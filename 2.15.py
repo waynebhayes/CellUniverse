@@ -54,9 +54,9 @@ if __name__ == '__main__':
         
         # Pulling stage
         S.sort(key=lambda x: x[0])
-        if t > 40:
-            improve(S, frame_array)
-            S.sort(key=lambda x: x[0])
+        k3 = min(3*K, len(S))
+        S = pool.map(improve_mapped, [(S[i], frame_array) for i in range(k3)])
+        S.sort(key=lambda x: x[0])
         S = S[:K]
 
         # Combine all best-match bacteria into 1 new universe

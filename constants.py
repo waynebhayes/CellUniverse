@@ -18,7 +18,7 @@ COLOR_WHITE = (255,255,255)
 
 K = 10 # was 10 originally
 Z = 20
-NUMBER_OF_PROCESSES = 3 # was 3 originally
+NUMBER_OF_PROCESSES = 30 # was 3 originally
 VARIATIONS_PER_BACTERIUM = 10
 
 
