@@ -16,8 +16,8 @@ def circles_collision(B, i, j, circle_i, circle_j):
         B[i].v += dp/B[i].m
 
             # rotation movement
-        inertia = 12/B[i].length**2
-        dw = np.cross(circle_i - B[i].pos, dp)*inertia
+        inertia = B[i].m*B[i].length**2/12
+        dw = np.cross(circle_i - B[i].pos, dp)/inertia
         B[i].w += dw
 
         
@@ -29,8 +29,8 @@ def circles_collision(B, i, j, circle_i, circle_j):
         B[j].v += dp/B[j].m
         
             # rotation movement
-        inertia = 12/B[j].length**2
-        dw = np.cross(circle_j - B[j].pos, dp)
+        inertia = B[j].m*B[j].length**2/12
+        dw = np.cross(circle_j - B[j].pos, dp)/inertia
         B[j].w += dw
 
         return True
@@ -59,8 +59,8 @@ def circle_line(B, i, j, circle_i, line_j):
         B[i].v += dp/B[i].m
 
             # rotation movement
-        inertia = 12/B[i].length**2
-        dw = np.cross(circle_i - B[i].pos, dp)*inertia
+        inertia = B[i].m*B[i].length**2/12
+        dw = np.cross(circle_i - B[i].pos, dp)/inertia
         B[i].w += dw
 
         # bacterium j (only linear movement)
