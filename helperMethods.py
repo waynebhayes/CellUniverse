@@ -1,10 +1,22 @@
 import os
 from Bacterium import *
 import cv2
-import matplotlib.pyplot as plt
 import collisionEventsHandler
 import mahotas
 import bisect
+import time
+import sys
+
+# ran once per process in the pool
+def process_init(l):
+    global lock
+    lock = l
+
+# syncronized print function
+def safe_print(msg):
+    with lock:
+        print(msg)
+        sys.stdout.flush()
 
 # Combine best-match bacteria across all U in S
 #   into 1 new universe
@@ -16,22 +28,23 @@ def best_bacteria(S, frame_array):
 
     # Init the map with unique names of the greates ancestors
     name_to_cost = dict()
-    for _, U, _ in S:
+    for _, U, _, _ in S:
         for bacterium in U:
-            name_to_cost[bacterium.name] = 999999
+            name_to_cost[bacterium.name] = sys.maxsize
 
     # Keep only greatest ancestors
     to_remove = set()
     for name, c in name_to_cost.items():
-        for i in range(1,len(name)):
+        for i in range(1, len(name)):
             if name[:i] in name_to_cost:
-                to_remove.update(name)
+                to_remove.add(name)
                 break
+
     name_to_cost = {name: c for name, c in name_to_cost.items() if name not in to_remove}
 
     # Finding the minimum cost for each entry in the map
     name_to_bacteria = dict()
-    for _, U, _ in S:
+    for _, U, _, _ in S:
         for bacterium in U:
             # Find the bacterium's ancestor name in the 'names' map
             ancestor = bacterium.name
@@ -56,20 +69,27 @@ def best_bacteria(S, frame_array):
     for value in name_to_bacteria.values():
         U += value
 
-    return (cost(frame_array, U), U, K)
+    return (cost(frame_array, U), U, K, -1)
     
 
 # Generate future universes from an input universe
 def generate_universes(args):
+
     U = args[0]
     frame_array = args[1]
     index = args[2]
+    count = args[3]
+    start = args[4]
+
     M = collision_matrix(U) # calculate U's matrix for collision detection
     Us = [deepcopy_list(U) for i in range(4*K)]
     best_moves = []
 
     # Find best moves for each bacterium in U
     for i, bacterium in enumerate(U):
+
+        safe_print("[PID: {}] find_k_best_moves: Bacterium {} of {} in Universe {} of {} ({:.2f} sec)".format(os.getpid(), i + 1, len(U), index + 1, count, time.time() - start))
+
         best_moves.append(find_k_best_moves(U, i, M, frame_array))
 
     # Apply the best moves to all bacteria in Us
@@ -87,7 +107,7 @@ def generate_universes(args):
 
         collisionEventsHandler.run(Us[i], M)
         
-    return [(cost(frame_array, U), U, index) for U in Us]
+    return [(cost(frame_array, Us[i]), Us[i], index, i) for i in xrange(len(Us))]
 
 # Find k best moves for bacterium i
 def find_k_best_moves(U, i, M, frame_array):
@@ -96,10 +116,12 @@ def find_k_best_moves(U, i, M, frame_array):
     bacterium.w = np.zeros(2)
     k_best_moves = []
     U_copy = deepcopy_list(U)
+
     for x in np.linspace(-3,3,7):
         for y in np.linspace(-3,3,7):
             for d_theta in np.linspace(-pi/10, pi/10, 21):
                 for dh in np.linspace(0,3,4):
+
                     bacterium_copy = deepcopy(bacterium)
 
                     bacterium_copy.pos += np.array([x,y,0])
@@ -127,6 +149,7 @@ def find_k_best_moves(U, i, M, frame_array):
         if bacterium_copy.length > 31:
             for split_ratio in np.linspace(0.25,0.75,20):
                 bacterium_copy_2 = deepcopy(bacterium_copy)
+
                 new_bacterium = split(bacterium_copy_2, split_ratio)
                 if bacterium_copy_2.length < 13 or new_bacterium.length < 13:
                     continue
@@ -144,7 +167,13 @@ def improve_mapped(args):
     Si = args[0]
     frame_array = args[1]
 
-    w, U, index = Si
+    index = args[2]
+    count = args[3]
+    start = args[4]
+
+    safe_print("[PID: {}] improve_mapped: Universe {} of {} ({:.02f} sec)".format(os.getpid(), index + 1, count, time.time() - start))
+
+    w, U, index, index2 = Si
     improved = True
     M = collision_matrix(U)
     
@@ -163,7 +192,7 @@ def improve_mapped(args):
                 if s < w:
                     w = s
                     U = U_copy
-                    Si = (s, U, index)
+                    Si = (s, U, index, index2)
                     improved = True
                     
             # horizontal
@@ -176,7 +205,7 @@ def improve_mapped(args):
                 if s < w:
                     w = s
                     U = U_copy
-                    Si = (s, U, index)
+                    Si = (s, U, index, index2)
                     improved = True
                 
             # vertical
@@ -189,7 +218,7 @@ def improve_mapped(args):
                 if s < w:
                     w = s
                     U = U_copy
-                    Si = (s, U, index)
+                    Si = (s, U, index, index2)
                     improved = True
 
             # rotating
@@ -202,14 +231,15 @@ def improve_mapped(args):
                 if s < w:
                     w = s
                     U = U_copy
-                    Si = (s, U, index)
+                    Si = (s, U, index, index2)
                     improved = True
 
     return Si
 
+
 # find greatest common ancestor name
 def find_greatest_common_ancestor_name(bacterium, names):
-    for i in range(1,len(bacterium.name)):
+    for i in range(1, len(bacterium.name)):
         if bacterium.name[:i] in names:
             return bacterium.name[:i]
 
@@ -493,8 +523,6 @@ def cost(base_im_array, U, xform=None):
         xform[xform > 5] = 5
         xform = xform + 1
         dif *= xform
-
-        
     
     return int(np.sum(dif))
 
