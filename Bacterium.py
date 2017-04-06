@@ -3,21 +3,16 @@ import numpy as np
 from constants import *
 
 def normalize(v):
-    norm=np.linalg.norm(v)
-    if norm==0: 
+    norm = np.linalg.norm(v)
+    if norm == 0:
        return v
-    return v/norm
+    return v / norm
 
 def two_tuple(v):
     return tuple(list(v)[:2])
 
 def findStartAngle(x0, y0, x1, y1):
-    if x0 == x1: return 90 if y1 > y0 else 270
-    alpha = atan((y1 - y0)/(x1-x0))*180/pi
-    if x0 > x1:
-        return alpha + 180
-    else:
-        return alpha
+    return atan2(y1 - y0, x1 - x0) * 180 / pi
 
 class Line:
     def __init__(self, p1 = None, p2 = None, m = None, b = None, normal_vector = None):
@@ -139,18 +134,6 @@ class Bacterium:
             # Finding new tail box and start angle
             self.tail_box = (int(x - radius), int(y - radius), int(x + radius), int(y + radius))
             self.tail_start_angle = int(findStartAngle(x, y, self.end_point_4[0], self.end_point_4[1]))
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
