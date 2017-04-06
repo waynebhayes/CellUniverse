@@ -138,77 +138,6 @@ def find_k_best_moves(U, i, M, frame_array):
 
     # return result extracted from k_best_moves
     return [e[1:] for e in k_best_moves]
-    
-
-# improve() method in pulling stage
-def improve(S, frame_array):
-    k3 = min(3*K, len(S))
-
-    for i in range(k3):
-        w, U, index = S[i]
-        improved = True
-        z = 0
-        M = collision_matrix(U)
-        
-        while improved:
-            improved = False
-            for j, bacterium in enumerate(U):
-                U_copy = deepcopy_list(U)
-
-                # shrink
-                for dh in [-4,-2, -1]:
-                    U_copy = deepcopy_list(U)
-                    U_copy[j].length += dh
-                    if U_copy[j].length < 10: continue
-                    U_copy[j].update()
-                    collisionEventsHandler.run(U_copy, M)
-                    s = cost(frame_array, U_copy)
-                    if s < w:
-                        w = s
-                        U = U_copy
-                        S[i] = (s, U, index)
-                        improved = True
-                        
-                # horizontal
-                for x in [-1,1]:
-                    U_copy = deepcopy_list(U)
-                    U_copy[j].pos[0] += x
-                    U_copy[j].update()
-                    collisionEventsHandler.run(U_copy, M)
-                    s = cost(frame_array, U_copy)
-                    if s < w:
-                        w = s
-                        U = U_copy
-                        S[i] = (s, U, index)
-                        improved = True
-                    
-                # vertical
-                for y in [-1,1]:
-                    U_copy = deepcopy_list(U)
-                    U_copy[j].pos[1] += y
-                    U_copy[j].update()
-                    collisionEventsHandler.run(U_copy, M)
-                    s = cost(frame_array, U_copy)
-                    if s < w:
-                        w = s
-                        U = U_copy
-                        S[i] = (s, U, index)
-                        improved = True
-
-                # rotating
-                for dtheta in [-pi/100, pi/100]:
-                    U_copy = deepcopy_list(U)
-                    U_copy[j].theta += dtheta
-                    U_copy[j].update()
-                    collisionEventsHandler.run(U_copy, M)
-                    s = cost(frame_array, U_copy)
-                    if s < w:
-                        w = s
-                        U = U_copy
-                        S[i] = (s, U, index)
-                        improved = True
-
-            z += 1
 
 # parallelized improve() method in pulling stage
 def improve_mapped(args):
@@ -222,7 +151,6 @@ def improve_mapped(args):
     while improved:
         improved = False
         for j, bacterium in enumerate(U):
-            #U_copy = deepcopy_list(U)
 
             # shrink
             for dh in [-4,-2, -1]:
