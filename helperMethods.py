@@ -515,7 +515,7 @@ def write_state2(U, f):
 # cost function
 def cost(base_im_array, U, xform=None):
     im = generate_image_cv2(U)
-    dif = np.abs(base_im_array - im)
+    dif = cv2.absdiff(base_im_array, im)
 
     #xform = True
     if xform != None:
@@ -524,7 +524,7 @@ def cost(base_im_array, U, xform=None):
         xform = xform + 1
         dif *= xform
     
-    return int(np.sum(dif))
+    return int(cv2.sumElems(dif)[0])
 
 # bacterium splits into 2 bacteria
 def split(bacterium, split_ratio):
