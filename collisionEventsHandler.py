@@ -53,15 +53,14 @@ def circle_line(B, i, j, circle_i, line_j):
     m = line_j.m
     b = line_j.b
 
-    # point on the line nearest the circle's center
-    z = 1.0/(m*m + 1)
-
     # distance between the circle's center and nearest point on the line
+    z = 1.0/(m*m + 1)
     d = abs(m*x - y + b)*sqrt(z)
 
     # if the circle is overlapping the line,
     if d < B[i].radius:
 
+        # point on the line nearest the circle's center
         ip = np.array([(x + m*(y - b))*z, (m*(x + m*y) + b)*z, 0])
 
         # if the nearest point is within the line segment
