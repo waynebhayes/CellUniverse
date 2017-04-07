@@ -37,10 +37,14 @@ if __name__ == '__main__':
     debug_dir = "Output/Debug/"
     if not os.path.exists(debug_dir):
         os.makedirs(debug_dir)
+
+    profile_dir = "Output/Profile"
+    if not os.path.exists(profile_dir):
+        os.makedirs(profile_dir) 
             
     # Creating a pool of processes
     lock = Lock()
-    pool = Pool(NUMBER_OF_PROCESSES, initializer=process_init, initargs=(lock,))
+    pool = Pool(NUMBER_OF_PROCESSES, initializer=process_init, initargs=(lock, profile_dir))
 
     # Processing
     start_program = time.time()
@@ -52,7 +56,7 @@ if __name__ == '__main__':
         frame_array = (cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY) > 0)*np.uint8(1)
 
         # Generate future universes from S
-        new_S = pool.map(generate_universes, [(deepcopy_list(U), frame_array, index, len(S), start) for index, U in enumerate(S)])
+        new_S = pool.map(generate_universes, [(deepcopy_list(U), frame_array, index, len(S), start, t) for index, U in enumerate(S)])
 
         # unroll new_S in to a list of U's
         S = []
@@ -70,7 +74,7 @@ if __name__ == '__main__':
 
         # improve the top 3K universes
         k3 = min(3*K, len(S))
-        S = pool.map(improve_mapped, [(S[i], frame_array, i, k3, start) for i in range(k3)])
+        S = pool.map(improve_mapped_wrapper, [(S[i], frame_array, i, k3, start, t) for i in range(k3)])
         
         # pick the K best universes
         S.sort(key=lambda x: x[0])
