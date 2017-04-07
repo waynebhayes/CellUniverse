@@ -88,15 +88,17 @@ class Bacterium:
         self.tail_start_angle = int(findStartAngle(x, y, self.end_point_4[0], self.end_point_4[1]))
 
         # update body
+        normal = normalize(self.end_point_1 - self.end_point_2)
+
         # body line 1
         b = self.end_point_1[1] - m*self.end_point_1[0]
         self.body_line_1 = np.array([m, b, 0])
-        self.line_1 = Line(self.end_point_1, self.end_point_4, m, b, normalize(self.end_point_1 - self.end_point_2))
+        self.line_1 = Line(self.end_point_1, self.end_point_4, m, b, normal)
 
         # body line 2
         b = self.end_point_2[1] - m*self.end_point_2[0]
         self.body_line_2 = np.array([m, b])
-        self.line_2 = Line(self.end_point_2, self.end_point_3, m, b, normalize(self.end_point_2 - self.end_point_1))
+        self.line_2 = Line(self.end_point_2, self.end_point_3, m, b, -normal)
 
         # body box
         self.body_box = two_tuple(self.end_point_1) + two_tuple(self.end_point_2) + two_tuple(self.end_point_3) + two_tuple(self.end_point_4)
