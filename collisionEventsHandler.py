@@ -54,44 +54,47 @@ def circle_line(B, i, j, circle_i, line_j):
     b = line_j.b
 
     # point on the line nearest the circle's center
-    z = 1.0/(m**2 + 1)
-    ip = np.array([(x + m*y - m*b)*z, (m*x + m**2*y + b)*z, 0])
+    z = 1.0/(m*m + 1)
 
     # distance between the circle's center and nearest point on the line
     d = abs(m*x - y + b)*sqrt(z)
 
     # if the circle is overlapping the line,
-    #   and the nearest point is within the line segment
-    if d < B[i].radius and np.dot(line_j.p1 - ip, line_j.p2 - ip) < 0:
+    if d < B[i].radius:
 
-        B[i].collided = True
-        B[j].collided = True
+        ip = np.array([(x + m*(y - b))*z, (m*(x + m*y) + b)*z, 0])
 
-        # the amount of overlap
-        x = B[i].radius - d
+        # if the nearest point is within the line segment
+        if np.dot(line_j.p1 - ip, line_j.p2 - ip) < 0:
 
-        # compute spring force acting on bacterium i
-        F = B[i].k*x*(line_j.normal_vector)
-        
-        # linear movement
-        dp = F*dt
-        B[i].v += dp/B[i].m
+            B[i].collided = True
+            B[j].collided = True
 
-        # moment of inertia
-        inertia = B[i].m*B[i].length**2/12
-        
-        # change in angular velocity
-        dw = np.cross(circle_i - B[i].pos, dp)/inertia
-        B[i].w += dw
+            # the amount of overlap
+            x = B[i].radius - d
 
-        # equal and opposite force acting on bacterium j
-        F = -F
+            # compute spring force acting on bacterium i
+            F = B[i].k*x*(line_j.normal_vector)
+            
+            # linear movement
+            dp = F*dt
+            B[i].v += dp/B[i].m
 
-        # change in momentum
-        dp = F*dt
-        B[j].v += dp/B[j].m
+            # moment of inertia
+            inertia = B[i].m*B[i].length**2/12
+            
+            # change in angular velocity
+            dw = np.cross(circle_i - B[i].pos, dp)/inertia
+            B[i].w += dw
 
-        return True
+            # equal and opposite force acting on bacterium j
+            F = -F
+
+            # change in momentum
+            dp = F*dt
+            B[j].v += dp/B[j].m
+
+            return True
 
     return False
 
