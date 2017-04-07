@@ -3,7 +3,7 @@ import numpy as np
 from constants import *
 
 def normalize(v):
-    norm = np.linalg.norm(v)
+    norm = sqrt(np.dot(v, v))
     if norm == 0:
        return v
     return v / norm

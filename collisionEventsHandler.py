@@ -2,7 +2,8 @@ from Bacterium import *
 
 # circle-circle collisions
 def circles_collision(B, i, j, circle_i, circle_j):
-    d = np.linalg.norm(circle_j - circle_i)
+    r = circle_j - circle_i
+    d = sqrt(np.dot(r, r))
 
     # if the circles are overlapping
     if d < 2*B[i].radius:
@@ -53,10 +54,11 @@ def circle_line(B, i, j, circle_i, line_j):
     b = line_j.b
 
     # point on the line nearest the circle's center
-    ip = np.array([(x + m*y - m*b)/(m**2 + 1), (m*x + m**2*y + b)/(m**2 + 1), 0])
+    z = 1.0/(m**2 + 1)
+    ip = np.array([(x + m*y - m*b)*z, (m*x + m**2*y + b)*z, 0])
 
     # distance between the circle's center and nearest point on the line
-    d = abs(m*x - y + b)/sqrt(m**2 + 1)
+    d = abs(m*x - y + b)*sqrt(z)
 
     # if the circle is overlapping the line,
     #   and the nearest point is within the line segment
