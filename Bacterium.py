@@ -8,9 +8,6 @@ def normalize(v):
        return v
     return v / norm
 
-def two_tuple(v):
-    return tuple(list(v)[:2])
-
 def findStartAngle(x0, y0, x1, y1):
     return atan2(y1 - y0, x1 - x0) * 180 / pi
 
@@ -68,7 +65,7 @@ class Bacterium:
         # update head
         x = pos[0] - (length/2-radius)*cos(theta)
         y = pos[1] - (length/2-radius)*sin(theta)
-        self.head_pos = np.array([x,y,0])
+        self.head_pos = np.array([x, y, 0])
 
         self.end_point_1 = np.array([x + radius*cos(theta - pi/2), y + radius*sin(theta - pi/2), 0])
         self.end_point_2 = np.array([x - radius*cos(theta - pi/2), y - radius*sin(theta - pi/2), 0])
@@ -79,7 +76,7 @@ class Bacterium:
         # update tail
         x = pos[0] + (length/2-radius)*cos(theta)
         y = pos[1] + (length/2-radius)*sin(theta)
-        self.tail_pos = np.array([x,y, 0])
+        self.tail_pos = np.array([x, y, 0])
 
         self.end_point_3 = np.array([x - radius*cos(theta - pi/2), y - radius*sin(theta - pi/2), 0])
         self.end_point_4 = np.array([x + radius*cos(theta - pi/2), y + radius*sin(theta - pi/2), 0])
@@ -100,9 +97,6 @@ class Bacterium:
         self.body_line_2 = np.array([m, b])
         self.line_2 = Line(self.end_point_2, self.end_point_3, m, b, -normal)
 
-        # body box
-        self.body_box = two_tuple(self.end_point_1) + two_tuple(self.end_point_2) + two_tuple(self.end_point_3) + two_tuple(self.end_point_4)
-        
         self.mid_point_1 = self.end_point_1
         self.mid_point_2 = self.end_point_2
 
