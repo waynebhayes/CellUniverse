@@ -110,6 +110,7 @@ def generate_universes(args):
 
     # Apply the best moves to all bacteria in Us
     for i in range(4*K):
+        correspondence = []
         for j in range(len(U)):
             bacterium = Us[i][j]
             move = best_moves[j][i]
@@ -120,8 +121,14 @@ def generate_universes(args):
             bacterium.update()
             if len(move) == 5:
                 Us[i].append(split(bacterium, move[4]))
+                correspondence.append(j)
 
-        collisionEventsHandler.run(Us[i], M)
+        # expand the collision matrix if bacteria have split
+        new_M = M
+        if len(correspondence) > 0:
+            new_M = expand_collision_matrix(U, M, correspondence)
+
+        collisionEventsHandler.run(Us[i], new_M)
         
     return [(cost(frame_array, Us[i]), Us[i], index, i) for i in xrange(len(Us))]
 
@@ -484,8 +491,50 @@ def collision_matrix(U):
                 M[i][j] = True
 
     return M
+
         
-  
+def expand_collision_matrix(U, M, correspondence):
+    """Expands the collision matrix after splits have occured.
+
+    When a bacterium splits, their bodies overlap the same space that the 
+    original bacterium covered (they don't spontaneously move far away).  
+    Therefore, the entries of the collision matrix for the original bacterium
+    corresponds to the entries of the two new bacteria (they collide with the
+    same bacteria as the original did).  We can use this fact to save time by
+    reusing the existing values in the collision matrix, since computing the
+    distance between two bacterium is computationally more expensive.
+
+    Args:
+        U (Universe): The universe for which the collision matrix is made.
+        M (list): The old collision matrix (list of lists of booleans).
+        correspondence (list): A list of integers representing the bacteria
+            index which corresponds to the other split bacterium.
+
+    Returns:
+        A boolean square matrix of length len(U) indicating if a pair of
+        bacteria are in proximity to each other.
+    """
+
+    N = len(U)
+
+    new_M = [[False for i in range(N)] for i in range(N)]
+
+    # Copy over the existing collision matrix
+    for i in xrange(N):
+        for j in xrange(i + 1, N):
+
+            # get the corresponding indices of the newly split bacteria
+            ci = i if i < len(M) else correspondence[i - len(M)]
+            cj = j if j < len(M) else correspondence[j - len(M)]
+
+            # swap so that the smallest index is first
+            if ci > cj: 
+                ci, cj = cj, ci
+
+            new_M[i][j] = M[ci][cj]
+
+    return new_M
+
 
 # deep copy function
 #   returns a copy of a bacterium
