@@ -53,7 +53,7 @@ if __name__ == '__main__':
         sys.stdout.flush()
 
         start = time.time()
-        frame_array = (cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY) > 0)*np.uint8(1)
+        frame_array = (cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY) > 0)*int(1)
 
         # Generate future universes from S
         new_S = pool.map(generate_universes, [(deepcopy_list(U), frame_array, index, len(S), start, t) for index, U in enumerate(S)])

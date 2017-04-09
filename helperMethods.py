@@ -396,7 +396,7 @@ def two_tuple(v):
 
 def generate_image_cv2(U, im=None):
     if im is None:
-        im = np.zeros((IMAGE_SIZE[1], IMAGE_SIZE[0]), dtype='uint8')
+        im = np.zeros((IMAGE_SIZE[1], IMAGE_SIZE[0]), dtype=int)
     for bacterium in U:
         # head and tail
         cv2.circle(im, tuple(bacterium.head_pos[:2].astype(int)), bacterium.radius, 1, -1)
@@ -412,7 +412,7 @@ def generate_image_cv2(U, im=None):
 
 def generate_image_edge(U, im=None):
     if im is None:
-        im = np.zeros((IMAGE_SIZE[1], IMAGE_SIZE[0]), dtype='uint8')
+        im = np.zeros((IMAGE_SIZE[1], IMAGE_SIZE[0]), dtype=int)
     for bacterium in U:
         p1 = (int(bacterium.end_point_1[0]), int(bacterium.end_point_1[1]))
         p2 = (int(bacterium.end_point_2[0]), int(bacterium.end_point_2[1]))
