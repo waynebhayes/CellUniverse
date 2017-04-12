@@ -70,55 +70,22 @@ def best_bacteria(S, frame_array):
         U += value
 
     return (cost(frame_array, U), U, K, -1)
-    
 
-# Generate future universes from an input universe
-def generate_universes(args):
+
+# find the best k moves mapped for parallel processing
+def find_k_best_moves_mapped(args):
 
     U = args[0]
     frame_array = args[1]
     index = args[2]
-    count = args[3]
-    start = args[4]
-    frame_number = args[5]
-
-    M = collision_matrix(U) # calculate U's matrix for collision detection
-    Us = [deepcopy_list(U) for i in range(4*K)]
-    best_moves = []
+    i = args[3]
+    count = args[4]
+    M = args[5]
+    start = args[6]
 
     # Find best moves for each bacterium in U
-    for i, bacterium in enumerate(U):
+    safe_print("[PID: {}] find_k_best_moves: Bacterium {} of {} in Universe {} of {} ({:.2f} sec)".format(os.getpid(), i + 1, len(U), index + 1, count, time.time() - start))
 
-        safe_print("[PID: {}] find_k_best_moves: Bacterium {} of {} in Universe {} of {} ({:.2f} sec)".format(os.getpid(), i + 1, len(U), index + 1, count, time.time() - start))
-
-        best_moves.append(find_k_best_moves(U, i, M, frame_array))
-
-    # Apply the best moves to all bacteria in Us
-    for i in range(4*K):
-        correspondence = []
-        for j in range(len(U)):
-            bacterium = Us[i][j]
-            move = best_moves[j][i]
-            
-            bacterium.pos += np.array([move[0], move[1], 0])
-            bacterium.theta += move[2]
-            bacterium.length += move[3]
-            bacterium.update()
-            if len(move) == 5:
-                Us[i].append(split(bacterium, move[4]))
-                correspondence.append(j)
-
-        # expand the collision matrix if bacteria have split
-        new_M = M
-        if len(correspondence) > 0:
-            new_M = expand_collision_matrix(U, M, correspondence)
-
-        collisionEventsHandler.run(Us[i], new_M)
-        
-    return [(cost(frame_array, Us[i]), Us[i], index, i) for i in xrange(len(Us))]
-
-# Find k best moves for bacterium i
-def find_k_best_moves(U, i, M, frame_array):
     bacterium = U[i]
     bacterium.v = np.zeros(2)
     bacterium.w = np.zeros(2)
@@ -167,8 +134,51 @@ def find_k_best_moves(U, i, M, frame_array):
     for e in to_insert:
         bisect.insort_left(k_best_moves, e)
 
-    # return result extracted from k_best_moves
-    return [e[1:] for e in k_best_moves]
+    # result extracted from k_best_moves
+    results = [e[1:] for e in k_best_moves]
+
+    return (index, i, results)
+
+
+# Generate future universes from an input universe
+def generate_universes(args):
+
+    U = args[0]
+    frame_array = args[1]
+    index = args[2]
+    count = args[3]
+    best_moves = args[4]
+    start = args[5]
+
+    M = collision_matrix(U) # calculate U's matrix for collision detection
+    Us = [deepcopy_list(U) for i in range(4*K)]
+
+    # Find best moves for each bacterium in U
+    safe_print("[PID: {}] generate_universes: Universe {} of {} ({:.2f} sec)".format(os.getpid(), index + 1, count, time.time() - start))
+
+    # Apply the best moves to all bacteria in Us
+    for i in range(4*K):
+        correspondence = []
+        for j in range(len(U)):
+            bacterium = Us[i][j]
+            move = best_moves[j][i]
+            
+            bacterium.pos += np.array([move[0], move[1], 0])
+            bacterium.theta += move[2]
+            bacterium.length += move[3]
+            bacterium.update()
+            if len(move) == 5:
+                Us[i].append(split(bacterium, move[4]))
+                correspondence.append(j)
+
+        # expand the collision matrix if bacteria have split
+        new_M = M
+        if len(correspondence) > 0:
+            new_M = expand_collision_matrix(U, M, correspondence)
+
+        collisionEventsHandler.run(Us[i], new_M)
+        
+    return [(cost(frame_array, Us[i]), Us[i], index, i) for i in xrange(len(Us))]
 
 
 # parallelized improve() method in pulling stage

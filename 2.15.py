@@ -47,8 +47,33 @@ if __name__ == '__main__':
         start = time.time()
         frame_array = (cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY) > 0)*np.int16(1)
 
+        # generate the list of arguments to be passed to find_k_best_moves_mapped
+        args = []
+        for index, U in enumerate(S):
+
+            # calculate U's matrix for collision detection
+            M = collision_matrix(U)
+
+            for bacterium_index in range(len(U)):
+                args.append((deepcopy_list(U), frame_array, index, bacterium_index, len(S), M, start))
+
+        # Find best moves for each bacterium in each universe
+        moves_list = pool.map(find_k_best_moves_mapped, args)
+
+        # initialize the best move lists
+        best_moves = []
+        for universe_index in range(len(S)):
+            best_moves_per_universe = []
+            for bacterium_index in range(len(S[universe_index])):
+                best_moves_per_universe.append(None)
+            best_moves.append(best_moves_per_universe)
+
+        # organize the best move dictionary into a list
+        for moves in moves_list:
+            best_moves[moves[0]][moves[1]] = moves[2]
+
         # Generate future universes from S
-        new_S = pool.map(generate_universes, [(deepcopy_list(U), frame_array, index, len(S), start, t) for index, U in enumerate(S)])
+        new_S = pool.map(generate_universes, [(deepcopy_list(U), frame_array, index, len(S), best_moves[index], start) for index, U in enumerate(S)])
 
         # unroll new_S in to a list of U's
         S = []
