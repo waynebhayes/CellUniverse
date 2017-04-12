@@ -33,18 +33,10 @@ if __name__ == '__main__':
         state_dirs.append('Output/States/' + str(i) + '/')
         if not os.path.exists(state_dirs[i]):
             os.makedirs(state_dirs[i])
-
-    debug_dir = "Output/Debug/"
-    if not os.path.exists(debug_dir):
-        os.makedirs(debug_dir)
-
-    profile_dir = "Output/Profile"
-    if not os.path.exists(profile_dir):
-        os.makedirs(profile_dir) 
             
     # Creating a pool of processes
     lock = Lock()
-    pool = Pool(NUMBER_OF_PROCESSES, initializer=process_init, initargs=(lock, profile_dir))
+    pool = Pool(NUMBER_OF_PROCESSES, initializer=process_init, initargs=(lock,))
 
     # Processing
     start_program = time.time()
@@ -66,25 +58,13 @@ if __name__ == '__main__':
         # Pulling stage
         S.sort(key=lambda x: x[0])
 
-        # debug statistics: Which of the newly generated universes have the lowest cost?
-        with open("{}prepulling {}.csv".format(debug_dir, t), "w") as fp:
-            print("Old_Universe, New_Universe, Cost", file=fp)
-            for s in S:
-                print("{}, {}, {}".format(s[2], s[3], s[0]), file=fp)
-
         # improve the top 3K universes
         k3 = min(3*K, len(S))
-        S = pool.map(improve_mapped_wrapper, [(S[i], frame_array, i, k3, start, t) for i in range(k3)])
+        S = pool.map(improve_mapped, [(S[i], frame_array, i, k3, start) for i in range(k3)])
         
         # pick the K best universes
         S.sort(key=lambda x: x[0])
         S = S[:K]
-
-        # debug statistics: Which of the universes won?
-        with open("{}postpulling {}.csv".format(debug_dir, t), "w") as fp:
-            print("Old_Universe, New_Universe, Cost", file=fp)
-            for s in S:
-                print("{}, {}, {}".format(s[2], s[3], s[0]), file=fp)
 
         # Combine all best-match bacteria into 1 new universe
         best_U = best_bacteria(S, frame_array)

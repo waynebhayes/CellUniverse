@@ -7,15 +7,10 @@ import bisect
 import time
 import sys
 
-import cProfile
-
 # ran once per process in the pool
-def process_init(l, pd):
+def process_init(l):
     global lock
     lock = l
-
-    global profile_dir 
-    profile_dir = pd
 
 # syncronized print function
 def safe_print(msg):
@@ -91,22 +86,12 @@ def generate_universes(args):
     Us = [deepcopy_list(U) for i in range(4*K)]
     best_moves = []
 
-    if PROFILING_ENABLED:
-        # profile find_k_best_moves
-        profile = cProfile.Profile()
-        profile.enable()
-
     # Find best moves for each bacterium in U
     for i, bacterium in enumerate(U):
 
         safe_print("[PID: {}] find_k_best_moves: Bacterium {} of {} in Universe {} of {} ({:.2f} sec)".format(os.getpid(), i + 1, len(U), index + 1, count, time.time() - start))
 
         best_moves.append(find_k_best_moves(U, i, M, frame_array))
-
-    if PROFILING_ENABLED:
-        # save profile
-        profile.disable()
-        profile.dump_stats("{}/find_k_best_moves-{}-{}.prof".format(profile_dir, frame_number, index))
 
     # Apply the best moves to all bacteria in Us
     for i in range(4*K):
@@ -185,25 +170,6 @@ def find_k_best_moves(U, i, M, frame_array):
     # return result extracted from k_best_moves
     return [e[1:] for e in k_best_moves]
 
-# wrapper for improve_mapped for profiling
-def improve_mapped_wrapper(args):
-
-    index = args[2]
-    frame_number = args[5]
-
-    if PROFILING_ENABLED:
-        # profile find_k_best_moves
-        profile = cProfile.Profile()
-        profile.enable()
-
-    retval = improve_mapped(args)
-
-    if PROFILING_ENABLED:
-        # save profile
-        profile.disable()
-        profile.dump_stats("{}/improve_mapped-{}-{}.prof".format(profile_dir, frame_number, index))
-
-    return retval
 
 # parallelized improve() method in pulling stage
 def improve_mapped(args):
