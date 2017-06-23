@@ -553,8 +553,8 @@ def read_state(f):
     return U
 
 # Write the state of bacteria B to the file f
-def write_state(U, f):
-    f.write(str(len(U)) + '\n')
+def write_state(index, U, f):
+    f.write("{} {}\n".format(index, len(U)))
     for bacterium in sorted(U, key=lambda x: x.pos[0]):
         f.write(str(bacterium.name)  + ' ')
         f.write(str(bacterium.pos[0]) + ' ')

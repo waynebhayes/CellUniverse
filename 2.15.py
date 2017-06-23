@@ -104,7 +104,7 @@ if __name__ == '__main__':
             misc.imsave(file_name, new_frame)
             
             f = open(state_dirs[i] + str(t) + '.txt', 'w')
-            write_state(U, f)
+            write_state(index, U, f)
             f.close()
 
         S = [U for _, U, _, _ in S[:K+1]]
