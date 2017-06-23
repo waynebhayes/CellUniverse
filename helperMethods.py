@@ -294,27 +294,27 @@ def init_space(t):
 
         # bacterium 1
         U[0].name = '00'
-        U[0].pos = np.array([160, 105, 0])
+        U[0].pos = np.array([160.0, 105.0, 0])
         U[0].theta = pi/2 + pi/93
-        U[0].length = 20
+        U[0].length = 20.0
         
         # bacterium 2
         U[1].name = '01'
-        U[1].pos = np.array([156, 125, 0])
+        U[1].pos = np.array([156.0, 125.0, 0])
         U[1].theta = pi/2 + pi/8 + pi/93
-        U[1].length = 17
+        U[1].length = 17.0
         
         # bacterium 3
         U[2].name = '10'
-        U[2].pos = np.array([165, 130, 0])
+        U[2].pos = np.array([165.0, 130.0, 0])
         U[2].theta = pi/2 + pi/8 + pi/93
-        U[2].length = 14
+        U[2].length = 14.0
 
         # bacterium 4
         U[3].name = '11'
-        U[3].pos = np.array([170, 113, 0])
+        U[3].pos = np.array([170.0, 113.0, 0])
         U[3].theta = pi/2 + pi/93
-        U[3].length = 15
+        U[3].length = 15.0
 
 
         for i in range(N):

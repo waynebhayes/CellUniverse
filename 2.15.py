@@ -16,7 +16,7 @@ import sys
 if __name__ == '__main__':
     # Initializations
     # Initialize the Space S
-    t = 1
+    t = 0
     S = init_space(t)
 
     # Image set from the real universe
