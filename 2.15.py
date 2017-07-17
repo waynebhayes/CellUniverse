@@ -25,7 +25,7 @@ if __name__ == '__main__':
     # Creating directories
     image_dirs = []
     state_dirs = []
-    for i in range(K + 1):
+    for i in range(K):
         image_dirs.append('Output/Images/' + str(i) + '/')
         if not os.path.exists(image_dirs[i]):
             os.makedirs(image_dirs[i])
@@ -92,8 +92,8 @@ if __name__ == '__main__':
         S = S[:K]
 
         # Combine all best-match bacteria into 1 new universe
-        best_U = best_bacteria(S, frame_array)
-        S.append(best_U)
+        # best_U = best_bacteria(S, frame_array)
+        # S.append(best_U)
 
         # Output to files
         runtime = str(int(time.time() - start))
@@ -107,7 +107,7 @@ if __name__ == '__main__':
             write_state(index, U, f)
             f.close()
 
-        S = [U for _, U, _, _ in S[:K+1]]
+        S = [U for _, U, _, _ in S[:K]]
 
         # next frame
         t += 1
