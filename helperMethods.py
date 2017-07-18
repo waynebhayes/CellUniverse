@@ -1,11 +1,17 @@
+import bisect
 import os
-from Bacterium import *
+import re
+import shlex
+import sys
+import time
+from collections import defaultdict
+
 import cv2
+
 import collisionEventsHandler
 import mahotas
-import bisect
-import time
-import sys
+from Bacterium import *
+
 
 # ran once per process in the pool
 def process_init(l):
@@ -285,47 +291,90 @@ def find_states(t):
     return file_names
 
 # Initial space S
-def init_space(t):
-    if t == 0:
-        N = 4   # init number of bacteria
-        U = []
-        for i in range(N):
-            U.append(Bacterium())
+def init_space(t, initial):
 
-        # bacterium 1
-        U[0].name = '00'
-        U[0].pos = np.array([160.0, 105.0, 0])
-        U[0].theta = pi/2 + pi/93
-        U[0].length = 20.0
-        
-        # bacterium 2
-        U[1].name = '01'
-        U[1].pos = np.array([156.0, 125.0, 0])
-        U[1].theta = pi/2 + pi/8 + pi/93
-        U[1].length = 17.0
-        
-        # bacterium 3
-        U[2].name = '10'
-        U[2].pos = np.array([165.0, 130.0, 0])
-        U[2].theta = pi/2 + pi/8 + pi/93
-        U[2].length = 14.0
+    trim_comments = lambda line: re.compile(r"""
+        ^(?P<line>[^#]*)    # anything before a comment marker is the line
+        (?:\#.*)?$          # ignore comments if they exist until the end of line
+    """, re.VERBOSE).match(line).group("line")
 
-        # bacterium 4
-        U[3].name = '11'
-        U[3].pos = np.array([170.0, 113.0, 0])
-        U[3].theta = pi/2 + pi/93
-        U[3].length = 15.0
+    # define attribute names and types
+    schema = {"name": str,
+              "pos:x": float,
+              "pos:y": float,
+              "length": float,
+              "rotation": float}
 
+    # list required header columns
+    requirements = ["pos:x", "pos:y", "length", "rotation"]
 
-        for i in range(N):
-            U[i].update()
-            
-        return [U]
-    
+    # find header
+    for line in initial:
+        header = shlex.split(trim_comments(line))
+        if header: break
     else:
-        file_names = find_states(t)
-        file_names.sort(key=lambda x: int(x.split('/')[2]))
-        return [read_state(open(file_name)) for file_name in file_names]
+        raise Exception("No headers found for the data '{}'!".format(initial.name))
+
+    # check for valid header columns
+    invalid_attributes = [column.lower() for column in header if column not in schema]
+    if invalid_attributes:
+        raise Exception("Header column(s) '{}' not valid attribute(s)! "
+                        "Must be one of the following: {}"
+                        .format(", ".join(invalid_attributes),
+                                ", ".join(schema.keys())))
+
+    # check for duplicates
+    duplicate_attributes = set([column for column in header if header.count(column) > 1])
+    if duplicate_attributes:
+        raise Exception("Cannot have duplicate header columns! "
+                        "Too many: {}"
+                        .format(", ".join(duplicate_attributes)))
+
+    # check for required header columns
+    missing_attributes = [required for required in requirements if required not in header]
+    if missing_attributes:
+        raise Exception("Missing header column(s): {}"
+                        .format(", ".join(missing_attributes)))
+
+    # get initial data
+    rows = []
+    for line in initial:
+        data = shlex.split(trim_comments(line))
+
+        # check for and skip empty lines
+        if not data: continue
+
+        # check that row column count matches header column count
+        if len(data) != len(header):
+            raise Exception("Row '{}' has an incorrect number of columns!"
+                            .format(trim_comments(line)))
+
+        # append row of data
+        row = {header[i]: schema[header[i]](data[i]) for i in range(len(data))}
+        rows.append(defaultdict(str, row))
+
+    # check if we have any rows
+    if not rows:
+        raise Exception("No initial data found!")
+
+    # create a name template for automatically generating names
+    name_template = "{{:0{}b}}".format(len("{:b}".format(len(rows) - 1)))
+
+    # create starting universe
+    universe = []
+    for index, row in enumerate(rows):
+        # create bacterium
+        bacterium = Bacterium()
+        bacterium.name = row["name"] or name_template.format(index)
+        bacterium.pos = np.array([row["pos:x"], row["pos:y"], 0])
+        bacterium.theta = row["rotation"]
+        bacterium.length = row["length"]
+        bacterium.update()
+
+        # add to the universe
+        universe.append(bacterium)
+
+    return [universe]
 
 
 # Advance bacterium, including moving and spinning
@@ -614,5 +663,3 @@ def split(bacterium, split_ratio):
     new_bacterium.update()
 
     return new_bacterium
-
-

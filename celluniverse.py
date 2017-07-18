@@ -1,23 +1,45 @@
+#!/usr/bin/env python
 # Authors: Huy Pham, Emile Shehada, Shane Stahlheber
-# Date: April 6, 2017
+# Date: July 11, 2017
 # Bacterial Growth Simulation Project
 
 from __future__ import print_function
 
-from helperMethods import *
-from scipy import misc
-from multiprocessing import Pool, Lock
-import time
+__version__ = "2.2"
+
+import argparse
 import sys
+import time
+from multiprocessing import Lock, Pool, cpu_count
+
+from scipy import misc
+
+from helperMethods import *
 
 #------------------
 # Main
 #------------------
-if __name__ == '__main__':
+def main():
+
+    default_processes = max(cpu_count() // 2, 1)
+
+    parser = argparse.ArgumentParser(description="Cell-Universe Cell Tracker.")
+    parser.add_argument("-v", "--version", action="version",
+                        version="%(prog)s {}".format(__version__))
+    parser.add_argument("-s", "--start", type=int, default=0, metavar="FRAME",
+                        help="start from specific frame (default: 0)")
+    parser.add_argument("-p", "--processes", type=int, default=default_processes, metavar="COUNT",
+                        help="number of concurrent processes to run (default: {})".format(default_processes))
+    parser.add_argument("initial", type=argparse.FileType('r'),
+                        help="initial properties file ('example.init.txt')")
+
+    args = parser.parse_args()
+
     # Initializations
     # Initialize the Space S
-    t = 0
-    S = init_space(t)
+    t = args.start
+    S = init_space(t, args.initial)
+    args.initial.close()
 
     # Image set from the real universe
     frames = get_frames('frames/', t)
@@ -36,7 +58,7 @@ if __name__ == '__main__':
             
     # Creating a pool of processes
     lock = Lock()
-    pool = Pool(NUMBER_OF_PROCESSES, initializer=process_init, initargs=(lock,))
+    pool = Pool(args.processes, initializer=process_init, initargs=(lock,))
 
     # Processing
     start_program = time.time()
@@ -112,3 +134,9 @@ if __name__ == '__main__':
         # next frame
         t += 1
 
+    # finished
+    parser.exit(0)
+
+
+if __name__ == '__main__':
+    main()
