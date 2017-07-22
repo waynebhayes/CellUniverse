@@ -1,6 +1,7 @@
 from __future__ import division
 import numpy as np
 from constants import *
+from math import sqrt, atan2, sin, cos, tan
 
 def normalize(v):
     norm = sqrt(np.dot(v, v))
@@ -25,8 +26,8 @@ class Line:
 class Bacterium:
     def __init__(self):
         # Dimensions
-        self.length = INIT_LENGTH
-        self.width = INIT_WIDTH
+        self.length = Config.init_length
+        self.width = Config.init_width
         self.radius = int(self.width/2)
         self.theta = 0 #for rotation
         
@@ -38,7 +39,7 @@ class Bacterium:
         self.bend_angle = 0
 
         # Coordinates
-        self.pos = np.array([IMAGE_SIZE[0]/2, IMAGE_SIZE[1]/2, 0])
+        self.pos = np.array([Globals.image_width/2, Globals.image_height/2, 0])
         
         self.head_pos = np.zeros(3)
         self.tail_pos = np.zeros(3)

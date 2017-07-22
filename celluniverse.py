@@ -35,19 +35,20 @@ def main():
 
     args = parser.parse_args()
 
-    # Initializations
-    # Initialize the Space S
+    # get starting frame
     t = args.start
-    S = init_space(t, args.initial)
-    args.initial.close()
 
     # Image set from the real universe
     frames = get_frames('frames/', t)
 
+    # Initialize the Space S
+    S = init_space(t, args.initial)
+    args.initial.close()
+
     # Creating directories
     image_dirs = []
     state_dirs = []
-    for i in range(K):
+    for i in range(Config.K):
         image_dirs.append('Output/Images/' + str(i) + '/')
         if not os.path.exists(image_dirs[i]):
             os.makedirs(image_dirs[i])
@@ -58,7 +59,7 @@ def main():
             
     # Creating a pool of processes
     lock = Lock()
-    pool = Pool(args.processes, initializer=process_init, initargs=(lock,))
+    pool = Pool(args.processes, initializer=process_init, initargs=(lock, Globals.image_width, Globals.image_height))
 
     # Processing
     start_program = time.time()
@@ -106,12 +107,12 @@ def main():
         S.sort(key=lambda x: x[0])
 
         # improve the top 3K universes
-        k3 = min(3*K, len(S))
+        k3 = min(3*Config.K, len(S))
         S = pool.map(improve_mapped, [(S[i], frame_array, i, k3, start) for i in range(k3)])
         
         # pick the K best universes
         S.sort(key=lambda x: x[0])
-        S = S[:K]
+        S = S[:Config.K]
 
         # Combine all best-match bacteria into 1 new universe
         # best_U = best_bacteria(S, frame_array)
@@ -129,7 +130,7 @@ def main():
             write_state(index, U, f)
             f.close()
 
-        S = [U for _, U, _, _ in S[:K]]
+        S = [U for _, U, _, _ in S[:Config.K]]
 
         # next frame
         t += 1

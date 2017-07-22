@@ -14,9 +14,11 @@ from Bacterium import *
 
 
 # ran once per process in the pool
-def process_init(l):
+def process_init(l, width, height):
     global lock
     lock = l
+    Globals.image_width = width
+    Globals.image_height = height
 
 # syncronized print function
 def safe_print(msg):
@@ -75,7 +77,7 @@ def best_bacteria(S, frame_array):
     for value in name_to_bacteria.values():
         U += value
 
-    return (cost(frame_array, U), U, K, -1)
+    return (cost(frame_array, U), U, Config.K, -1)
 
 
 # find the best k moves mapped for parallel processing
@@ -157,13 +159,13 @@ def generate_universes(args):
     start = args[5]
 
     M = collision_matrix(U) # calculate U's matrix for collision detection
-    Us = [deepcopy_list(U) for i in range(4*K)]
+    Us = [deepcopy_list(U) for i in range(4*Config.K)]
 
     # Find best moves for each bacterium in U
     safe_print("[PID: {}] generate_universes: Universe {} of {} ({:.2f} sec)".format(os.getpid(), index + 1, count, time.time() - start))
 
     # Apply the best moves to all bacteria in Us
-    for i in range(4*K):
+    for i in range(4*Config.K):
         correspondence = []
         for j in range(len(U)):
             bacterium = Us[i][j]
@@ -417,6 +419,15 @@ def get_frames(directory, t):
 
     for f in file_names:
         frame = cv2.imread(directory + f)
+        height, width, _ = frame.shape
+
+        if Globals.image_width == None or Globals.image_height == None:
+            Globals.image_width = width
+            Globals.image_height = height
+        elif Globals.image_width != width or Globals.image_height != height:
+            raise Exception("Images must be of the same size! "
+                            "'{}' doesn't match previous frames.".format(f))
+
         frames.append(frame)
 
     return frames
@@ -428,7 +439,7 @@ def two_tuple(v):
 
 def generate_image_cv2(U, im=None):
     if im is None:
-        im = np.zeros((IMAGE_SIZE[1], IMAGE_SIZE[0]), dtype=np.int16)
+        im = np.zeros((Globals.image_height, Globals.image_width), dtype=np.int16)
     for bacterium in U:
         # head and tail
         cv2.circle(im, tuple(bacterium.head_pos[:2].astype(int)), bacterium.radius, 1, -1)
@@ -444,7 +455,7 @@ def generate_image_cv2(U, im=None):
 
 def generate_image_edge(U, im=None):
     if im is None:
-        im = np.zeros((IMAGE_SIZE[1], IMAGE_SIZE[0]), dtype=np.int16)
+        im = np.zeros((Globals.image_height, Globals.image_width), dtype=np.int16)
     for bacterium in U:
         p1 = (int(bacterium.end_point_1[0]), int(bacterium.end_point_1[1]))
         p2 = (int(bacterium.end_point_2[0]), int(bacterium.end_point_2[1]))

@@ -1,7 +1,9 @@
 from Bacterium import *
+from math import sqrt
 
 # circle-circle collisions
 def circles_collision(B, i, j, circle_i, circle_j):
+    dt = Config.dt
     r = circle_j - circle_i
     d = sqrt(np.dot(r, r))
 
@@ -48,6 +50,7 @@ def circles_collision(B, i, j, circle_i, circle_j):
         
 # circle-line collisions
 def circle_line(B, i, j, circle_i, line_j):
+    dt = Config.dt
     x = circle_i[0]
     y = circle_i[1]
     m = line_j.m
@@ -100,19 +103,19 @@ def circle_line(B, i, j, circle_i, line_j):
 
 # bacterium moves
 def move(bacterium):
-    bacterium.v[0] = min(MAX_SPEED, bacterium.v[0])
-    bacterium.v[1] = min(MAX_SPEED, bacterium.v[1])
-    bacterium.v[0] = max(-MAX_SPEED, bacterium.v[0])
-    bacterium.v[1] = max(-MAX_SPEED, bacterium.v[1])
+    bacterium.v[0] = min(Config.max_speed, bacterium.v[0])
+    bacterium.v[1] = min(Config.max_speed, bacterium.v[1])
+    bacterium.v[0] = max(-Config.max_speed, bacterium.v[0])
+    bacterium.v[1] = max(-Config.max_speed, bacterium.v[1])
     
-    bacterium.pos += bacterium.v*dt
+    bacterium.pos += bacterium.v*Config.dt
 
 # bacterium spins
 def spin(bacterium):
-    bacterium.w[2] = min(MAX_SPIN, bacterium.w[2])
-    bacterium.w[2] = max(-MAX_SPIN, bacterium.w[2])
+    bacterium.w[2] = min(Config.max_spin, bacterium.w[2])
+    bacterium.w[2] = max(-Config.max_spin, bacterium.w[2])
     
-    d_theta = bacterium.w[2]*dt
+    d_theta = bacterium.w[2]*Config.dt
     bacterium.theta += d_theta
 
 
