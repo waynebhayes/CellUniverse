@@ -1,5 +1,10 @@
-from Bacterium import *
 from math import sqrt
+
+import numpy as np
+
+from Bacterium import normalize
+from constants import Config
+
 
 # circle-circle collisions
 def circles_collision(B, i, j, circle_i, circle_j):
@@ -198,4 +203,3 @@ def run2(B, i, M):
 
         B[i].update()
         B[i].collided = False
-        

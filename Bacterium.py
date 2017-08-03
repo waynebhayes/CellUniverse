@@ -1,7 +1,11 @@
 from __future__ import division
+
+from math import atan2, cos, pi, sin, sqrt, tan
+
 import numpy as np
-from constants import *
-from math import sqrt, atan2, sin, cos, tan
+
+from constants import Config, Globals
+
 
 def normalize(v):
     norm = sqrt(np.dot(v, v))
@@ -34,7 +38,6 @@ class Bacterium:
         # Structures
         self.line_1 = Line()
         self.line_2 = Line()
-        self.bending = False
         self.bend_ratio = 0.5
         self.bend_angle = 0
 
@@ -100,37 +103,3 @@ class Bacterium:
 
         self.mid_point_1 = self.end_point_1
         self.mid_point_2 = self.end_point_2
-
-        
-        # If bending
-        # This bending part is not used in the simulation yet
-        # because it will make the simulation way slower
-        if self.bending:
-            L = self.length - 2*self.radius
-            L_1 = self.bend_ratio*L
-
-            # Finding mid points 1 and 2
-            v = normalize(self.end_point_4 - self.end_point_1)
-            self.mid_point_1 = self.end_point_1 + L_1*v
-            self.mid_point_2 = self.end_point_2 + L_1*v
-            
-
-            # Finding new tail position
-            L_2 = L - L_1
-            u = vector(v[0]*cos(self.bend_angle) - v[1]*sin(self.bend_angle), v[0]*sin(self.bend_angle) + v[1]*cos(self.bend_angle))
-            self.tail_pos = self.head_pos + L_1*v + L_2*u
-
-            # Finding new end points 3 and 4
-            x = self.tail_pos[0]
-            y = self.tail_pos[1]
-            theta = self.theta + self.bend_angle
-            
-            self.end_point_3 = vector(x - radius*cos(theta - pi/2), y - radius*sin(theta - pi/2))
-            self.end_point_4 = vector(x + radius*cos(theta - pi/2), y + radius*sin(theta - pi/2))
-
-            # Finding new tail box and start angle
-            self.tail_box = (int(x - radius), int(y - radius), int(x + radius), int(y + radius))
-            self.tail_start_angle = int(findStartAngle(x, y, self.end_point_4[0], self.end_point_4[1]))
-
-
-

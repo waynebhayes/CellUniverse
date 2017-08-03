@@ -5,12 +5,14 @@ import shlex
 import sys
 import time
 from collections import defaultdict
+from math import pi
 
 import cv2
+import numpy as np
 
 import collisionEventsHandler
-import mahotas
-from Bacterium import *
+from Bacterium import Bacterium
+from constants import Config, Globals
 
 
 # ran once per process in the pool
@@ -381,9 +383,9 @@ def init_space(t, initial):
 
 # Advance bacterium, including moving and spinning
 def advance(bacterium):
-    bound_velocity(bacterium, MAX_SPEED, 2*pi)
-    bacterium.pos += bacterium.v*dt
-    bacterium.theta += bacterium.w.z*dt
+    bound_velocity(bacterium, Config.max_speed, 2*pi)
+    bacterium.pos += bacterium.v*Config.dt
+    bacterium.theta += bacterium.w.z*Config.dt
 
     bacterium.update()
 
@@ -634,16 +636,9 @@ def write_state2(U, f):
 
 
 # cost function
-def cost(base_im_array, U, xform=None):
+def cost(base_im_array, U):
     im = generate_image_cv2(U)
     dif = cv2.absdiff(base_im_array, im)
-
-    #xform = True
-    if xform != None:
-        xform = mahotas.distance(generate_image_edge(U) == 0)
-        xform[xform > 5] = 5
-        xform = xform + 1
-        dif *= xform
     
     return int(cv2.sumElems(dif)[0])
 

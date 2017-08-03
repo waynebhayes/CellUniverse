@@ -5,16 +5,26 @@
 
 from __future__ import print_function
 
-__version__ = "2.2"
-
 import argparse
+import os
 import sys
 import time
 from multiprocessing import Lock, Pool, cpu_count
 
+import cv2
+import numpy as np
 from scipy import misc
 
-from helperMethods import *
+from constants import Config, Globals
+from helperMethods import (collision_matrix, deepcopy_list,
+                           find_k_best_moves_mapped, generate_image_edge_cv2,
+                           generate_universes, get_frames, improve_mapped,
+                           init_space, process_init, write_state)
+
+__version__ = "2.2"
+
+
+
 
 #------------------
 # Main
@@ -62,7 +72,6 @@ def main():
     pool = Pool(args.processes, initializer=process_init, initargs=(lock, Globals.image_width, Globals.image_height))
 
     # Processing
-    start_program = time.time()
     for frame in frames:
         print("Processing frame {}...".format(t))
         sys.stdout.flush()

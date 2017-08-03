@@ -1,5 +1,6 @@
 from math import pi
 
+
 class Config:
     dt = 0.33
     init_length = 26
