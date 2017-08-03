@@ -29,7 +29,7 @@ def circles_collision(B, i, j, circle_i, circle_j):
         B[i].v += dp/B[i].m
 
         # moment of intertia
-        inertia = B[i].m*B[i].length**2/12
+        inertia = B[i].m * B[i].length**2 / 12
 
         # change in angular velocity
         dw = np.cross(circle_i - B[i].pos, dp)/inertia
@@ -41,9 +41,9 @@ def circles_collision(B, i, j, circle_i, circle_j):
         # change in momentum
         dp = F*dt
         B[j].v += dp/B[j].m
-        
+
         # moment of intertia
-        inertia = B[j].m*B[j].length**2/12
+        inertia = B[j].m * B[j].length**2 / 12
 
         # change in angular velocity
         dw = np.cross(circle_j - B[j].pos, dp)/inertia
@@ -52,7 +52,8 @@ def circles_collision(B, i, j, circle_i, circle_j):
         return True
 
     return False
-        
+
+
 # circle-line collisions
 def circle_line(B, i, j, circle_i, line_j):
     dt = Config.dt
@@ -82,14 +83,14 @@ def circle_line(B, i, j, circle_i, line_j):
 
             # compute spring force acting on bacterium i
             F = B[i].k*x*(line_j.normal_vector)
-            
+
             # linear movement
             dp = F*dt
             B[i].v += dp/B[i].m
 
             # moment of inertia
-            inertia = B[i].m*B[i].length**2/12
-            
+            inertia = B[i].m * B[i].length**2 / 12
+
             # change in angular velocity
             dw = np.cross(circle_i - B[i].pos, dp)/inertia
             B[i].w += dw
@@ -112,19 +113,20 @@ def move(bacterium):
     bacterium.v[1] = min(Config.max_speed, bacterium.v[1])
     bacterium.v[0] = max(-Config.max_speed, bacterium.v[0])
     bacterium.v[1] = max(-Config.max_speed, bacterium.v[1])
-    
+
     bacterium.pos += bacterium.v*Config.dt
+
 
 # bacterium spins
 def spin(bacterium):
     bacterium.w[2] = min(Config.max_spin, bacterium.w[2])
     bacterium.w[2] = max(-Config.max_spin, bacterium.w[2])
-    
+
     d_theta = bacterium.w[2]*Config.dt
     bacterium.theta += d_theta
 
 
-# Check for collision and move all collided bacteria 
+# Check for collision and move all collided bacteria
 def run(B, M):
     for p in range(3):
 
@@ -133,14 +135,18 @@ def run(B, M):
         for i in range(len(M)):
             for j in range(i+1, len(M)):
 
-                if not M[i][j]: 
+                if not M[i][j]:
                     continue
-            
+
                 # circle-circle collisions
-                collided |= circles_collision(B, i, j, B[i].head_pos, B[j].head_pos)
-                collided |= circles_collision(B, i, j, B[i].head_pos, B[j].tail_pos)
-                collided |= circles_collision(B, i, j, B[i].tail_pos, B[j].head_pos)
-                collided |= circles_collision(B, i, j, B[i].tail_pos, B[j].tail_pos)                 
+                collided |= circles_collision(B, i, j,
+                                              B[i].head_pos, B[j].head_pos)
+                collided |= circles_collision(B, i, j,
+                                              B[i].head_pos, B[j].tail_pos)
+                collided |= circles_collision(B, i, j,
+                                              B[i].tail_pos, B[j].head_pos)
+                collided |= circles_collision(B, i, j,
+                                              B[i].tail_pos, B[j].tail_pos)
 
                 # circle-line collisions
                 collided |= circle_line(B, i, j, B[i].head_pos, B[j].line_1)
@@ -152,7 +158,7 @@ def run(B, M):
                 collided |= circle_line(B, j, i, B[j].tail_pos, B[i].line_1)
                 collided |= circle_line(B, j, i, B[j].tail_pos, B[i].line_2)
 
-        if not collided: 
+        if not collided:
             break
 
         for bacterium in B:
@@ -161,9 +167,8 @@ def run(B, M):
                 spin(bacterium)
 
                 bacterium.update()
-            
-            bacterium.collided = False
 
+            bacterium.collided = False
 
 
 # Move only bacterium i
@@ -174,14 +179,18 @@ def run2(B, i, M):
 
         for j in range(len(B)):
 
-            if not M[i][j]: 
+            if not M[i][j]:
                 continue
-            
+
             # circle-circle collisions
-            collided |= circles_collision(B, i, j, B[i].head_pos, B[j].head_pos)
-            collided |= circles_collision(B, i, j, B[i].head_pos, B[j].tail_pos)
-            collided |= circles_collision(B, i, j, B[i].tail_pos, B[j].head_pos)
-            collided |= circles_collision(B, i, j, B[i].tail_pos, B[j].tail_pos)                 
+            collided |= circles_collision(B, i, j,
+                                          B[i].head_pos, B[j].head_pos)
+            collided |= circles_collision(B, i, j,
+                                          B[i].head_pos, B[j].tail_pos)
+            collided |= circles_collision(B, i, j,
+                                          B[i].tail_pos, B[j].head_pos)
+            collided |= circles_collision(B, i, j,
+                                          B[i].tail_pos, B[j].tail_pos)
 
             # circle-line collisions
             collided |= circle_line(B, i, j, B[i].head_pos, B[j].line_1)
@@ -195,7 +204,7 @@ def run2(B, i, M):
 
             B[j].collided = False
 
-        if not collided: 
+        if not collided:
             break
 
         move(B[i])

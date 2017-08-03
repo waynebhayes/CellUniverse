@@ -9,6 +9,7 @@ class Config:
     max_spin = pi/10
     K = 20
 
+
 class Globals:
     image_width = None
     image_height = None
