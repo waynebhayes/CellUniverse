@@ -100,6 +100,7 @@ def find_k_best_moves_mapped(args):
     k_best_moves = []
     U_copy = deepcopy_list(U)
 
+    # Remove these ugly magic numbers and put them in constants.py! - sez Prof. Hayes
     for x in np.linspace(-3,3,7):
         for y in np.linspace(-3,3,7):
             for d_theta in np.linspace(-pi/10, pi/10, 21):
