@@ -16,6 +16,7 @@ import numpy as np
 from scipy import misc
 
 from constants import Config, Globals
+from findconsistentpaths import create_consistent
 from helperMethods import (collision_matrix, deepcopy_list,
                            find_k_best_moves_mapped, generate_image_edge_cv2,
                            generate_universes, get_frames, improve_mapped,
@@ -40,17 +41,17 @@ def main():
     parser.add_argument("initial", type=argparse.FileType('r'),
                         help="initial properties file ('example.init.txt')")
 
-    args = parser.parse_args()
+    cli_args = parser.parse_args()
 
     # get starting frame
-    t = args.start
+    t = cli_args.start
 
     # Image set from the real universe
     frames = get_frames('frames/', t)
 
     # Initialize the Space S
-    S = init_space(t, args.initial)
-    args.initial.close()
+    S = init_space(t, cli_args.initial)
+    cli_args.initial.close()
 
     # Creating directories
     image_dirs = []
@@ -66,7 +67,7 @@ def main():
 
     # Creating a pool of processes
     lock = Lock()
-    pool = Pool(args.processes,
+    pool = Pool(cli_args.processes,
                 initializer=process_init,
                 initargs=(lock, Globals.image_width, Globals.image_height))
 
@@ -98,12 +99,7 @@ def main():
         moves_list = pool.map(find_k_best_moves_mapped, args)
 
         # initialize the best move lists
-        best_moves = []
-        for universe_index in range(len(S)):
-            best_moves_per_universe = []
-            for bacterium_index in range(len(S[universe_index])):
-                best_moves_per_universe.append(None)
-            best_moves.append(best_moves_per_universe)
+        best_moves = [[None for _ in universe] for universe in S]
 
         # organize the best move dictionary into a list
         for moves in moves_list:
@@ -122,10 +118,8 @@ def main():
         # Generate future universes from S
         new_S = pool.map(generate_universes, args)
 
-        # unroll new_S in to a list of U's
-        S = []
-        for Us in new_S:
-            S += Us
+        # flatten new_S in to a list of universes's (S)
+        S = [universe for universe_list in new_S for universe in universe_list]
 
         # Pulling stage
         S.sort(key=lambda x: x[0])
@@ -149,11 +143,12 @@ def main():
             new_frame = np.array(frame)
             # TODO: change the name of the output images and place this info
             #   somewhere else.
-            file_name = "{}{} - {} - {} - {}.png".format(image_dirs[i],
-                                                         str(t),
-                                                         str(c),
-                                                         str(index),
-                                                         runtime)
+            # file_name = "{}{} - {} - {} - {}.png".format(image_dirs[i],
+            #                                              str(t),
+            #                                              str(c),
+            #                                              str(index),
+            #                                              runtime)
+            file_name = "{}{}.png".format(image_dirs[i], t)
             generate_image_edge_cv2(U, new_frame)
             misc.imsave(file_name, new_frame)
 
@@ -166,7 +161,12 @@ def main():
         # next frame
         t += 1
 
+    # make consistent
+    print("Making consistent universes...")
+    create_consistent(cli_args.start, t-1)
+
     # finished
+    print("Finished!")
     parser.exit(0)
 
 
