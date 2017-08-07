@@ -1,0 +1,11 @@
+'''
+
+youtube link:
+www.youtube.com/watch?v=j8_xoM8Wwgs
+'''
+
+# Example initial configuration (with names manually added)
+# note: rotation is in radians
+name    pos:x   pos:y   length  rotation
+"00"    144.0   119     10      1.5708
+"01"    142     132     10      1.107148769440952

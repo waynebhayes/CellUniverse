@@ -342,5 +342,4 @@ Temporary Items
 [fF]rames/
 
 # Text files (except examples)
-*.txt
 !example*.init.txt
