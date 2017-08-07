@@ -1,8 +1,5 @@
-'''
-
-youtube link:
-www.youtube.com/watch?v=j8_xoM8Wwgs
-'''
+#youtube link:
+#www.youtube.com/watch?v=j8_xoM8Wwgs
 
 # Example initial configuration (with names manually added)
 # note: rotation is in radians
