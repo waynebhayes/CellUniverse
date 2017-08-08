@@ -9,7 +9,6 @@ from math import cos, pi, sin
 
 import cv2
 import numpy as np
-
 import collisionEventsHandler
 from Bacterium import Bacterium
 from constants import Config, Globals
@@ -124,10 +123,10 @@ def find_k_best_moves_mapped(args):
     U_copy = deepcopy_list(U)
 
     # Remove these ugly magic numbers and put them in constants.py! - sez Prof. Hayes
-    for x in np.linspace(-3, 3, 7):
-        for y in np.linspace(-3, 3, 7):
-            for d_theta in np.linspace(-pi/10, pi/10, 21):
-                for dh in np.linspace(0, 3, 4):
+    for x in np.linspace(-Config.MAX_X_MOTION, Config.MAX_X_MOTION, Config.MAX_X_RESOLUTION):
+        for y in np.linspace(-Config.MAX_Y_MOTION, Config.MAX_Y_MOTION, Config.MAX_Y_RESOLUTION):
+            for d_theta in np.linspace(-Config.MAX_ROTATION, Config.MAX_ROTATION, Config.MAX_ROTATION_RESOLUTION):
+                for dh in np.linspace(Config.MIN_HEIGHT_INCREASE, Config.MAX_HEIGHT_INCREASE, Config.HEIGHT_INCREASE_RESOLUTION):
 
                     bacterium_copy = deepcopy(bacterium)
 
@@ -153,12 +152,12 @@ def find_k_best_moves_mapped(args):
         bacterium_copy.theta += d_theta
         bacterium_copy.length += dh
         bacterium_copy.update()
-        if bacterium_copy.length > 31:
-            for split_ratio in np.linspace(0.25, 0.75, 20):
+        if bacterium_copy.length > Config.MAX_BACTERIA_LENGTH_BEFORE_SPLIT:
+            for split_ratio in np.linspace(CONFIG.SPLIT_RATIO_BEGINNING, CONFIG.SPLIT_RATIO_END, Config.SPLIT_RATIO_RESOLUTION):
                 bacterium_copy_2 = deepcopy(bacterium_copy)
 
                 new_bacterium = split(bacterium_copy_2, split_ratio)
-                if bacterium_copy_2.length < 13 or new_bacterium.length < 13:
+                if bacterium_copy_2.length < Config.MIN_BACTERIA_LENGTH or new_bacterium.length < Config.MIN_BACTERIA_LENGTH:
                     continue
 
                 c = cost(frame_array, [bacterium_copy_2, new_bacterium]) + 5
@@ -340,10 +339,19 @@ def find_states(t):
 def trim_comments(line):
     return LINE_PATTERN.match(line).group("line")
 
-
+import os
 # Initial space S
 def init_space(t, initial):
-
+    #while True:
+     #   try:
+      #      i = int(initial.next())
+       #     print "The magic number is: "
+        #    print i
+         #   print "Bye bye now...."
+          #  os.system("pkill -f celluniverse.py")
+           # break
+        #except:
+         #   continue
     # define attribute names and types
     schema = {"name": str,
               "pos:x": float,
@@ -430,6 +438,7 @@ def init_space(t, initial):
 
         # add to the universe
         universe.append(bacterium)
+    
 
     return [universe]
 
