@@ -30,6 +30,7 @@ def main():
     default_processes = max(cpu_count() // 2, 1)
 
     parser = argparse.ArgumentParser(description="Cell-Universe Cell Tracker.")
+    parser.add_argument("-f", "--frames", type=str, default='frames/', metavar = "DIR",help="directory of the frames (default = frames/")
     parser.add_argument("-v", "--version", action="version",
                         version="%(prog)s {}".format(__version__))
     parser.add_argument("-s", "--start", type=int, default=0, metavar="FRAME",
@@ -38,6 +39,7 @@ def main():
                         default=default_processes, metavar="COUNT",
                         help="number of concurrent processes to run "
                              "(default: {})".format(default_processes))
+    parser.add_argument("-o", "--output", type=str, default="Output/", metavar="OUTDIR", help="directory of output states and images (default = Output/)")
     parser.add_argument("initial", type=argparse.FileType('r'),
                         help="initial properties file ('example.init.txt')")
 
@@ -45,9 +47,14 @@ def main():
 
     # get starting frame
     t = cli_args.start
-
+    path = cli_args.frames
+    path_o = cli_args.output
+    if "/" not in path:
+        path+="/"
+    if "/" not in path_o:
+        path_o+="/"
     # Image set from the real universe
-    frames = get_frames('frames/', t)
+    frames = get_frames(path, t)
 
     # Initialize the Space S
     S = init_space(t, cli_args.initial)
@@ -57,11 +64,11 @@ def main():
     image_dirs = []
     state_dirs = []
     for i in range(Config.K):
-        image_dirs.append('Output/Images/' + str(i) + '/')
+        image_dirs.append('%s/Images/' %path_o + str(i) + '/')
         if not os.path.exists(image_dirs[i]):
             os.makedirs(image_dirs[i])
 
-        state_dirs.append('Output/States/' + str(i) + '/')
+        state_dirs.append('%s/States/' %path_o + str(i) + '/')
         if not os.path.exists(state_dirs[i]):
             os.makedirs(state_dirs[i])
 
