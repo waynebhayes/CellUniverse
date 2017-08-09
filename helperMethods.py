@@ -153,11 +153,11 @@ def find_k_best_moves_mapped(args):
         bacterium_copy.length += dh
         bacterium_copy.update()
         if bacterium_copy.length > Config.MAX_BACTERIA_LENGTH_BEFORE_SPLIT:
-            for split_ratio in np.linspace(CONFIG.SPLIT_RATIO_BEGINNING, CONFIG.SPLIT_RATIO_END, Config.SPLIT_RATIO_RESOLUTION):
+            for split_ratio in np.linspace(Config.SPLIT_RATIO_BEGINNING, Config.SPLIT_RATIO_END, Config.SPLIT_RATIO_RESOLUTION):
                 bacterium_copy_2 = deepcopy(bacterium_copy)
 
                 new_bacterium = split(bacterium_copy_2, split_ratio)
-                if bacterium_copy_2.length < Config.MIN_BACTERIA_LENGTH or new_bacterium.length < Config.MIN_BACTERIA_LENGTH:
+                if bacterium_copy_2.length < Config.MIN_LENGTH_BACTERIA or new_bacterium.length < Config.MIN_LENGTH_BACTERIA:
                     continue
 
                 c = cost(frame_array, [bacterium_copy_2, new_bacterium]) + 5
@@ -342,16 +342,31 @@ def trim_comments(line):
 import os
 # Initial space S
 def init_space(t, initial):
-    #while True:
-     #   try:
-      #      i = int(initial.next())
-       #     print "The magic number is: "
-        #    print i
-         #   print "Bye bye now...."
-          #  os.system("pkill -f celluniverse.py")
-           # break
-        #except:
-         #   continue
+    while True:
+        try:
+            Config.dt = float(initial.next())
+            Config.init_length = int(initial.next())
+            Config.init_width = int(initial.next())
+            Config.max_speed = int(initial.next())
+            Config.max_spin = float(initial.next())
+            Config.K = int(initial.next())
+            Config.MAX_X_MOTION = float(initial.next())
+            Config.MAX_Y_MOTION = float(initial.next())
+            Config.MAX_X_RESOLUTION = int(initial.next())
+            Config.MAX_Y_RESOLUTION = int(initial.next())
+            Config.MAX_ROTATION = float(initial.next())
+            Config.MAX_ROTATION_RESOLUTION = int(initial.next())
+            Config.MIN_HEIGHT_INCREASE = int(initial.next())
+            Config.MAX_HEIGHT_INCREASE = int(initial.next())
+            Config.HEIGHT_INCREASE_RESOLUTION = float(initial.next())
+            Config.MAX_BACTERIA_LENGTH_BEFORE_SPLIT = int(initial.next())
+            Config.MIN_LENGTH_BACTERIA = int(initial.next())
+            Config.SPLIT_RATIO_BEGINNING = float(initial.next())
+            Config.SPLIT_RATIO_END = float(initial.next())
+            Config.SPLIT_RATIO_RESOLUTION = int(initial.next())
+            break
+        except:
+            continue
     # define attribute names and types
     schema = {"name": str,
               "pos:x": float,

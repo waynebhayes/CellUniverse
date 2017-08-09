@@ -1,5 +1,27 @@
 # Example initial configuration (with names manually added)
 # note: rotation is in radians
+
+0.33
+26
+6
+3
+0.3141592653589793
+20
+3
+3
+7
+7
+0.3141592653589793
+21
+0
+3
+4
+31
+13
+0.25
+0.75
+20
+
 name    pos:x   pos:y   length  rotation
 "00"    160.0   105     20      1.6045768929625288
 "01"    156     125     17      1.997275974661253
