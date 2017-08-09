@@ -80,7 +80,7 @@ name    pos:x   pos:y   length  rotation
 Frames
 ------
 
-Images must all be placed in a directory. The default is `./frames/` directory,but you can change the name as long as you input the directory in the command line. The names of the images must match `0.png`, `1.png`, `2.png`, and so on.
+Images must all be placed in a directory. The default is `./frames/` directory, but you can change the name as long as you input the directory in the command line. The names of the images must match `0.png`, `1.png`, `2.png`, and so on.
 
 Usage
 -----
@@ -99,14 +99,14 @@ positional arguments:
 optional arguments:
   -h, --help            show this help message and exit
   -f DIR, --frames DIR
-			specify directory of all the frames (default: `frames/`	
+			specify directory of all the frames (default: frames/)
   -v, --version         show program's version number and exit
   -s FRAME, --start FRAME
                         start from specific frame (default: 0)
   -p COUNT, --processes COUNT
                         number of concurrent processes to run (default: 4)
   -o OUTDIR, --output OUTDIR
-			specify output directory name (default: `Output/`
+			specify output directory name (default: Output/)
 ```
 
 Examples
