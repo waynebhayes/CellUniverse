@@ -339,31 +339,38 @@ def find_states(t):
 def trim_comments(line):
     return LINE_PATTERN.match(line).group("line")
 
-import os
+def remcom(string): #ignores comments in configuration file for parameters
+    string = list(string)
+    if '#' in string:
+        while '#' in string:
+            string.pop()
+    string = ''.join(string)
+    return string
+
 # Initial space S
 def init_space(t, initial):
     while True:
         try:
-            Config.dt = float(initial.next())
-            Config.init_length = int(initial.next())
-            Config.init_width = int(initial.next())
-            Config.max_speed = int(initial.next())
-            Config.max_spin = float(initial.next())
-            Config.K = int(initial.next())
-            Config.MAX_X_MOTION = float(initial.next())
-            Config.MAX_Y_MOTION = float(initial.next())
-            Config.MAX_X_RESOLUTION = int(initial.next())
-            Config.MAX_Y_RESOLUTION = int(initial.next())
-            Config.MAX_ROTATION = float(initial.next())
-            Config.MAX_ROTATION_RESOLUTION = int(initial.next())
-            Config.MIN_HEIGHT_INCREASE = int(initial.next())
-            Config.MAX_HEIGHT_INCREASE = int(initial.next())
-            Config.HEIGHT_INCREASE_RESOLUTION = float(initial.next())
-            Config.MAX_BACTERIA_LENGTH_BEFORE_SPLIT = int(initial.next())
-            Config.MIN_LENGTH_BACTERIA = int(initial.next())
-            Config.SPLIT_RATIO_BEGINNING = float(initial.next())
-            Config.SPLIT_RATIO_END = float(initial.next())
-            Config.SPLIT_RATIO_RESOLUTION = int(initial.next())
+            Config.dt = float(remcom(initial.next()))
+            Config.init_length = int(remcom(initial.next()))
+            Config.init_width = int(remcom(initial.next()))
+            Config.max_speed = int(remcom(initial.next()))
+            Config.max_spin = float(remcom(initial.next()))
+            Config.K = int(remcom(initial.next()))
+            Config.MAX_X_MOTION = float(remcom(initial.next()))
+            Config.MAX_Y_MOTION = float(remcom(initial.next()))
+            Config.MAX_X_RESOLUTION = int(remcom(initial.next()))
+            Config.MAX_Y_RESOLUTION = int(remcom(initial.next()))
+            Config.MAX_ROTATION = float(remcom(initial.next()))
+            Config.MAX_ROTATION_RESOLUTION = int(remcom(initial.next()))
+            Config.MIN_HEIGHT_INCREASE = int(remcom(initial.next()))
+            Config.MAX_HEIGHT_INCREASE = int(remcom(initial.next()))
+            Config.HEIGHT_INCREASE_RESOLUTION = float(remcom(initial.next()))
+            Config.MAX_BACTERIA_LENGTH_BEFORE_SPLIT = int(remcom(initial.next()))
+            Config.MIN_LENGTH_BACTERIA = int(remcom(initial.next()))
+            Config.SPLIT_RATIO_BEGINNING = float(remcom(initial.next()))
+            Config.SPLIT_RATIO_END = float(remcom(initial.next()))
+            Config.SPLIT_RATIO_RESOLUTION = int(remcom(initial.next()))
             break
         except:
             continue

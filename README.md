@@ -31,9 +31,7 @@ This is an example initial properties file:
 0.25			#beginning of split ratio
 0.75			#end of split ratio
 20			#split ratio resolution
-#NOTE: PLEASE DON'T ADD THE COMMENTS WITH THE CONFIG VARIABLES ABOVE
-#OR ELSE THE CODE WON'T WORK
-#SEE THE SECOND EXAMPLE FOR CLARIFICATION
+#NOTE: The program will ignore comments
 
 pos:x   pos:y   length  rotation
 160     105     20      1.605
