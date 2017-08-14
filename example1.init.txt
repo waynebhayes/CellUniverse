@@ -1,10 +1,11 @@
 # Example initial configuration (with automatic name generation)
 # note: rotation is in radians
 
-0.33
-26
-6
-3
+# The following constants must remain in the following hard-coded order.
+0.33 # dt
+26 # init_length
+6 # init_width
+3 # max_speed
 0.3141592653589793
 20
 3
