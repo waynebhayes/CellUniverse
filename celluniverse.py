@@ -170,7 +170,7 @@ def main():
 
     # make consistent
     print("Making consistent universes...")
-    create_consistent(cli_args.start, t-1)
+    create_consistent(cli_args.start, t-1, path_o)
 
     # finished
     print("Finished!")

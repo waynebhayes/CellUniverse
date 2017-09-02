@@ -7,16 +7,16 @@ import glob
 from constants import Config
 
 
-def create_consistent(start, end):
-    universe_path = './Output/States'
-    universe_image_path = './Output/Images'
+def create_consistent(start, end, out):
+    universe_path = './%s/States' %out
+    universe_image_path = './%s/Images'%out
 
     # make output directory
-    output_base = './Output/Consistent'
+    output_base = './%s/Consistent' %out
     if not os.path.exists(output_base):
         os.makedirs(output_base)
 
-    output_image_base = './Output/Consistent Images'
+    output_image_base = './%s/Consistent Images' %out
     if not os.path.exists(output_image_base):
         os.makedirs(output_image_base)
 
@@ -40,7 +40,7 @@ def create_consistent(start, end):
         universe_dir = str(universe_index)
 
         # get the states corresponding to the universe index
-        states_path = './Output/States/{}'.format(universe_index)
+        states_path = ('./%s/States/{}' %out).format(universe_index)
         previous = {}
 
         for frame_index in range(start, end+1):
