@@ -1,3 +1,5 @@
+from __future__ import print_function
+
 import bisect
 import os
 import re
@@ -9,10 +11,11 @@ from math import cos, pi, sin
 
 import cv2
 import numpy as np
+
 import collisionEventsHandler
 from Bacterium import Bacterium
 from constants import Config, Globals
-
+from mphelper import doublestar_function, HandleExceptions
 
 LINE_PATTERN = re.compile(r"""
         ^(?P<line>[^#]*)  # anything before a comment marker is the line
@@ -24,14 +27,15 @@ LINE_PATTERN = re.compile(r"""
 def process_init(l, width, height):
     global lock
     lock = l
+    HandleExceptions.set_print(safe_print)
     Globals.image_width = width
     Globals.image_height = height
 
 
 # syncronized print function
-def safe_print(msg):
+def safe_print(*args, **kwargs):
     with lock:
-        print(msg)
+        print(*args, **kwargs)
         sys.stdout.flush()
 
 
@@ -92,15 +96,9 @@ def best_bacteria(S, frame_array):
 
 
 # find the best k moves mapped for parallel processing
-def find_k_best_moves_mapped(args):
-
-    U = args[0]
-    frame_array = args[1]
-    index = args[2]
-    i = args[3]
-    count = args[4]
-    M = args[5]
-    start = args[6]
+@doublestar_function
+@HandleExceptions.decorate
+def find_k_best_moves(U, frame_array, index, i, count, M, start):
 
     # display update
     details = {"process_id": os.getpid(),
@@ -172,14 +170,9 @@ def find_k_best_moves_mapped(args):
 
 
 # Generate future universes from an input universe
-def generate_universes(args):
-
-    U = args[0]
-    frame_array = args[1]
-    index = args[2]
-    count = args[3]
-    best_moves = args[4]
-    start = args[5]
+@doublestar_function
+@HandleExceptions.decorate
+def generate_universes(U, frame_array, index, count, best_moves, start):
 
     M = collision_matrix(U)  # calculate U's matrix for collision detection
     Us = [deepcopy_list(U) for i in range(4*Config.K)]
@@ -213,22 +206,20 @@ def generate_universes(args):
         # expand the collision matrix if bacteria have split
         new_M = M
         if len(correspondence) > 0:
-            new_M = expand_collision_matrix(U, M, correspondence)
+            new_M = expand_collision_matrix(M, correspondence)
 
-        collisionEventsHandler.run(Us[i], new_M)
+        assert len(new_M) == len(Us[i]), 'M and Us[i] differ in length'
+        # collisionEventsHandler.run(Us[i], new_M)
+        collisionEventsHandler.run(Us[i], M)
 
     return [(cost(frame_array, Us[i]), Us[i], index, i)
             for i in xrange(len(Us))]
 
 
 # parallelized improve() method in pulling stage
-def improve_mapped(args):
-    Si = args[0]
-    frame_array = args[1]
-
-    index = args[2]
-    count = args[3]
-    start = args[4]
+@doublestar_function
+@HandleExceptions.decorate
+def improve(Si, frame_array, index, count, start):
 
     # display update
     details = {"process_id": os.getpid(),
@@ -236,7 +227,7 @@ def improve_mapped(args):
                "universe_count": count,
                "current_runtime": time.time() - start}
 
-    safe_print("[PID: {process_id}] improve_mapped: "
+    safe_print("[PID: {process_id}] improve: "
                "Universe {universe_index} of {universe_count} "
                "({current_runtime:.02f} sec)".format(**details))
 
@@ -630,46 +621,53 @@ def collision_matrix(U):
     return M
 
 
-def expand_collision_matrix(U, M, correspondence):
+def expand_collision_matrix(old_matrix, correspondence):
     """Expands the collision matrix after splits have occured.
 
     When a bacterium splits, their bodies overlap the same space that the
     original bacterium covered (they don't spontaneously move far away).
-    Therefore, the entries of the collision matrix for the original bacterium
-    corresponds to the entries of the two new bacteria (they collide with the
-    same bacteria as the original did).  We can use this fact to save time by
-    reusing the existing values in the collision matrix, since computing the
-    distance between two bacterium is computationally more expensive.
+    Therefore, the entry of the collision matrix for the original bacterium
+    corresponds to the entries of the two new bacteria (one or both will still
+    collide with the same bacterium as the original did).  We can use this
+    fact to save time by reusing the existing values in the collision matrix,
+    since computing the distance between two bacterium is computationally
+    more expensive.
 
     Args:
-        U (Universe): The universe for which the collision matrix is made.
-        M (list): The old collision matrix (list of lists of booleans).
+        old_matrix (list): The old collision matrix (list of lists of
+            booleans).
         correspondence (list): A list of integers representing the bacteria
             index which corresponds to the other split bacterium.
 
     Returns:
-        A boolean square matrix of length len(U) indicating if a pair of
-        bacteria are in proximity to each other.
+        A boolean square matrix of length len(old_matrix) + len(correspondence)
+        indicating if a pair of bacteria are in proximity to each other.
     """
-    N = len(U)
+    old_count = len(old_matrix)
+    new_count = len(old_matrix) + len(correspondence)
 
-    new_M = [[False for i in range(N)] for i in range(N)]
+    new_matrix = [[False]*new_count]*new_count
 
     # Copy over the existing collision matrix
-    for i in xrange(N):
-        for j in xrange(i + 1, N):
+    for i in xrange(new_count):
+        for j in xrange(i + 1, new_count):
+
+            ci = i
+            cj = j
 
             # get the corresponding indices of the newly split bacteria
-            ci = i if i < len(M) else correspondence[i - len(M)]
-            cj = j if j < len(M) else correspondence[j - len(M)]
+            if i >= old_count:
+                ci = correspondence[i - old_count]
+            if j >= old_count:
+                cj = correspondence[j - old_count]
 
             # swap so that the smallest index is first
             if ci > cj:
                 ci, cj = cj, ci
 
-            new_M[i][j] = M[ci][cj]
+            new_matrix[i][j] = old_matrix[ci][cj]
 
-    return new_M
+    return new_matrix
 
 
 # deep copy function

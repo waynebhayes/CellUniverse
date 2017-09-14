@@ -18,9 +18,10 @@ from scipy import misc
 from constants import Config, Globals
 from findconsistentpaths import create_consistent
 from helperMethods import (collision_matrix, deepcopy_list,
-                           find_k_best_moves_mapped, generate_image_edge_cv2,
-                           generate_universes, get_frames, improve_mapped,
+                           find_k_best_moves, generate_image_edge_cv2,
+                           generate_universes, get_frames, improve,
                            init_space, process_init, write_state)
+from mphelper import kwargs
 
 __version__ = "2.2"
 
@@ -94,16 +95,17 @@ def main():
             M = collision_matrix(U)
 
             for bacterium_index in range(len(U)):
-                args.append((deepcopy_list(U),  # deep copy of universes
-                             frame_array,       # current image
-                             index,             # index of universe
-                             bacterium_index,   # index of bacterium
-                             len(S),            # number of universes
-                             M,                 # the collision matrix
-                             start))            # start time for current frame
+                args.append(kwargs(
+                    U=deepcopy_list(U),         # deep copy of universes
+                    frame_array=frame_array,    # current image
+                    index=index,                # index of universe
+                    i=bacterium_index,          # index of bacterium
+                    count=len(S),               # number of universes
+                    M=M,                        # the collision matrix
+                    start=start))               # start time for current frame
 
         # Find best moves for each bacterium in each universe
-        moves_list = pool.map(find_k_best_moves_mapped, args)
+        moves_list = pool.map(find_k_best_moves, args)
 
         # initialize the best move lists
         best_moves = [[None for _ in universe] for universe in S]
@@ -115,12 +117,13 @@ def main():
         # generate the list of arguments for generate_universes
         args = []
         for index, U in enumerate(S):
-            args.append((deepcopy_list(U),      # deep copy of universes
-                         frame_array,           # current image
-                         index,                 # index of universe
-                         len(S),                # number of universes
-                         best_moves[index],     # list of best moves
-                         start))                # start time for current frame
+            args.append(kwargs(
+                U=deepcopy_list(U),             # deepcopy of universes
+                frame_array=frame_array,        # current image
+                index=index,                    # index of universe
+                count=len(S),                   # number of universes
+                best_moves=best_moves[index],   # list of best moves
+                start=start))                   # start time for current frame
 
         # Generate future universes from S
         new_S = pool.map(generate_universes, args)
@@ -133,8 +136,15 @@ def main():
 
         # improve the top 3K universes
         k3 = min(3*Config.K, len(S))
-        args = [(S[i], frame_array, i, k3, start) for i in range(k3)]
-        S = pool.map(improve_mapped, args)
+        args = []
+        for index in range(k3):
+            args.append(kwargs(
+                Si=S[i],
+                frame_array=frame_array,
+                index=index,
+                count=k3,
+                start=start))
+        S = pool.map(improve, args)
 
         # pick the K best universes
         S.sort(key=lambda x: x[0])
