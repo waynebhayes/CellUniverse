@@ -124,17 +124,36 @@ def find_k_best_moves(U, frame_array, index, i, count, M, start):
     k_best_moves = []
     U_copy = deepcopy_list(U)
 
-    # Remove these ugly magic numbers and put them in constants.py! - sez Prof. Hayes
-    for x in np.linspace(-Config.MAX_X_MOTION, Config.MAX_X_MOTION, Config.MAX_X_RESOLUTION):
-        for y in np.linspace(-Config.MAX_Y_MOTION, Config.MAX_Y_MOTION, Config.MAX_Y_RESOLUTION):
-            for d_theta in np.linspace(-Config.MAX_ROTATION, Config.MAX_ROTATION, Config.MAX_ROTATION_RESOLUTION):
-                for dh in np.linspace(Config.MIN_HEIGHT_INCREASE, Config.MAX_HEIGHT_INCREASE, Config.HEIGHT_INCREASE_RESOLUTION):
+    dx_space = np.linspace(-Config.MAX_X_MOTION,
+                           Config.MAX_X_MOTION,
+                           Config.MAX_X_RESOLUTION)
+
+    dy_space = np.linspace(-Config.MAX_Y_MOTION,
+                           Config.MAX_Y_MOTION,
+                           Config.MAX_Y_RESOLUTION)
+
+    dtheta_space = np.linspace(-Config.MAX_ROTATION,
+                               Config.MAX_ROTATION,
+                               Config.MAX_ROTATION_RESOLUTION)
+
+    dlength_space = np.linspace(Config.MIN_LENGTH_INCREASE,
+                                Config.MAX_LENGTH_INCREASE,
+                                Config.LENGTH_INCREASE_RESOLUTION)
+
+    split_ratio_space = np.linspace(Config.SPLIT_RATIO_BEGINNING,
+                                    Config.SPLIT_RATIO_END,
+                                    Config.SPLIT_RATIO_RESOLUTION)
+
+    for dx in dx_space:
+        for dy in dy_space:
+            for dtheta in dtheta_space:
+                for dlength in dlength_space:
 
                     bacterium_copy = deepcopy(bacterium)
 
-                    bacterium_copy.pos += np.array([x, y, 0])
-                    bacterium_copy.theta += d_theta
-                    bacterium_copy.length += dh
+                    bacterium_copy.pos += np.array([dx, dy, 0])
+                    bacterium_copy.theta += dtheta
+                    bacterium_copy.length += dlength
 
                     bacterium_copy.update()
                     temp = U_copy[i]
@@ -143,27 +162,31 @@ def find_k_best_moves(U, frame_array, index, i, count, M, start):
                     U_copy[i] = temp
 
                     c = cost(frame_array, [bacterium_copy])
-                    bisect.insort_left(k_best_moves, (c, x, y, d_theta, dh))
+                    bisect.insort_left(k_best_moves,
+                                       (c, dx, dy, dtheta, dlength))
 
     # splitting
     to_insert = []
-    for c, x, y, d_theta, dh in k_best_moves:
+    for c, dx, dy, dtheta, dlength in k_best_moves:
         bacterium_copy = deepcopy(bacterium)
 
-        bacterium_copy.pos += np.array([x, y, 0])
-        bacterium_copy.theta += d_theta
-        bacterium_copy.length += dh
+        bacterium_copy.pos += np.array([dx, dy, 0])
+        bacterium_copy.theta += dtheta
+        bacterium_copy.length += dlength
         bacterium_copy.update()
-        if bacterium_copy.length > Config.MAX_BACTERIA_LENGTH_BEFORE_SPLIT:
-            for split_ratio in np.linspace(Config.SPLIT_RATIO_BEGINNING, Config.SPLIT_RATIO_END, Config.SPLIT_RATIO_RESOLUTION):
+
+        if bacterium_copy.length > Config.MAX_LENGTH_BEFORE_SPLIT:
+            for split_ratio in split_ratio_space:
                 bacterium_copy_2 = deepcopy(bacterium_copy)
 
                 new_bacterium = split(bacterium_copy_2, split_ratio)
-                if bacterium_copy_2.length < Config.MIN_LENGTH_BACTERIA or new_bacterium.length < Config.MIN_LENGTH_BACTERIA:
+                if (bacterium_copy_2.length < Config.MIN_LENGTH or
+                        new_bacterium.length < Config.MIN_LENGTH):
                     continue
 
                 c = cost(frame_array, [bacterium_copy_2, new_bacterium]) + 5
-                to_insert.append((c, x, y, d_theta, dh, split_ratio))
+                to_insert.append((c, dx, dy, dtheta, dlength, split_ratio))
+
     for e in to_insert:
         bisect.insort_left(k_best_moves, e)
 
@@ -334,13 +357,15 @@ def find_states(t):
 def trim_comments(line):
     return LINE_PATTERN.match(line).group("line")
 
-def remcom(string): #ignores comments in configuration file for parameters
+
+def remcom(string):  # ignores comments in configuration file for parameters
     string = list(string)
     if '#' in string:
         while '#' in string:
             string.pop()
     string = ''.join(string)
     return string
+
 
 # Initial space S
 def init_space(t, initial):
@@ -358,17 +383,18 @@ def init_space(t, initial):
             Config.MAX_Y_RESOLUTION = int(remcom(initial.next()))
             Config.MAX_ROTATION = float(remcom(initial.next()))
             Config.MAX_ROTATION_RESOLUTION = int(remcom(initial.next()))
-            Config.MIN_HEIGHT_INCREASE = int(remcom(initial.next()))
-            Config.MAX_HEIGHT_INCREASE = int(remcom(initial.next()))
-            Config.HEIGHT_INCREASE_RESOLUTION = float(remcom(initial.next()))
-            Config.MAX_BACTERIA_LENGTH_BEFORE_SPLIT = int(remcom(initial.next()))
-            Config.MIN_LENGTH_BACTERIA = int(remcom(initial.next()))
+            Config.MIN_LENGTH_INCREASE = int(remcom(initial.next()))
+            Config.MAX_LENGTH_INCREASE = int(remcom(initial.next()))
+            Config.LENGTH_INCREASE_RESOLUTION = float(remcom(initial.next()))
+            Config.MAX_LENGTH_BEFORE_SPLIT = int(remcom(initial.next()))
+            Config.MIN_LENGTH = int(remcom(initial.next()))
             Config.SPLIT_RATIO_BEGINNING = float(remcom(initial.next()))
             Config.SPLIT_RATIO_END = float(remcom(initial.next()))
             Config.SPLIT_RATIO_RESOLUTION = int(remcom(initial.next()))
             break
         except:
             continue
+
     # define attribute names and types
     schema = {"name": str,
               "pos:x": float,
@@ -455,7 +481,6 @@ def init_space(t, initial):
 
         # add to the universe
         universe.append(bacterium)
-    
 
     return [universe]
 
@@ -502,7 +527,8 @@ def get_frames(directory, t):
     file_names = sorted(file_names, key=lambda f: int(f.split('.')[0]))
 
     for f in file_names:
-        frame = cv2.imread(directory + f)
+        path = os.path.join(directory, f)
+        frame = cv2.imread(path)
         height, width, _ = frame.shape
 
         if Globals.image_width is None or Globals.image_height is None:
@@ -619,7 +645,7 @@ def collision_matrix(U):
     for i in range(N):
         for j in range(i+1, N):
             distance_between_centers = np.linalg.norm(U[i].pos - U[j].pos)
-            if (distance_between_centers < U[i].length/2 + U[j].length/2 + 6):
+            if distance_between_centers < U[i].length/2 + U[j].length/2 + 6:
                 M[i][j] = True
 
     return M
@@ -715,25 +741,29 @@ def read_state(f):
 
 
 # Write the state of bacteria B to the file f
-def write_state(index, U, f):
-    f.write("{} {}\n".format(index, len(U)))
-    for bacterium in sorted(U, key=lambda x: x.pos[0]):
-        f.write(str(bacterium.name) + ' ')
-        f.write(str(bacterium.pos[0]) + ' ')
-        f.write(str(bacterium.pos[1]) + ' ')
-        f.write(str(bacterium.length) + ' ')
-        f.write(str(bacterium.theta) + '\n')
+def write_state(path, index, U):
+    with open(path, "w") as file:
+        file.write("{index} {count}\n".format(index=index, count=len(U)))
+        for bacterium in sorted(U, key=lambda x: x.pos[0]):
+            file.write("{name} {x} {y} {length} {theta}\n"
+                       .format(name=bacterium.name,
+                               x=bacterium.pos[0],
+                               y=bacterium.pos[1],
+                               length=bacterium.length,
+                               theta=bacterium.theta))
 
 
-def write_state2(U, f):
-    f.write(str(len(U)) + '\n')
-    for bacterium in sorted(U, key=lambda x: x.pos[0]):
-        f.write(str(bacterium.name) + ' ')
-        f.write(str(bacterium.index) + ' ')
-        f.write(str(bacterium.pos[0]) + ' ')
-        f.write(str(bacterium.pos[1]) + ' ')
-        f.write(str(bacterium.length) + ' ')
-        f.write(str(bacterium.theta) + '\n')
+def write_state2(path, U):
+    with open(path, "w") as file:
+        file.write("{count}\n".format(count=len(U)))
+        for bacterium in sorted(U, key=lambda x: x.pos[0]):
+            file.write("{name} {index} {x} {y} {length} {theta}\n"
+                       .format(name=bacterium.name,
+                               index=bacterium.index,
+                               x=bacterium.pos[0],
+                               y=bacterium.pos[1],
+                               length=bacterium.length,
+                               theta=bacterium.theta))
 
 
 # cost function

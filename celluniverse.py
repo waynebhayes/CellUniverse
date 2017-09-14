@@ -11,7 +11,7 @@ import sys
 import time
 from multiprocessing import Lock, cpu_count
 
-# To prevent crashing during a keyboard interrupt
+# To prevent crashing during a keyboard interrupt (must be before numpy/scipy)
 os.environ['FOR_DISABLE_CONSOLE_CTRL_HANDLER'] = '1'
 
 import cv2
@@ -20,11 +20,12 @@ from scipy import misc
 
 from constants import Config, Globals
 from findconsistentpaths import create_consistent
-from helperMethods import (collision_matrix, deepcopy_list,
-                           find_k_best_moves, generate_image_edge_cv2,
-                           generate_universes, get_frames, improve,
-                           init_space, process_init, write_state)
-from mphelper import kwargs, InterruptablePool
+from helperMethods import (collision_matrix, deepcopy_list, find_k_best_moves,
+                           generate_image_edge_cv2, generate_universes,
+                           get_frames, improve, init_space, process_init,
+                           write_state)
+from mphelper import InterruptablePool, kwargs
+
 
 __version__ = "2.2"
 
@@ -34,31 +35,48 @@ def main():
     default_processes = max(cpu_count() // 2, 1)
 
     parser = argparse.ArgumentParser(description="Cell-Universe Cell Tracker.")
-    parser.add_argument("-f", "--frames", type=str, default='frames/', metavar = "DIR",help="directory of the frames (default = frames/")
-    parser.add_argument("-v", "--version", action="version",
+
+    parser.add_argument("-f", "--frames",
+                        metavar="DIR",
+                        type=str,
+                        default='frames',
+                        help="directory of the frames (default: 'frames')")
+
+    parser.add_argument("-v", "--version",
+                        action="version",
                         version="%(prog)s {}".format(__version__))
-    parser.add_argument("-s", "--start", type=int, default=0, metavar="FRAME",
+
+    parser.add_argument("-s", "--start",
+                        metavar="FRAME",
+                        type=int,
+                        default=0,
                         help="start from specific frame (default: 0)")
-    parser.add_argument("-p", "--processes", type=int,
-                        default=default_processes, metavar="COUNT",
+
+    parser.add_argument("-p", "--processes",
+                        metavar="COUNT",
+                        type=int,
+                        default=default_processes,
                         help="number of concurrent processes to run "
                              "(default: {})".format(default_processes))
-    parser.add_argument("-o", "--output", type=str, default="Output/", metavar="OUTDIR", help="directory of output states and images (default = Output/)")
-    parser.add_argument("initial", type=argparse.FileType('r'),
+
+    parser.add_argument("-o", "--output",
+                        metavar="OUTDIR",
+                        type=str,
+                        default="Output",
+                        help="directory of output states and images "
+                             "(default: 'Output')")
+
+    parser.add_argument("initial",
+                        type=argparse.FileType('r'),
                         help="initial properties file ('example.init.txt')")
 
     cli_args = parser.parse_args()
 
     # get starting frame
     t = cli_args.start
-    path = cli_args.frames
-    path_o = cli_args.output
-    if "/" not in path:
-        path+="/"
-    if "/" not in path_o:
-        path_o+="/"
-    # Image set from the real universe
-    frames = get_frames(path, t)
+    frames_dir = cli_args.frames
+    output_dir = cli_args.output
+    frames = get_frames(frames_dir, t)
 
     # Initialize the Space S
     S = init_space(t, cli_args.initial)
@@ -68,11 +86,11 @@ def main():
     image_dirs = []
     state_dirs = []
     for i in range(Config.K):
-        image_dirs.append('%s/Images/' %path_o + str(i) + '/')
+        image_dirs.append(os.path.join(output_dir, Config.images_dir, str(i)))
         if not os.path.exists(image_dirs[i]):
             os.makedirs(image_dirs[i])
 
-        state_dirs.append('%s/States/' %path_o + str(i) + '/')
+        state_dirs.append(os.path.join(output_dir, Config.states_dir, str(i)))
         if not os.path.exists(state_dirs[i]):
             os.makedirs(state_dirs[i])
 
@@ -160,7 +178,7 @@ def main():
         # S.append(best_U)
 
         # Output to files
-        runtime = str(int(time.time() - start))
+        # runtime = str(int(time.time() - start))
         for i, (c, U, index, _) in enumerate(S):
             new_frame = np.array(frame)
             # TODO: change the name of the output images and place this info
@@ -170,13 +188,14 @@ def main():
             #                                              str(c),
             #                                              str(index),
             #                                              runtime)
-            file_name = "{}{}.png".format(image_dirs[i], t)
+            image_filename = "{}.png".format(t)
+            image_path = os.path.join(image_dirs[i], image_filename)
             generate_image_edge_cv2(U, new_frame)
-            misc.imsave(file_name, new_frame)
+            misc.imsave(image_path, new_frame)
 
-            f = open(state_dirs[i] + str(t) + '.txt', 'w')
-            write_state(index, U, f)
-            f.close()
+            state_filename = "{}.txt".format(t)
+            state_path = os.path.join(state_dirs[i], state_filename)
+            write_state(state_path, index, U)
 
         S = [U for _, U, _, _ in S[:Config.K]]
 
@@ -185,7 +204,7 @@ def main():
 
     # make consistent
     print("Making consistent universes...")
-    create_consistent(cli_args.start, t-1, path_o)
+    create_consistent(cli_args.start, t-1, output_dir)
 
     # finished
     print("Finished!")

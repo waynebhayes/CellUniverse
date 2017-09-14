@@ -2,21 +2,20 @@
 
 import os
 import shutil
-import glob
 
 from constants import Config
 
 
-def create_consistent(start, end, out):
-    universe_path = './%s/States' %out
-    universe_image_path = './%s/Images'%out
+def create_consistent(start, end, output_dir):
+    universe_path = os.path.join(output_dir, Config.states_dir)
+    universe_image_path = os.path.join(output_dir, Config.images_dir)
 
     # make output directory
-    output_base = './%s/Consistent' %out
+    output_base = os.path.join(output_dir, Config.consistent_states_dir)
     if not os.path.exists(output_base):
         os.makedirs(output_base)
 
-    output_image_base = './%s/Consistent Images' %out
+    output_image_base = os.path.join(output_dir, Config.consistent_images_dir)
     if not os.path.exists(output_image_base):
         os.makedirs(output_image_base)
 
@@ -40,7 +39,7 @@ def create_consistent(start, end, out):
         universe_dir = str(universe_index)
 
         # get the states corresponding to the universe index
-        states_path = ('./%s/States/{}' %out).format(universe_index)
+        states_path = os.path.join(universe_path, str(universe_index))
         previous = {}
 
         for frame_index in range(start, end+1):
