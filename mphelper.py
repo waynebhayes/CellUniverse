@@ -8,6 +8,7 @@ from __future__ import print_function
 import functools
 import os
 import traceback
+from multiprocessing.pool import Pool
 
 
 def doublestar_function(func):
@@ -18,6 +19,30 @@ def doublestar_function(func):
     def func_wrapper(kwargs):
         return func(**kwargs)
     return func_wrapper
+
+
+class InterruptablePool(Pool):
+    """
+    A multiprocessing pool that has an keyboard-interruptable map function.
+    """
+
+    def map(self, func, iterable, chunksize=None):
+        '''
+        Equivalent of `map()` builtin.
+        '''
+        result = self.map_async(func, iterable, chunksize)
+
+        try:
+            while not result.ready():
+                result.wait(1)
+        except KeyboardInterrupt:
+            print("Program has been terminated by user.")
+            self.terminate()
+            self.join()
+            print("Exiting.")
+            exit(0)
+
+        return result.get()
 
 
 class HandleExceptions(object):

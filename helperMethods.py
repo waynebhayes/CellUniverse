@@ -4,6 +4,7 @@ import bisect
 import os
 import re
 import shlex
+import signal
 import sys
 import time
 from collections import defaultdict
@@ -27,7 +28,10 @@ LINE_PATTERN = re.compile(r"""
 def process_init(l, width, height):
     global lock
     lock = l
+
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
     HandleExceptions.set_print(safe_print)
+
     Globals.image_width = width
     Globals.image_height = height
 

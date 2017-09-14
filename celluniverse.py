@@ -9,7 +9,10 @@ import argparse
 import os
 import sys
 import time
-from multiprocessing import Lock, Pool, cpu_count
+from multiprocessing import Lock, cpu_count
+
+# To prevent crashing during a keyboard interrupt
+os.environ['FOR_DISABLE_CONSOLE_CTRL_HANDLER'] = '1'
 
 import cv2
 import numpy as np
@@ -21,7 +24,7 @@ from helperMethods import (collision_matrix, deepcopy_list,
                            find_k_best_moves, generate_image_edge_cv2,
                            generate_universes, get_frames, improve,
                            init_space, process_init, write_state)
-from mphelper import kwargs
+from mphelper import kwargs, InterruptablePool
 
 __version__ = "2.2"
 
@@ -75,9 +78,11 @@ def main():
 
     # Creating a pool of processes
     lock = Lock()
-    pool = Pool(cli_args.processes,
-                initializer=process_init,
-                initargs=(lock, Globals.image_width, Globals.image_height))
+    pool = InterruptablePool(cli_args.processes,
+                             initializer=process_init,
+                             initargs=(lock,
+                                       Globals.image_width,
+                                       Globals.image_height))
 
     # Processing
     for frame in frames:
