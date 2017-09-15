@@ -25,9 +25,11 @@ LINE_PATTERN = re.compile(r"""
 
 
 # ran once per process in the pool
-def process_init(l, width, height):
-    global lock
+def process_init(l, width, height, initial):
+    global lock, safe_print
     lock = l
+
+    safe_print = _safe_print
 
     signal.signal(signal.SIGINT, signal.SIG_IGN)
     HandleExceptions.set_print(safe_print)
@@ -35,9 +37,16 @@ def process_init(l, width, height):
     Globals.image_width = width
     Globals.image_height = height
 
+    with lock:
+        with open(initial, 'r') as file:
+            init_space(0, file)
+
+
+safe_print = print
+
 
 # syncronized print function
-def safe_print(*args, **kwargs):
+def _safe_print(*args, **kwargs):
     with lock:
         print(*args, **kwargs)
         sys.stdout.flush()
