@@ -367,42 +367,37 @@ def trim_comments(line):
     return LINE_PATTERN.match(line).group("line")
 
 
-def remcom(string):  # ignores comments in configuration file for parameters
-    string = list(string)
-    if '#' in string:
-        while '#' in string:
-            string.pop()
-    string = ''.join(string)
-    return string
+def get_next_nonempty_line(initial):
+    line = trim_comments(initial.next()).strip()
+    while not line:
+        line = trim_comments(initial.next().strip())
+    return line
 
 
 # Initial space S
 def init_space(t, initial):
-    while True:
-        try:
-            Config.dt = float(remcom(initial.next()))
-            Config.init_length = int(remcom(initial.next()))
-            Config.init_width = int(remcom(initial.next()))
-            Config.max_speed = int(remcom(initial.next()))
-            Config.max_spin = float(remcom(initial.next()))
-            Config.K = int(remcom(initial.next()))
-            Config.MAX_X_MOTION = float(remcom(initial.next()))
-            Config.MAX_Y_MOTION = float(remcom(initial.next()))
-            Config.MAX_X_RESOLUTION = int(remcom(initial.next()))
-            Config.MAX_Y_RESOLUTION = int(remcom(initial.next()))
-            Config.MAX_ROTATION = float(remcom(initial.next()))
-            Config.MAX_ROTATION_RESOLUTION = int(remcom(initial.next()))
-            Config.MIN_LENGTH_INCREASE = int(remcom(initial.next()))
-            Config.MAX_LENGTH_INCREASE = int(remcom(initial.next()))
-            Config.LENGTH_INCREASE_RESOLUTION = float(remcom(initial.next()))
-            Config.MAX_LENGTH_BEFORE_SPLIT = int(remcom(initial.next()))
-            Config.MIN_LENGTH = int(remcom(initial.next()))
-            Config.SPLIT_RATIO_BEGINNING = float(remcom(initial.next()))
-            Config.SPLIT_RATIO_END = float(remcom(initial.next()))
-            Config.SPLIT_RATIO_RESOLUTION = int(remcom(initial.next()))
-            break
-        except:
-            continue
+    # FIXME: A malformed initial config file can cause an exception without any
+    #  explaination.
+    Config.dt = float(get_next_nonempty_line(initial))
+    Config.init_length = int(get_next_nonempty_line(initial))
+    Config.init_width = int(get_next_nonempty_line(initial))
+    Config.max_speed = int(get_next_nonempty_line(initial))
+    Config.max_spin = float(get_next_nonempty_line(initial))
+    Config.K = int(get_next_nonempty_line(initial))
+    Config.MAX_X_MOTION = float(get_next_nonempty_line(initial))
+    Config.MAX_Y_MOTION = float(get_next_nonempty_line(initial))
+    Config.MAX_X_RESOLUTION = int(get_next_nonempty_line(initial))
+    Config.MAX_Y_RESOLUTION = int(get_next_nonempty_line(initial))
+    Config.MAX_ROTATION = float(get_next_nonempty_line(initial))
+    Config.MAX_ROTATION_RESOLUTION = int(get_next_nonempty_line(initial))
+    Config.MIN_LENGTH_INCREASE = int(get_next_nonempty_line(initial))
+    Config.MAX_LENGTH_INCREASE = int(get_next_nonempty_line(initial))
+    Config.LENGTH_INCREASE_RESOLUTION = float(get_next_nonempty_line(initial))
+    Config.MAX_LENGTH_BEFORE_SPLIT = int(get_next_nonempty_line(initial))
+    Config.MIN_LENGTH = int(get_next_nonempty_line(initial))
+    Config.SPLIT_RATIO_BEGINNING = float(get_next_nonempty_line(initial))
+    Config.SPLIT_RATIO_END = float(get_next_nonempty_line(initial))
+    Config.SPLIT_RATIO_RESOLUTION = int(get_next_nonempty_line(initial))
 
     # define attribute names and types
     schema = {"name": str,
@@ -561,6 +556,7 @@ def generate_image_cv2(U, im=None):
         im = np.zeros((Globals.image_height, Globals.image_width),
                       dtype=np.int16)
     for bacterium in U:
+
         # head and tail
         cv2.circle(im, tuple(bacterium.head_pos[:2].astype(int)),
                    bacterium.radius, 1, -1)
