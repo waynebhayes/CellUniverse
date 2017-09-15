@@ -67,7 +67,7 @@ def main():
                              "(default: 'Output')")
 
     parser.add_argument("initial",
-                        type=argparse.FileType('r'),
+                        type=str,
                         help="initial properties file ('example.init.txt')")
 
     cli_args = parser.parse_args()
@@ -79,8 +79,8 @@ def main():
     frames = get_frames(frames_dir, t)
 
     # Initialize the Space S
-    S = init_space(t, cli_args.initial)
-    cli_args.initial.close()
+    with open(cli_args.initial, 'r') as file:
+        S = init_space(t, file)
 
     # Creating directories
     image_dirs = []
@@ -100,7 +100,8 @@ def main():
                              initializer=process_init,
                              initargs=(lock,
                                        Globals.image_width,
-                                       Globals.image_height))
+                                       Globals.image_height,
+                                       cli_args.initial))
 
     # Processing
     for frame in frames:
