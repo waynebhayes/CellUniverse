@@ -7,7 +7,7 @@
 
 0.33				#dt
 46				#init length
-20				#init width
+16				#init width
 3				#max speed
 0.15707963267948966		#max spin
 20				#K universes
@@ -20,13 +20,13 @@
 0				#min height increase
 6				#max height increase
 14				#height increase resolution
-50				#max length of bacteria before splitting
-25				#minimum length of bacteria
+70				#max length of bacteria before splitting
+20				#minimum length of bacteria
 0.25				#beginning of split ratio
 0.75				#end of split ratio
 21				#split ratio resolution
 
 name    pos:x   pos:y   length  rotation
-"00"    193.0   183     32      2.62798666
-"01"    200     200     32      2.62798666
-"10"    247     156     48	1.088283
+"00"    193.0   183     32      0.9799500
+"01"    200     200     32      0.9799500
+"10"    247     156     48	2.1879797
