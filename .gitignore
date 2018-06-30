@@ -344,3 +344,12 @@ Temporary Items
 # Text files (except examples)
 *.txt
 !*.init.txt
+
+debug/
+input/
+output/
+__pycache__/
+encode.ps1
+*.mp4
+*.ttf
+*.code-workspace

@@ -9,76 +9,34 @@ Initial Properties File
 This is an example initial properties file:
 
 ``` sourceCode
-# Initial property file (line commented out)
-
-0.33   	  	   	#dt, or the number of hours per frame
-26    			#init_length of bacteria
-6     			#init_width of bacteria
-3     			#max speed
-0.3141592653589793	#max spin
-20			#number of ideal universes
-3			#max x motion
-3			#max y motion
-7			#max x resolution
-7			#max y resolution
-0.3141592653589793	#max rotation
-21			#max rotation resolution
-0			#minimum height increase
-3			#maximum height increase
-4			#height increase resolution
-31			#maximum length of single bacteria before splitting
-13			#minimum length of any bacteria
-0.25			#beginning of split ratio
-0.75			#end of split ratio
-20			#split ratio resolution
-#NOTE: The program will ignore comments
-
-pos:x   pos:y   length  rotation
-160     105     20      1.605
-156     125     17      1.997
-165     130     14      1.997
-170     113     15      1.605
+cellType: bacilli
+timestep:   1.0   # second
+maxSpeed:  12.0   # microns per second
+maxSpin:    1.57  # radians per second
+minGrowth: -2.0   # microns
+maxGrowth:  9.0   # microns
+minWidth:   3.0   # microns
+maxWidth:   9.0   # microns
+minLength: 10.0   # microns
+maxLength: 48.0   # microns
+delimiter: " "
+---
+name      x     y   width  length  rotation
+A       160   105       6      18      1.61
+B       156   125       6      17      2.00
+C       165   130       6      16      2.00
+D       170   113       6      16      1.61
 ```
+
 You can start with one or more cell properties. The rotation is specified in
 radians.
-
-Also, you may specify the names manually:
-
-``` sourceCode
-# Initial property file
-
-0.33
-26
-6
-3
-0.3141592653589793
-20
-3
-3
-7
-7
-0.3141592653589793
-21
-0
-3
-4
-31
-13
-0.25
-0.75
-20
-
-name    pos:x   pos:y   length  rotation
-"00"    160     105     20      1.605
-"01"    156     125     17      1.997
-"10"    165     130     14      1.997
-"11"    170     113     15      1.605
-```
 
 Frames
 ------
 
-Images must all be placed in a directory. The default is `./frames/` directory, but you can change the name as long as you input the directory in the command line. The names of the images must match `0.png`, `1.png`, `2.png`, and so on.
+Images must all be placed in a directory. The images are found using a pattern
+in the command line. For example, for the images "./input/frame001.png",
+"./input/frame002.png", ..., you would use "-i frame%03d.png" to find the images.
 
 Usage
 -----
@@ -86,30 +44,31 @@ Usage
 Command line help:
 
 ``` sourceCode
-$ python celluniverse.py --help
-usage: celluniverse.py [-h] [-f DIR] [-v] [-s FRAME] [-p COUNT] [-o OUTDIR] initial
-
-Cell-Universe Cell Tracker.
-
-positional arguments:
-  initial               initial properties file ('example.init.txt')
+$ python main.py --help
+usage: main.py [-h] [-v] [-q] [-l FILE] [-p N] [-s N] [-f N] -i PATTERN -o
+               DIRECTORY -c FILE
 
 optional arguments:
   -h, --help            show this help message and exit
-  -f DIR, --frames DIR
-			specify directory of all the frames (default: frames/)
-  -v, --version         show program's version number and exit
-  -s FRAME, --start FRAME
-                        start from specific frame (default: 0)
-  -p COUNT, --processes COUNT
-                        number of concurrent processes to run (default: 4)
-  -o OUTDIR, --output OUTDIR
-			specify output directory name (default: Output/)
+  -v, --verbose         give more output (additive)
+  -q, --quiet           give less output (additive)
+  -l FILE, --log FILE   path to a verbose appending log
+  -p N, --processes N   number of extra processes allowed
+  -s N, --start N       starting image number (default: 0)
+  -f N, --finish N      final image number (default until last image
+
+required arguments:
+  -i PATTERN, --input PATTERN
+                        input filename pattern (example: "image%03d.png")
+  -o DIRECTORY, --output DIRECTORY
+                        path to the output directory
+  -c FILE, --config FILE
+                        filename of the configuration file
 ```
 
 Examples
 --------
 
 ``` sourceCode
-python celluniverse.py --frames frames/ --processes 2 --output Output/ example1.init.txt
+python main.py -s 0 -f 19 -i ./input/frame%03d.png -o ./output/ -c ./config.yml
 ```
