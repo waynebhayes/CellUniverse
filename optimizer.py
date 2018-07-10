@@ -72,17 +72,32 @@ def simulated_annealing(colony: Colony, real_image: np.ndarray, config: dict,
         new_rotation = leaf.cell.rotation
         new_dimensions = leaf.cell.dimensions.copy()
 
-        choice = random.random()
-        if choice < 0.35:
-            new_position.x += random.gauss(0, sigma=2)
-        elif choice < 0.7:
-            new_position.y += random.gauss(0, sigma=2)
-        elif choice < 0.8:
-            new_rotation += random.gauss(0, sigma=0.1)
-        elif choice < 0.9:
-            new_dimensions.length += random.gauss(0, sigma=3)
-        else:
-            new_dimensions.width += random.gauss(0, sigma=0.1)
+        no_change = True
+        while no_change:
+            choice = random.random()
+            if choice < 0.35:
+                new_position.x += random.gauss(0, sigma=2)
+                no_change = False
+
+            choice = random.random()
+            if choice < 0.35:
+                new_position.y += random.gauss(0, sigma=2)
+                no_change = False
+
+            choice = random.random()
+            if choice < 0.1:
+                new_rotation += random.gauss(0, sigma=0.1)
+                no_change = False
+
+            choice = random.random()
+            if choice < 0.1:
+                new_dimensions.length += random.gauss(0, sigma=3)
+                no_change = False
+
+            choice = random.random()
+            if choice < 0.1:
+                new_dimensions.width += random.gauss(0, sigma=0.1)
+                no_change = False
 
         # Enforce constraints
         displacement = sqrt(np.sum((new_position - original_leaf.cell.position)**2))
