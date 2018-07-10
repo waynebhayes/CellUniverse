@@ -18,7 +18,7 @@ from colony import Colony, LineageNode
 
 logger = logging.getLogger(__name__)
 
-DEBUG = True
+DEBUG = False
 FONT_SIZE = 16
 FONT = ImageFont.truetype('Hack-Regular.ttf', size=FONT_SIZE)
 
@@ -164,7 +164,7 @@ def simulated_annealing(colony: Colony, real_image: np.ndarray, config: dict,
                 leaves = colony.leaves
                 original_leaves = original_colony.leaves
 
-            synthetic_image = np.zeros_like(real_image) - 0.5
+            synthetic_image = np.zeros_like(real_image)
 
             for drawing_leaf in leaves:
                 drawing_leaf.cell.draw(synthetic_image)
@@ -221,3 +221,20 @@ def simulated_annealing(colony: Colony, real_image: np.ndarray, config: dict,
 
         # Cool temperature
         temperature *= alpha
+
+    # Produce output frame and save
+    frame = np.empty((real_image.shape[0], real_image.shape[1], 3))
+    frame[:, :, 0] = real_image/2
+    frame[:, :, 1] = frame[:, :, 0]
+    frame[:, :, 2] = frame[:, :, 0]
+
+    for drawing_leaf in leaves:
+        drawing_leaf.cell.debug_draw(frame)
+
+    frame = np.clip(frame, 0, 1)
+
+    output_image = Image.fromarray((255*frame).astype(np.uint8))
+    draw = ImageDraw.Draw(output_image)
+    draw.text((2, 2), str(filename), (255, 255, 0), FONT)
+
+    output_image.save(f'./output/{filename.name}')

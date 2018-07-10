@@ -203,7 +203,7 @@ def main() -> int:
 
         # run the optimizer on all frames
         for i, filename in enumerate(options.input_files):
-            real_image = imread(filename, as_grey=True)/255 - 0.5
+            real_image = imread(filename, as_grey=True)/255
             simulated_annealing(cell_colony, real_image, config, filename, offset=1000*i)
 
             # output the current cell colony
