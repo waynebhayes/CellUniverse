@@ -353,3 +353,5 @@ encode.ps1
 *.mp4
 *.ttf
 *.code-workspace
+clean.ps1
+output-encoder.ps1
