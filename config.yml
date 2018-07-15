@@ -7,7 +7,7 @@ maxGrowth:  13.0   # microns
 minWidth:   3.0   # microns
 maxWidth:   9.0   # microns
 minLength: 10.0   # microns
-maxLength: 35.0   # microns
+maxLength: 45.0   # microns
 delimiter: " "
 ---
 name      x     y   width  length  rotation
