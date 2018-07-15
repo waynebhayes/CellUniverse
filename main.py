@@ -206,6 +206,8 @@ def main() -> int:
             real_image = imread(filename, as_grey=True)/255
             simulated_annealing(cell_colony, real_image, config, filename, offset=1000*i)
 
+            cell_colony.flatten()
+
             # output the current cell colony
             for leaf in cell_colony.leaves:
                 print(','.join(

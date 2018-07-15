@@ -62,3 +62,6 @@ class Colony(object):
                 for child in children:
                     stack.append(child)
         return leaves
+
+    def flatten(self):
+        self._roots = self.leaves
