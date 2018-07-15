@@ -51,9 +51,9 @@ def simulated_annealing(colony: Colony, real_image: np.ndarray, config: dict,
     leaves = colony.leaves
     original_leaves = original_colony.leaves
 
-    run_count = int(1000*np.sqrt(len(leaves)))
-    temperature = 10.0
-    alpha = 10**(np.log10(0.995)/np.sqrt(len(leaves)))
+    run_count = int(500*len(leaves))
+    temperature = 5.0
+    alpha = 10**(np.log10(0.99)/len(leaves))
 
     # ensure no cells start in flux
     for leaf in leaves:
@@ -102,12 +102,12 @@ def simulated_annealing(colony: Colony, real_image: np.ndarray, config: dict,
         while no_change:
             choice = random.random()
             if choice < 0.35:
-                new_position.x += random.gauss(0, sigma=3)
+                new_position.x += random.gauss(0, sigma=.5)
                 no_change = False
 
             choice = random.random()
             if choice < 0.35:
-                new_position.y += random.gauss(0, sigma=3)
+                new_position.y += random.gauss(0, sigma=.5)
                 no_change = False
 
             choice = random.random()
@@ -117,12 +117,12 @@ def simulated_annealing(colony: Colony, real_image: np.ndarray, config: dict,
 
             choice = random.random()
             if choice < 0.2:
-                new_dimensions.length += random.gauss(0, sigma=3)
+                new_dimensions.length += random.gauss(0, sigma=1)
                 no_change = False
 
             choice = random.random()
             if choice < 0.1:
-                new_dimensions.width += random.gauss(0, sigma=0.1)
+                new_dimensions.width += random.gauss(0, sigma=0.05)
                 no_change = False
 
         leaf.push()
@@ -139,9 +139,9 @@ def simulated_annealing(colony: Colony, real_image: np.ndarray, config: dict,
 
         choice = random.random()
 
-        if choice < 0.1 and not leaf.cell.in_flux:     # split cell
+        if choice < 0.05 and not leaf.cell.in_flux:     # split cell
             # choose alpha
-            length_alpha = random.random()/3 + 1/3     # TODO: choose from settings and constraints
+            length_alpha = random.random()/5 + 2/5     # TODO: choose from settings and constraints
             # length_alpha = 0.5
 
             # split
@@ -202,7 +202,7 @@ def simulated_annealing(colony: Colony, real_image: np.ndarray, config: dict,
                 if cell_2.dimensions.length < min_length or cell_2.dimensions.length > max_length:
                     skip = True
 
-        elif choice < 0.4 and leaf.cell.in_flux:    # combine cells
+        elif choice < 0.2 and leaf.cell.in_flux:    # combine cells
             combined = True
 
             # get the parent node
