@@ -14,8 +14,6 @@ import logging.handlers
 import os
 import pathlib
 
-import ansiutils
-
 
 class MaxLevelFilter(logging.Filter):
     """TFilters out logs above a certain level."""
@@ -50,9 +48,9 @@ class ColorizedStreamHandler(logging.StreamHandler):
 
     COLORS = [
         # This needs to be in order from highest logging level to lowest.
-        (logging.CRITICAL, _color_wrap('\033[1;31m')),
-        (logging.ERROR, _color_wrap('\033[31m')),
-        (logging.WARNING, _color_wrap('\033[33m')),
+        # (logging.CRITICAL, _color_wrap('\033[1;31m')),
+        # (logging.ERROR, _color_wrap('\033[31m')),
+        # (logging.WARNING, _color_wrap('\033[33m')),
     ]
 
     def __init__(self, stream=None):
@@ -62,16 +60,16 @@ class ColorizedStreamHandler(logging.StreamHandler):
         """Returns True if we should color; False otherwise."""
 
         # If the stream is a tty we should color it
-        if hasattr(self.stream, 'isatty') and self.stream.isatty():
-            return True
+        # if hasattr(self.stream, 'isatty') and self.stream.isatty():
+        #     return True
 
         # If we have an ANSI term, we should color it
-        if os.environ.get('TERM') == 'ANSI':
-            return True
+        # if os.environ.get('TERM') == 'ANSI':
+        #     return True
 
         # If we have xterm, we should color it
-        if os.environ.get('TERM').startswith('xterm'):
-            return True
+        # if os.environ.get('TERM').startswith('xterm'):
+        #     return True
 
         # If anything else we should not color it
         return False
