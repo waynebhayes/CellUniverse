@@ -14,6 +14,7 @@ from collections import namedtuple
 from itertools import count
 from pathlib import Path
 
+import numpy as np
 import yaml
 from skimage.io import imread
 
@@ -203,7 +204,14 @@ def main() -> int:
 
         # run the optimizer on all frames
         for i, filename in enumerate(options.input_files):
-            real_image = imread(filename, as_gray=True)/255
+            real_image = imread(filename, as_gray=True).astype(np.float64)
+
+            max_value = np.max(real_image)
+            if max_value > 255:
+                real_image /= 65535
+            elif max_value > 1:
+                real_image /= 255
+
             simulated_annealing(cell_colony, real_image, config, filename, offset=1000*i)
 
             cell_colony.flatten()
