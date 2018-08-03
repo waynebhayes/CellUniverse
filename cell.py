@@ -211,7 +211,7 @@ class Bacilli(Cell):
         position_2 = (center + back)/2
 
         cell_1 = Bacilli(
-            self.name + 'A',
+            self.name + '0',
             position_1.x, position_1.y,
             self.dimensions.width,
             alpha*self.dimensions.length,
@@ -219,7 +219,7 @@ class Bacilli(Cell):
             in_flux=True)
 
         cell_2 = Bacilli(
-            self.name + 'B',
+            self.name + '1',
             position_2.x, position_2.y,
             self.dimensions.width,
             (1 - alpha)*self.dimensions.length,
