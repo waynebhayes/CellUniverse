@@ -5,6 +5,9 @@ cellannealer.cell
 ~~~~~~~~~~~~~~~~~
 """
 
+import colorsys
+import hashlib
+
 import numpy as np
 from skimage.draw import circle, polygon
 
@@ -180,7 +183,14 @@ class Bacilli(Cell):
         mask[head_mask] = True
         mask[tail_mask] = True
 
-        frame[:, :, 0][mask] += 0.3
+        h = hashlib.blake2b()   # pylint: disable=E1101
+        h.update(self._name.encode('utf-8'))
+        hue = int(h.hexdigest()[2:4], base=16)/255
+        r, g, b = colorsys.hsv_to_rgb(hue, 1, 1)
+
+        frame[:, :, 0][mask] += r*0.3
+        frame[:, :, 1][mask] += g*0.3
+        frame[:, :, 2][mask] += b*0.3
 
     def __repr__(self) -> str:
         return (f'Bacilli(name={self.name}, x={self.position.x}, y={self.position.y}, '
