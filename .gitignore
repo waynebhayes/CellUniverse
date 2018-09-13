@@ -9,6 +9,20 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+
+data1_input/
+debug/
+initial_input/
+input/
+out_put/
+output/
+output_data1/
+synthetic/
+test.svg
+tree.svg
+tree1.svg
+
+
 # Python Distribution / packaging
 .Python
 build/
@@ -344,3 +358,13 @@ Temporary Items
 # Text files (except examples)
 *.txt
 !*.init.txt
+
+debug/
+input/
+output/
+__pycache__/
+encode.ps1
+*.mp4
+*.code-workspace
+clean.ps1
+output-encoder.ps1
