@@ -335,7 +335,7 @@ Temporary Items
 *.tiff
 *.gif
 *.bmp
-*.svg
+
 
 # Videos
 *.wmv
