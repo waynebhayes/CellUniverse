@@ -1,0 +1,17 @@
+cellType: bacilli
+timestep:   1.0   # second
+maxSpeed:  24.0   # microns per second
+maxSpin:    1.57  # radians per second
+minGrowth: -2.0   # microns
+maxGrowth:  13.0  # microns
+minWidth:   3.0   # microns
+maxWidth:   9.0   # microns
+minLength: 10.0   # microns
+maxLength: 48.0   # microns
+delimiter: " "
+---
+name      x     y   width  length  rotation
+b00     163   114       5      24      1.43
+b01     153   129       6      23      1.75
+b10     169   135       6      22      2.41
+b11     174   110       7      22      1.41
