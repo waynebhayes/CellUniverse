@@ -1,0 +1,30 @@
+# Example initial configuration (with automatic name generation)
+# note: rotation is in radians
+
+# The following constants must remain in the following hard-coded order.
+0.33 # dt
+26 # init_length
+6 # init_width
+3 # max_speed
+0.3141592653589793 #max_spin
+20 #K universes
+3 #max x motion
+3 #max y motion
+7 #max x resolution
+7 #max y resolution
+0.3141592653589793 #max rotation
+21 #max rotation resolution
+0 #minimum height increase
+3 #max height increase
+4 #height increase resolution
+31 #max length of bacteria before splitting
+13 #minimum length of any bacteria
+0.25 #beginning of split ratio
+0.75 #end of split ratio
+20 #split ratio resolution
+
+pos:x   pos:y   length  rotation
+160.0   105     20      1.6045768929625288
+156     125     17      1.997275974661253
+165.    130.00  14      1.997275974661253
+170     113     15      1.6045768929625288
