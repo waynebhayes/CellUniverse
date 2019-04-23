@@ -5,6 +5,7 @@ from math import sqrt
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import matplotlib.pyplot as plt
+from scipy.ndimage import distance_transform_edt
 
 from cell import Bacilli
 from colony import CellNode, Colony
@@ -18,6 +19,10 @@ badcount = 0  # DEBUG
 def objective(realimage, synthimage):
     """Full objective function between two images."""
     return np.sum((realimage - synthimage)**2)
+
+
+def dist_objective(diffimage, distmap):
+    return np.sum((diffimage*distmap)**2)
 
 
 def generate_synthetic_image(cellnodes, shape):
@@ -260,7 +265,13 @@ def optimize(imagefile, lineageframes, args, config):
     # find the initial cost
     synthimage = generate_synthetic_image(cellnodes, realimage.shape)
     diffimage = realimage - synthimage
-    cost = objective(realimage, synthimage)
+    if config['global.useDistanceObjective']:
+        distmap = distance_transform_edt(realimage < .5)
+        distmap /= config[f'{celltype}.distanceCostDivisor']*config['global.pixelsPerMicron']
+        distmap += 1
+        cost = dist_objective(diffimage, distmap)
+    else:
+        cost = objective(realimage, synthimage)
 
     # setup temperature schedule
     run_count = int(2000*len(cellnodes))
@@ -302,8 +313,13 @@ def optimize(imagefile, lineageframes, args, config):
                 # compute the starting cost
                 region = (cnode.cell.region.union(snode1.cell.region)
                                            .union(snode2.cell.region))
-                start_cost = np.sum(diffimage[region.top:region.bottom,
-                                              region.left:region.right]**2)
+                if config['global.useDistanceObjective']:
+                    start_cost = dist_objective(
+                        diffimage[region.top:region.bottom, region.left:region.right],
+                        distmap[region.top:region.bottom, region.left:region.right])
+                else:
+                    start_cost = np.sum(diffimage[region.top:region.bottom,
+                                                region.left:region.right]**2)
 
                 # subtract the previous cells
                 snode1.cell.draw(diffimage, 1.0)
@@ -318,9 +334,14 @@ def optimize(imagefile, lineageframes, args, config):
                 # compute the starting cost
                 region = (node.cell.region.union(snode1.cell.region)
                                           .union(snode2.cell.region))
-                start_cost = np.sum(diffimage[region.top:region.bottom,
-                                              region.left:region.right]**2)
-
+                if config['global.useDistanceObjective']:
+                    start_cost = dist_objective(
+                        diffimage[region.top:region.bottom, region.left:region.right],
+                        distmap[region.top:region.bottom, region.left:region.right])
+                else:
+                    start_cost = np.sum(diffimage[region.top:region.bottom,
+                                                region.left:region.right]**2)
+                
                 # subtract the previous cell
                 node.cell.draw(diffimage, 1.0)
 
@@ -331,8 +352,13 @@ def optimize(imagefile, lineageframes, args, config):
             else:
                 # compute the starting cost
                 region = node.cell.region.union(new_node.cell.region)
-                start_cost = np.sum(diffimage[region.top:region.bottom,
-                                              region.left:region.right]**2)
+                if config['global.useDistanceObjective']:
+                    start_cost = dist_objective(
+                        diffimage[region.top:region.bottom, region.left:region.right],
+                        distmap[region.top:region.bottom, region.left:region.right])
+                else:
+                    start_cost = np.sum(diffimage[region.top:region.bottom,
+                                                region.left:region.right]**2)
 
                 # subtract the previous cell
                 node.cell.draw(diffimage, 1.0)
@@ -341,8 +367,13 @@ def optimize(imagefile, lineageframes, args, config):
                 new_node.cell.draw(diffimage, -1.0)
 
             # compute the cost difference
-            end_cost = np.sum(diffimage[region.top:region.bottom,
-                                        region.left:region.right]**2)
+            if config['global.useDistanceObjective']:
+                end_cost = dist_objective(
+                    diffimage[region.top:region.bottom, region.left:region.right],
+                    distmap[region.top:region.bottom, region.left:region.right])
+            else:
+                end_cost = np.sum(diffimage[region.top:region.bottom,
+                                            region.left:region.right]**2)
             costdiff = end_cost - start_cost
 
             # compute the acceptance threshold
@@ -395,7 +426,10 @@ def optimize(imagefile, lineageframes, args, config):
     print(f'Bad Percentage: {100*badcount/run_count}%')
 
     synthimage = generate_synthetic_image(cellnodes, realimage.shape)
-    new_cost = objective(realimage, synthimage)
+    if config['global.useDistanceObjective']:
+        new_cost = dist_objective(diffimage, distmap)
+    else:
+        new_cost = objective(realimage, synthimage)
     print(f'Incremental Cost: {cost}')
     print(f'Actual Cost:      {new_cost}')
 
