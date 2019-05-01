@@ -24,6 +24,8 @@ def parse_args():
                         help='starting image (default: %(default)s)')
     parser.add_argument('-f', '--finish', metavar='N', type=int, default=-1,
                         help='final image (defaults to until last image)')
+    parser.add_argument('--dist', action='store_true', default=False,
+                        help='use distance-based objective function')
 
     # required arguments
     required = parser.add_argument_group('required arguments')
