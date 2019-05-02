@@ -1,0 +1,9 @@
+.image {
+    height: 100vh;
+    width: 50vw;
+}
+
+.cell{
+    position: absolute;
+    top:0;
+}

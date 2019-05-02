@@ -1,0 +1,10 @@
+.image2 {
+    padding-top: 10vh;
+    padding-bottom: 10vh;
+    padding-left: 5vw;
+    padding-right: 5vw;
+    position:absolute;
+    /* background-image: url("../../../output/pie.svg");
+    background-repeat: no-repeat;
+    background-position: center; */
+}
