@@ -257,6 +257,7 @@ def optimize(imagefile, lineageframes, args, config):
     shape = realimage.shape
 
     celltype = config['global.cellType'].lower()
+    useDistanceObjective = args.dist
 
     # progress the lineage frame forward
     colony = lineageframes.forward()
@@ -265,7 +266,7 @@ def optimize(imagefile, lineageframes, args, config):
     # find the initial cost
     synthimage = generate_synthetic_image(cellnodes, realimage.shape)
     diffimage = realimage - synthimage
-    if config['global.useDistanceObjective']:
+    if useDistanceObjective:
         distmap = distance_transform_edt(realimage < .5)
         distmap /= config[f'{celltype}.distanceCostDivisor']*config['global.pixelsPerMicron']
         distmap += 1
@@ -313,7 +314,7 @@ def optimize(imagefile, lineageframes, args, config):
                 # compute the starting cost
                 region = (cnode.cell.region.union(snode1.cell.region)
                                            .union(snode2.cell.region))
-                if config['global.useDistanceObjective']:
+                if useDistanceObjective:
                     start_cost = dist_objective(
                         diffimage[region.top:region.bottom, region.left:region.right],
                         distmap[region.top:region.bottom, region.left:region.right])
@@ -334,7 +335,7 @@ def optimize(imagefile, lineageframes, args, config):
                 # compute the starting cost
                 region = (node.cell.region.union(snode1.cell.region)
                                           .union(snode2.cell.region))
-                if config['global.useDistanceObjective']:
+                if useDistanceObjective:
                     start_cost = dist_objective(
                         diffimage[region.top:region.bottom, region.left:region.right],
                         distmap[region.top:region.bottom, region.left:region.right])
@@ -352,7 +353,7 @@ def optimize(imagefile, lineageframes, args, config):
             else:
                 # compute the starting cost
                 region = node.cell.region.union(new_node.cell.region)
-                if config['global.useDistanceObjective']:
+                if useDistanceObjective:
                     start_cost = dist_objective(
                         diffimage[region.top:region.bottom, region.left:region.right],
                         distmap[region.top:region.bottom, region.left:region.right])
@@ -367,7 +368,7 @@ def optimize(imagefile, lineageframes, args, config):
                 new_node.cell.draw(diffimage, -1.0)
 
             # compute the cost difference
-            if config['global.useDistanceObjective']:
+            if useDistanceObjective:
                 end_cost = dist_objective(
                     diffimage[region.top:region.bottom, region.left:region.right],
                     distmap[region.top:region.bottom, region.left:region.right])
@@ -426,7 +427,7 @@ def optimize(imagefile, lineageframes, args, config):
     print(f'Bad Percentage: {100*badcount/run_count}%')
 
     synthimage = generate_synthetic_image(cellnodes, realimage.shape)
-    if config['global.useDistanceObjective']:
+    if useDistanceObjective:
         new_cost = dist_objective(diffimage, distmap)
     else:
         new_cost = objective(realimage, synthimage)

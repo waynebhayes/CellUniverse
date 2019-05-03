@@ -3,7 +3,6 @@
     "global.cellType": "bacilli",
     "global.pixelsPerMicron": 1.0,
     "global.framesPerSecond": 1.0,
-    "global.useDistanceObjective": false,
 
     // Bacilli settings
     "bacilli.maxSpeed":  24.0,  // microns per second
