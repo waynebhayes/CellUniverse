@@ -1,0 +1,31 @@
+#youtube link:
+#www.youtube.com/watch?v=j8_xoM8Wwgs
+
+# Example initial configuration (with names manually added)
+# note: rotation is in radians
+
+
+0.33				#dt
+12				#init length
+6				#init width
+2				#max speed
+0.15707963267948966		#max spin
+20				#K universes
+1				#max x motion
+1				#max y motion
+5				#max x resolution
+5				#max y resolution
+0.15707963267948966		#max rotation
+20				#max rotation resolution
+0				#min height increase
+2				#max height increase
+5				#height increase resolution
+8				#max length of bacteria before splitting
+5				#minimum length of bacteria
+0.3				#beginning of split ratio
+0.7				#end of split ratio
+20				#split ratio resolution
+
+name    pos:x   pos:y   length  rotation
+"00"    144.0   119     10      1.5708
+"01"    142     132     10      1.107148769440952
