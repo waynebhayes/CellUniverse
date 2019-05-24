@@ -86,30 +86,35 @@ Usage
 Command line help:
 
 ``` sourceCode
-$ python celluniverse.py --help
-usage: celluniverse.py [-h] [-f DIR] [-v] [-s FRAME] [-p COUNT] [-o OUTDIR] initial
-
-Cell-Universe Cell Tracker.
-
-positional arguments:
-  initial               initial properties file ('example.init.txt')
+$ python main.py --help
+usage: main.py [-h] [-d DIRECTORY] [-s N] [-f N] [--dist] -i PATTERN -o
+               DIRECTORY -c FILE -x FILE -t TEMP -e TEMP
 
 optional arguments:
   -h, --help            show this help message and exit
-  -f DIR, --frames DIR
-			specify directory of all the frames (default: frames/)
-  -v, --version         show program's version number and exit
-  -s FRAME, --start FRAME
-                        start from specific frame (default: 0)
-  -p COUNT, --processes COUNT
-                        number of concurrent processes to run (default: 4)
-  -o OUTDIR, --output OUTDIR
-			specify output directory name (default: Output/)
+  -d DIRECTORY, --debug DIRECTORY
+                        path to the debug directory (enables debug mode)
+  -s N, --start N       starting image (default: 0)
+  -f N, --finish N      final image (defaults to until last image)
+  --dist                use distance-based objective function
+
+required arguments:
+  -i PATTERN, --input PATTERN
+                        input filename pattern (e.g. "image%03d.png")
+  -o DIRECTORY, --output DIRECTORY
+                        path to the output directory
+  -c FILE, --config FILE
+                        path to the configuration file
+  -x FILE, --initial FILE
+                        path to the initial cell configuration
+  -t TEMP, --temp TEMP  starting temperature for the simulated annealing
+  -e TEMP, --endtemp TEMP
+                        ending temperature for the simulated annealing
 ```
 
 Examples
 --------
 
 ``` sourceCode
-python celluniverse.py --frames frames/ --processes 2 --output Output/ example1.init.txt
+python "./main.py" --start 0 --finish 13 --debug "./debug" --input "./input/frame%03d.png" --output "$TEST_DIR/output" --config "./config.json" --initial "./cells.0.csv" --temp 10 --endtemp 0.01
 ```
