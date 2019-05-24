@@ -428,11 +428,13 @@ def optimize(imagefile, lineageframes, args, config):
 
     synthimage = generate_synthetic_image(cellnodes, realimage.shape)
     if useDistanceObjective:
-        new_cost = dist_objective(diffimage, distmap)
+        new_cost = dist_objective(realimage - synthimage, distmap)
     else:
         new_cost = objective(realimage, synthimage)
     print(f'Incremental Cost: {cost}')
     print(f'Actual Cost:      {new_cost}')
+    if abs(new_cost - cost) > 1e-7:
+        print('WARNING: incremental cost diverged from expected cost')
 
     frame = np.empty((shape[0], shape[1], 3))
     frame[..., 0] = realimage
@@ -448,6 +450,5 @@ def optimize(imagefile, lineageframes, args, config):
     debugimage.save(args.output/imagefile.name)
     debugcount += 1
 
-    
 
     return colony
