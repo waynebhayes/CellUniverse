@@ -1,0 +1,41 @@
+{
+  "name": "cellviewer",
+  "version": "0.1.0",
+  "private": true,
+  "homepage": "http://metanovitia.github.io/cellviewer",
+  "dependencies": {
+    "@material-ui/core": "^3.9.3",
+    "@material-ui/lab": "^3.0.0-alpha.30",
+    "chart.js": "^2.8.0",
+    "jquery": "^3.3.1",
+    "react": "^16.8.6",
+    "react-canvas-draw": "^1.0.1-hotfix.4",
+    "react-chartkick": "^0.3.0",
+    "react-dom": "^16.8.6",
+    "react-router-dom": "^5.0.0",
+    "react-scripts": "2.1.8",
+    "react-shapes": "^0.1.0",
+    "react-svg-piechart": "^2.4.0",
+    "reactstrap": "^8.0.0"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject",
+    "predeploy": "npm run build",
+    "deploy": "gh-pages -d build"
+  },
+  "eslintConfig": {
+    "extends": "react-app"
+  },
+  "browserslist": [
+    ">0.2%",
+    "not dead",
+    "not ie <= 11",
+    "not op_mini all"
+  ],
+  "devDependencies": {
+    "gh-pages": "^2.0.1"
+  }
+}
