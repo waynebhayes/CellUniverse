@@ -1,17 +1,6 @@
 import React, { Component } from 'react';
 import { Container } from 'reactstrap';
 import Slider from '@material-ui/lab/Slider';
-// import Cell from "./Cell/Cell.js"
-import './RadialTree.css';
-
-
-const data = [
-    {title: "", value: 1, color: "rgb(255,0,0)"},
-    {title: "", value: 1, color: "rgb(0,255,0)"},
-    {title: "", value: 1, color: "rgb(0,0,255)"},
-    {title: "", value: 1, color: "rgb(255,255,0)"}
-  ]
-  
 
 export default class RadialTree extends Component {
     constructor(props) {
@@ -30,6 +19,11 @@ export default class RadialTree extends Component {
 
     render() {
 
+        var l = window.innerHeight
+        if(window.innerHeight*2 > window.innerWidth){
+            l = window.innerWidth/2
+        }
+
         var posC = this.state.posC;
         return (
             <Container 
@@ -43,13 +37,10 @@ export default class RadialTree extends Component {
                     alt=""
                     style={{
                         position:"absolute",
-                        height: "79vh",
-                        width: "39vw",
-                        right:"0.5vw",
-                        top:"0.5vh",
-                        margin: "10vh",
-                        marginLeft: "5vw",
-                        marginRight: "5vw",
+                        height: (l*.79).toString()+"px",
+                        width: (l*.79).toString()+"px",
+                        right: (window.innerWidth/4-(l*.79/2)).toString()+"px",
+                        top: (window.innerHeight/2-(l*.79/2)).toString()+"px",
                         backgroundColor:"gray",
                         display:["none","initial"][posC]
                     }}
@@ -60,10 +51,11 @@ export default class RadialTree extends Component {
                     alt="im"
                     className="image2"
                     style={{
-                        height: (this.props.pos*80).toString()+"vh",
-                        width: (this.props.pos*40).toString()+"vw",
-                        right: ((40-this.props.pos*40)/2).toString()+"vw",
-                        top: ((80-this.props.pos*80)/2).toString()+"vh"
+                        position:"absolute",
+                        height: (this.props.pos*l*.8).toString()+"px",
+                        width: (this.props.pos*l*.8).toString()+"px",
+                        right: (window.innerWidth/4-this.props.pos*l*.4).toString()+"px",
+                        top: (window.innerHeight/2-this.props.pos*l*.4).toString()+"px"
                     }}/>
                 <img
                     id="tree"
@@ -71,12 +63,13 @@ export default class RadialTree extends Component {
                     alt="im"
                     className="image2"
                     style={{
-                        height: "80vh",
-                        width: "40vw",
-                        right:"0",
-                        top:"0"
+                        position:"absolute",
+                        height: (l*.8).toString()+"px",
+                        width: (l*.8).toString()+"px",
+                        right: (window.innerWidth/4-l*.4).toString()+"px",
+                        top: (window.innerHeight/2-l*.4).toString()+"px"
                     }}
-                    />
+                />
 
                 <Slider
                     value={posC}

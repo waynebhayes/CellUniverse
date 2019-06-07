@@ -1,4 +1,4 @@
-"""Converts SuperSegger Cell Tracking data into a radial tree plot."""
+"""Converts Cell Universe data into a radial tree plot."""
 
 import argparse
 import csv
@@ -6,7 +6,11 @@ import math
 import sys
 from pathlib import Path
 
+from config import *
+
 from svgwrite import Drawing
+
+from parseColony import parseColony
 
 colors={
     "00": "red",
@@ -16,8 +20,6 @@ colors={
 }
 
 SVG_SIZE = 512
-STEP_LENGTH = math.floor(SVG_SIZE/2/81) # redefined below
-
 
 def _print_error(msg):
     print(f'ERROR: {msg}', file=sys.stderr)
@@ -77,7 +79,7 @@ def get_leaf_count(node):
     return sum([get_leaf_count(child) for child in node.children])
 
 
-def set_angles(node, angle_spacings, lowest_angle):
+def set_angles(node, angle_spacings, lowest_angle, angleFile):
     '''Sets the angles for all of the nodes.'''
     if not node.children:
         node.angle = next(angle_spacings)
@@ -86,11 +88,12 @@ def set_angles(node, angle_spacings, lowest_angle):
         angles = []
         pie_angles = []
         for child in node.children:
-            angle,pie_angle = set_angles(child, angle_spacings, lowest_angle)
+            angle,pie_angle = set_angles(child, angle_spacings, lowest_angle, angleFile)
             angles.append(angle)
             pie_angles.append(pie_angle)
         node.angle = sum(angles)/len(node.children)
         node.pie_angle = max(pie_angles)
+    angleFile.write(",\n\t\"b"+node.object_id+"\": "+str(node.angle))
     return (node.angle,node.pie_angle)
 
 
@@ -112,7 +115,7 @@ def convert_to_tree(rows):
             node = CellNode(object_id, parent_id, frame)
             merge_dict[object_id] = node
 
-            if parent_id == '0':
+            if parent_id == '':
                 root_list.append(node)
             else:
                 merge_dict[parent_id].children.append(node)
@@ -175,10 +178,8 @@ def draw_radial_tree_node(svg_drawing, tree_plot, node, rad_grad, step_size):
 def save_radial_tree_plot(filename, root_list, step_size):
     
     #  define some params
-    radius = "50%"
     white = "rgb(255, 255, 255)"
     black = "rgb(0, 0, 0)"
-    grey = "rgb(127,127,127)"
 
     #  create the drawing surface
     svg_drawing = Drawing(
@@ -218,7 +219,7 @@ def save_pie_chart(filename, root_list, step_size):
     
     start_x = SVG_SIZE//2
     start_y = SVG_SIZE//2
-    radius = SVG_SIZE//2-(2*step_size)
+    radius = SVG_SIZE//2
     
     radians0 = root_list[-1].pie_angle
     for node in root_list:
@@ -243,47 +244,39 @@ def save_pie_chart(filename, root_list, step_size):
     svg_drawing.save()
 
 def main():
-    # Get the path to the lineage data from the command-line
+    # Get the path to the output directory from the command-line
     parser = argparse.ArgumentParser(description='Generate a radial tree plot.')
-    parser.add_argument('path', metavar='LINEAGE_DATA', type=Path,
-                        help='the path to the lineage data (in CSV format)')
-    parser.add_argument('svg_path', metavar='SVG_FILE', type=Path,
-                        help='the path to the outputted plot')
-    parser.add_argument('pie_path', metavar='PIE_FILE', type=Path,
-                        help='the path to the outputted pie color chart')    
-
+    parser.add_argument('output_path', metavar='OUTPUT_PATH', type=str,
+                        help='the desired output path') 
     args = parser.parse_args()
 
-    if not args.path.exists():
-        print(f'File not found: {args.path.absolute()}')
-        return
-
     # Load the data into memory
-    rows = []
-    with args.path.open() as fd:
-        reader = csv.DictReader(fd)
-        for row in reader:
-            rows.append(row)
+    rows = parseColony(args.output_path)
 
     # Merge individual cells temporally and generate tree
+    # Create angle file
     root_list,last_image =  convert_to_tree(rows)
     leaf_counts = [get_leaf_count(root) for root in root_list]
     total_leaves = sum(leaf_counts)
     lowest_angle = 2*math.pi/total_leaves
     step_size = SVG_SIZE/2/(last_image+2)
     angle_spacings = angle_spacing_generator(total_leaves)
+    angleFile = open(args.output_path+"/"+angleFilename, 'w')
+    angleFile.write("{\n\t\"name\": \"angle\"")
     for root in root_list:
-        set_angles(root, angle_spacings, lowest_angle)
+        set_angles(root, angle_spacings, lowest_angle, angleFile)
+    angleFile.write("\n}")
+    angleFile.close()
 
     # Compress tree
     for root in root_list:
         compress_tree(root)
 
     # Draw the SVG radial tree plot
-    save_radial_tree_plot(args.svg_path, root_list, step_size)
+    save_radial_tree_plot(args.output_path+"/"+treeFilename, root_list, step_size)
     
     # Draw the SVG pie color chart
-    save_pie_chart(args.pie_path, root_list, step_size)
+    save_pie_chart(args.output_path+"/"+pieFilename, root_list, step_size)
     
 
 if __name__ == '__main__':
