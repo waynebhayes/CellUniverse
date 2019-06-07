@@ -6,16 +6,11 @@
   "dependencies": {
     "@material-ui/core": "^3.9.3",
     "@material-ui/lab": "^3.0.0-alpha.30",
-    "chart.js": "^2.8.0",
     "jquery": "^3.3.1",
     "react": "^16.8.6",
-    "react-canvas-draw": "^1.0.1-hotfix.4",
-    "react-chartkick": "^0.3.0",
     "react-dom": "^16.8.6",
     "react-router-dom": "^5.0.0",
     "react-scripts": "2.1.8",
-    "react-shapes": "^0.1.0",
-    "react-svg-piechart": "^2.4.0",
     "reactstrap": "^8.0.0"
   },
   "scripts": {
