@@ -8,7 +8,7 @@ TEST_DIR=./regression-tests/cellviewer
 
 mkdir -p $TEST_DIR/test/
 rm -f $TEST_DIR/test/*
-cp -r $TEST_DIR/original_data/ $TEST_DIR/test/
+cp -r $TEST_DIR/original_data/* $TEST_DIR/test/
 
 mkdir -p $TEST_DIR/results/
 rm -f $TEST_DIR/results/*
@@ -27,4 +27,3 @@ python "$TEST_DIR/checkerCellViewer.py" \
     "-wd=$TEST_DIR"
 
 echo "Done testing cellviewer"
-exit
