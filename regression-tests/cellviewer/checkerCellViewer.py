@@ -123,13 +123,19 @@ def checkJSON(test_path, expected_path, lvl, file):
             test = ordered(json.loads(testData))
             testLines = testData.split('\n')
 
+    except IOError as e:
+        err = 'Test JSON: An IOError occurred. '+e.args[-1]+'. File: '+test_path
+        print(err)
+        return []
+    
+    try:
         with open(expected_path,'r') as eFile:
             expectedData = eFile.read()
             expected = ordered(json.loads(expectedData))
             expectedLines = expectedData.split('\n')
 
     except IOError as e:
-        err = 'An IOError occurred. '+e.args[-1]
+        err = 'Expected JSON: An IOError occurred. '+e.args[-1]+'. File: '+expected_path
         print(err)
         return []
 
@@ -146,13 +152,19 @@ def checkSVG(test_path, expected_path, lvl, file):
         with open(test_path,'r') as tFile:
             tData = tFile.read().split("<")
             tData = sorted([sorted(tag.split())] for tag in tData)
+    
+    except IOError as e:
+        err = 'Test SVG: An IOError occurred. '+e.args[-1]+'. File: '+test_path
+        print(err)
+        return []
 
+    try:
         with open(expected_path,'r') as eFile:
             eData = eFile.read().split("<")
             eData = sorted([sorted(tag.split())] for tag in eData)
 
     except IOError as e:
-        err = 'An IOError occurred. '+e.args[-1]
+        err = 'Expected SVG: An IOError occurred. '+e.args[-1]+'. File: '+expected_path
         print(err)
         return []     
 
