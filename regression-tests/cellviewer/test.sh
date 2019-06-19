@@ -6,14 +6,12 @@ echo "Testing cellviewer"
 TEST_DIR=./regression-tests/cellviewer
 [ -d "$TEST_DIR" ] || die "Must run from the repository's root directory!"
 
-mkdir -p $TEST_DIR/test/
-rm -f $TEST_DIR/test/*
-cp -r $TEST_DIR/original_data/* $TEST_DIR/test/
+rm -rf $TEST_DIR/test
+mkdir $TEST_DIR/test
+cp -r $TEST_DIR/original_data/* $TEST_DIR/test
 
-mkdir -p $TEST_DIR/results/
-rm -f $TEST_DIR/results/*
-
-
+rm -rf $TEST_DIR/results
+mkdir $TEST_DIR/results
 
 if python "./cellviewer/radialtree.py" \
     $TEST_DIR/test; then
