@@ -13,15 +13,12 @@ cp -r $TEST_DIR/original_data/* $TEST_DIR/test
 rm -rf $TEST_DIR/results
 mkdir $TEST_DIR/results
 
-if python "./cellviewer/radialtree.py" \
-    $TEST_DIR/test; then
+if python3 "./cellviewer/radialtree.py" $TEST_DIR/test; then
     :
 else
     die "Python quit unexpectedly!"
 fi
 
-python "$TEST_DIR/checkerCellViewer.py" \
-    "-checkLevel=1" \
-    "-wd=$TEST_DIR"
+python3 "$TEST_DIR/checkerCellViewer.py" "-checkLevel=1" "-wd=$TEST_DIR"
 
 echo "Done testing cellviewer"
