@@ -30,8 +30,7 @@ export default class Viewer extends Component {
             srcTree: srcTree,
             src_pie: srcPie
         }
-
-        for(var i=0; i<=50; i++){
+        for(var i=0; i<colony.frames; i++){
             var x = i.toString();
             while (x.length !==3){
                 x = "0"+x;

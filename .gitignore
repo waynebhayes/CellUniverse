@@ -344,3 +344,11 @@ Temporary Items
 # Text files (except examples)
 # *.txt
 !*.init.txt
+
+# cellviewer
+node_modules/
+package-lock.json
+!upload.png
+regression-tests/cellviewer/results/
+regression-tests/cellviewer/test/
+cellviewer*.sh

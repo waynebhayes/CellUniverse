@@ -131,7 +131,7 @@ def checkJSON(test_path, expected_path, lvl, file):
     except IOError as e:
         err = 'An IOError occurred. '+e.args[-1]
         print(err)
-        return err
+        return []
 
     lineDiff = lineCheck(testLines, expectedLines) if not lvl%2 else None
     valDiff = valueCheck(test, expected) if lvl else None
@@ -154,7 +154,7 @@ def checkSVG(test_path, expected_path, lvl, file):
     except IOError as e:
         err = 'An IOError occurred. '+e.args[-1]
         print(err)
-        return err     
+        return []     
 
     return [valueCheck(tData, eData)]
 
