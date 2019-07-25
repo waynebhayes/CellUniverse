@@ -130,6 +130,15 @@ class Colony(object):
         #print(len(nodes))
         self._nodes = nodes
 
+    def clone(self):
+        """Make a deep copy of the colony."""
+        colony = Colony()
+
+        for node in list(self):
+            colony.add(CellNode(deepcopy(node.cell), prior=node))
+
+        return colony
+
 
 class LineageFrames(object):
     """The LineageFrames class keeps track of the colonies of each frame."""
@@ -138,18 +147,39 @@ class LineageFrames(object):
         self._frames = []
 
     def forward(self):
-        colony = Colony()
-        if self._frames:
-            prior_colony = self._frames[-1]
-            for node in list(prior_colony):
-                colony.add(CellNode(deepcopy(node.cell), prior=node))
-        self._frames.append(colony)
+        colony = self.clone_colony()
+        self.add_frame(colony)
         return colony
+
+    def add_frame(self, colony):
+        self._frames.append(colony)
+
+    def clone_colony(self):
+        if self._frames:
+            if isinstance(self._frames[-1], (list,)):
+                return self._frames[-1][0].clone()
+            else:
+                return self._frames[-1].clone()
+        else:
+            return Colony()
 
     def __iter__(self):
         for colony in self._frames:
-            yield colony
+            if isinstance(colony, (list,)):
+                yield colony[0]
+            else:
+                yield colony
 
     @property
     def latest(self):
-        return self._frames[-1]
+        if isinstance(self._frames[-1], (list,)):
+            return self._frames[-1][0]
+        else:
+            return self._frames[-1]
+
+    @property
+    def latest_group(self):
+        if isinstance(self._frames[-1], (list,)):
+            return self._frames[-1]
+        else:
+            return [self._frames[-1]]
