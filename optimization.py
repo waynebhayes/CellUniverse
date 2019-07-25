@@ -1,6 +1,7 @@
 import random
 import time
-from math import sqrt
+import math
+from math import sqrt, atan
 from itertools import chain
 
 import numpy as np
@@ -131,10 +132,15 @@ def perturb_bacilli(node, config, imageshape):
     # push the new cell over the previous in the node
     node.push(Bacilli(cell.name, x, y, width, length, rotation))
 
+def split_proba(length):
+    """Returns the split probability given the length of the cell."""
+    # Determined empirically based on previous runs
+    return math.sin((length - 14) / (2 * math.pi * math.pi)) if 14 <= length <= 45 else 0
 
 def bacilli_split(node, config, imageshape):
     """Split the cell and push both onto the stack for testing."""
-    if random.random() > 0.1:
+
+    if random.random() < split_proba(node.cell.length):
         return False
 
     max_displacement = config['bacilli.maxSpeed']/config['global.framesPerSecond']
