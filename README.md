@@ -86,9 +86,8 @@ Usage
 Command line help:
 
 ``` sourceCode
-$ python main.py --help
-usage: main.py [-h] [-d DIRECTORY] [-s N] [-f N] [--dist] -i PATTERN -o
-               DIRECTORY -c FILE -x FILE -t TEMP -e TEMP
+usage: main.py [-h] [-d DIRECTORY] [-s N] [-f N] [--dist] [-w WORKERS] [-j JOBS] [--keep KEEP] [--strategy STRATEGY] [--cluster CLUSTER] -i
+               PATTERN -o DIRECTORY -c FILE -x FILE -t TEMP -e TEMP
 
 optional arguments:
   -h, --help            show this help message and exit
@@ -97,6 +96,12 @@ optional arguments:
   -s N, --start N       starting image (default: 0)
   -f N, --finish N      final image (defaults to until last image)
   --dist                use distance-based objective function
+  -w WORKERS, --workers WORKERS
+                        number of parallel workers (defaults to number of processors)
+  -j JOBS, --jobs JOBS  number of jobs per frame (defaults to --workers/-w)
+  --keep KEEP           number of top solutions kept (must be equal or less than --jobs/-j)
+  --strategy STRATEGY   one of "best-wins", "worst-wins", "extreme-wins"
+  --cluster CLUSTER     dask cluster address (defaults to local cluster)
 
 required arguments:
   -i PATTERN, --input PATTERN

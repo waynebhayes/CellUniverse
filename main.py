@@ -10,6 +10,7 @@ The entry point for CellAnneal program.
 
 import cProfile
 import argparse
+import multiprocessing
 from pathlib import Path
 
 
@@ -26,6 +27,16 @@ def parse_args():
                         help='final image (defaults to until last image)')
     parser.add_argument('--dist', action='store_true', default=False,
                         help='use distance-based objective function')
+    parser.add_argument('-w', '--workers', type=int, default=-1,
+                        help='number of parallel workers (defaults to number of processors)')
+    parser.add_argument('-j', '--jobs', type=int, default=-1,
+                        help='number of jobs per frame (defaults to --workers/-w)')
+    parser.add_argument('--keep', type=int, default=1,
+                        help='number of top solutions kept (must be equal or less than --jobs/-j)')
+    parser.add_argument('--strategy', type=str, default='best-wins',
+                        help='one of "best-wins", "worst-wins", "extreme-wins"')
+    parser.add_argument('--cluster', type=str, default='',
+                        help='dask cluster address (defaults to local cluster)')
 
     # required arguments
     required = parser.add_argument_group('required arguments')
@@ -42,7 +53,18 @@ def parse_args():
     required.add_argument('-e', '--endtemp', metavar='TEMP', type=float, required=True,
                           help='ending temperature for the simulated annealing')
 
-    return parser.parse_args()
+    parsed = parser.parse_args()
+
+    if parsed.workers == -1:
+        parsed.workers = multiprocessing.cpu_count()
+
+    if parsed.jobs == -1:
+        if parsed.cluster:
+            raise ValueError('-j/--jobs is required for non-local clusters')
+        else:
+            parsed.jobs = parsed.workers
+
+    return parsed
 
 
 def load_config(config_file):
@@ -113,6 +135,17 @@ def get_inputfiles(args):
 def main(args):
     """Main function of cellanneal."""
 
+    import dask
+    from dask.distributed import Client, LocalCluster
+    if not args.cluster:
+        cluster = LocalCluster(
+            n_workers=args.workers,
+        )
+    else:
+        cluster = args.cluster
+
+    client = Client(cluster)
+
     lineagefile = None
     start = time.time()
 
@@ -137,7 +170,7 @@ def main(args):
 
         for imagefile in get_inputfiles(args):
 
-            colony = optimize(imagefile, lineageframes, args, config)
+            colony = optimize(imagefile, lineageframes, args, config, client)
 
             # flatten modifications and save cell properties
             colony.flatten()
@@ -180,6 +213,7 @@ if __name__ == '__main__':
 
     # pr = cProfile.Profile()
     # pr.enable()
+    print('CHECKPOINT, {}, {}, {}'.format(time.time(), -1, -1), flush=True)
     exit(main(args))
     # main(args)
     # pr.disable()

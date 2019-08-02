@@ -1,6 +1,8 @@
 import random
 import time
-from math import sqrt
+import math
+from math import sqrt, atan
+from itertools import chain
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -9,6 +11,8 @@ from scipy.ndimage import distance_transform_edt
 
 from cell import Bacilli
 from colony import CellNode, Colony
+
+import dask.distributed
 
 FONT = ImageFont.load_default()
 
@@ -128,10 +132,15 @@ def perturb_bacilli(node, config, imageshape):
     # push the new cell over the previous in the node
     node.push(Bacilli(cell.name, x, y, width, length, rotation))
 
+def split_proba(length):
+    """Returns the split probability given the length of the cell."""
+    # Determined empirically based on previous runs
+    return math.sin((length - 14) / (2 * math.pi * math.pi)) if 14 <= length <= 45 else 0
 
 def bacilli_split(node, config, imageshape):
     """Split the cell and push both onto the stack for testing."""
-    if random.random() > 0.1:
+
+    if random.random() < split_proba(node.cell.length):
         return False
 
     max_displacement = config['bacilli.maxSpeed']/config['global.framesPerSecond']
@@ -247,11 +256,9 @@ def bacilli_combine(node, config, imageshape):
 
     return True, presplit
 
-
-def optimize(imagefile, lineageframes, args, config):
-    """Optimize the cell properties using simulated annealing."""
+def optimize_core(imagefile, colony, args, config):
+    """Core of the optimization routine."""
     global debugcount, badcount  # DEBUG
-    badcount = 0  # DEBUG
 
     realimage = load_image(imagefile)
     shape = realimage.shape
@@ -259,8 +266,6 @@ def optimize(imagefile, lineageframes, args, config):
     celltype = config['global.cellType'].lower()
     useDistanceObjective = args.dist
 
-    # progress the lineage frame forward
-    colony = lineageframes.forward()
     cellnodes = list(colony)
 
     # find the initial cost
@@ -282,8 +287,8 @@ def optimize(imagefile, lineageframes, args, config):
 
     for i in range(run_count):
         # print progress for debugging purposes
-        if i%1013 == 59:
-            print(f'{imagefile.name}: Progress: {100*i/run_count:.02f}%')
+        #if i%1013 == 59:
+        #    print(f'{imagefile.name}: Progress: {100*i/run_count:.02f}%', flush=True)
 
         # choose a cell at random
         index = random.randint(0, len(cellnodes) - 1)
@@ -424,7 +429,7 @@ def optimize(imagefile, lineageframes, args, config):
 
         temperature *= alpha
 
-    print(f'Bad Percentage: {100*badcount/run_count}%')
+    # print(f'Bad Percentage: {100*badcount/run_count}%')
 
     synthimage = generate_synthetic_image(cellnodes, realimage.shape)
     if useDistanceObjective:
@@ -447,8 +452,61 @@ def optimize(imagefile, lineageframes, args, config):
     frame = np.clip(frame, 0, 1)
 
     debugimage = Image.fromarray((255*frame).astype(np.uint8))
-    debugimage.save(args.output/imagefile.name)
-    debugcount += 1
 
+    return colony, cost, debugimage
+
+def optimize(imagefile, lineageframes, args, config, client):
+    """Optimize the cell properties using simulated annealing."""
+    global badcount  # DEBUG
+    badcount = 0  # DEBUG
+
+    #tasks = []
+
+    group = lineageframes.latest_group
+    ejob = args.jobs // len(group)
+
+    futures = []
+
+    for colony in group:
+        for i in range(ejob):
+            newColony = colony.clone()
+            futures.append(client.submit(optimize_core, imagefile, newColony, args, config))
+
+    try:
+        dask.distributed.wait(futures, 360)
+    except Exception as e:
+        print(e)
+
+    results = []
+    for future in futures:
+        if not future.done():
+            print('Task timed out - Cancelling')
+            future.cancel()
+        else:
+            results.append(future.result(timeout=10))
+
+    if args.strategy not in ['best-wins', 'worst-wins', 'extreme-wins']:
+        raise ValueError('--strategy must be one of "best-wins", "worst-wins", "extreme-wins"')
+
+    if args.strategy in ['best-wins', 'worst-wins']:
+        results = sorted(results, key=lambda x: x[1], reverse=args.strategy == 'worst-wins')
+    else:
+        bestresults = sorted(results, key=lambda x: x[1])
+        worstresults = sorted(results, key=lambda x: x[1], reverse=True)
+        # https://stackoverflow.com/a/11125256
+        results = list(chain.from_iterable(zip(bestresults, worstresults)))
+
+    winning = results[:args.keep]
+    print('keeping {}, got {}'.format(args.keep, len(winning)))
+
+    # Choose the best or worst
+    print('The winning solution(s) ({}) have cost values {}'.format(args.strategy, [s[1] for s in winning]))
+    print('CHECKPOINT, {}, {}, {}'.format(time.time(), imagefile.name, winning[0][1]), flush=True)
+
+    lineageframes.add_frame([s[0] for s in winning])
+
+    for i, s in enumerate(winning):
+        debugimage = s[2]
+        debugimage.save(args.output/'{:03d}-{}'.format(i, imagefile.name))
 
     return colony
