@@ -35,7 +35,7 @@ export default class Viewer extends Component {
             while (x.length !==3){
                 x = "0"+x;
             }
-            this.data.imgs.push(require('../../output/frame'+x+'.png'));
+            this.data.imgs.push(require('../../output/000-frame'+x+'.png'));
         }
 
         this.l = 1000;
