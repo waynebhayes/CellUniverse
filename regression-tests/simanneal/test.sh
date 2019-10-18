@@ -10,7 +10,7 @@ TEST_DIR=./regression-tests/simanneal
 mkdir -p $TEST_DIR/output
 rm -f $TEST_DIR/output/*
 
-if python "./main.py" \
+if python3 "./main.py" \
     --start 0 \
     --finish 13 \
     --debug "./debug" \
@@ -25,7 +25,7 @@ else
     die "Python quit unexpectedly!"
 fi
 
-python "$TEST_DIR/compare.py" "$TEST_DIR/expected_lineage.csv" "$TEST_DIR/output/lineage.csv"
+python3 "$TEST_DIR/compare.py" "$TEST_DIR/expected_lineage.csv" "$TEST_DIR/output/lineage.csv"
 
 echo "Done testing simulated annealing."
 exit
