@@ -4,7 +4,7 @@ npm install --prefix cellviewer
 rm -rf ./cellviewer/src/output/
 mkdir ./cellviewer/src/output/
 
-python "./main.py" \
+python3 "./main.py" \
     --start 0 \
     --finish 20 \
     --debug "./debug" \
@@ -15,7 +15,7 @@ python "./main.py" \
     --temp 10 \
     --endtemp 0.01
 
-python "./cellviewer/radialtree.py" \
+python3 "./cellviewer/radialtree.py" \
     "./cellviewer/src/output"
 
 npm run --prefix cellviewer deploy
