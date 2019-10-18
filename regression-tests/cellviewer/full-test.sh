@@ -1,3 +1,4 @@
+echo "Testing cellviewer (pushing to website)"
 npm install --prefix cellviewer
 
 rm -rf ./cellviewer/src/output/
@@ -18,3 +19,5 @@ python "./cellviewer/radialtree.py" \
     "./cellviewer/src/output"
 
 npm run --prefix cellviewer deploy
+
+echo "Done testing cellviewer (pushed to website)"
