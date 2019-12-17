@@ -1,5 +1,6 @@
 #!/bin/bash
-die() { echo "$@" >&2; exit 1; }
+die() { echo "$@" >&2; exit 1;
+}
 
 echo "Testing simulated annealing distance objective"
 
@@ -26,7 +27,6 @@ else
     die "Python quit unexpectedly!"
 fi
 
-python3 "$TEST_DIR/compare.py" "$TEST_DIR/expected_lineage.csv" "$TEST_DIR/output/lineage.csv"
+python3 "$TEST_DIR/compare.py" "$TEST_DIR/expected_lineage.csv" "$TEST_DIR/output/lineage.csv" || die "compare failed"
 
 echo "Done testing simulated annealing dist."
-exit
