@@ -339,11 +339,11 @@ def optimize_core(imagefile, colony, args, config):
                                                 region.left:region.right]**2)
 
                 # subtract the previous cells
-                snode1.cell.draw(diffimage, is_background, greySyntheticImage)
-                snode2.cell.draw(diffimage, is_background, greySyntheticImage)
+                snode1.cell.draw(diffimage, is_cell, greySyntheticImage)
+                snode2.cell.draw(diffimage, is_cell, greySyntheticImage)
 
                 # add the new cell
-                cnode.cell.draw(diffimage, is_cell, greySyntheticImage)
+                cnode.cell.draw(diffimage, is_background, greySyntheticImage)
 
             elif split:
                 snode1, snode2 = node.children
@@ -360,11 +360,11 @@ def optimize_core(imagefile, colony, args, config):
                                                 region.left:region.right]**2)
                 
                 # subtract the previous cell
-                node.cell.draw(diffimage, is_background, greySyntheticImage)
+                node.cell.draw(diffimage, is_cell, greySyntheticImage)
 
                 # add the new cells
-                snode1.cell.draw(diffimage, is_cell, greySyntheticImage)
-                snode2.cell.draw(diffimage, is_cell, greySyntheticImage)
+                snode1.cell.draw(diffimage, is_background, greySyntheticImage)
+                snode2.cell.draw(diffimage, is_background, greySyntheticImage)
 
             else:
                 # compute the starting cost
@@ -378,10 +378,10 @@ def optimize_core(imagefile, colony, args, config):
                                                 region.left:region.right]**2)
 
                 # subtract the previous cell
-                node.cell.draw(diffimage, is_background, greySyntheticImage)
+                node.cell.draw(diffimage, is_cell, greySyntheticImage)
 
                 # add the new cells
-                new_node.cell.draw(diffimage, is_cell, greySyntheticImage)
+                new_node.cell.draw(diffimage, is_background, greySyntheticImage)
 
             # compute the cost difference
             if useDistanceObjective:
@@ -429,8 +429,8 @@ def optimize_core(imagefile, colony, args, config):
                 frame[..., 1] = frame[..., 0]
                 frame[..., 2] = frame[..., 0]
 
-                for node in cellnodes:
-                    node.cell.drawoutline(frame, (1, 0, 0))
+                #for node in cellnodes:
+                    #node.cell.drawoutline(frame, (1, 0, 0))
 
                 frame = np.clip(frame, 0, 1)
 

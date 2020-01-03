@@ -125,17 +125,17 @@ class Bacilli(Cell):
         if greySyntheticImage:
             if is_cell:
                 image[self._region.top:self._region.bottom,
-                      self._region.left:self._region.right][mask] = 0.15
+                      self._region.left:self._region.right][mask] += -0.24
             else:
                 image[self._region.top:self._region.bottom,
-                      self._region.left:self._region.right][mask] = 0.39
+                      self._region.left:self._region.right][mask] += 0.24
         else:
             if is_cell:
                 image[self._region.top:self._region.bottom,
-                      self._region.left:self._region.right][mask] += -1.0
+                      self._region.left:self._region.right][mask] += 1.0
             else:
                 image[self._region.top:self._region.bottom,
-                      self._region.left:self._region.right][mask] += 1.0
+                      self._region.left:self._region.right][mask] += -1.0
 
     def drawoutline(self, image, color):
         """Draws the outline of the cell over a color image."""
