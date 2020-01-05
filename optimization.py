@@ -18,6 +18,10 @@ FONT = ImageFont.load_default()
 
 debugcount = 0
 badcount = 0  # DEBUG
+greySyntheticImage = False  # if generate binary synticimage, False
+is_cell = True
+is_background = False
+
 
 
 def objective(realimage, synthimage):
@@ -29,11 +33,18 @@ def dist_objective(diffimage, distmap):
     return np.sum((diffimage*distmap)**2)
 
 
-def generate_synthetic_image(cellnodes, shape):
-    synthimage = np.zeros(shape)
-    for node in cellnodes:
-        node.cell.draw(synthimage, 1.0)
-    return synthimage
+def generate_synthetic_image(cellnodes, shape, greySyntheticImage):
+    if greySyntheticImage:
+        synthimage = np.full(shape, 0.39)  # pixel value: 0.39*255 == 100
+        for node in cellnodes:
+            node.cell.draw(synthimage, is_cell, greySyntheticImage)  # pixel value: 0.15*255 == 40
+        return synthimage
+    else:
+        synthimage = np.zeros(shape)
+        for node in cellnodes:
+            node.cell.draw(synthimage, is_cell, greySyntheticImage)
+        return synthimage
+
 
 
 def load_image(imagefile):
@@ -269,7 +280,7 @@ def optimize_core(imagefile, colony, args, config):
     cellnodes = list(colony)
 
     # find the initial cost
-    synthimage = generate_synthetic_image(cellnodes, realimage.shape)
+    synthimage = generate_synthetic_image(cellnodes, realimage.shape, greySyntheticImage)
     diffimage = realimage - synthimage
     if useDistanceObjective:
         distmap = distance_transform_edt(realimage < .5)
@@ -328,11 +339,11 @@ def optimize_core(imagefile, colony, args, config):
                                                 region.left:region.right]**2)
 
                 # subtract the previous cells
-                snode1.cell.draw(diffimage, 1.0)
-                snode2.cell.draw(diffimage, 1.0)
+                snode1.cell.draw(diffimage, is_cell, greySyntheticImage)
+                snode2.cell.draw(diffimage, is_cell, greySyntheticImage)
 
                 # add the new cell
-                cnode.cell.draw(diffimage, -1.0)
+                cnode.cell.draw(diffimage, is_background, greySyntheticImage)
 
             elif split:
                 snode1, snode2 = node.children
@@ -349,11 +360,11 @@ def optimize_core(imagefile, colony, args, config):
                                                 region.left:region.right]**2)
                 
                 # subtract the previous cell
-                node.cell.draw(diffimage, 1.0)
+                node.cell.draw(diffimage, is_cell, greySyntheticImage)
 
                 # add the new cells
-                snode1.cell.draw(diffimage, -1.0)
-                snode2.cell.draw(diffimage, -1.0)
+                snode1.cell.draw(diffimage, is_background, greySyntheticImage)
+                snode2.cell.draw(diffimage, is_background, greySyntheticImage)
 
             else:
                 # compute the starting cost
@@ -367,10 +378,10 @@ def optimize_core(imagefile, colony, args, config):
                                                 region.left:region.right]**2)
 
                 # subtract the previous cell
-                node.cell.draw(diffimage, 1.0)
+                node.cell.draw(diffimage, is_cell, greySyntheticImage)
 
                 # add the new cells
-                new_node.cell.draw(diffimage, -1.0)
+                new_node.cell.draw(diffimage, is_background, greySyntheticImage)
 
             # compute the cost difference
             if useDistanceObjective:
@@ -410,16 +421,16 @@ def optimize_core(imagefile, colony, args, config):
             cellnodes = list(colony)
 
             # DEBUG
-            if False and args.debug and i%80 == 0:
-                synthimage = generate_synthetic_image(cellnodes, realimage.shape)
+            if args.debug and i%80 == 0:
+                synthimage = generate_synthetic_image(cellnodes, realimage.shape, greySyntheticImage)
 
                 frame = np.empty((shape[0], shape[1], 3))
-                frame[..., 0] = (realimage - synthimage + 1)/2
+                frame[..., 0] = synthimage
                 frame[..., 1] = frame[..., 0]
                 frame[..., 2] = frame[..., 0]
 
-                for node in cellnodes:
-                    node.cell.drawoutline(frame, (1, 0, 0))
+                #for node in cellnodes:
+                    #node.cell.drawoutline(frame, (1, 0, 0))
 
                 frame = np.clip(frame, 0, 1)
 
@@ -431,7 +442,7 @@ def optimize_core(imagefile, colony, args, config):
 
     # print(f'Bad Percentage: {100*badcount/run_count}%')
 
-    synthimage = generate_synthetic_image(cellnodes, realimage.shape)
+    synthimage = generate_synthetic_image(cellnodes, realimage.shape, greySyntheticImage)
     if useDistanceObjective:
         new_cost = dist_objective(realimage - synthimage, distmap)
     else:
