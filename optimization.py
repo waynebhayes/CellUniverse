@@ -267,7 +267,7 @@ def bacilli_combine(node, config, imageshape):
 
     return True, presplit
 
-def optimize_core(imagefile, colony, args, config):
+def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000):
     """Core of the optimization routine."""
     global debugcount, badcount  # DEBUG
 
@@ -291,7 +291,7 @@ def optimize_core(imagefile, colony, args, config):
         cost = objective(realimage, synthimage)
 
     # setup temperature schedule
-    run_count = int(2000*len(cellnodes))
+    run_count = int(iterations_per_cell*len(cellnodes))
     temperature = args.temp
     end_temperature = args.endtemp
     alpha = (end_temperature/temperature)**(1/run_count)
@@ -470,6 +470,11 @@ def optimize(imagefile, lineageframes, args, config, client):
     """Optimize the cell properties using simulated annealing."""
     global badcount  # DEBUG
     badcount = 0  # DEBUG
+
+    if not client:
+        colony,_,debugimage = optimize_core(imagefile, lineageframes.forward(), args, config)
+        debugimage.save(args.output / imagefile.name)
+        return colony
 
     #tasks = []
 
