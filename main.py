@@ -37,6 +37,9 @@ def parse_args():
                         help='one of "best-wins", "worst-wins", "extreme-wins"')
     parser.add_argument('--cluster', type=str, default='',
                         help='dask cluster address (defaults to local cluster)')
+    parser.add_argument('--graysynthetic', type=bool, default=False,
+                        help='enables the use of the grayscale synthetic image for use with non-thresholded images')
+    
 
     # required arguments
     required = parser.add_argument_group('required arguments')
@@ -63,6 +66,7 @@ def parse_args():
             raise ValueError('-j/--jobs is required for non-local clusters')
         else:
             parsed.jobs = parsed.workers
+
 
     return parsed
 
@@ -136,6 +140,7 @@ def main(args):
     """Main function of cellanneal."""
 
     import dask
+    global GreySyntheticImage
     from dask.distributed import Client, LocalCluster
     if not args.cluster:
         cluster = LocalCluster(
@@ -146,13 +151,14 @@ def main(args):
 
     client = Client(cluster)
 
+
     lineagefile = None
     start = time.time()
+
 
     try:
         if args.debug:
             debugmode = True
-
         config = load_config(args.config)
         celltype = config['global.cellType'].lower()
 
