@@ -39,7 +39,7 @@ def parse_args():
                         help='dask cluster address (defaults to local cluster)')
     parser.add_argument('--graysynthetic', type=bool, default=False,
                         help='enables the use of the grayscale synthetic image for use with non-thresholded images')
-    
+
 
     # required arguments
     required = parser.add_argument_group('required arguments')
