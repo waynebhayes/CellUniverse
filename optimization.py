@@ -477,7 +477,7 @@ def optimize_core(imagefile, colony, args, config):
     print(f'Incremental Cost: {cost}')
     print(f'Actual Cost:      {new_cost}')
     if abs(new_cost - cost) > 1e-7:
-        print('WARNING: incremental cost diverged from expected cost')
+        print('WARNING: incremen    tal cost diverged from expected cost')
 
     frame = np.empty((shape[0], shape[1], 3))
     frame[..., 0] = realimage
