@@ -397,6 +397,9 @@ def save_output(imagefiles, realimages, lineage: LineageM, args):
 
         frame = np.clip(frame, 0, 1)
 
+        if not args.output.is_dir():
+            args.output.mkdir()
+
         debugimage = Image.fromarray((255 * frame).astype(np.uint8))
         debugimage.save(args.output / imagefiles[frame_index].name)
 
