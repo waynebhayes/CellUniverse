@@ -40,6 +40,8 @@ def parse_args():
 
     parser.add_argument('--no_parallel', action='store_true', default=False, help='disable parallelism')
     parser.add_argument('--global_optimization', action='store_true', default=False, help='global optimization')
+    parser.add_argument('--graysynthetic', type=bool, default=False,
+                        help='enables the use of the grayscale synthetic image for use with non-thresholded images')
 
     # required arguments
     required = parser.add_argument_group('required arguments')
