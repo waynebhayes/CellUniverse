@@ -2,11 +2,12 @@ echo "Testing cellviewer (pushing to website)"
 npm install --prefix cellviewer
 
 rm -rf ./cellviewer/src/output/
+rm -rf node_modules/gh-pages/.cache
 mkdir ./cellviewer/src/output/
 
 python3 "./main.py" \
     --start 0 \
-    --finish 20 \
+    --finish 3 \
     --debug "./debug" \
     --input "./input/frame%03d.png" \
     --output "./cellviewer/src/output" \

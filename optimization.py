@@ -36,6 +36,8 @@ def generate_synthetic_image(cellnodes, shape):
     return synthimage
 
 
+
+
 def load_image(imagefile):
     """Open the image file and convert to a floating-point grayscale array."""
     with open(imagefile, 'rb') as fp:
@@ -410,8 +412,9 @@ def optimize_core(imagefile, colony, args, config):
             cellnodes = list(colony)
 
             # DEBUG
-            if False and args.debug and i%80 == 0:
+            if True and args.debug and i%80 == 0:
                 synthimage = generate_synthetic_image(cellnodes, realimage.shape)
+                residualimage = realimage-synthimage
 
                 frame = np.empty((shape[0], shape[1], 3))
                 frame[..., 0] = (realimage - synthimage + 1)/2
@@ -425,6 +428,10 @@ def optimize_core(imagefile, colony, args, config):
 
                 debugimage = Image.fromarray((255*frame).astype(np.uint8))
                 debugimage.save(args.debug/f'frame{debugcount}.png')
+
+                residualimage = Image.fromarray((255*synthimage).astype(np.uint8))
+                residualimage.save(args.debug/f'res_frame{debugcount}.png')
+
                 debugcount += 1
 
         temperature *= alpha
