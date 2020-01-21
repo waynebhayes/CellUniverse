@@ -18,6 +18,9 @@ FONT = ImageFont.load_default()
 
 debugcount = 0
 badcount = 0  # DEBUG
+is_cell = True
+is_background = False
+
 
 
 def objective(realimage, synthimage):
@@ -29,12 +32,17 @@ def dist_objective(diffimage, distmap):
     return np.sum((diffimage*distmap)**2)
 
 
-def generate_synthetic_image(cellnodes, shape):
-    synthimage = np.zeros(shape)
-    for node in cellnodes:
-        node.cell.draw(synthimage, 1.0)
-    return synthimage
-
+def generate_synthetic_image(cellnodes, shape, graySyntheticImage):
+    if graySyntheticImage:
+        synthimage = np.full(shape, 0.39)  # pixel value: 0.39*255 == 100
+        for node in cellnodes:
+            node.cell.draw(synthimage, is_cell, graySyntheticImage)  # pixel value: 0.15*255 == 40
+        return synthimage
+    else:
+        synthimage = np.zeros(shape)
+        for node in cellnodes:
+            node.cell.draw(synthimage, is_cell, graySyntheticImage)
+        return synthimage
 
 
 
@@ -258,7 +266,7 @@ def bacilli_combine(node, config, imageshape):
 
     return True, presplit
 
-def optimize_core(imagefile, colony, args, config):
+def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000):
     """Core of the optimization routine."""
     global debugcount, badcount  # DEBUG
 
@@ -271,7 +279,7 @@ def optimize_core(imagefile, colony, args, config):
     cellnodes = list(colony)
 
     # find the initial cost
-    synthimage = generate_synthetic_image(cellnodes, realimage.shape)
+    synthimage = generate_synthetic_image(cellnodes, realimage.shape, args.graysynthetic)
     diffimage = realimage - synthimage
     if useDistanceObjective:
         distmap = distance_transform_edt(realimage < .5)
@@ -282,7 +290,7 @@ def optimize_core(imagefile, colony, args, config):
         cost = objective(realimage, synthimage)
 
     # setup temperature schedule
-    run_count = int(2000*len(cellnodes))
+    run_count = int(iterations_per_cell*len(cellnodes))
     temperature = args.temp
     end_temperature = args.endtemp
     alpha = (end_temperature/temperature)**(1/run_count)
@@ -330,11 +338,11 @@ def optimize_core(imagefile, colony, args, config):
                                                 region.left:region.right]**2)
 
                 # subtract the previous cells
-                snode1.cell.draw(diffimage, 1.0)
-                snode2.cell.draw(diffimage, 1.0)
+                snode1.cell.draw(diffimage, is_cell, args.graysynthetic)
+                snode2.cell.draw(diffimage, is_cell, args.graysynthetic)
 
                 # add the new cell
-                cnode.cell.draw(diffimage, -1.0)
+                cnode.cell.draw(diffimage, is_background, args.graysynthetic)
 
             elif split:
                 snode1, snode2 = node.children
@@ -351,11 +359,11 @@ def optimize_core(imagefile, colony, args, config):
                                                 region.left:region.right]**2)
                 
                 # subtract the previous cell
-                node.cell.draw(diffimage, 1.0)
+                node.cell.draw(diffimage, is_cell, args.graysynthetic)
 
                 # add the new cells
-                snode1.cell.draw(diffimage, -1.0)
-                snode2.cell.draw(diffimage, -1.0)
+                snode1.cell.draw(diffimage, is_background, args.graysynthetic)
+                snode2.cell.draw(diffimage, is_background, args.graysynthetic)
 
             else:
                 # compute the starting cost
@@ -369,10 +377,10 @@ def optimize_core(imagefile, colony, args, config):
                                                 region.left:region.right]**2)
 
                 # subtract the previous cell
-                node.cell.draw(diffimage, 1.0)
+                node.cell.draw(diffimage, is_cell, args.graysynthetic)
 
                 # add the new cells
-                new_node.cell.draw(diffimage, -1.0)
+                new_node.cell.draw(diffimage, is_background, args.graysynthetic)
 
             # compute the cost difference
             if useDistanceObjective:
@@ -412,33 +420,42 @@ def optimize_core(imagefile, colony, args, config):
             cellnodes = list(colony)
 
             # DEBUG
-            if True and args.debug and i%80 == 0:
-                synthimage = generate_synthetic_image(cellnodes, realimage.shape)
-                residualimage = realimage-synthimage
+            if args.debug and i%80 == 0:
+                synthimage = generate_synthetic_image(cellnodes, realimage.shape, args.graysynthetic)
 
-                frame = np.empty((shape[0], shape[1], 3))
-                frame[..., 0] = (realimage - synthimage + 1)/2
-                frame[..., 1] = frame[..., 0]
-                frame[..., 2] = frame[..., 0]
+                frame_1 = np.empty((shape[0], shape[1], 3))
+                frame_1[..., 0] = (realimage - synthimage)
+                frame_1[..., 1] = frame_1[..., 0]
+                frame_1[..., 2] = frame_1[..., 0]
 
                 for node in cellnodes:
-                    node.cell.drawoutline(frame, (1, 0, 0))
+                    node.cell.drawoutline(frame_1, (1, 0, 0))
 
-                frame = np.clip(frame, 0, 1)
+                frame_1 = np.clip(frame_1, 0, 1)
 
-                debugimage = Image.fromarray((255*frame).astype(np.uint8))
-                debugimage.save(args.debug/f'frame{debugcount}.png')
+                debugimage = Image.fromarray((255*frame_1).astype(np.uint8))
+                debugimage.save(args.debug/f'residual{debugcount}.png')
 
-                residualimage = Image.fromarray((255*synthimage).astype(np.uint8))
-                residualimage.save(args.debug/f'res_frame{debugcount}.png')
 
+                frame_2 = np.empty((shape[0], shape[1], 3))
+                frame_2[..., 0] = synthimage
+                frame_2[..., 1] = frame_2[..., 0]
+                frame_2[..., 2] = frame_2[..., 0]
+
+                for node in cellnodes:
+                    node.cell.drawoutline(frame_2, (1, 0, 0))
+
+                frame_2 = np.clip(frame_2, 0, 1)
+
+                debugimage = Image.fromarray((255*frame_2).astype(np.uint8))
+                debugimage.save(args.debug/f'synthetic{debugcount}.png')
                 debugcount += 1
 
         temperature *= alpha
 
     # print(f'Bad Percentage: {100*badcount/run_count}%')
 
-    synthimage = generate_synthetic_image(cellnodes, realimage.shape)
+    synthimage = generate_synthetic_image(cellnodes, realimage.shape, args.graysynthetic)
     if useDistanceObjective:
         new_cost = dist_objective(realimage - synthimage, distmap)
     else:
@@ -466,6 +483,11 @@ def optimize(imagefile, lineageframes, args, config, client):
     """Optimize the cell properties using simulated annealing."""
     global badcount  # DEBUG
     badcount = 0  # DEBUG
+
+    if not client:
+        colony,_,debugimage = optimize_core(imagefile, lineageframes.forward(), args, config)
+        debugimage.save(args.output / imagefile.name)
+        return colony
 
     #tasks = []
 
