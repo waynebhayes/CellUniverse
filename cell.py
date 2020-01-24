@@ -86,7 +86,7 @@ class Bacilli(Cell):
 
         self._needs_refresh = False
 
-    def draw(self, image, value):
+    def draw(self, image, is_cell, greySyntheticImage):
         """Draws the cell by adding the given value to the image."""
         if self._needs_refresh:
             self._refresh()
@@ -122,8 +122,20 @@ class Bacilli(Cell):
         mask[head_mask] = True
         mask[tail_mask] = True
 
-        image[self._region.top:self._region.bottom,
-              self._region.left:self._region.right][mask] += value
+        if greySyntheticImage:
+            if is_cell:
+                image[self._region.top:self._region.bottom,
+                      self._region.left:self._region.right][mask] += -0.24
+            else:
+                image[self._region.top:self._region.bottom,
+                      self._region.left:self._region.right][mask] += 0.24
+        else:
+            if is_cell:
+                image[self._region.top:self._region.bottom,
+                      self._region.left:self._region.right][mask] += 1.0
+            else:
+                image[self._region.top:self._region.bottom,
+                      self._region.left:self._region.right][mask] += -1.0
 
     def drawoutline(self, image, color):
         """Draws the outline of the cell over a color image."""

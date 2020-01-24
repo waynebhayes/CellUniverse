@@ -38,6 +38,11 @@ def parse_args():
     parser.add_argument('--cluster', type=str, default='',
                         help='dask cluster address (defaults to local cluster)')
 
+    parser.add_argument('--no_parallel', action='store_true', default=False, help='disable parallelism')
+    parser.add_argument('--global_optimization', action='store_true', default=False, help='global optimization')
+    parser.add_argument('--graysynthetic', type=bool, default=False,
+                        help='enables the use of the grayscale synthetic image for use with non-thresholded images')
+
     # required arguments
     required = parser.add_argument_group('required arguments')
     required.add_argument('-i', '--input', metavar='PATTERN', type=str, required=True,
@@ -135,16 +140,19 @@ def get_inputfiles(args):
 def main(args):
     """Main function of cellanneal."""
 
-    import dask
-    from dask.distributed import Client, LocalCluster
-    if not args.cluster:
-        cluster = LocalCluster(
-            n_workers=args.workers,
-        )
-    else:
-        cluster = args.cluster
+    if not args.no_parallel:
+        import dask
+        from dask.distributed import Client, LocalCluster
+        if not args.cluster:
+            cluster = LocalCluster(
+                n_workers=args.workers,
+            )
+        else:
+            cluster = args.cluster
 
-    client = Client(cluster)
+        client = Client(cluster)
+    else:
+        client = None
 
     lineagefile = None
     start = time.time()
@@ -167,6 +175,11 @@ def main(args):
         if celltype == 'bacilli':
             header.extend(['x', 'y', 'width', 'length', 'rotation'])
         print(','.join(header), file=lineagefile)
+
+        if args.global_optimization:
+            import global_optimization
+            global_optimization.optimize(get_inputfiles(args), lineageframes, lineagefile, args, config)
+            return 0
 
         for imagefile in get_inputfiles(args):
 
