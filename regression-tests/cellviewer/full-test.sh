@@ -1,5 +1,7 @@
 #!/bin/sh
-die() { echo "FATAL ERROR: $@">&2; exit 1
+die() { echo "FATAL ERROR: $@" >&2; exit 1;
+}
+npm() { echo "Not running npm, since it seems to be broken" >&2
 }
 echo "Testing cellviewer (pushing to website)"
 npm install --prefix cellviewer || die "npm failed"
