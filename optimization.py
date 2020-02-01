@@ -428,8 +428,8 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000):
                 frame_1[..., 1] = frame_1[..., 0]
                 frame_1[..., 2] = frame_1[..., 0]
 
-                for node in cellnodes:
-                    node.cell.drawoutline(frame_1, (1, 0, 0))
+                #for node in cellnodes:
+                    #node.cell.drawoutline(frame_1, (1, 0, 0))
 
                 frame_1 = np.clip(frame_1, 0, 1)
 
@@ -442,8 +442,8 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000):
                 frame_2[..., 1] = frame_2[..., 0]
                 frame_2[..., 2] = frame_2[..., 0]
 
-                for node in cellnodes:
-                    node.cell.drawoutline(frame_2, (1, 0, 0))
+                #for node in cellnodes:
+                    #node.cell.drawoutline(frame_2, (1, 0, 0))
 
                 frame_2 = np.clip(frame_2, 0, 1)
 
