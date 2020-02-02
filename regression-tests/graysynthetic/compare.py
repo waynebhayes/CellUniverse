@@ -30,8 +30,13 @@ class Lineage(CSVFile):
     def compare(self, other):
         my_max_frame = self.max_frame()
         other_max_frame = other.max_frame()
+	
+
         if (my_max_frame != other_max_frame):
-            print("Ended at wrong image frame!", file=sys.stderr)
+
+
+            print("Ended at wrong image frame: {}, {}".format(my_max_frame, other_max_frame), file=sys.stderr )
+
             return False
 
         my_last_frame_data = self.select('file', my_max_frame)
