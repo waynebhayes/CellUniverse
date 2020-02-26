@@ -12,6 +12,7 @@ import cProfile
 import argparse
 import multiprocessing
 from pathlib import Path
+from optimization import auto_temp_schedule
 
 
 def parse_args():
@@ -43,7 +44,10 @@ def parse_args():
     parser.add_argument('--graysynthetic', type=bool, default=False,
                         help='enables the use of the grayscale synthetic image for use with non-thresholded images')
 
+    parser.add_argument('-t', '--temp', type=float, default=1, help='starting temperature for the simulated annealing')
+    parser.add_argument('-e', '--endtemp', type=float, default=0.01, help='ending temperature for the simulated annealing')
     # required arguments
+
     required = parser.add_argument_group('required arguments')
     required.add_argument('-i', '--input', metavar='PATTERN', type=str, required=True,
                           help='input filename pattern (e.g. "image%%03d.png")')
@@ -53,10 +57,8 @@ def parse_args():
                           help='path to the configuration file')
     required.add_argument('-x', '--initial', metavar='FILE', type=Path, required=True,
                           help='path to the initial cell configuration')
-    required.add_argument('-t', '--temp', metavar='TEMP', type=float, required=True,
-                          help='starting temperature for the simulated annealing')
-    required.add_argument('-e', '--endtemp', metavar='TEMP', type=float, required=True,
-                          help='ending temperature for the simulated annealing')
+    required.add_argument('-a', '--auto_temp', metavar='TEMP', type=int, required=True,
+                          help='auto temperature scheduling for the simulated annealing')
 
     parsed = parser.parse_args()
 
@@ -180,6 +182,13 @@ def main(args):
             import global_optimization
             global_optimization.optimize(get_inputfiles(args), lineageframes, lineagefile, args, config)
             return 0
+
+        if args.auto_temp == 1:
+            temperature, end_temperature = auto_temp_schedule(get_inputfiles(args)[0], lineageframes.forward(), args, config)
+            setattr(args, 'temp', temperature)
+            setattr(args, 'endtemp', end_temperature)
+            print("auto temperature schedule finished")
+            print("starting temperature is ", args.temp, "ending temperature is ", args.endtemp)
 
         for imagefile in get_inputfiles(args):
 
