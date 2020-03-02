@@ -266,9 +266,12 @@ def bacilli_combine(node, config, imageshape):
 
     return True, presplit
 
-def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000):
+def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000, auto_temp_complete=True, auto_const_temp = 1):
     """Core of the optimization routine."""
     global debugcount, badcount  # DEBUG
+
+    bad_count = 0
+    bad_prob_tot = 0
 
     realimage = load_image(imagefile)
     shape = realimage.shape
@@ -291,9 +294,14 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000):
 
     # setup temperature schedule
     run_count = int(iterations_per_cell*len(cellnodes))
-    temperature = args.temp
-    end_temperature = args.endtemp
-    alpha = (end_temperature/temperature)**(1/run_count)
+
+    if (auto_temp_complete == False):
+        temperature = auto_const_temp
+    else:
+        temperature = args.temp
+        end_temperature = args.endtemp
+
+        alpha = (end_temperature/temperature)**(1/run_count)
 
     for i in range(run_count):
         # print progress for debugging purposes
@@ -397,6 +405,8 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000):
                 acceptance = 1.0
             else:
                 acceptance = np.exp(-costdiff/temperature)
+                bad_count += 1
+                bad_prob_tot += acceptance
 
             # check if the acceptance threshold was met; pop if not
             if acceptance <= random.random():
@@ -418,6 +428,7 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000):
 
             colony.flatten()
             cellnodes = list(colony)
+
 
             # DEBUG
             if args.debug and i%80 == 0:
@@ -451,9 +462,17 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000):
                 debugimage.save(args.debug/f'synthetic{debugcount}.png')
                 debugcount += 1
 
-        temperature *= alpha
+        if (auto_temp_complete == True):
+            temperature *= alpha
 
     # print(f'Bad Percentage: {100*badcount/run_count}%')
+
+    if (auto_temp_complete == False):
+
+        # print("pbad is ", bad_prob_tot/bad_count)
+        # print("temperature is ", temperature)
+
+        return bad_prob_tot/bad_count
 
     synthimage = generate_synthetic_image(cellnodes, realimage.shape, args.graysynthetic)
     if useDistanceObjective:
@@ -479,170 +498,21 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000):
 
     return colony, cost, debugimage
 
-def find_pbad(imagefile, colony, args, temp, config):
-    ITERATION = 500
-    bad_count = 0
-    bad_prob_tot = 0
-
-    realimage = load_image(imagefile)
-    shape = realimage.shape
-
-    celltype = config['global.cellType'].lower()
-    useDistanceObjective = args.dist
-
-    cellnodes = list(colony)
-
-    synthimage = generate_synthetic_image(cellnodes, realimage.shape, args.graysynthetic)
-    diffimage = realimage - synthimage
-    if useDistanceObjective:
-        distmap = distance_transform_edt(realimage < .5)
-        distmap /= config[f'{celltype}.distanceCostDivisor']*config['global.pixelsPerMicron']
-        distmap += 1
-        cost = dist_objective(diffimage, distmap)
-    else:
-        cost = objective(realimage, synthimage)
-
-    run_count = int(ITERATION * len(cellnodes))
-
-
-    for i in range(run_count):
-        # print progress for debugging purposes
-        # if i%1013 == 59:
-        #    print(f'{imagefile.name}: Progress: {100*i/run_count:.02f}%', flush=True)
-
-        # choose a cell at random
-        index = random.randint(0, len(cellnodes) - 1)
-        node = cellnodes[index]
-
-        # perturb the cell and push it onto the stack
-        if celltype == 'bacilli':
-            perturb_bacilli(node, config, shape)
-            new_node = node.children[0]
-
-            old_diff = diffimage.copy()
-
-            # # try splitting (or combining if already split)
-            combined = False
-            split = False
-            if node.split:
-                combined, presplit = bacilli_combine(new_node, config, shape)
-            elif not node.split:
-                split = bacilli_split(new_node, config, shape)
-
-            if combined:
-                # get the new combined node
-                cnode = presplit.children[0]
-
-                # get the previous split nodes (see note in bacilli_combine)
-                snode1, snode2 = cnode.children
-
-                # compute the starting cost
-                region = (cnode.cell.region.union(snode1.cell.region)
-                          .union(snode2.cell.region))
-                if useDistanceObjective:
-                    start_cost = dist_objective(
-                        diffimage[region.top:region.bottom, region.left:region.right],
-                        distmap[region.top:region.bottom, region.left:region.right])
-                else:
-                    start_cost = np.sum(diffimage[region.top:region.bottom,
-                                        region.left:region.right] ** 2)
-
-                # subtract the previous cells
-                snode1.cell.draw(diffimage, is_cell, args.graysynthetic)
-                snode2.cell.draw(diffimage, is_cell, args.graysynthetic)
-
-                # add the new cell
-                cnode.cell.draw(diffimage, is_background, args.graysynthetic)
-
-            elif split:
-                snode1, snode2 = node.children
-
-                # compute the starting cost
-                region = (node.cell.region.union(snode1.cell.region)
-                          .union(snode2.cell.region))
-                if useDistanceObjective:
-                    start_cost = dist_objective(
-                        diffimage[region.top:region.bottom, region.left:region.right],
-                        distmap[region.top:region.bottom, region.left:region.right])
-                else:
-                    start_cost = np.sum(diffimage[region.top:region.bottom,
-                                        region.left:region.right] ** 2)
-
-                # subtract the previous cell
-                node.cell.draw(diffimage, is_cell, args.graysynthetic)
-
-                # add the new cells
-                snode1.cell.draw(diffimage, is_background, args.graysynthetic)
-                snode2.cell.draw(diffimage, is_background, args.graysynthetic)
-
-            else:
-                # compute the starting cost
-                region = node.cell.region.union(new_node.cell.region)
-                if useDistanceObjective:
-                    start_cost = dist_objective(
-                        diffimage[region.top:region.bottom, region.left:region.right],
-                        distmap[region.top:region.bottom, region.left:region.right])
-                else:
-                    start_cost = np.sum(diffimage[region.top:region.bottom,
-                                        region.left:region.right] ** 2)
-
-                # subtract the previous cell
-                node.cell.draw(diffimage, is_cell, args.graysynthetic)
-
-                # add the new cells
-                new_node.cell.draw(diffimage, is_background, args.graysynthetic)
-
-            # compute the cost difference
-            if useDistanceObjective:
-                end_cost = dist_objective(
-                    diffimage[region.top:region.bottom, region.left:region.right],
-                    distmap[region.top:region.bottom, region.left:region.right])
-            else:
-                end_cost = np.sum(diffimage[region.top:region.bottom,
-                                  region.left:region.right] ** 2)
-            costdiff = end_cost - start_cost
-
-            # compute the acceptance threshold
-            if costdiff <= 0:
-                acceptance = 1.0
-            else:
-                acceptance = np.exp(-costdiff / temp)
-                bad_count += 1
-                bad_prob_tot += acceptance
-
-            # check if the acceptance threshold was met; pop if not
-            if acceptance <= random.random():
-                # restore the previous cells
-                if combined:
-                    presplit.pop()
-                    presplit.push2(snode1.cell, snode2.cell, node.alpha)
-                else:
-                    node.pop()
-
-                # restore the diff image
-                diffimage = old_diff
-
-            else:
-                if combined:
-                    presplit.children[0].pop()
-
-
-                cost += costdiff
-
-    return bad_prob_tot/bad_count
-
 def auto_temp_schedule(imagefile, colony, args, config):
     initial_temp = 1
-    while(find_pbad(imagefile, colony, args, initial_temp, config)<0.10):
+    ITERATION = 500
+    AUTO_TEMP_COMPLETE = False
+
+    while(optimize_core(imagefile, colony, args, config, ITERATION, AUTO_TEMP_COMPLETE, initial_temp)<0.40):
         initial_temp *= 10.0
-    while(find_pbad(imagefile, colony, args, initial_temp, config)>0.10):
+    while(optimize_core(imagefile, colony, args, config, ITERATION, AUTO_TEMP_COMPLETE, initial_temp)>0.40):
         initial_temp /= 10.0
-    while(find_pbad(imagefile, colony, args, initial_temp, config)<0.10):
+    while(optimize_core(imagefile, colony, args, config, ITERATION, AUTO_TEMP_COMPLETE, initial_temp)<0.40):
         initial_temp *= 1.1
 
     end_temp = initial_temp
 
-    while(find_pbad(imagefile, colony, args, end_temp, config)>=1e-6):
+    while(optimize_core(imagefile, colony, args, config, ITERATION, AUTO_TEMP_COMPLETE, end_temp)>=1e-10):
         end_temp /= 10.0
 
     return initial_temp, end_temp
