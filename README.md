@@ -115,6 +115,8 @@ required arguments:
   -t TEMP, --temp TEMP  starting temperature for the simulated annealing
   -e TEMP, --endtemp TEMP
                         ending temperature for the simulated annealing
+  -a AUTOTEMP --auto_temp 
+                        enable auto-temperature schedule
 ```
 
 Examples

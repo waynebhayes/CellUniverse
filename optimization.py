@@ -266,9 +266,12 @@ def bacilli_combine(node, config, imageshape):
 
     return True, presplit
 
-def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000):
+def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000, auto_temp_complete=True, auto_const_temp = 1):
     """Core of the optimization routine."""
     global debugcount, badcount  # DEBUG
+
+    bad_count = 0
+    bad_prob_tot = 0
 
     realimage = load_image(imagefile)
     shape = realimage.shape
@@ -291,9 +294,14 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000):
 
     # setup temperature schedule
     run_count = int(iterations_per_cell*len(cellnodes))
-    temperature = args.temp
-    end_temperature = args.endtemp
-    alpha = (end_temperature/temperature)**(1/run_count)
+
+    if (auto_temp_complete == False):
+        temperature = auto_const_temp
+    else:
+        temperature = args.temp
+        end_temperature = args.endtemp
+
+        alpha = (end_temperature/temperature)**(1/run_count)
 
     for i in range(run_count):
         # print progress for debugging purposes
@@ -397,6 +405,8 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000):
                 acceptance = 1.0
             else:
                 acceptance = np.exp(-costdiff/temperature)
+                bad_count += 1
+                bad_prob_tot += acceptance
 
             # check if the acceptance threshold was met; pop if not
             if acceptance <= random.random():
@@ -418,6 +428,7 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000):
 
             colony.flatten()
             cellnodes = list(colony)
+
 
             # DEBUG
             if args.debug and i%80 == 0:
@@ -451,9 +462,17 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000):
                 debugimage.save(args.debug/f'synthetic{debugcount}.png')
                 debugcount += 1
 
-        temperature *= alpha
+        if (auto_temp_complete == True):
+            temperature *= alpha
 
     # print(f'Bad Percentage: {100*badcount/run_count}%')
+
+    if (auto_temp_complete == False):
+
+        # print("pbad is ", bad_prob_tot/bad_count)
+        # print("temperature is ", temperature)
+
+        return bad_prob_tot/bad_count
 
     synthimage = generate_synthetic_image(cellnodes, realimage.shape, args.graysynthetic)
     if useDistanceObjective:
@@ -478,6 +497,25 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000):
     debugimage = Image.fromarray((255*frame).astype(np.uint8))
 
     return colony, cost, debugimage
+
+def auto_temp_schedule(imagefile, colony, args, config):
+    initial_temp = 1
+    ITERATION = 500
+    AUTO_TEMP_COMPLETE = False
+
+    while(optimize_core(imagefile, colony, args, config, ITERATION, AUTO_TEMP_COMPLETE, initial_temp)<0.40):
+        initial_temp *= 10.0
+    while(optimize_core(imagefile, colony, args, config, ITERATION, AUTO_TEMP_COMPLETE, initial_temp)>0.40):
+        initial_temp /= 10.0
+    while(optimize_core(imagefile, colony, args, config, ITERATION, AUTO_TEMP_COMPLETE, initial_temp)<0.40):
+        initial_temp *= 1.1
+
+    end_temp = initial_temp
+
+    while(optimize_core(imagefile, colony, args, config, ITERATION, AUTO_TEMP_COMPLETE, end_temp)>=1e-10):
+        end_temp /= 10.0
+
+    return initial_temp, end_temp
 
 def optimize(imagefile, lineageframes, args, config, client):
     """Optimize the cell properties using simulated annealing."""
