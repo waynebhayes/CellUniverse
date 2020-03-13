@@ -32,16 +32,24 @@ def dist_objective(diffimage, distmap):
     return np.sum((diffimage*distmap)**2)
 
 
+# def generate_synthetic_image(cellnodes, shape, graySyntheticImage):
+#     if graySyntheticImage:
+#         synthimage = np.full(shape, 0.39)  # pixel value: 0.39*255 == 100
+#         for node in cellnodes:
+#             node.cell.draw(synthimage, is_cell, graySyntheticImage)  # pixel value: 0.15*255 == 40
+#         return synthimage
+#     else:
+#         synthimage = np.zeros(shape)
+#         for node in cellnodes:
+#             node.cell.draw(synthimage, is_cell, graySyntheticImage)
+#         return synthimage
+
+
 def generate_synthetic_image(cellnodes, shape, graySyntheticImage):
-    if graySyntheticImage:
-        synthimage = np.full(shape, 0.39)  # pixel value: 0.39*255 == 100
+
+        synthimage = np.full(shape, 0.35)  # pixel value: 0.39*255 == 100
         for node in cellnodes:
             node.cell.draw(synthimage, is_cell, graySyntheticImage)  # pixel value: 0.15*255 == 40
-        return synthimage
-    else:
-        synthimage = np.zeros(shape)
-        for node in cellnodes:
-            node.cell.draw(synthimage, is_cell, graySyntheticImage)
         return synthimage
 
 

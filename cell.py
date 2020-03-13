@@ -95,6 +95,7 @@ class Bacilli(Cell):
         height = self._region.bottom - self._region.top
         mask = np.zeros((height, width), dtype=np.bool)
 
+
         body_mask = polygon(
             r=(self._head_left.y - self._region.top,
                self._head_right.y - self._region.top,
@@ -106,36 +107,77 @@ class Bacilli(Cell):
                self._tail_left.x - self._region.left),
             shape=mask.shape)
 
+        body_mask_up = polygon(
+            r=(self._head_left.y - self._region.top,
+               ceil((self._head_right.y + self._head_left.y) / 2) - self._region.top,
+               ceil((self._tail_right.y + self._tail_left.y) / 2) - self._region.top,
+               self._tail_left.y - self._region.top),
+            c=(self._head_left.x - self._region.left,
+               ceil((self._head_right.x + self._head_left.x) / 2) - self._region.left,
+               ceil((self._tail_right.x + self._tail_left.x) / 2) - self._region.left,
+               self._tail_left.x - self._region.left),
+            shape=mask.shape)
+
+        body_mask_middle = polygon(
+            r=(ceil((self._head_right.y + self._head_left.y * 2) / 3) - self._region.top,
+               ceil((self._head_right.y * 2 + self._head_left.y) / 3) - self._region.top,
+               ceil((self._tail_right.y * 2 + self._tail_left.y) / 3) - self._region.top,
+               ceil((self._tail_right.y + self._tail_left.y * 2) / 3) - self._region.top),
+            c=(ceil((self._head_right.x + self._head_left.x * 2) / 3) - self._region.left,
+               ceil((self._head_right.x * 2 + self._head_left.x) / 3) - self._region.left,
+               ceil((self._tail_right.x * 2 + self._tail_left.x) / 3) - self._region.left,
+               ceil((self._tail_right.x + self._tail_left.x * 2) / 3) - self._region.left),
+            shape=mask.shape)
+
         head_mask = circle(
             x=self._head_center.x - self._region.left,
             y=self._head_center.y - self._region.top,
-            radius=self._width/2,
+            radius=self._width / 2,
             shape=mask.shape)
 
         tail_mask = circle(
             x=self._tail_center.x - self._region.left,
             y=self._tail_center.y - self._region.top,
-            radius=self._width/2,
+            radius=self._width / 2,
             shape=mask.shape)
 
-        mask[body_mask] = True
-        mask[head_mask] = True
-        mask[tail_mask] = True
 
-        if greySyntheticImage:
-            if is_cell:
-                image[self._region.top:self._region.bottom,
-                      self._region.left:self._region.right][mask] += -0.24
-            else:
-                image[self._region.top:self._region.bottom,
-                      self._region.left:self._region.right][mask] += 0.24
+
+
+        if not is_cell:
+            mask[body_mask] = True
+            mask[head_mask] = True
+            mask[tail_mask] = True
+
+            image[self._region.top:self._region.bottom,
+            self._region.left:self._region.right][mask] = 0.35 #0.35*255=90
+
         else:
-            if is_cell:
-                image[self._region.top:self._region.bottom,
-                      self._region.left:self._region.right][mask] += 1.0
-            else:
-                image[self._region.top:self._region.bottom,
-                      self._region.left:self._region.right][mask] += -1.0
+            mask = np.zeros((height, width), dtype=np.bool)
+            mask[body_mask] = True
+            image[self._region.top:self._region.bottom,
+            self._region.left:self._region.right][mask] = 0.25 #0.25*255=65
+
+            mask = np.zeros((height, width), dtype=np.bool)
+            mask[head_mask] = True
+            image[self._region.top:self._region.bottom,
+            self._region.left:self._region.right][mask] = 0.25
+
+            mask = np.zeros((height, width), dtype=np.bool)
+            mask[tail_mask] = True
+            image[self._region.top:self._region.bottom,
+            self._region.left:self._region.right][mask] = 0.25
+
+            mask = np.zeros((height, width), dtype=np.bool)
+            mask[body_mask_up] = True
+            image[self._region.top:self._region.bottom,
+            self._region.left:self._region.right][mask] = 0.63 #0.63*255=160
+
+            mask = np.zeros((height, width), dtype=np.bool)
+            mask[body_mask_middle] = True
+            image[self._region.top:self._region.bottom,
+            self._region.left:self._region.right][mask] = 0.39 #0.39*255=100
+
 
     def drawoutline(self, image, color):
         """Draws the outline of the cell over a color image."""
