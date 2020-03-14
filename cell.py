@@ -86,7 +86,7 @@ class Bacilli(Cell):
 
         self._needs_refresh = False
 
-    def draw(self, image, is_cell, greySyntheticImage):
+    def draw(self, image, is_cell, greySyntheticImage, phaseContractImage):
         """Draws the cell by adding the given value to the image."""
         if self._needs_refresh:
             self._refresh()
@@ -141,42 +141,65 @@ class Bacilli(Cell):
             radius=self._width / 2,
             shape=mask.shape)
 
+        if greySyntheticImage:
+            if phaseContractImage:
+                if not is_cell:
+                    mask[body_mask] = True
+                    mask[head_mask] = True
+                    mask[tail_mask] = True
 
+                    image[self._region.top:self._region.bottom,
+                    self._region.left:self._region.right][mask] = 0.39  # 0.39*255=100
 
+                else:
+                    mask = np.zeros((height, width), dtype=np.bool)
+                    mask[body_mask] = True
+                    image[self._region.top:self._region.bottom,
+                    self._region.left:self._region.right][mask] = 0.25  # 0.25*255=65
 
-        if not is_cell:
-            mask[body_mask] = True
-            mask[head_mask] = True
-            mask[tail_mask] = True
+                    mask = np.zeros((height, width), dtype=np.bool)
+                    mask[head_mask] = True
+                    image[self._region.top:self._region.bottom,
+                    self._region.left:self._region.right][mask] = 0.25
 
-            image[self._region.top:self._region.bottom,
-            self._region.left:self._region.right][mask] = 0.35 #0.35*255=90
+                    mask = np.zeros((height, width), dtype=np.bool)
+                    mask[tail_mask] = True
+                    image[self._region.top:self._region.bottom,
+                    self._region.left:self._region.right][mask] = 0.25
 
+                    mask = np.zeros((height, width), dtype=np.bool)
+                    mask[body_mask_up] = True
+                    image[self._region.top:self._region.bottom,
+                    self._region.left:self._region.right][mask] = 0.63  # 0.63*255=160
+
+                    mask = np.zeros((height, width), dtype=np.bool)
+                    mask[body_mask_middle] = True
+                    image[self._region.top:self._region.bottom,
+                    self._region.left:self._region.right][mask] = 0.39  # 0.39*255=100
+
+            if not phaseContractImage:
+                mask[body_mask] = True
+                mask[head_mask] = True
+                mask[tail_mask] = True
+                if is_cell:
+                    image[self._region.top:self._region.bottom,
+                          self._region.left:self._region.right][mask] += -0.24
+                else:
+                    image[self._region.top:self._region.bottom,
+                          self._region.left:self._region.right][mask] += 0.24
         else:
-            mask = np.zeros((height, width), dtype=np.bool)
             mask[body_mask] = True
-            image[self._region.top:self._region.bottom,
-            self._region.left:self._region.right][mask] = 0.25 #0.25*255=65
-
-            mask = np.zeros((height, width), dtype=np.bool)
             mask[head_mask] = True
-            image[self._region.top:self._region.bottom,
-            self._region.left:self._region.right][mask] = 0.25
-
-            mask = np.zeros((height, width), dtype=np.bool)
             mask[tail_mask] = True
-            image[self._region.top:self._region.bottom,
-            self._region.left:self._region.right][mask] = 0.25
+            if is_cell:
+                image[self._region.top:self._region.bottom,
+                      self._region.left:self._region.right][mask] += 1.0
+            else:
+                image[self._region.top:self._region.bottom,
+                      self._region.left:self._region.right][mask] += -1.0
 
-            mask = np.zeros((height, width), dtype=np.bool)
-            mask[body_mask_up] = True
-            image[self._region.top:self._region.bottom,
-            self._region.left:self._region.right][mask] = 0.63 #0.63*255=160
 
-            mask = np.zeros((height, width), dtype=np.bool)
-            mask[body_mask_middle] = True
-            image[self._region.top:self._region.bottom,
-            self._region.left:self._region.right][mask] = 0.39 #0.39*255=100
+
 
 
     def drawoutline(self, image, color):

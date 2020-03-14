@@ -43,6 +43,8 @@ def parse_args():
     parser.add_argument('--global_optimization', action='store_true', default=False, help='global optimization')
     parser.add_argument('--graysynthetic', type=bool, default=False,
                         help='enables the use of the grayscale synthetic image for use with non-thresholded images')
+    parser.add_argument('--phaseContractImage', type=bool, default=False,
+                        help='enables the use of the grayscale synthetic image for phase contract images')
 
     parser.add_argument('-t', '--temp', type=float, default=1, help='starting temperature for the simulated annealing')
     parser.add_argument('-e', '--endtemp', type=float, default=0.01, help='ending temperature for the simulated annealing')

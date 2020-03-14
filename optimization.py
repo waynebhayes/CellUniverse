@@ -32,24 +32,17 @@ def dist_objective(diffimage, distmap):
     return np.sum((diffimage*distmap)**2)
 
 
-# def generate_synthetic_image(cellnodes, shape, graySyntheticImage):
-#     if graySyntheticImage:
-#         synthimage = np.full(shape, 0.39)  # pixel value: 0.39*255 == 100
-#         for node in cellnodes:
-#             node.cell.draw(synthimage, is_cell, graySyntheticImage)  # pixel value: 0.15*255 == 40
-#         return synthimage
-#     else:
-#         synthimage = np.zeros(shape)
-#         for node in cellnodes:
-#             node.cell.draw(synthimage, is_cell, graySyntheticImage)
-#         return synthimage
+def generate_synthetic_image(cellnodes, shape, graySyntheticImage, phaseContractImage):
 
-
-def generate_synthetic_image(cellnodes, shape, graySyntheticImage):
-
-        synthimage = np.full(shape, 0.35)  # pixel value: 0.39*255 == 100
+    if graySyntheticImage:
+        synthimage = np.full(shape, 0.39)  # pixel value: 0.39*255 == 100
         for node in cellnodes:
-            node.cell.draw(synthimage, is_cell, graySyntheticImage)  # pixel value: 0.15*255 == 40
+            node.cell.draw(synthimage, is_cell, graySyntheticImage, phaseContractImage)  # pixel value: 0.15*255 == 40
+        return synthimage
+    else:
+        synthimage = np.zeros(shape)
+        for node in cellnodes:
+            node.cell.draw(synthimage, is_cell, graySyntheticImage, phaseContractImage)
         return synthimage
 
 
@@ -290,7 +283,7 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000, aut
     cellnodes = list(colony)
 
     # find the initial cost
-    synthimage = generate_synthetic_image(cellnodes, realimage.shape, args.graysynthetic)
+    synthimage = generate_synthetic_image(cellnodes, realimage.shape, args.graysynthetic, args.phaseContractImage)
     diffimage = realimage - synthimage
     if useDistanceObjective:
         distmap = distance_transform_edt(realimage < .5)
@@ -354,11 +347,11 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000, aut
                                                 region.left:region.right]**2)
 
                 # subtract the previous cells
-                snode1.cell.draw(diffimage, is_cell, args.graysynthetic)
-                snode2.cell.draw(diffimage, is_cell, args.graysynthetic)
+                snode1.cell.draw(diffimage, is_cell, args.graysynthetic, args.phaseContractImage)
+                snode2.cell.draw(diffimage, is_cell, args.graysynthetic, args.phaseContractImage)
 
                 # add the new cell
-                cnode.cell.draw(diffimage, is_background, args.graysynthetic)
+                cnode.cell.draw(diffimage, is_background, args.graysynthetic, args.phaseContractImage)
 
             elif split:
                 snode1, snode2 = node.children
@@ -375,11 +368,11 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000, aut
                                                 region.left:region.right]**2)
                 
                 # subtract the previous cell
-                node.cell.draw(diffimage, is_cell, args.graysynthetic)
+                node.cell.draw(diffimage, is_cell, args.graysynthetic, args.phaseContractImage)
 
                 # add the new cells
-                snode1.cell.draw(diffimage, is_background, args.graysynthetic)
-                snode2.cell.draw(diffimage, is_background, args.graysynthetic)
+                snode1.cell.draw(diffimage, is_background, args.graysynthetic, args.phaseContractImage)
+                snode2.cell.draw(diffimage, is_background, args.graysynthetic, args.phaseContractImage)
 
             else:
                 # compute the starting cost
@@ -393,10 +386,10 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000, aut
                                                 region.left:region.right]**2)
 
                 # subtract the previous cell
-                node.cell.draw(diffimage, is_cell, args.graysynthetic)
+                node.cell.draw(diffimage, is_cell, args.graysynthetic, args.phaseContractImage)
 
                 # add the new cells
-                new_node.cell.draw(diffimage, is_background, args.graysynthetic)
+                new_node.cell.draw(diffimage, is_background, args.graysynthetic, args.phaseContractImage)
 
             # compute the cost difference
             if useDistanceObjective:
@@ -440,7 +433,7 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000, aut
 
             # DEBUG
             if args.debug and i%80 == 0:
-                synthimage = generate_synthetic_image(cellnodes, realimage.shape, args.graysynthetic)
+                synthimage = generate_synthetic_image(cellnodes, realimage.shape, args.graysynthetic, args.phaseContractImage)
 
                 frame_1 = np.empty((shape[0], shape[1], 3))
                 frame_1[..., 0] = (realimage - synthimage)
@@ -482,7 +475,7 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000, aut
 
         return bad_prob_tot/bad_count
 
-    synthimage = generate_synthetic_image(cellnodes, realimage.shape, args.graysynthetic)
+    synthimage = generate_synthetic_image(cellnodes, realimage.shape, args.graysynthetic, args.phaseContractImage)
     if useDistanceObjective:
         new_cost = dist_objective(realimage - synthimage, distmap)
     else:
