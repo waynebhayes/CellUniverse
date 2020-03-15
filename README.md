@@ -102,6 +102,11 @@ optional arguments:
   --keep KEEP           number of top solutions kept (must be equal or less than --jobs/-j)
   --strategy STRATEGY   one of "best-wins", "worst-wins", "extreme-wins"
   --cluster CLUSTER     dask cluster address (defaults to local cluster)
+  -t TEMP, --temp TEMP  starting temperature for the simulated annealing
+  -e TEMP, --endtemp TEMP
+                        ending temperature for the simulated annealing
+  -a AUTOTEMP --auto_temp 
+                        disable auto-temperature schedule(default: enabled)
 
 required arguments:
   -i PATTERN, --input PATTERN
@@ -112,16 +117,12 @@ required arguments:
                         path to the configuration file
   -x FILE, --initial FILE
                         path to the initial cell configuration
-  -t TEMP, --temp TEMP  starting temperature for the simulated annealing
-  -e TEMP, --endtemp TEMP
-                        ending temperature for the simulated annealing
-  -a AUTOTEMP --auto_temp 
-                        enable auto-temperature schedule
+
 ```
 
 Examples
 --------
 
 ``` sourceCode
-python "./main.py" --start 0 --finish 13 --debug "./debug" --input "./input/frame%03d.png" --output "$TEST_DIR/output" --config "./config.json" --initial "./cells.0.csv" --temp 10 --endtemp 0.01
+python "./main.py" --start 0 --finish 13 --debug "./debug" --input "./input/frame%03d.png" --output "$TEST_DIR/output" --config "./config.json" --initial "./cells.0.csv"
 ```

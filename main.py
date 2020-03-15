@@ -45,8 +45,10 @@ def parse_args():
                         help='enables the use of the grayscale synthetic image for use with non-thresholded images')
     parser.add_argument('--phaseContractImage', type=bool, default=False,
                         help='enables the use of the grayscale synthetic image for phase contract images')
-    parser.add_argument('-a', '--auto_temp', metavar='TEMP', type=int, default=0,
+    parser.add_argument('-a', '--auto_temp', metavar='TEMP', type=int, default=1,
                           help='auto temperature scheduling for the simulated annealing')
+    parser.add_argument('-t', '--temp', type=float, help='starting temperature for the simulated annealing')
+    parser.add_argument('-e', '--endtemp', type=float, help='ending temperature for the simulated annealing')
 
     # required arguments
 
@@ -59,8 +61,7 @@ def parse_args():
                           help='path to the configuration file')
     required.add_argument('-x', '--initial', metavar='FILE', type=Path, required=True,
                           help='path to the initial cell configuration')
-    required.add_argument('-t', '--temp', type=float, required=True, help='starting temperature for the simulated annealing')
-    required.add_argument('-e', '--endtemp', type=float, required=True, help='ending temperature for the simulated annealing')
+
 
     parsed = parser.parse_args()
 
@@ -143,6 +144,8 @@ def get_inputfiles(args):
 
 def main(args):
     """Main function of cellanneal."""
+    if (args.temp is not None or args.endtemp is not None) and args.auto_temp == 1:
+        raise Exception("when auto_temp is set to 1(default value), starting temperature or ending temperature should not be set manually")
 
     if not args.no_parallel:
         import dask
