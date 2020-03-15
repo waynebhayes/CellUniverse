@@ -18,9 +18,7 @@ if python3 "./main.py" \
     --input "./input/frame%03d.png" \
     --output "$TEST_DIR/output" \
     --config "./config.json" \
-    --initial "./cells.0.csv" \
-    --temp 10 \
-    --endtemp 0.01; then
+    --initial "./cells.0.csv" ; then
     :
 else
     die "Python quit unexpectedly!"

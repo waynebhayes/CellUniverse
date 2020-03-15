@@ -17,9 +17,7 @@ python3 "./main.py" \
     --input "./input/frame%03d.png" \
     --output "./cellviewer/src/output" \
     --config "./config.json" \
-    --initial "./cells.0.csv" \
-    --temp 10 \
-    --endtemp 0.01 || die "main.py failed"
+    --initial "./cells.0.csv" || die "main.py failed"
 
 python3 "./cellviewer/radialtree.py" \
     "./cellviewer/src/output" || die "radialtree failed"
