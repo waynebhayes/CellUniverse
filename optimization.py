@@ -299,8 +299,8 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000, aut
     if (auto_temp_complete == False):
         temperature = auto_const_temp
     else:
-        temperature = args.temp
-        end_temperature = args.endtemp
+        temperature = args.start_temp
+        end_temperature = args.end_temp
 
         alpha = (end_temperature/temperature)**(1/run_count)
 
