@@ -414,8 +414,8 @@ def optimize(imagefiles, lineageframes, lineagefile, args, config):
 
     # simulated annealing
     run_count = 2000*lineage.total_cell_count
-    temperature = args.temp
-    end_temperature = args.endtemp
+    temperature = args.start_temp
+    end_temperature = args.end_temp
     alpha = (end_temperature/temperature)**(1/run_count)
 
     bad_count = 0
