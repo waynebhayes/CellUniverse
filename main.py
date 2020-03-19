@@ -152,7 +152,7 @@ def main(args):
         from dask.distributed import Client, LocalCluster
         if not args.cluster:
             cluster = LocalCluster(
-                n_workers=args.workers,
+                n_workers=args.workers,local_dir="/tmp/CellUniverse/dask-worker-space"
             )
         else:
             cluster = args.cluster
