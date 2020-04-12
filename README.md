@@ -108,7 +108,9 @@ optional arguments:
                         ending temperature for the simulated annealing
   -ta AUTOTEMP --auto_temp 
                         auto-temperature schedule(default: 1(enabled))
-
+  -am AUTOMETH --auto_meth
+                        dynamic auto-temperature schedule methods
+                        (execute by frame number("frame"), factor increase("factor"),  constant increase("const") of cell number)
 required arguments:
   -i PATTERN, --input PATTERN
                         input filename pattern (e.g. "image%03d.png")

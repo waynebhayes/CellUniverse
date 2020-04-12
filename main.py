@@ -12,7 +12,7 @@ import cProfile
 import argparse
 import multiprocessing
 from pathlib import Path
-from optimization import auto_temp_schedule
+from optimization import auto_temp_schedule, ats_const, ats_factor, ats_frame
 
 
 def parse_args():
@@ -49,6 +49,7 @@ def parse_args():
                           help='auto temperature scheduling for the simulated annealing')
     parser.add_argument('-ts', '--start_temp', type=float, help='starting temperature for the simulated annealing')
     parser.add_argument('-te', '--end_temp', type=float, help='ending temperature for the simulated annealing')
+    parser.add_argument('-am', '--auto_meth', type=str, default='none', help='method for auto-temperature scheduling')
 
     # required arguments
 
@@ -141,25 +142,34 @@ def get_inputfiles(args):
 
     return inputfiles
 
+def ats(imagefile, colony, args, config):
+    temperature, end_temperature = auto_temp_schedule(imagefile, colony, args, config)
+    print("auto temperature schedule started")
+    setattr(args, 'start_temp', temperature)
+    setattr(args, 'end_temp', end_temperature)
+    print("auto temperature schedule finished")
+    print("starting temperature is ", args.start_temp, "ending temperature is ", args.end_temp)
+    return args
+
 
 def main(args):
     """Main function of cellanneal."""
     if (args.start_temp is not None or args.end_temp is not None) and args.auto_temp == 1:
         raise Exception("when auto_temp is set to 1(default value), starting temperature or ending temperature should not be set manually")
 
-    if not args.no_parallel:
-        import dask
-        from dask.distributed import Client, LocalCluster
-        if not args.cluster:
-            cluster = LocalCluster(
-                n_workers=args.workers,local_dir="/tmp/CellUniverse/dask-worker-space"
-            )
-        else:
-            cluster = args.cluster
-
-        client = Client(cluster)
-    else:
-        client = None
+    # if not args.no_parallel:
+    #     import dask
+    #     from dask.distributed import Client, LocalCluster
+    #     if not args.cluster:
+    #         cluster = LocalCluster(
+    #             n_workers=args.workers,local_dir="/tmp/CellUniverse/dask-worker-space"
+    #         )
+    #     else:
+    #         cluster = args.cluster
+    #
+    #     client = Client(cluster)
+    # else:
+    client = None
 
     lineagefile = None
     start = time.time()
@@ -189,13 +199,27 @@ def main(args):
             return 0
 
         if args.auto_temp == 1:
-            temperature, end_temperature = auto_temp_schedule(get_inputfiles(args)[0], lineageframes.forward(), args, config)
-            setattr(args, 'start_temp', temperature)
-            setattr(args, 'end_temp', end_temperature)
-            print("auto temperature schedule finished")
-            print("starting temperature is ", args.start_temp, "ending temperature is ", args.end_temp)
+            args = ats(get_inputfiles(args)[0], lineageframes.forward(), args, config)
 
-        for imagefile in get_inputfiles(args):
+        frame_num = 0
+        prev_cell_num = len(colony.get_nodes())
+        for imagefile in get_inputfiles(args): # Recomputing temperature when needed
+
+            frame_num += 1
+
+            if args.auto_meth == "frame":
+                if ats_frame(frame_num, 8):
+                   args = ats(imagefile, lineageframes.forward(), args, config)
+
+            elif args.auto_meth == "factor":
+                if ats_factor(len(colony.get_nodes()), prev_cell_num, 1.1):
+                    args = ats(imagefile, lineageframes.forward(), args, config)
+                    prev_cell_num = len(colony.get_nodes())
+
+            elif args.auto_meth == "const":
+                if ats_factor(len(colony.get_nodes()), prev_cell_num, 10):
+                    args = ats(imagefile, lineageframes.forward(), args, config)
+                    prev_cell_num = len(colony.get_nodes())
 
             colony = optimize(imagefile, lineageframes, args, config, client)
 
