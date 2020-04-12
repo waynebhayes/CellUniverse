@@ -267,6 +267,16 @@ def bacilli_combine(node, config, imageshape):
 
     return True, presplit
 
+# functions for different types of dynamic auto-temperature scheduling
+def ats_frame(frame, k_frame):
+    return frame % k_frame == 0
+
+def ats_factor(cell_num, prev_num, factor):
+    return True if cell_num / prev_num >= factor else False
+
+def ats_const(cell_num, prev_num, constant):
+    return True if cell_num - prev_num >= constant else False
+
 def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000, auto_temp_complete=True, auto_const_temp = 1):
     """Core of the optimization routine."""
     global debugcount, badcount  # DEBUG

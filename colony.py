@@ -90,6 +90,9 @@ class Colony(object):
     def __init__(self):
         self._nodes = []
 
+    def get_nodes(self):
+        return self._nodes
+
     def add(self, cellnode):
         """Add the cell to the colony."""
         self._nodes.append(cellnode)
@@ -138,6 +141,8 @@ class Colony(object):
             colony.add(CellNode(deepcopy(node.cell), prior=node))
 
         return colony
+
+
 
 
 class LineageFrames(object):
