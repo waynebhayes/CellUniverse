@@ -12,7 +12,7 @@ import cProfile
 import argparse
 import multiprocessing
 from pathlib import Path
-from optimization import auto_temp_schedule, ats_const, ats_factor, ats_frame
+from optimization import auto_temp_schedule, auto_temp_schedule_frame, auto_temp_schedule_factor, auto_temp_schedule_const
 
 
 def parse_args():
@@ -49,7 +49,8 @@ def parse_args():
                           help='auto temperature scheduling for the simulated annealing')
     parser.add_argument('-ts', '--start_temp', type=float, help='starting temperature for the simulated annealing')
     parser.add_argument('-te', '--end_temp', type=float, help='ending temperature for the simulated annealing')
-    parser.add_argument('-am', '--auto_meth', type=str, default='none', help='method for auto-temperature scheduling')
+    parser.add_argument('-am', '--auto_meth', type=str, default='none', choices=('none', 'frame', 'factor', 'const'),
+                        help='method for auto-temperature scheduling')
 
     # required arguments
 
@@ -142,15 +143,6 @@ def get_inputfiles(args):
 
     return inputfiles
 
-def ats(imagefile, colony, args, config):
-    temperature, end_temperature = auto_temp_schedule(imagefile, colony, args, config)
-    print("auto temperature schedule started")
-    setattr(args, 'start_temp', temperature)
-    setattr(args, 'end_temp', end_temperature)
-    print("auto temperature schedule finished")
-    print("starting temperature is ", args.start_temp, "ending temperature is ", args.end_temp)
-    return args
-
 
 def main(args):
     """Main function of cellanneal."""
@@ -199,27 +191,39 @@ def main(args):
             return 0
 
         if args.auto_temp == 1:
-            args = ats(get_inputfiles(args)[0], lineageframes.forward(), args, config)
+            print("auto temperature schedule started")
+            args.start_temp, args.end_temp = auto_temp_schedule(get_inputfiles(args)[0], lineageframes.forward(), args, config)
+            print("auto temperature schedule finished")
+            print("starting temperature is ", args.start_temp, "ending temperature is ", args.end_temp)
 
         frame_num = 0
-        prev_cell_num = len(colony.get_nodes())
+        prev_cell_num = len(colony)
         for imagefile in get_inputfiles(args): # Recomputing temperature when needed
 
             frame_num += 1
 
             if args.auto_meth == "frame":
-                if ats_frame(frame_num, 8):
-                   args = ats(imagefile, lineageframes.forward(), args, config)
+                if auto_temp_schedule_frame(frame_num, 8):
+                    print("auto temperature schedule started (recomputed)")
+                    args.start_temp, args.end_temp = auto_temp_schedule(imagefile, colony, args, config)
+                    print("auto temperature schedule finished")
+                    print("starting temperature is ", args.start_temp, "ending temperature is ", args.end_temp)
 
             elif args.auto_meth == "factor":
-                if ats_factor(len(colony.get_nodes()), prev_cell_num, 1.1):
-                    args = ats(imagefile, lineageframes.forward(), args, config)
-                    prev_cell_num = len(colony.get_nodes())
+                if auto_temp_schedule_factor(len(colony), prev_cell_num, 1.1):
+                    print("auto temperature schedule started (recomputed)")
+                    args.start_temp, args.end_temp = auto_temp_schedule(imagefile, colony, args, config)
+                    print("auto temperature schedule finished")
+                    print("starting temperature is ", args.start_temp, "ending temperature is ", args.end_temp)
+                    prev_cell_num = len(colony)
 
             elif args.auto_meth == "const":
-                if ats_factor(len(colony.get_nodes()), prev_cell_num, 10):
-                    args = ats(imagefile, lineageframes.forward(), args, config)
-                    prev_cell_num = len(colony.get_nodes())
+                if auto_temp_schedule_const(len(colony), prev_cell_num, 10):
+                    print("auto temperature schedule started (recomputed)")
+                    args.start_temp, args.end_temp = auto_temp_schedule(imagefile, colony, args, config)
+                    print("auto temperature schedule finished")
+                    print("starting temperature is ", args.start_temp, "ending temperature is ", args.end_temp)
+                    prev_cell_num = len(colony)
 
             colony = optimize(imagefile, lineageframes, args, config, client)
 
