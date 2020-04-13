@@ -90,8 +90,8 @@ class Colony(object):
     def __init__(self):
         self._nodes = []
 
-    def get_nodes(self):
-        return self._nodes
+    def __len__(self):
+        return len(self._nodes)
 
     def add(self, cellnode):
         """Add the cell to the colony."""
