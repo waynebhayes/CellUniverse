@@ -12,15 +12,13 @@ mkdir -p $TEST_DIR/output
 rm -f $TEST_DIR/output/*
 
 if python3 "./main.py" \
-    --start 0 \
-    --finish 13 \
+    --frame_first 0 \
+    --frame_last 13 \
     --debug "./debug" \
     --input "./input/frame%03d.png" \
     --output "$TEST_DIR/output" \
     --config "./config.json" \
     --initial "./cells.0.csv" \
-    --temp 10 \
-    --endtemp 0.01 \
     --no_parallel --global_optimization; then
     :
 else

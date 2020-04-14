@@ -12,6 +12,7 @@ import cProfile
 import argparse
 import multiprocessing
 from pathlib import Path
+from optimization import auto_temp_schedule
 
 
 def parse_args():
@@ -21,9 +22,9 @@ def parse_args():
     # optional arguments
     parser.add_argument('-d', '--debug', metavar='DIRECTORY', type=Path, default=None,
                         help='path to the debug directory (enables debug mode)')
-    parser.add_argument('-s', '--start', metavar='N', type=int, default=0,
+    parser.add_argument('-ff', '--frame_first', metavar='N', type=int, default=0,
                         help='starting image (default: %(default)s)')
-    parser.add_argument('-f', '--finish', metavar='N', type=int, default=-1,
+    parser.add_argument('-lf', '--frame_last', metavar='N', type=int, default=-1,
                         help='final image (defaults to until last image)')
     parser.add_argument('--dist', action='store_true', default=False,
                         help='use distance-based objective function')
@@ -40,8 +41,17 @@ def parse_args():
 
     parser.add_argument('--no_parallel', action='store_true', default=False, help='disable parallelism')
     parser.add_argument('--global_optimization', action='store_true', default=False, help='global optimization')
+    parser.add_argument('--graysynthetic', type=bool, default=False,
+                        help='enables the use of the grayscale synthetic image for use with non-thresholded images')
+    parser.add_argument('--phaseContractImage', type=bool, default=False,
+                        help='enables the use of the grayscale synthetic image for phase contract images')
+    parser.add_argument('-ta', '--auto_temp', metavar='TEMP', type=int, default=1,
+                          help='auto temperature scheduling for the simulated annealing')
+    parser.add_argument('-ts', '--start_temp', type=float, help='starting temperature for the simulated annealing')
+    parser.add_argument('-te', '--end_temp', type=float, help='ending temperature for the simulated annealing')
 
     # required arguments
+
     required = parser.add_argument_group('required arguments')
     required.add_argument('-i', '--input', metavar='PATTERN', type=str, required=True,
                           help='input filename pattern (e.g. "image%%03d.png")')
@@ -51,10 +61,7 @@ def parse_args():
                           help='path to the configuration file')
     required.add_argument('-x', '--initial', metavar='FILE', type=Path, required=True,
                           help='path to the initial cell configuration')
-    required.add_argument('-t', '--temp', metavar='TEMP', type=float, required=True,
-                          help='starting temperature for the simulated annealing')
-    required.add_argument('-e', '--endtemp', metavar='TEMP', type=float, required=True,
-                          help='ending temperature for the simulated annealing')
+
 
     parsed = parser.parse_args()
 
@@ -115,19 +122,19 @@ def get_inputfiles(args):
     """Gets the list of images that are to be analyzed."""
     inputfiles = []
 
-    if args.finish < args.start and args.finish >= 0:
-        raise ValueError('Invalid interval: start must be less than finish')
-    elif args.start < 0:
-        raise ValueError('Invalid interval: start must be greater or equal to 0')
+    if args.frame_first < args.frame_first and args.frame_last >= 0:
+        raise ValueError('Invalid interval: frame_first must be less than frame_last')
+    elif args.frame_first < 0:
+        raise ValueError('Invalid interval: frame_first must be greater or equal to 0')
 
-    for i in count(args.start):
+    for i in count(args.frame_first):
         # check to see if the file exists
         file = Path(args.input % i)
         if file.exists() and file.is_file():
             inputfiles.append(file)
-            if i == args.finish:
+            if i == args.frame_last:
                 break
-        elif args.finish < 0 and args.start != i:
+        elif args.frame_last < 0 and args.frame_first != i:
             break
         else:
             raise ValueError(f'Input file not found "{file}"')
@@ -137,13 +144,15 @@ def get_inputfiles(args):
 
 def main(args):
     """Main function of cellanneal."""
+    if (args.start_temp is not None or args.end_temp is not None) and args.auto_temp == 1:
+        raise Exception("when auto_temp is set to 1(default value), starting temperature or ending temperature should not be set manually")
 
     if not args.no_parallel:
         import dask
         from dask.distributed import Client, LocalCluster
         if not args.cluster:
             cluster = LocalCluster(
-                n_workers=args.workers,
+                n_workers=args.workers,local_dir="/tmp/CellUniverse/dask-worker-space"
             )
         else:
             cluster = args.cluster
@@ -178,6 +187,13 @@ def main(args):
             import global_optimization
             global_optimization.optimize(get_inputfiles(args), lineageframes, lineagefile, args, config)
             return 0
+
+        if args.auto_temp == 1:
+            temperature, end_temperature = auto_temp_schedule(get_inputfiles(args)[0], lineageframes.forward(), args, config)
+            setattr(args, 'start_temp', temperature)
+            setattr(args, 'end_temp', end_temperature)
+            print("auto temperature schedule finished")
+            print("starting temperature is ", args.start_temp, "ending temperature is ", args.end_temp)
 
         for imagefile in get_inputfiles(args):
 

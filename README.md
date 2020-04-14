@@ -93,8 +93,8 @@ optional arguments:
   -h, --help            show this help message and exit
   -d DIRECTORY, --debug DIRECTORY
                         path to the debug directory (enables debug mode)
-  -s N, --start N       starting image (default: 0)
-  -f N, --finish N      final image (defaults to until last image)
+  -ff N, --frame_first N       starting image (default: 0)
+  -lf N, --frame_last N      final image (defaults to until last image)
   --dist                use distance-based objective function
   -w WORKERS, --workers WORKERS
                         number of parallel workers (defaults to number of processors)
@@ -102,6 +102,12 @@ optional arguments:
   --keep KEEP           number of top solutions kept (must be equal or less than --jobs/-j)
   --strategy STRATEGY   one of "best-wins", "worst-wins", "extreme-wins"
   --cluster CLUSTER     dask cluster address (defaults to local cluster)
+  -ts TEMP, --start_temp TEMP  
+                        starting temperature for the simulated annealing
+  -te TEMP, --end_temp TEMP
+                        ending temperature for the simulated annealing
+  -ta AUTOTEMP --auto_temp 
+                        auto-temperature schedule(default: 1(enabled))
 
 required arguments:
   -i PATTERN, --input PATTERN
@@ -112,14 +118,12 @@ required arguments:
                         path to the configuration file
   -x FILE, --initial FILE
                         path to the initial cell configuration
-  -t TEMP, --temp TEMP  starting temperature for the simulated annealing
-  -e TEMP, --endtemp TEMP
-                        ending temperature for the simulated annealing
+
 ```
 
 Examples
 --------
 
 ``` sourceCode
-python "./main.py" --start 0 --finish 13 --debug "./debug" --input "./input/frame%03d.png" --output "$TEST_DIR/output" --config "./config.json" --initial "./cells.0.csv" --temp 10 --endtemp 0.01
+python "./main.py" --frame_first 0 --frame_last 13 --debug "./debug" --input "./input/frame%03d.png" --output "$TEST_DIR/output" --config "./config.json" --initial "./cells.0.csv"
 ```

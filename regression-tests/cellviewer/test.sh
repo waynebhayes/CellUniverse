@@ -1,5 +1,5 @@
 #!/bin/bash
-die() { echo "$@" >&2; exit 1;
+die() { echo "FATAL ERROR: $@" >&2; exit 1;
 }
 
 echo "Testing cellviewer"
