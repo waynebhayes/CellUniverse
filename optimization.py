@@ -32,7 +32,7 @@ def dist_objective(diffimage, distmap):
     return np.sum((diffimage*distmap)**2)
 
 
-def generate_synthetic_image(cellnodes, shape, graySyntheticImage, phaseContractImage):
+def generate_synthetic_image(cellnodes, shape, graySyntheticImage, phaseContractImage=None):
 
     if graySyntheticImage:
         synthimage = np.full(shape, 0.39)  # pixel value: 0.39*255 == 100
