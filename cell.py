@@ -86,7 +86,7 @@ class Bacilli(Cell):
 
         self._needs_refresh = False
 
-    def draw(self, image, is_cell, greySyntheticImage, phaseContractImage):
+    def draw(self, image, is_cell, greySyntheticImage, phaseContractImage=None):
         """Draws the cell by adding the given value to the image."""
         if self._needs_refresh:
             self._refresh()
