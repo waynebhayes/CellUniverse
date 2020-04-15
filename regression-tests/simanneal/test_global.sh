@@ -19,6 +19,9 @@ if python3 "./main.py" \
     --output "$TEST_DIR/output" \
     --config "./config.json" \
     --initial "./cells.0.csv" \
+    --start_temp 10 \
+    --end_temp 0.1 \
+    --auto_temp 0 \
     --no_parallel --global_optimization; then
     :
 else
@@ -27,4 +30,4 @@ fi
 
 python3 "$TEST_DIR/compare.py" "$TEST_DIR/expected_lineage.csv" "$TEST_DIR/output/lineage.csv" || die "compare failed"
 
-echo "Done testing simulated annealing dist."
+echo "Done testing simulated annealing global optimization."

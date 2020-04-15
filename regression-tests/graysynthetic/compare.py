@@ -41,7 +41,7 @@ class Lineage(CSVFile):
 
         my_last_frame_data = self.select('file', my_max_frame)
         other_last_frame_data = other.select('file', my_max_frame)
-        if abs(len(my_last_frame_data) - len(other_last_frame_data)) > 1:
+        if len(my_last_frame_data)//len(other_last_frame_data) > 2:
             print("Difference in number of bacteria too big!", file=sys.stderr)
             return False
 
