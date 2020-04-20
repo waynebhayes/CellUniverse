@@ -13,6 +13,7 @@ import time
 import numpy as np
 from skimage.draw import polygon
 # from skimage.draw import circle, polygon
+from skimage.filters import gaussian
 
 from drawing import draw_arc, draw_line, circle
 from mathhelper import Rectangle, Vector
@@ -58,6 +59,10 @@ class Bacilli(Cell):
         self._length = length
         self._rotation = rotation
         self._needs_refresh = True
+        # diffraction constant, controlling how much does the pattern spread
+        self._sigma = 3.0
+        # diffraction value, controlling how bright the diffraction pattern is
+        self._diff_v = 0.5
 
     def _refresh(self):
         # get the positions of the centers of the head and tail circles
@@ -90,23 +95,44 @@ class Bacilli(Cell):
         """Draws the cell by adding the given value to the image."""
         if self._needs_refresh:
             self._refresh()
-
-        width = self._region.right - self._region.left
-        height = self._region.bottom - self._region.top
+        
+        # binary images (not grey scale) don't have diffraction pattern
+        # currently also no diffraction pattern for PCImg
+        if (not greySyntheticImage) or phaseContractImage:
+            self._sigma = 0
+            self._diff_v = 0
+        
+        # calculate the expansion of the region based on how much does diffraction pattern spread
+        # if self._sigma = 0, then expansion = 0
+        # if self._diff_v = 0, then expansion = 0
+        # if phaseContractImage is True, then expansion = 0
+        expansion = int(self._sigma * 2) if self._diff_v !=0 else 0
+        
+        # expand the square enclosing the cell
+        top = self._region.top - expansion
+        bottom = self._region.bottom + expansion
+        left = self._region.left - expansion
+        right = self._region.right + expansion
+        width = right - left
+        height = bottom - top
         mask = np.zeros((height, width), dtype=np.bool)
-
-
+        
+        # use an extra mask for diffraction pattern
+        diff_mask = np.zeros((height, width), dtype=np.float)
+        
+        # body_mask is expanded
         body_mask = polygon(
-            r=(self._head_left.y - self._region.top,
-               self._head_right.y - self._region.top,
-               self._tail_right.y - self._region.top,
-               self._tail_left.y - self._region.top),
-            c=(self._head_left.x - self._region.left,
-               self._head_right.x - self._region.left,
-               self._tail_right.x - self._region.left,
-               self._tail_left.x - self._region.left),
+            r=(self._head_left.y - top,
+               self._head_right.y - top,
+               self._tail_right.y - top,
+               self._tail_left.y - top),
+            c=(self._head_left.x - left,
+               self._head_right.x - left,
+               self._tail_right.x - left,
+               self._tail_left.x - left),
             shape=mask.shape)
-
+        
+        # body_mask_up is for phaseContractImage so no change for now
         body_mask_up = polygon(
             r=(self._head_left.y - self._region.top,
                ceil((self._head_right.y + self._head_left.y) / 2) - self._region.top,
@@ -117,7 +143,8 @@ class Bacilli(Cell):
                ceil((self._tail_right.x + self._tail_left.x) / 2) - self._region.left,
                self._tail_left.x - self._region.left),
             shape=mask.shape)
-
+        
+        # body_mask_middle is for phaseContractImage so no change for now
         body_mask_middle = polygon(
             r=(ceil((self._head_right.y + self._head_left.y * 2) / 3) - self._region.top,
                ceil((self._head_right.y * 2 + self._head_left.y) / 3) - self._region.top,
@@ -128,20 +155,24 @@ class Bacilli(Cell):
                ceil((self._tail_right.x * 2 + self._tail_left.x) / 3) - self._region.left,
                ceil((self._tail_right.x + self._tail_left.x * 2) / 3) - self._region.left),
             shape=mask.shape)
-
+        
+        # head_mask is expanded
         head_mask = circle(
-            x=self._head_center.x - self._region.left,
-            y=self._head_center.y - self._region.top,
+            x=self._head_center.x - left,
+            y=self._head_center.y - top,
             radius=self._width / 2,
             shape=mask.shape)
 
+        # tail_mask is expanded
         tail_mask = circle(
-            x=self._tail_center.x - self._region.left,
-            y=self._tail_center.y - self._region.top,
+            x=self._tail_center.x - left,
+            y=self._tail_center.y - top,
             radius=self._width / 2,
             shape=mask.shape)
-
+        
         if greySyntheticImage:
+            
+            # phaseContractImage == True part remains unchanged
             if phaseContractImage:
                 if not is_cell:
                     mask[body_mask] = True
@@ -178,15 +209,42 @@ class Bacilli(Cell):
                     self._region.left:self._region.right][mask] = 0.39  # 0.39*255=100
 
             if not phaseContractImage:
+                
                 mask[body_mask] = True
                 mask[head_mask] = True
-                mask[tail_mask] = True
-                if is_cell:
-                    image[self._region.top:self._region.bottom,
-                          self._region.left:self._region.right][mask] += -0.24
+                mask[tail_mask] = True    
+                
+                if is_cell:  
+                    
+                    if (self._diff_v != 0) and (self._sigma != 0):
+                        diff_mask[body_mask] = self._diff_v
+                        diff_mask[head_mask] = self._diff_v
+                        diff_mask[tail_mask] = self._diff_v
+                    
+                        # blur the white cell
+                        diff_mask = gaussian(diff_mask, self._sigma)
+                        
+                        # add diffraction pattern to the image
+                        image[top:bottom, left:right] += diff_mask
+                    
+                    # overlap the cell part with the black cell
+                    image[top:bottom, left:right][mask] = 0.15 #0.39 - 0.24 = 0.15
+                
                 else:
-                    image[self._region.top:self._region.bottom,
-                          self._region.left:self._region.right][mask] += 0.24
+                    
+                    if (self._diff_v != 0) and (self._sigma != 0):
+                        diff_mask[body_mask] = self._diff_v
+                        diff_mask[head_mask] = self._diff_v
+                        diff_mask[tail_mask] = self._diff_v
+                    
+                        # blur the white cell
+                        diff_mask = gaussian(diff_mask, self._sigma)
+                        
+                        # subtract diffraction pattern to the image
+                        image[top:bottom, left:right] -= diff_mask
+                    
+                    # overlap the cell part with background
+                    image[top:bottom, left:right][mask] = 0.39
         else:
             mask[body_mask] = True
             mask[head_mask] = True
