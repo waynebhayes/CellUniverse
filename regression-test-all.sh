@@ -5,7 +5,7 @@ for dir in regression-tests/*; do
 	echo --- in directory $dir ---
 	for r in $dir/*.sh; do
 		echo --- running test $r ---
-		if setbuf -oL -eL "$r"; then # force output and error to be line buffered
+		if stdbuf -oL -eL "$r"; then # force output and error to be line buffered
 			:
 		else
 			RETURN=1
