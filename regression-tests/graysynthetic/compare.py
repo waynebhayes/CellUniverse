@@ -3,8 +3,13 @@ import sys
 
 class CSVFile:
     def __init__(self, file):
-        self.cols = [col.strip() for col in next(file).split(',')]
+        
+        next_line = next(file,None)
+        if next_line != None:
+            self.cols = [col.strip() for col in next_line.split(',')]
+
         self.data = []
+
         for line in file:
             if len(line.strip()) > 0:
                 cols = [col.strip() for col in line.split(',')]
