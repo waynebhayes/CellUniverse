@@ -59,10 +59,6 @@ class Bacilli(Cell):
         self._length = length
         self._rotation = rotation
         self._needs_refresh = True
-        # diffraction constant, controlling how much does the pattern spread
-        self._sigma = 3.0
-        # diffraction value, controlling how bright the diffraction pattern is
-        self._diff_v = 0.5
 
     def _refresh(self):
         # get the positions of the centers of the head and tail circles
@@ -91,7 +87,7 @@ class Bacilli(Cell):
 
         self._needs_refresh = False
 
-    def draw(self, image, is_cell, greySyntheticImage, phaseContractImage=None):
+    def draw(self, image, is_cell, diffraction_sigma, diffraction_strength, greySyntheticImage, phaseContractImage):
         """Draws the cell by adding the given value to the image."""
         if self._needs_refresh:
             self._refresh()
@@ -99,14 +95,14 @@ class Bacilli(Cell):
         # binary images (not grey scale) don't have diffraction pattern
         # currently also no diffraction pattern for PCImg
         if (not greySyntheticImage) or phaseContractImage:
-            self._sigma = 0
-            self._diff_v = 0
+            diffraction_sigma = 0
+            diffraction_strength = 0
         
         # calculate the expansion of the region based on how much does diffraction pattern spread
-        # if self._sigma = 0, then expansion = 0
-        # if self._diff_v = 0, then expansion = 0
+        # if diffraction_strength = 0, then expansion = 0
+        # if diffraction_sigma_= 0, then expansion = 0
         # if phaseContractImage is True, then expansion = 0
-        expansion = int(self._sigma * 2) if self._diff_v !=0 else 0
+        expansion = int(diffraction_sigma * 2) if diffraction_strength !=0 else 0
         
         # expand the square enclosing the cell
         top = self._region.top - expansion
@@ -216,13 +212,13 @@ class Bacilli(Cell):
                 
                 if is_cell:  
                     
-                    if (self._diff_v != 0) and (self._sigma != 0):
-                        diff_mask[body_mask] = self._diff_v
-                        diff_mask[head_mask] = self._diff_v
-                        diff_mask[tail_mask] = self._diff_v
+                    if (diffraction_sigma != 0) and (diffraction_strength != 0):
+                        diff_mask[body_mask] = diffraction_strength
+                        diff_mask[head_mask] = diffraction_strength
+                        diff_mask[tail_mask] = diffraction_strength
                     
                         # blur the white cell
-                        diff_mask = gaussian(diff_mask, self._sigma)
+                        diff_mask = gaussian(diff_mask, diffraction_sigma)
                         
                         # add diffraction pattern to the image
                         image[top:bottom, left:right] += diff_mask
@@ -232,13 +228,13 @@ class Bacilli(Cell):
                 
                 else:
                     
-                    if (self._diff_v != 0) and (self._sigma != 0):
-                        diff_mask[body_mask] = self._diff_v
-                        diff_mask[head_mask] = self._diff_v
-                        diff_mask[tail_mask] = self._diff_v
+                    if (diffraction_strength != 0) and (diffraction_sigma != 0):
+                        diff_mask[body_mask] = diffraction_strength
+                        diff_mask[head_mask] = diffraction_strength
+                        diff_mask[tail_mask] = diffraction_strength
                     
                         # blur the white cell
-                        diff_mask = gaussian(diff_mask, self._sigma)
+                        diff_mask = gaussian(diff_mask, diffraction_sigma)
                         
                         # subtract diffraction pattern to the image
                         image[top:bottom, left:right] -= diff_mask
