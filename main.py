@@ -41,9 +41,9 @@ def parse_args():
 
     parser.add_argument('--no_parallel', action='store_true', default=False, help='disable parallelism')
     parser.add_argument('--global_optimization', action='store_true', default=False, help='global optimization')
-    parser.add_argument('--graysynthetic', type=bool, default=False,
+    parser.add_argument('--graysynthetic', action='store_true', default=False,
                         help='enables the use of the grayscale synthetic image for use with non-thresholded images')
-    parser.add_argument('--phaseContractImage', type=bool, default=False,
+    parser.add_argument('--phaseContractImage', action='store_true', default=False,
                         help='enables the use of the grayscale synthetic image for phase contract images')
     parser.add_argument('-ta', '--auto_temp', metavar='TEMP', type=int, default=1,
                           help='auto temperature scheduling for the simulated annealing')
@@ -265,7 +265,7 @@ if __name__ == '__main__':
     from cell import Bacilli
     from colony import CellNode, Colony, LineageFrames
     from optimization import optimize
-
+    from sys import exit
     # pr = cProfile.Profile()
     # pr.enable()
     print('CHECKPOINT, {}, {}, {}'.format(time.time(), -1, -1), flush=True)
