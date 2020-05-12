@@ -15,8 +15,14 @@
     "bacilli.maxLength": 48.0,  // microns
     "bacilli.distanceCostDivisor": 24,  // microns
     
-    // Light settings
-    // set either diffraction parameter to 0 if no diffraction needed
-    "light.diffraction.sigma": 3.0,  
-    "light.diffraction.strength": 0.5
+    // simulation settings. NOTE: Image are converted to grayscale float32. 
+    // All settings should be floats.
+    "simulation":
+    {
+        "image.type": "To be Set", 
+        "background.color": "auto", // 0.39 for gary scale image
+        "cell.color" : "auto", // 0.15 for gray scale image
+        "light.diffraction.sigma": "auto",  
+        "light.diffraction.strength": "auto"
+    }
 }

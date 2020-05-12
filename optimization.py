@@ -8,6 +8,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 import matplotlib.pyplot as plt
 from scipy.ndimage import distance_transform_edt
+from scipy.optimize import leastsq
 
 from cell import Bacilli
 from colony import CellNode, Colony
@@ -31,18 +32,65 @@ def objective(realimage, synthimage):
 def dist_objective(diffimage, distmap):
     return np.sum((diffimage*distmap)**2)
 
+def find_optimal_simulation_conf(simulation_config, realimage1, cellnodes):
+    shape = realimage1.shape
+    def cost(values, target, simulation_config):
+        for i in range(len(target)):
+            simulation_config[target[i]] = values[i]
+        synthimage = generate_synthetic_image(cellnodes, shape, simulation_config)
+        return (realimage1 - synthimage).flatten()
+    
+    
+    if simulation_config["background.color"] == "auto" or simulation_config["cell.color"] == "auto":
+        simulation_config_copy = simulation_config.copy()
+        simulation_config_copy["light.diffraction.sigma"] = 0
+        simulation_config_copy["light.diffraction.strength"] = 0
+        colors = ["background.color", "cell.color"]
+        target = [i for i in colors if simulation_config[i] == "auto"]
+        
+        initial_values = np.random.random(2)
+        
+        residues = lambda x: cost(x, target, simulation_config_copy)
+        
+        optimal_values, _ = leastsq(residues, initial_values)
+        
+        for i, param in enumerate(target):
+            simulation_config[param] = optimal_values[i]
+            
+    if simulation_config["light.diffraction.sigma"] == "auto" or simulation_config["light.diffraction.strength"] == "auto":
+        params = ["light.diffraction.sigma", "light.diffraction.strength"]
+        target = [i for i in params if simulation_config[i] == "auto"]
+        
+        initial_values = []
+        
+        if "light.diffraction.sigma" in target:
+            initial_values.append(3) 
+        if "light.diffraction.strength" in target:
+            initial_values.append(0.6)
+        
+        residues = lambda x: cost(x, target, simulation_config)
+        
+        optimal_values, _ = leastsq(residues, initial_values)
+        
+        for i, param in enumerate(target):
+            simulation_config[param] = optimal_values[i]
+    
+    print(f"optimal simulation configuration values found: {simulation_config}")
+    return simulation_config
+            
 
-def generate_synthetic_image(cellnodes, shape, diffraction_sigma, diffraction_strength, graySyntheticImage, phaseContractImage=None):
-
-    if graySyntheticImage:
-        synthimage = np.full(shape, 0.39)  # pixel value: 0.39*255 == 100
+def generate_synthetic_image(cellnodes, shape, simulation_config):
+    image_type = simulation_config["image.type"]
+    if image_type == "graySynthetic" or image_type == "phaseContrast":
+        background_color = simulation_config["background.color"]
+        synthimage = np.full(shape, background_color) 
         for node in cellnodes:
-            node.cell.draw(synthimage, is_cell, diffraction_sigma, diffraction_strength, graySyntheticImage, phaseContractImage)  # pixel value: 0.15*255 == 40
+            node.cell.draw(synthimage, is_cell, simulation_config)
         return synthimage
     else:
         synthimage = np.zeros(shape)
         for node in cellnodes:
-            node.cell.draw(synthimage, is_cell, diffraction_sigma, diffraction_strength, graySyntheticImage, phaseContractImage)
+            node.cell.draw(synthimage, is_cell, simulation_config)
         return synthimage
 
 
@@ -286,8 +334,7 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000, aut
 
     realimage = load_image(imagefile)
     shape = realimage.shape
-    diffraction_strength = config["light.diffraction.strength"]
-    diffraction_sigma = config["light.diffraction.sigma"]
+    simulation_config = config["simulation"]
     
     celltype = config['global.cellType'].lower()
     useDistanceObjective = args.dist
@@ -295,7 +342,7 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000, aut
     cellnodes = list(colony)
 
     # find the initial cost
-    synthimage = generate_synthetic_image(cellnodes, realimage.shape, diffraction_sigma, diffraction_strength, args.graysynthetic, args.phaseContractImage)
+    synthimage = generate_synthetic_image(cellnodes, shape, simulation_config)
     diffimage = realimage - synthimage
     if useDistanceObjective:
         distmap = distance_transform_edt(realimage < .5)
@@ -331,6 +378,7 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000, aut
             new_node = node.children[0]
 
             old_diff = diffimage.copy()
+            old_synthimage = synthimage.copy()
 
             # # try splitting (or combining if already split)
             combined = False
@@ -359,11 +407,11 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000, aut
                                                 region.left:region.right]**2)
 
                 # subtract the previous cells
-                snode1.cell.draw(diffimage, is_cell, diffraction_sigma, diffraction_strength, args.graysynthetic, args.phaseContractImage)
-                snode2.cell.draw(diffimage, is_cell, diffraction_sigma, diffraction_strength, args.graysynthetic, args.phaseContractImage)
+                snode1.cell.draw(synthimage, is_background, simulation_config)
+                snode2.cell.draw(synthimage, is_background, simulation_config)
 
                 # add the new cell
-                cnode.cell.draw(diffimage, is_background, diffraction_sigma, diffraction_strength, args.graysynthetic, args.phaseContractImage)
+                cnode.cell.draw(synthimage, is_cell, simulation_config)
 
             elif split:
                 snode1, snode2 = node.children
@@ -380,11 +428,11 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000, aut
                                                 region.left:region.right]**2)
                 
                 # subtract the previous cell
-                node.cell.draw(diffimage, is_cell, diffraction_sigma, diffraction_strength, args.graysynthetic, args.phaseContractImage)
+                node.cell.draw(synthimage, is_background, simulation_config)
 
                 # add the new cells
-                snode1.cell.draw(diffimage, is_background, diffraction_sigma, diffraction_strength, args.graysynthetic, args.phaseContractImage)
-                snode2.cell.draw(diffimage, is_background, diffraction_sigma, diffraction_strength, args.graysynthetic, args.phaseContractImage)
+                snode1.cell.draw(synthimage, is_cell, simulation_config)
+                snode2.cell.draw(synthimage, is_cell, simulation_config)
 
             else:
                 # compute the starting cost
@@ -398,12 +446,14 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000, aut
                                                 region.left:region.right]**2)
 
                 # subtract the previous cell
-                node.cell.draw(diffimage, is_cell, diffraction_sigma, diffraction_strength, args.graysynthetic, args.phaseContractImage)
+                node.cell.draw(synthimage, is_background, simulation_config)
 
                 # add the new cells
-                new_node.cell.draw(diffimage, is_background, diffraction_sigma, diffraction_strength, args.graysynthetic, args.phaseContractImage)
+                new_node.cell.draw(synthimage, is_cell, simulation_config)
 
             # compute the cost difference
+            diffimage = realimage - synthimage
+            
             if useDistanceObjective:
                 end_cost = dist_objective(
                     diffimage[region.top:region.bottom, region.left:region.right],
@@ -432,6 +482,7 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000, aut
 
                 # restore the diff image
                 diffimage = old_diff
+                synthimage = old_synthimage
 
             else:
                 if combined:
@@ -442,10 +493,10 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000, aut
             colony.flatten()
             cellnodes = list(colony)
 
-
+            
             # DEBUG
             if args.debug and i%80 == 0:
-                synthimage = generate_synthetic_image(cellnodes, realimage.shape, diffraction_sigma, diffraction_strength, args.graysynthetic, args.phaseContractImage)
+                synthimage = generate_synthetic_image(cellnodes, shape, simulation_config)
 
                 frame_1 = np.empty((shape[0], shape[1], 3))
                 frame_1[..., 0] = (realimage - synthimage)
@@ -487,7 +538,6 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000, aut
 
         return bad_prob_tot/bad_count
 
-    synthimage = generate_synthetic_image(cellnodes, realimage.shape, diffraction_sigma, diffraction_strength, args.graysynthetic, args.phaseContractImage)
     if useDistanceObjective:
         new_cost = dist_objective(realimage - synthimage, distmap)
     else:

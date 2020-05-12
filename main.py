@@ -12,7 +12,7 @@ import cProfile
 import argparse
 import multiprocessing
 from pathlib import Path
-from optimization import auto_temp_schedule, auto_temp_schedule_frame, auto_temp_schedule_factor, auto_temp_schedule_const
+from optimization import auto_temp_schedule, auto_temp_schedule_frame, auto_temp_schedule_factor, auto_temp_schedule_const, find_optimal_simulation_conf, load_image
 
 
 def parse_args():
@@ -41,9 +41,11 @@ def parse_args():
 
     parser.add_argument('--no_parallel', action='store_true', default=False, help='disable parallelism')
     parser.add_argument('--global_optimization', action='store_true', default=False, help='global optimization')
-    parser.add_argument('--graysynthetic', action='store_true', default=False,
+    parser.add_argument('--binary', action='store_true', default=True,
+                        help = "input image is binary")
+    parser.add_argument('--graySynthetic', action='store_true', default=False,
                         help='enables the use of the grayscale synthetic image for use with non-thresholded images')
-    parser.add_argument('--phaseContractImage', action='store_true', default=False,
+    parser.add_argument('--phaseContrast', action='store_true', default=False,
                         help='enables the use of the grayscale synthetic image for phase contract images')
     parser.add_argument('-ta', '--auto_temp', metavar='TEMP', type=int, default=1,
                           help='auto temperature scheduling for the simulated annealing')
@@ -167,10 +169,23 @@ def main(args):
     start = time.time()
 
     try:
+        config = load_config(args.config)
+        
+        simulation_config = config["simulation"]
+        #Maybe better to store the image type in the config file in the first place, instead of using cmd?
+        if args.graySynthetic == True:
+            simulation_config["image.type"] = "graySynthetic"
+        elif args.phaseContrast == True:
+            simulation_config["image.type"] = "phaseContrastImage"
+        elif args.binary == True:
+            simulation_config["image.type"] = "binary"
+        else:
+            raise ValueError("Invalid Command: Input image type must be specified")
+            
         if args.debug:
             debugmode = True
 
-        config = load_config(args.config)
+        
         celltype = config['global.cellType'].lower()
 
         # setup the colony from a file with the initial properties
@@ -185,6 +200,8 @@ def main(args):
             header.extend(['x', 'y', 'width', 'length', 'rotation'])
         print(','.join(header), file=lineagefile)
 
+        #optimze configuration
+        config["simulation"] = find_optimal_simulation_conf(config["simulation"], load_image(get_inputfiles(args)[0]), list(colony))
         if args.global_optimization:
             import global_optimization
             global_optimization.optimize(get_inputfiles(args), lineageframes, lineagefile, args, config)
@@ -224,6 +241,7 @@ def main(args):
                     print("auto temperature schedule finished")
                     print("starting temperature is ", args.start_temp, "ending temperature is ", args.end_temp)
                     prev_cell_num = len(colony)
+
 
             colony = optimize(imagefile, lineageframes, args, config, client)
 
