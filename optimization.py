@@ -559,7 +559,13 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000, aut
 
     debugimage = Image.fromarray((255*frame).astype(np.uint8))
 
-    return colony, cost, debugimage
+    best_fit_frame = np.empty((shape[0], shape[1], 3))
+    best_fit_frame[..., 0] = synthimage
+    best_fit_frame[..., 1] = best_fit_frame[...,0]
+    best_fit_frame[..., 2] = best_fit_frame[...,0]
+    best_fit_frame = np.clip(best_fit_frame, 0, 1)
+    best_fit_frame = Image.fromarray((255* best_fit_frame). astype(np.uint8))
+    return colony, cost, debugimage, best_fit_frame
 
 def auto_temp_schedule(imagefile, colony, args, config):
     initial_temp = 1
@@ -586,8 +592,9 @@ def optimize(imagefile, lineageframes, args, config, client):
     badcount = 0  # DEBUG
 
     if not client:
-        colony,_,debugimage = optimize_core(imagefile, lineageframes.forward(), args, config)
+        colony,_,debugimage, best_fit_frame = optimize_core(imagefile, lineageframes.forward(), args, config)
         debugimage.save(args.output / imagefile.name)
+        best_fit_frame.save(args.bestfit/imagefile.name)
         return colony
 
     #tasks = []
