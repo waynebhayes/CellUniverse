@@ -65,6 +65,8 @@ def parse_args():
                           help='path to the configuration file')
     required.add_argument('-x', '--initial', metavar='FILE', type=Path, required=True,
                           help='path to the initial cell configuration')
+    required.add_argument('-b', "--bestfit", metavar="FILE", type=Path, required=True,
+                          help="path to the best fit synthetic image output directory")
 
 
     parsed = parser.parse_args()
