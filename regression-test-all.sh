@@ -2,6 +2,8 @@
 RETURN=0
 #renice 19 $$
 for dir in regression-tests/*; do
+	REG_DIR=$dir
+	export REG_DIR
 	echo --- in directory $dir ---
 	for r in $dir/*.sh; do
 		echo --- running test $r ---
