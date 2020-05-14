@@ -1,3 +1,10 @@
+rm -rf ./output
+mkdir ./output
+
+rm -rf ./bestfit
+mkdir ./bestfit
+
+
 python ".\main.py" \
     --start 0 \
     --finish 60 \

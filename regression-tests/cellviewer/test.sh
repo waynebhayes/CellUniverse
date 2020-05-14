@@ -9,6 +9,7 @@ TEST_DIR=./regression-tests/cellviewer
 
 rm -rf $TEST_DIR/test
 mkdir $TEST_DIR/test
+
 cp -r $TEST_DIR/original_data/* $TEST_DIR/test
 
 rm -rf $TEST_DIR/results
