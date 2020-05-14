@@ -17,7 +17,7 @@ mkdir $TEST_DIR/bestfit
 
 if python3 "./main.py" \
     --frame_first 0 \
-    --frame_last 13 \
+    --frame_last 67 \
     --debug "./debug" \
     --input "./input_gray/frame%03d.png" \
     --graysynthetic \
