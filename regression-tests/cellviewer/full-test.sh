@@ -6,16 +6,19 @@ npm() { echo "Not running npm, since it seems to be broken" >&2
 echo "Testing cellviewer (pushing to website)"
 npm install --prefix cellviewer || die "npm failed"
 
-rm -rf ./cellviewer/src/output/
+rm -rf ./cellviewer/src/output
+rm -rf ./cellviewer/src/bestfit
 rm -rf node_modules/gh-pages/.cache
-mkdir ./cellviewer/src/output/
+mkdir ./cellviewer/src/output
+mkdir ./cellviewer/src/bestfit
 
 python3 "./main.py" \
     --frame_first 0 \
-    --frame_last 3 \
+    --frame_last 13 \
     --debug "./debug" \
     --input "./input/frame%03d.png" \
     --output "./cellviewer/src/output" \
+    --bestfit "./cellviewer/src/bestfit" \
     --config "./config.json" \
     --initial "./cells.0.csv" || die "main.py failed"
 
