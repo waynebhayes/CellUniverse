@@ -147,6 +147,7 @@ def perturb_bacilli(node, config, imageshape):
     length_sigma = perturb_conf["modification.length.sigma"]
     rotation_sigma = perturb_conf["modification.rotation.sigma"]
     
+    count=0
     while True:
         # set starting properties
         x = cell.x
@@ -181,9 +182,15 @@ def perturb_bacilli(node, config, imageshape):
         
         if not (0 <= x < imageshape[1] and 0 <= y < imageshape[0]) or (displacement > max_displacement)\
             or width < min_width or width > max_width or (abs(rotation - prior.rotation) > max_rotation) or \
-            not (min_length < length < max_length) or not (min_growth < length - prior.length < max_growth):
+            not (min_length < length < max_length):
                 badcount += 1
-                continue
+        elif not (min_growth < length - prior.length < max_growth):
+            badcount+=1
+            count+=1
+            if count > 10:
+                #print(f"length: {length}, prior.length: {prior.length}, difference: {length - prior.length}")
+                length = prior.length + max_growth
+                break
         else:
             break
         
@@ -373,9 +380,7 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000, aut
 
         # perturb the cell and push it onto the stack
         if celltype == 'bacilli':
-            #print(f"in {i}")
             perturb_bacilli(node, config, shape)
-            #print(f"success {i}")
             new_node = node.children[0]
 
             old_diff = diffimage.copy()
