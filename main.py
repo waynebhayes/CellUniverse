@@ -182,7 +182,7 @@ def main(args):
         elif args.binary == True:
             simulation_config["image.type"] = "binary"
         else:
-            raise ValueError("Invalid Command: Input image type must be specified")
+            raise ValueError("Invalid Command: Synthetic image type must be specified")
             
         if args.debug:
             debugmode = True

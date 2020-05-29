@@ -110,14 +110,15 @@ def perturb_bacilli(node, config, imageshape):
     cell = node.cell
     prior = node.prior.cell
 
-    if node.split:
-        p1, p2 = node.prior.cell.split(node.alpha)
-        if p1.name == node.cell.name:
-            prior = p1
-        elif p2.name == node.cell.name:
-            prior = p2
-        else:
-            AssertionError('Names not matching')
+    #delete?
+    #if node.split:
+        #p1, p2 = node.prior.cell.split(node.alpha)
+        #if p1.name == node.cell.name:
+            #prior = p1
+        #elif p2.name == node.cell.name:
+            #prior = p2
+        #else:
+            #AssertionError('Names not matching')
 
     max_displacement = config['bacilli.maxSpeed']/config['global.framesPerSecond']
     max_rotation = config['bacilli.maxSpin']/config['global.framesPerSecond']
@@ -127,67 +128,66 @@ def perturb_bacilli(node, config, imageshape):
     max_width = config['bacilli.maxWidth']
     min_length = config['bacilli.minLength']
     max_length = config['bacilli.maxLength']
-
-    # set starting properties
-    x = cell.x
-    y = cell.y
-    width = cell.width
-    length = cell.length
-    rotation = cell.rotation
-
-    modified = False
-    wasbad = False  # DEBUG
-    while not modified:
-
-        # randomly make changes
-        if random.random() < 0.35:
-            x = cell.x + random.gauss(mu=0, sigma=0.5)
-            modified = True
-
-        if random.random() < 0.35:
-            y = cell.y + random.gauss(mu=0, sigma=0.5)
-            modified = True
-
-        if random.random() < 0.1:
-            width = cell.width + random.gauss(mu=0, sigma=0.1)
-            modified = True
-
-        if random.random() < 0.2:
-            length = cell.length + random.gauss(mu=0, sigma=1)
-            modified = True
-
-        if random.random() < 0.2:
-            rotation = cell.rotation + random.gauss(mu=0, sigma=0.2)
-            modified = True
-
-        # ensure that those changes fall within constraints
-        if modified:
-            displacement = sqrt(np.sum((np.array([x, y, 0] - prior.position))**2))
-            bad = False
-            if not (0 <= x < imageshape[1] and 0 <= y < imageshape[0]):
-                bad = True
-            elif displacement > max_displacement:
-                bad = True
-            elif width < min_width or width > max_width:
-                bad = True
-            elif abs(rotation - prior.rotation) > max_rotation:
-                bad = True
-            elif not (min_length < length < max_length):
-                bad = True
-            elif not (min_growth < length - prior.length < max_growth):
-                bad = True
-            if bad:
-                wasbad = True   # DEBUG
-                x = cell.x
-                y = cell.y
-                width = cell.width
-                length = cell.length
-                rotation = cell.rotation
-                modified = False
-
-    if wasbad:  # DEBUG
-        badcount += 1
-
+    
+    perturb_conf = config["perturbation"]
+    p_x = perturb_conf["prob.x"]
+    p_y = perturb_conf["prob.y"]
+    p_width = perturb_conf["prob.width"]
+    p_length = perturb_conf["prob.length"]
+    p_rotation = perturb_conf["prob.rotation"]
+    
+    x_mu = perturb_conf["modification.x.mu"]
+    y_mu = perturb_conf["modification.y.mu"]
+    width_mu = perturb_conf["modification.width.mu"]
+    length_mu = perturb_conf["modification.length.mu"]
+    rotation_mu = perturb_conf["modification.rotation.mu"]
+    
+    x_sigma = perturb_conf["modification.x.sigma"]
+    y_sigma = perturb_conf["modification.y.sigma"]
+    width_sigma = perturb_conf["modification.width.sigma"]
+    length_sigma = perturb_conf["modification.length.sigma"]
+    rotation_sigma = perturb_conf["modification.rotation.sigma"]
+    
+    while True:
+        # set starting properties
+        x = cell.x
+        y = cell.y
+        width = cell.width
+        length = cell.length
+        rotation = cell.rotation
+        
+        p_decision = np.array([p_x, p_y, p_width, p_length, p_rotation])
+        p = np.random.uniform(0.0, 1.0, size= p_decision.size)
+        
+        # generate a sequence such that an attribute must be modified
+        while (p > p_decision).all():
+            p = np.random.uniform(0.0, 1.0, size=5)
+        
+        if p[0] < p_decision[0]: #perturb x
+            x = cell.x + random.gauss(mu=x_mu, sigma=x_sigma)
+    
+        if p[1] < p_decision[1]: #perturb y
+            y = cell.y + random.gauss(mu=y_mu, sigma=y_sigma)
+    
+        if p[2] < p_decision[2]: #perturb width
+            width = cell.width + random.gauss(mu=width_mu, sigma=width_sigma)
+    
+        if p[3] < p_decision[3]: #perturb length
+            length = cell.length + random.gauss(mu=length_mu, sigma=length_sigma)
+    
+        if p[4] < p_decision[4]: #perturb rotation
+            rotation = cell.rotation + random.gauss(mu=rotation_mu, sigma=rotation_sigma)
+            
+        displacement = sqrt(np.sum((np.array([x, y, 0] - prior.position))**2))
+        
+        if not (0 <= x < imageshape[1] and 0 <= y < imageshape[0]) or (displacement > max_displacement)\
+            or width < min_width or width > max_width or (abs(rotation - prior.rotation) > max_rotation) or \
+            not (min_length < length < max_length) or not (min_growth < length - prior.length < max_growth):
+                badcount += 1
+                continue
+        else:
+            break
+        
     # push the new cell over the previous in the node
     node.push(Bacilli(cell.name, x, y, width, length, rotation))
 
@@ -374,7 +374,9 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000, aut
 
         # perturb the cell and push it onto the stack
         if celltype == 'bacilli':
+            print(f"in {i}")
             perturb_bacilli(node, config, shape)
+            print(f"success {i}")
             new_node = node.children[0]
 
             old_diff = diffimage.copy()
@@ -529,12 +531,12 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000, aut
         if (auto_temp_complete == True):
             temperature *= alpha
 
-    # print(f'Bad Percentage: {100*badcount/run_count}%')
+    #print(f'Bad Percentage: {100*badcount/run_count}%')
 
     if (auto_temp_complete == False):
 
-        # print("pbad is ", bad_prob_tot/bad_count)
-        # print("temperature is ", temperature)
+        print("pbad is ", bad_prob_tot/bad_count)
+        #print("temperature is ", temperature)
 
         return bad_prob_tot/bad_count
 
@@ -571,17 +573,27 @@ def auto_temp_schedule(imagefile, colony, args, config):
     initial_temp = 1
     ITERATION = 500
     AUTO_TEMP_COMPLETE = False
+    
+    count = 0
 
     while(optimize_core(imagefile, colony, args, config, ITERATION, AUTO_TEMP_COMPLETE, initial_temp)<0.40):
+        count += 1
         initial_temp *= 10.0
+        print(f"count: {count}")
+    print("finished < 0.4")
     while(optimize_core(imagefile, colony, args, config, ITERATION, AUTO_TEMP_COMPLETE, initial_temp)>0.40):
+        count += 1 
         initial_temp /= 10.0
+        print(f"count: {count}")
+    print("finished > 0.4")
     while(optimize_core(imagefile, colony, args, config, ITERATION, AUTO_TEMP_COMPLETE, initial_temp)<0.40):
+        count += 1
         initial_temp *= 1.1
-
+        print(f"count: {count}")
     end_temp = initial_temp
-
+    print("finished < 0.4")
     while(optimize_core(imagefile, colony, args, config, ITERATION, AUTO_TEMP_COMPLETE, end_temp)>=1e-10):
+        count += 1
         end_temp /= 10.0
 
     return initial_temp, end_temp
