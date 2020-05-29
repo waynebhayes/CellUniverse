@@ -110,15 +110,14 @@ def perturb_bacilli(node, config, imageshape):
     cell = node.cell
     prior = node.prior.cell
 
-    #delete?
-    #if node.split:
-        #p1, p2 = node.prior.cell.split(node.alpha)
-        #if p1.name == node.cell.name:
-            #prior = p1
-        #elif p2.name == node.cell.name:
-            #prior = p2
-        #else:
-            #AssertionError('Names not matching')
+    if node.split:
+        p1, p2 = node.prior.cell.split(node.alpha)
+        if p1.name == node.cell.name:
+            prior = p1
+        elif p2.name == node.cell.name:
+            prior = p2
+        else:
+            AssertionError('Names not matching')
 
     max_displacement = config['bacilli.maxSpeed']/config['global.framesPerSecond']
     max_rotation = config['bacilli.maxSpin']/config['global.framesPerSecond']
@@ -374,9 +373,9 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000, aut
 
         # perturb the cell and push it onto the stack
         if celltype == 'bacilli':
-            print(f"in {i}")
+            #print(f"in {i}")
             perturb_bacilli(node, config, shape)
-            print(f"success {i}")
+            #print(f"success {i}")
             new_node = node.children[0]
 
             old_diff = diffimage.copy()

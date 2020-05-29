@@ -202,7 +202,7 @@ class Bacilli(Cell):
             diffraction_mask = mask.astype(float)
             diffraction_mask[mask] = diffraction_strength
             diffraction_mask = np.pad(diffraction_mask, extension, mode="constant")
-            diffraction_mask = gaussian_filter(diffraction_mask, gaussian_filter_truncate)
+            diffraction_mask = gaussian_filter(diffraction_mask, gaussian_filter_sigma, truncate = gaussian_filter_truncate)
             
             diff_top = top - extension
             diff_left = left - extension
