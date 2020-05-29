@@ -24,5 +24,24 @@
         "cell.color" : "auto", // 0.15 for gray scale image
         "light.diffraction.sigma": "auto",  
         "light.diffraction.strength": "auto"
+    },
+    
+    "perturbation":
+    {
+        "prob.x": 0.35,
+        "prob.y": 0.35,
+        "prob.width":0.1,
+        "prob.length":0.2,
+        "prob.rotation":0.2,
+        "modification.x.mu":0.0,
+        "modification.y.mu":0.0,
+        "modification.width.mu":0.0,
+        "modification.length.mu":0.0,
+        "modification.rotation.mu":0.0,
+        "modification.x.sigma":0.5,
+        "modification.y.sigma":0.5,
+        "modification.width.sigma":0.1,
+        "modification.length.sigma":1.0,
+        "modification.rotation.sigma":0.2
     }
 }
