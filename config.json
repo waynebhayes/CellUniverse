@@ -23,7 +23,8 @@
         "background.color": "auto", // 0.39 for gary scale image
         "cell.color" : "auto", // 0.15 for gray scale image
         "light.diffraction.sigma": "auto",  
-        "light.diffraction.strength": "auto"
+        "light.diffraction.strength": "auto",
+        "light.diffraction.truncate": 4
     },
     
     "perturbation":
