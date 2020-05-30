@@ -90,7 +90,7 @@ class Bacilli(Cell):
 
         self._needs_refresh = False
 
-    def draw(self, image, is_cell, simulation_config):
+    def draw(self, image, cellmap, is_cell, simulation_config):
         """Draws the cell by adding the given value to the image."""
         if self._needs_refresh:
             self._refresh()
@@ -193,7 +193,7 @@ class Bacilli(Cell):
             mask[head_mask] = True
             mask[tail_mask] = True
             
-            gaussian_filter_truncate = 4
+            gaussian_filter_truncate = simulation_config["light.diffraction.truncate"]
             gaussian_filter_sigma = simulation_config["light.diffraction.sigma"]
             diffraction_strength = simulation_config["light.diffraction.strength"]
             #in order to use optimze funtion
@@ -210,11 +210,21 @@ class Bacilli(Cell):
             diff_right = right + extension
             
             if is_cell:  
-                image[diff_top:diff_bottom, diff_left:diff_right] += diffraction_mask
-                image[top:bottom, left:right][mask] = cell_color 
+                cellmap[top:bottom, left:right][mask] += 1
+                cellmap_diff = cellmap[diff_top:diff_bottom, diff_left:diff_right]
+                diffraction_mask = np.zeros(cellmap_diff.shape, dtype=float)
+                diffraction_mask[cellmap_diff>0] = diffraction_strength
+                diffraction_mask = gaussian_filter(diffraction_mask, gaussian_filter_sigma, truncate = gaussian_filter_truncate)
+                diffraction_mask[cellmap_diff==0] += background_color
+                image[diff_top:diff_bottom, diff_left:diff_right] = diffraction_mask
             else:
-                image[diff_top:diff_bottom, diff_left:diff_right] -= diffraction_mask
-                image[top:bottom, left:right][mask] = background_color
+                cellmap[top:bottom, left:right][mask] -= 1
+                cellmap_diff = cellmap[diff_top:diff_bottom, diff_left:diff_right]
+                diffraction_mask = np.zeros(cellmap_diff.shape, dtype=float)
+                diffraction_mask[cellmap_diff>0] = diffraction_strength
+                diffraction_mask = gaussian_filter(diffraction_mask, gaussian_filter_sigma, truncate = gaussian_filter_truncate)
+                diffraction_mask[cellmap_diff==0] += background_color
+                image[diff_top:diff_bottom, diff_left:diff_right] = diffraction_mask
                 
         elif image_type == "binary":
             mask[body_mask] = True
@@ -223,9 +233,13 @@ class Bacilli(Cell):
             if is_cell:
                 image[self._region.top:self._region.bottom,
                       self._region.left:self._region.right][mask] += 1.0
+                cellmap[self._region.top:self._region.bottom,
+                      self._region.left:self._region.right][mask] += 1
             else:
                 image[self._region.top:self._region.bottom,
-                      self._region.left:self._region.right][mask] += -1.0
+                      self._region.left:self._region.right][mask] -= 1.0
+                cellmap[self._region.top:self._region.bottom,
+                      self._region.left:self._region.right][mask] -= 1
 
 
 
@@ -334,12 +348,33 @@ class Bacilli(Cell):
                 f'width={self._width}, length={self._length}, '
                 f'rotation={self._rotation})')
 
+    def simulated_region(self, simulation_config):
+        if self._needs_refresh:
+            self._refresh()
+        if simulation_config["image.type"] == "binary":
+            return self._region
+        elif simulation_config["image.type"] == "graySynthetic":
+            gaussian_filter_truncate = simulation_config["light.diffraction.truncate"]
+            gaussian_filter_sigma = simulation_config["light.diffraction.sigma"]
+            diffraction_strength = simulation_config["light.diffraction.strength"]
+            
+            extension = max(floor(gaussian_filter_truncate * gaussian_filter_sigma - 0.5),0)
+            diff_top = self._region.top  - extension
+            diff_left = self._region.left  - extension
+            diff_bottom = self._region.bottom + extension
+            diff_right = self._region.right + extension
+            
+            region = Rectangle(diff_left, diff_top, diff_right, diff_bottom)
+            return region
+        else:
+            raise ValueError("Cell:simulated_region: unsupported image type")
+            
+            
     @property
     def region(self):
         if self._needs_refresh:
             self._refresh()
         return self._region
-
     @property
     def position(self):
         return self._position.copy()

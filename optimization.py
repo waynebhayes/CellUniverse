@@ -24,20 +24,20 @@ is_background = False
 
 
 
-def objective(realimage, synthimage):
+def objective(realimage, synthimage, cellmap):
     """Full objective function between two images."""
-    return np.sum((realimage - synthimage)**2)
+    overlap_map = cellmap[cellmap>1] - 1
+    return np.sum(np.square(realimage - synthimage)) + 0.1 * np.sum(np.square(overlap_map))
 
-
-def dist_objective(diffimage, distmap):
-    return np.sum((diffimage*distmap)**2)
+def dist_objective(realimage, synthimage, distmap, cellmap):
+    return np.sum(np.square((realimage-synthimage)*distmap)) + 0.1 * np.sum(np.square(overlap_map))
 
 def find_optimal_simulation_conf(simulation_config, realimage1, cellnodes):
     shape = realimage1.shape
     def cost(values, target, simulation_config):
         for i in range(len(target)):
             simulation_config[target[i]] = values[i]
-        synthimage = generate_synthetic_image(cellnodes, shape, simulation_config)
+        synthimage, cellmap = generate_synthetic_image(cellnodes, shape, simulation_config)
         return (realimage1 - synthimage).flatten()
     
     
@@ -81,17 +81,18 @@ def find_optimal_simulation_conf(simulation_config, realimage1, cellnodes):
 
 def generate_synthetic_image(cellnodes, shape, simulation_config):
     image_type = simulation_config["image.type"]
+    cellmap = np.zeros(shape, dtype=int)
     if image_type == "graySynthetic" or image_type == "phaseContrast":
         background_color = simulation_config["background.color"]
         synthimage = np.full(shape, background_color) 
         for node in cellnodes:
-            node.cell.draw(synthimage, is_cell, simulation_config)
-        return synthimage
+            node.cell.draw(synthimage, cellmap, is_cell, simulation_config)
+        return synthimage, cellmap
     else:
         synthimage = np.zeros(shape)
         for node in cellnodes:
-            node.cell.draw(synthimage, is_cell, simulation_config)
-        return synthimage
+            node.cell.draw(synthimage, cellmap, is_cell, simulation_config)
+        return synthimage, cellmap
 
 
 
@@ -147,7 +148,6 @@ def perturb_bacilli(node, config, imageshape):
     length_sigma = perturb_conf["modification.length.sigma"]
     rotation_sigma = perturb_conf["modification.rotation.sigma"]
     
-    count=0
     while True:
         # set starting properties
         x = cell.x
@@ -182,15 +182,8 @@ def perturb_bacilli(node, config, imageshape):
         
         if not (0 <= x < imageshape[1] and 0 <= y < imageshape[0]) or (displacement > max_displacement)\
             or width < min_width or width > max_width or (abs(rotation - prior.rotation) > max_rotation) or \
-            not (min_length < length < max_length):
+            not (min_length < length < max_length) or not (min_growth < length - prior.length < max_growth):
                 badcount += 1
-        elif not (min_growth < length - prior.length < max_growth):
-            badcount+=1
-            count+=1
-            if count > 10:
-                #print(f"length: {length}, prior.length: {prior.length}, difference: {length - prior.length}")
-                length = prior.length + max_growth
-                break
         else:
             break
         
@@ -348,15 +341,14 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000, aut
     cellnodes = list(colony)
 
     # find the initial cost
-    synthimage = generate_synthetic_image(cellnodes, shape, simulation_config)
-    diffimage = realimage - synthimage
+    synthimage, cellmap = generate_synthetic_image(cellnodes, shape, simulation_config)
     if useDistanceObjective:
         distmap = distance_transform_edt(realimage < .5)
         distmap /= config[f'{celltype}.distanceCostDivisor']*config['global.pixelsPerMicron']
         distmap += 1
-        cost = dist_objective(diffimage, distmap)
+        cost = dist_objective(realimage, synthimage, distmap, cellmap)
     else:
-        cost = objective(realimage, synthimage)
+        cost = objective(realimage, synthimage, cellmap)
 
     # setup temperature schedule
     run_count = int(iterations_per_cell*len(cellnodes))
@@ -383,8 +375,8 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000, aut
             perturb_bacilli(node, config, shape)
             new_node = node.children[0]
 
-            old_diff = diffimage.copy()
             old_synthimage = synthimage.copy()
+            old_cellmap = cellmap.copy()
 
             # # try splitting (or combining if already split)
             combined = False
@@ -402,71 +394,83 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000, aut
                 snode1, snode2 = cnode.children
 
                 # compute the starting cost
-                region = (cnode.cell.region.union(snode1.cell.region)
-                                           .union(snode2.cell.region))
+                region = (cnode.cell.simulated_region(simulation_config).\
+                          union(snode1.cell.simulated_region(simulation_config))\
+                          .union(snode2.cell.simulated_region(simulation_config)))
                 if useDistanceObjective:
                     start_cost = dist_objective(
-                        diffimage[region.top:region.bottom, region.left:region.right],
-                        distmap[region.top:region.bottom, region.left:region.right])
+                        realimage[region.top:region.bottom, region.left:region.right],
+                        synthimage[region.top:region.bottom, region.left:region.right],
+                        distmap[region.top:region.bottom, region.left:region.right],
+                        cellmap[region.top:region.bottom, region.left:region.right])
                 else:
-                    start_cost = np.sum(diffimage[region.top:region.bottom,
-                                                region.left:region.right]**2)
+                    start_cost = objective(realimage[region.top:region.bottom,region.left:region.right],
+                                           synthimage[region.top:region.bottom,region.left:region.right],
+                                           cellmap[region.top:region.bottom,region.left:region.right])
 
                 # subtract the previous cells
-                snode1.cell.draw(synthimage, is_background, simulation_config)
-                snode2.cell.draw(synthimage, is_background, simulation_config)
+                snode1.cell.draw(synthimage, cellmap, is_background, simulation_config)
+                snode2.cell.draw(synthimage, cellmap, is_background, simulation_config)
 
                 # add the new cell
-                cnode.cell.draw(synthimage, is_cell, simulation_config)
+                cnode.cell.draw(synthimage, cellmap, is_cell, simulation_config)
 
             elif split:
                 snode1, snode2 = node.children
 
                 # compute the starting cost
-                region = (node.cell.region.union(snode1.cell.region)
-                                          .union(snode2.cell.region))
+                region = (node.cell.simulated_region(simulation_config).\
+                          union(snode1.cell.simulated_region(simulation_config))\
+                          .union(snode2.cell.simulated_region(simulation_config)))
                 if useDistanceObjective:
                     start_cost = dist_objective(
-                        diffimage[region.top:region.bottom, region.left:region.right],
-                        distmap[region.top:region.bottom, region.left:region.right])
+                        realimage[region.top:region.bottom, region.left:region.right],
+                        synthimage[region.top:region.bottom, region.left:region.right],
+                        distmap[region.top:region.bottom, region.left:region.right],
+                        cellmap[region.top:region.bottom, region.left:region.right])
                 else:
-                    start_cost = np.sum(diffimage[region.top:region.bottom,
-                                                region.left:region.right]**2)
+                    start_cost = objective(realimage[region.top:region.bottom,region.left:region.right],
+                                           synthimage[region.top:region.bottom,region.left:region.right],
+                                           cellmap[region.top:region.bottom,region.left:region.right])
                 
                 # subtract the previous cell
-                node.cell.draw(synthimage, is_background, simulation_config)
+                node.cell.draw(synthimage, cellmap, is_background, simulation_config)
 
                 # add the new cells
-                snode1.cell.draw(synthimage, is_cell, simulation_config)
-                snode2.cell.draw(synthimage, is_cell, simulation_config)
+                snode1.cell.draw(synthimage, cellmap, is_cell, simulation_config)
+                snode2.cell.draw(synthimage, cellmap, is_cell, simulation_config)
 
             else:
                 # compute the starting cost
-                region = node.cell.region.union(new_node.cell.region)
+                region = node.cell.simulated_region(simulation_config).\
+                union(new_node.cell.simulated_region(simulation_config))
                 if useDistanceObjective:
                     start_cost = dist_objective(
-                        diffimage[region.top:region.bottom, region.left:region.right],
-                        distmap[region.top:region.bottom, region.left:region.right])
+                        realimage[region.top:region.bottom, region.left:region.right],
+                        synthimage[region.top:region.bottom, region.left:region.right],
+                        distmap[region.top:region.bottom, region.left:region.right],
+                        cellmap[region.top:region.bottom, region.left:region.right])
                 else:
-                    start_cost = np.sum(diffimage[region.top:region.bottom,
-                                                region.left:region.right]**2)
+                    start_cost = objective(realimage[region.top:region.bottom,region.left:region.right],
+                                           synthimage[region.top:region.bottom,region.left:region.right],
+                                           cellmap[region.top:region.bottom,region.left:region.right])
 
                 # subtract the previous cell
-                node.cell.draw(synthimage, is_background, simulation_config)
+                node.cell.draw(synthimage, cellmap, is_background, simulation_config)
 
                 # add the new cells
-                new_node.cell.draw(synthimage, is_cell, simulation_config)
-
-            # compute the cost difference
-            diffimage = realimage - synthimage
+                new_node.cell.draw(synthimage, cellmap, is_cell, simulation_config)
             
             if useDistanceObjective:
-                end_cost = dist_objective(
-                    diffimage[region.top:region.bottom, region.left:region.right],
-                    distmap[region.top:region.bottom, region.left:region.right])
+                    end_cost = dist_objective(
+                        realimage[region.top:region.bottom, region.left:region.right],
+                        synthimage[region.top:region.bottom, region.left:region.right],
+                        distmap[region.top:region.bottom, region.left:region.right],
+                        cellmap[region.top:region.bottom, region.left:region.right])
             else:
-                end_cost = np.sum(diffimage[region.top:region.bottom,
-                                            region.left:region.right]**2)
+                end_cost = objective(realimage[region.top:region.bottom,region.left:region.right],
+                                       synthimage[region.top:region.bottom,region.left:region.right],
+                                       cellmap[region.top:region.bottom,region.left:region.right])
             costdiff = end_cost - start_cost
 
             # compute the acceptance threshold
@@ -487,8 +491,8 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000, aut
                     node.pop()
 
                 # restore the diff image
-                diffimage = old_diff
                 synthimage = old_synthimage
+                cellmap = old_cellmap
 
             else:
                 if combined:
@@ -502,8 +506,7 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000, aut
             
             # DEBUG
             if args.debug and i%80 == 0:
-                synthimage = generate_synthetic_image(cellnodes, shape, simulation_config)
-
+                synthimage, cellmap = generate_synthetic_image(cellnodes, shape, simulation_config)
                 frame_1 = np.empty((shape[0], shape[1], 3))
                 frame_1[..., 0] = (realimage - synthimage)
                 frame_1[..., 1] = frame_1[..., 0]
@@ -545,9 +548,9 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000, aut
         return bad_prob_tot/bad_count
 
     if useDistanceObjective:
-        new_cost = dist_objective(realimage - synthimage, distmap)
+        new_cost = dist_objective(realimage, synthimage, distmap, cellmap)
     else:
-        new_cost = objective(realimage, synthimage)
+        new_cost = objective(realimage, synthimage, cellmap)
     print(f'Incremental Cost: {cost}')
     print(f'Actual Cost:      {new_cost}')
     if abs(new_cost - cost) > 1e-7:
