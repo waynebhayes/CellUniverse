@@ -30,6 +30,7 @@ def objective(realimage, synthimage, cellmap):
     return np.sum(np.square(realimage - synthimage)) + 0.1 * np.sum(np.square(overlap_map))
 
 def dist_objective(realimage, synthimage, distmap, cellmap):
+    overlap_map = cellmap[cellmap>1] - 1
     return np.sum(np.square((realimage-synthimage)*distmap)) + 0.1 * np.sum(np.square(overlap_map))
 
 def find_optimal_simulation_conf(simulation_config, realimage1, cellnodes):
