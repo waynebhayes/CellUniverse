@@ -1,9 +1,13 @@
 import sys
+import os
 
 
 class CSVFile:
     def __init__(self, file):
-        self.cols = [col.strip() for col in next(file).split(',')]
+        next_line = next(file,None)
+        if next_line != None:
+            self.cols = [col.strip() for col in next_line.split(',')]
+
         self.data = []
         for line in file:
             if len(line.strip()) > 0:
@@ -62,6 +66,16 @@ def dist(x1, y1, x2, y2):
 
 def main():
     try:
+        empty = False
+        if os.stat(sys.argv[1]).st_size == 0:
+            empty = True
+            print("The first file {} is empty!".format(sys.argv[1]), file=sys.stderr)
+        if os.stat(sys.argv[2]).st_size == 0:
+            empty = True
+            print("The second file {} is empty!".format(sys.argv[2]), file=sys.stderr)
+        if empty:
+            sys.exit(1)
+            
         with open(sys.argv[1]) as file:
             lineage1 = Lineage(file)
         with open(sys.argv[2]) as file:
@@ -72,7 +86,7 @@ def main():
     except IOError:
         print("Failed to open files!", file=sys.stderr)
         sys.exit(1)
-
+    
     sys.exit(0 if lineage1.compare(lineage2) else 1)
 
 

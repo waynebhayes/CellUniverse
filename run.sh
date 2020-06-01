@@ -4,6 +4,7 @@ python ".\main.py" \
     --debug ".\debug" \
     --input ".\input\frame%03d.png" \
     --output ".\output" \
+    --bestfit ".\bestfit" \
     --config ".\config.json" \
     --initial ".\cells.0.csv" \
     --temp 10 \
