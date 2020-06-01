@@ -11,7 +11,6 @@ from scipy.ndimage import distance_transform_edt
 import cell
 import optimization
 
-grey_synthetic_image = False
 useDistanceObjective = False
 
 
@@ -71,7 +70,7 @@ class FrameM:
     def __init__(self, prev: 'FrameM' = None):
         self.node_map: Dict[str, CellNodeM] = {}
         self.prev = prev
-
+     
     def __repr__(self):
         return str(list(self.node_map.values()))
 
@@ -101,13 +100,32 @@ class LineageM:
     def total_cell_count(self):
         return sum(len(frame.node_map) for frame in self.frames)
 
+    def count_cells_in(self, start, end):
+        if start is None or start < 0:
+            start = 0
+        if end is None or end > len(self.frames):
+            end = len(self.frames)
+        return sum(len(frame.node_map) for frame in self.frames[start:end])
+
     def forward(self):
         self.frames.append(FrameM(self.frames[-1]))
 
-    def choose_random_frame_index(self) -> int:
-        threshold = int(random.random()*self.total_cell_count)
+    def copy_forward(self):
+        self.forward()
+        for cell_node in self.frames[-2].nodes:
+            self.frames[-1].add_cell(cell_node.cell)
 
-        for i, frame in enumerate(self.frames):
+    def choose_random_frame_index(self, start=None, end=None) -> int:
+        if start is None or start < 0:
+            start = 0
+
+        if end is None or end > len(self.frames):
+            end = len(self.frames)
+
+        threshold = int(random.random() * self.count_cells_in(start, end))
+
+        for i in range(start, end):
+            frame = self.frames[i]
             if len(frame.nodes) > threshold:
                 return i
             else:
@@ -130,9 +148,11 @@ class Change:
 
 
 class Perturbation(Change):
-    def __init__(self, node: CellNodeM, config: Dict[str, Any], diffimage, distmap=None):
+    def __init__(self, node: CellNodeM, config: Dict[str, Any], realimage, synthimage, cellmap, distmap=None):
         self.node = node
-        self.diffimage = diffimage
+        self.realimage = realimage
+        self.synthimage = synthimage
+        self.cellmap = cellmap
         self.config = config
         self._checks = []
         cell = node.cell
@@ -171,29 +191,38 @@ class Perturbation(Change):
 
     @property
     def is_valid(self):
-        return check_constraints(self.config, self.diffimage.shape, [self.replacement_cell], self.get_checks())
+        return check_constraints(self.config, self.realimage.shape, [self.replacement_cell], self.get_checks())
 
     @property
     def costdiff(self):
-        new_diff = self.diffimage.copy()
+        new_synth = self.synthimage.copy()
+        new_cellmap = self.cellmap.copy()
         region = self.node.cell.region.union(self.replacement_cell.region)
-        self.node.cell.draw(new_diff, True, grey_synthetic_image)
-        self.replacement_cell.draw(new_diff, False, grey_synthetic_image)
+        self.node.cell.draw(new_synth, new_cellmap, optimization.is_background, self.config['simulation'])
+        self.replacement_cell.draw(new_synth, new_cellmap, optimization.is_cell, self.config['simulation'])
 
         if useDistanceObjective:
-            start_cost = optimization.dist_objective(self.diffimage[region.top:region.bottom, region.left:region.right],
-                                                     self.distmap[region.top:region.bottom, region.left:region.right])
-            end_cost = optimization.dist_objective(new_diff[region.top:region.bottom, region.left:region.right],
-                                                   self.distmap[region.top:region.bottom, region.left:region.right])
+            start_cost = optimization.dist_objective(self.realimage[region.top:region.bottom, region.left:region.right],
+                                                     self.synthimage[region.top:region.bottom, region.left:region.right],
+                                                     self.distmap[region.top:region.bottom, region.left:region.right],
+                                                     self.cellmap[region.top:region.bottom, region.left:region.right])
+            end_cost = optimization.dist_objective(self.realimage[region.top:region.bottom, region.left:region.right],
+                                                   new_synth[region.top:region.bottom, region.left:region.right],
+                                                   self.distmap[region.top:region.bottom, region.left:region.right],
+                                                   new_cellmap[region.top:region.bottom, region.left:region.right])
         else:
-            start_cost = np.sum(self.diffimage[region.top:region.bottom, region.left:region.right] ** 2)
-            end_cost = np.sum(new_diff[region.top:region.bottom, region.left:region.right] ** 2)
+            start_cost = optimization.objective(self.realimage[region.top:region.bottom, region.left:region.right],
+                                self.synthimage[region.top:region.bottom, region.left:region.right],
+                                self.cellmap[region.top:region.bottom, region.left:region.right])
+            end_cost = optimization.objective(self.realimage[region.top:region.bottom, region.left:region.right],
+                              new_synth[region.top:region.bottom, region.left:region.right],
+                              new_cellmap[region.top:region.bottom, region.left:region.right])
 
         return end_cost - start_cost
 
     def apply(self):
-        self.node.cell.draw(self.diffimage, True, grey_synthetic_image)
-        self.replacement_cell.draw(self.diffimage, False, grey_synthetic_image)
+        self.node.cell.draw(self.synthimage, self.cellmap, optimization.is_background, self.config['simulation'])
+        self.replacement_cell.draw(self.synthimage, self.cellmap, optimization.is_cell, self.config['simulation'])
         self.node.cell = self.replacement_cell
 
     def get_checks(self) -> List[Tuple[cell.Bacilli, cell.Bacilli]]:
@@ -224,10 +253,12 @@ class Perturbation(Change):
 
 class Combination(Change):
     """Move split forward: o<8=8 -> o-o<8"""
-    def __init__(self, node: CellNodeM, config, child_diffimage, child_frame: FrameM, distmap=None):
+    def __init__(self, node: CellNodeM, config, child_realimage, child_synthimage, child_cellmap, child_frame: FrameM, distmap=None):
         self.node = node
         self.config = config
-        self.diffimage = child_diffimage
+        self.realimage = child_realimage
+        self.synthimage = child_synthimage
+        self.cellmap = child_cellmap
         self.frame = child_frame
         self._checks = []
         self.combination = None
@@ -252,39 +283,48 @@ class Combination(Change):
     @property
     def is_valid(self) -> bool:
         return len(self.node.children) == 2 and len(self.node.grandchildren) <= 2 and \
-               check_constraints(self.config, self.diffimage.shape, [self.combination], self.get_checks())
+               check_constraints(self.config, self.realimage.shape, [self.combination], self.get_checks())
 
     @property
     def costdiff(self) -> float:
-        new_diff = self.diffimage.copy()
+        new_synth = self.synthimage.copy()
+        new_cellmap = self.cellmap.copy()
         region = self.combination.region
 
         for child in self.node.children:
             region = region.union(child.cell.region)
 
         for child in self.node.children:
-            child.cell.draw(new_diff, True, grey_synthetic_image)
+            child.cell.draw(new_synth, new_cellmap, optimization.is_background, self.config['simulation'])
 
-        self.combination.draw(new_diff, False, grey_synthetic_image)
+        self.combination.draw(new_synth, new_cellmap, optimization.is_cell, self.config['simulation'])
 
         if useDistanceObjective:
-            start_cost = optimization.dist_objective(self.diffimage[region.top:region.bottom, region.left:region.right],
-                                                     self.distmap[region.top:region.bottom, region.left:region.right])
-            end_cost = optimization.dist_objective(new_diff[region.top:region.bottom, region.left:region.right],
-                                                   self.distmap[region.top:region.bottom, region.left:region.right])
+            start_cost = optimization.dist_objective(self.realimage[region.top:region.bottom, region.left:region.right],
+                                                     self.synthimage[region.top:region.bottom, region.left:region.right],
+                                                     self.distmap[region.top:region.bottom, region.left:region.right],
+                                                     self.cellmap[region.top:region.bottom, region.left:region.right])
+            end_cost = optimization.dist_objective(self.realimage[region.top:region.bottom, region.left:region.right],
+                                                   new_synth[region.top:region.bottom, region.left:region.right],
+                                                   self.distmap[region.top:region.bottom, region.left:region.right],
+                                                   new_cellmap[region.top:region.bottom, region.left:region.right])
         else:
-            start_cost = np.sum(self.diffimage[region.top:region.bottom, region.left:region.right] ** 2)
-            end_cost = np.sum(new_diff[region.top:region.bottom, region.left:region.right] ** 2)
+            start_cost = optimization.objective(self.realimage[region.top:region.bottom, region.left:region.right],
+                                self.synthimage[region.top:region.bottom, region.left:region.right],
+                                self.cellmap[region.top:region.bottom, region.left:region.right])
+            end_cost = optimization.objective(self.realimage[region.top:region.bottom, region.left:region.right],
+                              new_synth[region.top:region.bottom, region.left:region.right],
+                              new_cellmap[region.top:region.bottom, region.left:region.right])
 
         return end_cost - start_cost
 
     def apply(self) -> None:
-        self.combination.draw(self.diffimage, False, grey_synthetic_image)
+        self.combination.draw(self.synthimage, self.cellmap, optimization.is_cell, self.config['simulation'])
         grandchildren = self.node.grandchildren
 
         for child in self.node.children:
             del self.frame.node_map[child.cell.name]
-            child.cell.draw(self.diffimage, True, grey_synthetic_image)
+            child.cell.draw(self.synthimage, self.cellmap, optimization.is_background, self.config['simulation'])
 
         self.node.children = []
         combination_node = self.node.make_child(self.combination)
@@ -297,10 +337,12 @@ class Combination(Change):
 
 class Split(Change):
     """Move split backward: o-o<8 -> o<8=8"""
-    def __init__(self, node: CellNodeM, config, child_diffimage, child_frame: FrameM, distmap=None):
+    def __init__(self, node: CellNodeM, config, child_realimage, child_synthimage, child_cellmap, child_frame: FrameM, distmap=None):
         self.node = node
         self.config = config
-        self.diffimage = child_diffimage
+        self.realimage = child_realimage
+        self.synthimage = child_synthimage
+        self.cellmap = child_cellmap
         self.frame = child_frame
         self._checks = []
         self.s1 = self.s2 = None
@@ -334,31 +376,40 @@ class Split(Change):
     @property
     def is_valid(self) -> bool:
         return len(self.node.children) == 1 and len(self.node.grandchildren) != 1 and \
-               check_constraints(self.config, self.diffimage.shape, [self.s1, self.s2], self.get_checks())
+               check_constraints(self.config, self.realimage.shape, [self.s1, self.s2], self.get_checks())
 
     @property
     def costdiff(self) -> float:
-        new_diff = self.diffimage.copy()
+        new_synth = self.synthimage.copy()
+        new_cellmap = self.cellmap.copy()
         region = self.node.children[0].cell.region.union(self.s1.region).union(self.s2.region)
-        self.node.children[0].cell.draw(new_diff, True, grey_synthetic_image)
-        self.s1.draw(new_diff, False, grey_synthetic_image)
-        self.s2.draw(new_diff, False, grey_synthetic_image)
+        self.node.children[0].cell.draw(new_synth, new_cellmap, optimization.is_background, self.config['simulation'])
+        self.s1.draw(new_synth, new_cellmap, optimization.is_cell, self.config['simulation'])
+        self.s2.draw(new_synth, new_cellmap, optimization.is_cell, self.config['simulation'])
 
         if useDistanceObjective:
-            start_cost = optimization.dist_objective(self.diffimage[region.top:region.bottom, region.left:region.right],
-                                                     self.distmap[region.top:region.bottom, region.left:region.right])
-            end_cost = optimization.dist_objective(new_diff[region.top:region.bottom, region.left:region.right],
-                                                   self.distmap[region.top:region.bottom, region.left:region.right])
+            start_cost = optimization.dist_objective(self.realimage[region.top:region.bottom, region.left:region.right],
+                                                     self.synthimage[region.top:region.bottom, region.left:region.right],
+                                                     self.distmap[region.top:region.bottom, region.left:region.right],
+                                                     self.cellmap[region.top:region.bottom, region.left:region.right])
+            end_cost = optimization.dist_objective(self.realimage[region.top:region.bottom, region.left:region.right],
+                                                   new_synth[region.top:region.bottom, region.left:region.right],
+                                                   self.distmap[region.top:region.bottom, region.left:region.right],
+                                                   new_cellmap[region.top:region.bottom, region.left:region.right])
         else:
-            start_cost = np.sum(self.diffimage[region.top:region.bottom, region.left:region.right] ** 2)
-            end_cost = np.sum(new_diff[region.top:region.bottom, region.left:region.right] ** 2)
+            start_cost = optimization.objective(self.realimage[region.top:region.bottom, region.left:region.right],
+                                self.synthimage[region.top:region.bottom, region.left:region.right],
+                                self.cellmap[region.top:region.bottom, region.left:region.right])
+            end_cost = optimization.objective(self.realimage[region.top:region.bottom, region.left:region.right],
+                              new_synth[region.top:region.bottom, region.left:region.right],
+                              new_cellmap[region.top:region.bottom, region.left:region.right])
 
         return end_cost - start_cost
 
     def apply(self) -> None:
-        self.node.children[0].cell.draw(self.diffimage, True, grey_synthetic_image)
-        self.s1.draw(self.diffimage, False, grey_synthetic_image)
-        self.s2.draw(self.diffimage, False, grey_synthetic_image)
+        self.node.children[0].cell.draw(self.synthimage, self.cellmap, optimization.is_background, self.config['simulation'])
+        self.s1.draw(self.synthimage, self.cellmap, optimization.is_cell, self.config['simulation'])
+        self.s2.draw(self.synthimage, self.cellmap, optimization.is_cell, self.config['simulation'])
         del self.frame.node_map[self.node.children[0].cell.name]
         grandchildren = self.node.grandchildren
         self.node.children = []
@@ -376,42 +427,14 @@ class Split(Change):
                 s2_node.children = [gc]
 
 
-def build_initial_lineage(imagefiles, lineageframes, args, config):
-    lineage = LineageM()
-
-    colony = lineageframes.latest
-    for cellnode in colony:
-        lineage.frames[0].add_cell(cellnode.cell)
-
-    for imagefile in imagefiles[1:]:
-        lineage.forward()
-        colony, _, debugimage = optimization.optimize_core(imagefile, lineageframes.forward(), args, config, iterations_per_cell=500)
-        colony.flatten()
-        # debugimage.save(args.output / imagefile.name)
-
-        for cellnode in colony:
-            lineage.frames[-1].add_cell(cellnode.cell)
-            properties = [
-                imagefile.name, cellnode.cell.name,
-                str(cellnode.cell.x),
-                str(cellnode.cell.y),
-                str(cellnode.cell.width),
-                str(cellnode.cell.length),
-                str(cellnode.cell.rotation)]
-            # print(','.join(properties), file=lineagefile)
-
-        # print(str(lineage))
-
-    return lineage
-
-
-def save_output(imagefiles, realimages, lineage: LineageM, args, lineagefile):
+def save_output(imagefiles, realimages, cellmaps, lineage: LineageM, args, lineagefile, simulation_config):
     shape = realimages[0].shape
     for frame_index in range(len(lineage.frames)):
         realimage = realimages[frame_index]
         cellnodes = lineage.frames[frame_index].nodes
-        synthimage = optimization.generate_synthetic_image(cellnodes, realimage.shape, grey_synthetic_image)
-        cost = optimization.objective(realimage, synthimage)
+        cellmap = cellmaps[frame_index]
+        synthimage = optimization.generate_synthetic_image(cellnodes, realimage.shape, simulation_config)
+        cost = optimization.objective(realimage, synthimage, cellmap)
         print('Final Cost:', cost)
 
         frame = np.empty((shape[0], shape[1], 3))
@@ -434,79 +457,101 @@ def save_output(imagefiles, realimages, lineage: LineageM, args, lineagefile):
             print(','.join(properties), file=lineagefile)
 
         frame = np.clip(frame, 0, 1)
-
-
         debugimage = Image.fromarray((255 * frame).astype(np.uint8))
         debugimage.save(args.output / imagefiles[frame_index].name)
 
 
-def optimize(imagefiles, lineageframes, lineagefile, args, config):
-    global grey_synthetic_image, useDistanceObjective
-    grey_synthetic_image = args.graysynthetic
+def build_initial_lineage(imagefiles, lineageframes, args, config):
+    lineage = LineageM()
+
+    colony = lineageframes.latest
+    for cellnode in colony:
+        lineage.frames[0].add_cell(cellnode.cell)
+
+    return lineage
+
+
+def gerp(a, b, t):
+    """Geometric interpolation"""
+    return a * (b / a) ** t
+
+
+def optimize(imagefiles, lineageframes, lineagefile, args, config, window=5):
+    global useDistanceObjective
     useDistanceObjective = args.dist
 
-    # optimize normally and copy to my data structures
     lineage = build_initial_lineage(imagefiles, lineageframes, args, config)
     realimages = [optimization.load_image(imagefile) for imagefile in imagefiles]
     shape = realimages[0].shape
-    diffimages = []
+    synthimages = []
+    cellmaps = []
     distmaps = []
     if not useDistanceObjective:
         distmaps = [None] * len(realimages)
 
-    for frame_index, realimage in enumerate(realimages):
-        synthimage = optimization.generate_synthetic_image(lineage.frames[frame_index].nodes, shape, grey_synthetic_image)
-        diffimages.append(realimage - synthimage)
-        if useDistanceObjective:
-            distmap = distance_transform_edt(realimage < .5)
-            distmap /= config[f'{config["global.cellType"].lower()}.distanceCostDivisor'] * config['global.pixelsPerMicron']
-            distmap += 1
-            distmaps.append(distmap)
+    for window_start in range(1 - window, len(realimages)):
+        window_end = window_start + window
+        print(window_start, window_end)
 
-    # simulated annealing
-    run_count = 500*lineage.total_cell_count
-    temperature = args.start_temp
-    end_temperature = args.end_temp
-    alpha = (end_temperature/temperature)**(1/run_count)
+        if window_end <= len(realimages):
+            # get initial estimate
+            if window_end > 1:
+                lineage.copy_forward()
 
-    bad_count = 0
-    bad_accepted = 0
+            # add next diffimage
+            realimage = realimages[window_end - 1]
+            synthimage, cellmap = optimization.generate_synthetic_image(lineage.frames[-1].nodes, shape, config["simulation"])
+            synthimages.append(synthimage)
+            cellmaps.append(cellmap)
+            if useDistanceObjective:
+                distmap = distance_transform_edt(realimage < .5)
+                distmap /= config[f'{config["global.cellType"].lower()}.distanceCostDivisor'] * config[
+                    'global.pixelsPerMicron']
+                distmap += 1
+                distmaps.append(distmap)
 
-    for iteration in range(run_count):
-        frame_index = lineage.choose_random_frame_index()
-        frame = lineage.frames[frame_index]
-        node = random.choice(frame.nodes)
-        change = None
+        # simulated annealing
+        run_count = 2000*lineage.count_cells_in(window_start, window_end)//window
+        print(run_count)
+        bad_count = 0
+        bad_accepted = 0
+        for iteration in range(run_count):
+            frame_index = lineage.choose_random_frame_index(window_start, window_end)
+            frame_start_temp = gerp(args.end_temp, args.start_temp, (frame_index - window_start + 1)/window)
+            frame_end_temp = gerp(args.end_temp, args.start_temp, (frame_index - window_start)/window)
+            temperature = gerp(frame_start_temp, frame_end_temp, iteration/(run_count - 1))
 
-        if frame_index < len(lineage.frames) - 1 and random.random() < 1/3:
-            change = Combination(node, config, diffimages[frame_index + 1], lineage.frames[frame_index + 1], distmaps[frame_index + 1])
-            if not change.is_valid:
-                change = None
+            frame = lineage.frames[frame_index]
+            node = random.choice(frame.nodes)
+            change = None
 
-        if not change and frame_index < len(lineage.frames) - 1 and random.random() < 2/3:
-            change = Split(node, config, diffimages[frame_index + 1], lineage.frames[frame_index + 1], distmaps[frame_index + 1])
-            if not change.is_valid:
-                change = None
+            if frame_index > 0 and random.random() < 1/3:
+                change = Combination(node.parent, config, realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], lineage.frames[frame_index], distmaps[frame_index])
+                if not change.is_valid:
+                    change = None
 
-        if not change:
-            change = Perturbation(node, config, diffimages[frame_index], distmaps[frame_index])
-            if not change.is_valid:
-                continue
+            if not change and frame_index > 0 and random.random() < 2/3:
+                change = Split(node.parent, config, realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], lineage.frames[frame_index], distmaps[frame_index])
+                if not change.is_valid:
+                    change = None
 
-        # apply if acceptable
-        costdiff = change.costdiff
+            if not change:
+                change = Perturbation(node, config, realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], distmaps[frame_index])
+                if not change.is_valid:
+                    continue
 
-        if costdiff <= 0:
-            acceptance = 1.0
-        else:
-            bad_count += 1
-            acceptance = np.exp(-costdiff / temperature)
+            # apply if acceptable
+            costdiff = change.costdiff
 
-        if acceptance > random.random():
-            if acceptance < 1:
-                bad_accepted += 1
-            change.apply()
+            if costdiff <= 0:
+                acceptance = 1.0
+            else:
+                bad_count += 1
+                acceptance = np.exp(-costdiff / temperature)
 
-        temperature *= alpha
+            if acceptance > random.random():
+                if acceptance < 1:
+                    bad_accepted += 1
+                change.apply()
 
-    save_output(imagefiles, realimages, lineage, args, lineagefile)
+    save_output(imagefiles, realimages, cellmaps, lineage, args, lineagefile, config['simulation'])
