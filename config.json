@@ -13,5 +13,36 @@
     "bacilli.maxWidth":   9.0,  // microns
     "bacilli.minLength": 14.0,  // microns
     "bacilli.maxLength": 48.0,  // microns
-    "bacilli.distanceCostDivisor": 24  // microns 
+    "bacilli.distanceCostDivisor": 24,  // microns
+    
+    // simulation settings. NOTE: Image are converted to grayscale float32. 
+    // All settings should be floats.
+    "simulation":
+    {
+        "image.type": "To be Set", 
+        "background.color": "auto", // 0.39 for gary scale image
+        "cell.color" : "auto", // 0.15 for gray scale image
+        "light.diffraction.sigma": "auto",  
+        "light.diffraction.strength": "auto",
+        "light.diffraction.truncate": 4
+    },
+    
+    "perturbation":
+    {
+        "prob.x": 0.35,
+        "prob.y": 0.35,
+        "prob.width":0.1,
+        "prob.length":0.2,
+        "prob.rotation":0.2,
+        "modification.x.mu":0.0,
+        "modification.y.mu":0.0,
+        "modification.width.mu":0.0,
+        "modification.length.mu":0.0,
+        "modification.rotation.mu":0.0,
+        "modification.x.sigma":0.5,
+        "modification.y.sigma":0.5,
+        "modification.width.sigma":0.1,
+        "modification.length.sigma":1.0,
+        "modification.rotation.sigma":0.2
+    }
 }
