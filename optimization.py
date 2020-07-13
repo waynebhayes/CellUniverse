@@ -41,41 +41,26 @@ def find_optimal_simulation_conf(simulation_config, realimage1, cellnodes):
         synthimage, cellmap = generate_synthetic_image(cellnodes, shape, simulation_config)
         return (realimage1 - synthimage).flatten()
     
-    
-    if simulation_config["background.color"] == "auto" or simulation_config["cell.color"] == "auto":
-        simulation_config_copy = simulation_config.copy()
-        simulation_config_copy["light.diffraction.sigma"] = 0
-        simulation_config_copy["light.diffraction.strength"] = 0
-        colors = ["background.color", "cell.color"]
-        target = [i for i in colors if simulation_config[i] == "auto"]
+    initial_values = []
+    variables = []
+    if simulation_config["background.color"] == "auto":
+        variables.append("background.color")
+        initial_values.append(1)
+    if simulation_config["cell.color"] == "auto":
+        variables.append("cell.color")
+        initial_values.append(0)
+    if simulation_config["light.diffraction.sigma"] == "auto":
+        variables.append("light.diffraction.sigma")
+        initial_values.append(11)
+    if simulation_config["light.diffraction.strength"] == "auto":
+        variables.append("light.diffraction.strength")
+        initial_values.append(0.5)
+    residues = lambda x: cost(x, variables, simulation_config)
+    optimal_values, _ = leastsq(residues, initial_values)
         
-        initial_values = np.random.random(2)
-        
-        residues = lambda x: cost(x, target, simulation_config_copy)
-        
-        optimal_values, _ = leastsq(residues, initial_values)
-        
-        for i, param in enumerate(target):
-            simulation_config[param] = optimal_values[i]
+    for i, param in enumerate(variables):
+        simulation_config[param] = optimal_values[i]
             
-    if simulation_config["light.diffraction.sigma"] == "auto" or simulation_config["light.diffraction.strength"] == "auto":
-        params = ["light.diffraction.sigma", "light.diffraction.strength"]
-        target = [i for i in params if simulation_config[i] == "auto"]
-        
-        initial_values = []
-        
-        if "light.diffraction.sigma" in target:
-            initial_values.append(3) 
-        if "light.diffraction.strength" in target:
-            initial_values.append(0.6)
-        
-        residues = lambda x: cost(x, target, simulation_config)
-        
-        optimal_values, _ = leastsq(residues, initial_values)
-        
-        for i, param in enumerate(target):
-            simulation_config[param] = optimal_values[i]
-    
     print(f"optimal simulation configuration values found: {simulation_config}")
     return simulation_config
             

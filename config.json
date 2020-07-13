@@ -24,7 +24,7 @@
         "cell.color" : "auto", // 0.15 for gray scale image
         "light.diffraction.sigma": "auto",  
         "light.diffraction.strength": "auto",
-        "light.diffraction.truncate": 4
+        "light.diffraction.truncate": 2
     },
     
     "perturbation":
