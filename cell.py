@@ -52,7 +52,7 @@ class Bacilli(Cell):
         'bacilli.maxLength'
     ]
 
-    def __init__(self, name, x, y, width, length, rotation):
+    def __init__(self, name, x, y, width, length, rotation, opacity=0):
         #upper left corner is the origin
         #x,y are index of the array
         #x:column index y:row index
@@ -61,6 +61,7 @@ class Bacilli(Cell):
         self._width = width
         self._length = length
         self._rotation = rotation
+        self._opacity = opacity
         self._needs_refresh = True
 
     def _refresh(self):
@@ -80,6 +81,7 @@ class Bacilli(Cell):
         self._head_left = self._head_center - radius*side
         self._tail_right = self._tail_center + radius*side
         self._tail_left = self._tail_center - radius*side
+        
 
         # compute the region of interest
         self._region = Rectangle(
@@ -196,6 +198,7 @@ class Bacilli(Cell):
             gaussian_filter_truncate = simulation_config["light.diffraction.truncate"]
             gaussian_filter_sigma = simulation_config["light.diffraction.sigma"]
             diffraction_strength = simulation_config["light.diffraction.strength"]
+            cell_opacity = self._opacity if self._opacity != "auto" else simulation_config["cell.opacity"]
             #in order to use optimze funtion
             gaussian_filter_sigma = max(gaussian_filter_sigma, 0)
             extension = ceil(gaussian_filter_truncate * gaussian_filter_sigma - 0.5)
@@ -223,7 +226,7 @@ class Bacilli(Cell):
                     diffraction_mask[cellmap_diff>0] = diffraction_strength
                     diffraction_mask = gaussian_filter(diffraction_mask, gaussian_filter_sigma, truncate = gaussian_filter_truncate)
                     diffraction_mask[cellmap_diff==0] += background_color
-                    diffraction_mask[cellmap_diff>0] = cell_color + 0.5 * diffraction_mask[cellmap_diff>0]
+                    diffraction_mask[cellmap_diff>0] = cell_color + cell_opacity * diffraction_mask[cellmap_diff>0]
                     image[re_rendering_top:re_rendering_bottom, re_rendering_left:re_rendering_right] = diffraction_mask[re_rendering_top - re_diff_top:
                                                                                                              re_rendering_bottom - re_diff_bottom, 
                                                                                                              re_rendering_left - re_diff_left:
@@ -238,7 +241,7 @@ class Bacilli(Cell):
                     diffraction_mask[cellmap_diff>0] = diffraction_strength
                     diffraction_mask = gaussian_filter(diffraction_mask, gaussian_filter_sigma, truncate = gaussian_filter_truncate)
                     diffraction_mask[cellmap_diff==0] += background_color
-                    diffraction_mask[cellmap_diff>0] = cell_color + 0.5 * diffraction_mask[cellmap_diff>0]
+                    diffraction_mask[cellmap_diff>0] = cell_color + cell_opacity * diffraction_mask[cellmap_diff>0]
                     image[re_rendering_top:re_rendering_bottom, re_rendering_left:re_rendering_right] = diffraction_mask[re_rendering_top - re_diff_top:
                                                                                                              re_rendering_bottom - re_diff_bottom, 
                                                                                                              re_rendering_left - re_diff_left:
@@ -306,13 +309,13 @@ class Bacilli(Cell):
             self._name + '0',
             position1.x, position1.y,
             self._width, self._length*alpha,
-            self._rotation)
+            self._rotation, self._opacity)
 
         cell2 = Bacilli(
             self._name + '1',
             position2.x, position2.y,
             self._width, self._length*(1 - alpha),
-            self._rotation)
+            self._rotation, self._opacity)
 
         return cell1, cell2
 
@@ -357,7 +360,7 @@ class Bacilli(Cell):
             self._name[:-1],
             position.x, position.y,
             width, length,
-            rotation)
+            rotation, (self._opacity + cell.opacity)/2)
 
     def __repr__(self):
         return (f'Bacilli('
@@ -440,7 +443,15 @@ class Bacilli(Cell):
     @property
     def rotation(self):
         return self._rotation
-
+    
+    @property
+    def opacity(self):
+        return self._opacity
+    
+    @opacity.setter
+    def opacity(self, value):
+        self._opacity = value
+        
     @rotation.setter
     def rotation(self, value):
         if value != self._rotation:

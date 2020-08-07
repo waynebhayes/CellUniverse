@@ -120,7 +120,11 @@ def load_colony(colony, initial_file, config):
                 width = float(row['width'])
                 length = float(row['length'])
                 rotation = float(row['rotation'])
-                cell = Bacilli(name, x, y, width, length, rotation)
+                if config["simulation"]["image.type"] == "graySynthetic":
+                    opacity = config["simulation"]["cell.opacity"]
+                    cell = Bacilli(name, x, y, width, length, rotation, opacity)
+                else:
+                    cell = Bacilli(name, x, y, width, length, rotation)
             colony.add(CellNode(cell))
 
 
