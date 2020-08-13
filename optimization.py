@@ -55,11 +55,20 @@ def find_optimal_simulation_conf(simulation_config, realimage1, cellnodes):
     if simulation_config["light.diffraction.strength"] == "auto":
         variables.append("light.diffraction.strength")
         initial_values.append(0.5)
-    residues = lambda x: cost(x, variables, simulation_config)
-    optimal_values, _ = leastsq(residues, initial_values)
+    if simulation_config["cell.opacity"] == "auto":
+        auto_opacity = True
+        variables.append("cell.opacity")
+        initial_values.append(0.2)
+    if len(variables) != 0:
+        residues = lambda x: cost(x, variables, simulation_config)
+        optimal_values, _ = leastsq(residues, initial_values)
         
-    for i, param in enumerate(variables):
-        simulation_config[param] = optimal_values[i]
+        for i, param in enumerate(variables):
+            simulation_config[param] = optimal_values[i]
+        
+        if auto_opacity:
+            for node in cellnodes:
+                node.cell.opacity = simulation_config["cell.opacity"]
             
     print(f"optimal simulation configuration values found: {simulation_config}")
     return simulation_config
@@ -134,6 +143,12 @@ def perturb_bacilli(node, config, imageshape):
     length_sigma = perturb_conf["modification.length.sigma"]
     rotation_sigma = perturb_conf["modification.rotation.sigma"]
     
+    simulation_config = config["simulation"]
+    if simulation_config["image.type"] == "graySynthetic":
+        p_opacity = perturb_conf["prob.opacity"]
+        opacity_mu = perturb_conf["modification.opacity.mu"]
+        opacity_sigma = perturb_conf["modification.opacity.sigma"]
+    
     while True:
         # set starting properties
         x = cell.x
@@ -141,13 +156,14 @@ def perturb_bacilli(node, config, imageshape):
         width = cell.width
         length = cell.length
         rotation = cell.rotation
+        cell_opacity = cell.opacity
         
-        p_decision = np.array([p_x, p_y, p_width, p_length, p_rotation])
+        p_decision = np.array([p_x, p_y, p_width, p_length, p_rotation, p_opacity])
         p = np.random.uniform(0.0, 1.0, size= p_decision.size)
         
         # generate a sequence such that an attribute must be modified
         while (p > p_decision).all():
-            p = np.random.uniform(0.0, 1.0, size=5)
+            p = np.random.uniform(0.0, 1.0, size= p_decision.size)
         
         if p[0] < p_decision[0]: #perturb x
             x = cell.x + random.gauss(mu=x_mu, sigma=x_sigma)
@@ -163,23 +179,28 @@ def perturb_bacilli(node, config, imageshape):
     
         if p[4] < p_decision[4]: #perturb rotation
             rotation = cell.rotation + random.gauss(mu=rotation_mu, sigma=rotation_sigma)
+        if p[5] < p_decision[5]:
+            cell_opacity = cell.opacity + (random.gauss(mu=opacity_mu, sigma=opacity_sigma))
             
         displacement = sqrt(np.sum((np.array([x, y, 0] - prior.position))**2))
         
         if not (0 <= x < imageshape[1] and 0 <= y < imageshape[0]) or (displacement > max_displacement)\
             or width < min_width or width > max_width or (abs(rotation - prior.rotation) > max_rotation) or \
-            not (min_length < length < max_length) or not (min_growth < length - prior.length < max_growth):
+            not (min_length < length < max_length) or not (min_growth < length - prior.length < max_growth) or cell_opacity < 0:
                 badcount += 1
         else:
             break
         
     # push the new cell over the previous in the node
-    node.push(Bacilli(cell.name, x, y, width, length, rotation))
+    if simulation_config["image.type"] == "graySynthetic":
+        node.push(Bacilli(cell.name, x, y, width, length, rotation, cell_opacity))
+    else:
+        node.push(Bacilli(cell.name, x, y, width, length, rotation))
 
 def split_proba(length):
     """Returns the split probability given the length of the cell."""
     # Determined empirically based on previous runs
-    return math.sin((length - 14) / (2 * math.pi * math.pi)) if 14 <= length <= 45 else 0
+    return min(1, math.sin((length - 14) / (2 * math.pi * math.pi)) + 0.1) if 14 <= length <= 45 else 0
 
 def bacilli_split(node, config, imageshape):
     """Split the cell and push both onto the stack for testing."""
