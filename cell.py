@@ -218,34 +218,30 @@ class Bacilli(Cell):
             
             if is_cell:  
                 cellmap[top:bottom, left:right][mask] += 1
-                if extension <= 0:
-                    image[top:bottom, left:right][mask] = cell_color + gaussian_filter_sigma
-                else:
-                    cellmap_diff = cellmap[re_diff_top:re_diff_bottom, re_diff_left:re_diff_right]
-                    diffraction_mask = np.zeros(cellmap_diff.shape, dtype=float)
-                    diffraction_mask[cellmap_diff>0] = diffraction_strength
-                    diffraction_mask = gaussian_filter(diffraction_mask, gaussian_filter_sigma, truncate = gaussian_filter_truncate)
-                    diffraction_mask[cellmap_diff==0] += background_color
-                    diffraction_mask[cellmap_diff>0] = cell_color + cell_opacity * diffraction_mask[cellmap_diff>0]
-                    image[re_rendering_top:re_rendering_bottom, re_rendering_left:re_rendering_right] = diffraction_mask[re_rendering_top - re_diff_top:
-                                                                                                             re_rendering_bottom - re_diff_bottom, 
-                                                                                                             re_rendering_left - re_diff_left:
-                                                                                                             re_rendering_right - re_diff_right]
+                cellmap_diff = cellmap[re_diff_top:re_diff_bottom, re_diff_left:re_diff_right]
+                diffraction_mask = np.zeros(cellmap_diff.shape, dtype=float)
+                diffraction_mask[cellmap_diff>0] = cell_diffraction_strength
+                diffraction_mask = gaussian_filter(diffraction_mask, cell_diffraction_sigma, truncate = gaussian_filter_truncate)
+                diffraction_mask[cellmap_diff==0] += background_color
+                diffraction_mask[cellmap_diff>0] = cell_color + cell_opacity * diffraction_mask[cellmap_diff>0]
+                #print("diffraction mask shape: ", diffraction_mask.shape)
+                image[re_rendering_top:re_rendering_bottom, re_rendering_left:re_rendering_right] = diffraction_mask[re_rendering_top - re_diff_top:
+                                                                                                         re_rendering_bottom - re_diff_bottom if re_rendering_bottom - re_diff_bottom != 0 else None, 
+                                                                                                         re_rendering_left - re_diff_left:
+                                                                                                         re_rendering_right - re_diff_right if re_rendering_right - re_diff_right != 0 else None]
             else:
                 cellmap[top:bottom, left:right][mask] -= 1
-                if extension <= 0:
-                    image[top:bottom, left:right][mask] = background_color
-                else:
-                    cellmap_diff = cellmap[re_diff_top:re_diff_bottom, re_diff_left:re_diff_right]
-                    diffraction_mask = np.zeros(cellmap_diff.shape, dtype=float)
-                    diffraction_mask[cellmap_diff>0] = diffraction_strength
-                    diffraction_mask = gaussian_filter(diffraction_mask, gaussian_filter_sigma, truncate = gaussian_filter_truncate)
-                    diffraction_mask[cellmap_diff==0] += background_color
-                    diffraction_mask[cellmap_diff>0] = cell_color + cell_opacity * diffraction_mask[cellmap_diff>0]
-                    image[re_rendering_top:re_rendering_bottom, re_rendering_left:re_rendering_right] = diffraction_mask[re_rendering_top - re_diff_top:
-                                                                                                             re_rendering_bottom - re_diff_bottom, 
-                                                                                                             re_rendering_left - re_diff_left:
-                                                                                                             re_rendering_right - re_diff_right]
+                cellmap_diff = cellmap[re_diff_top:re_diff_bottom, re_diff_left:re_diff_right]
+                diffraction_mask = np.zeros(cellmap_diff.shape, dtype=float)
+                diffraction_mask[cellmap_diff>0] = cell_diffraction_strength
+                diffraction_mask = gaussian_filter(diffraction_mask, cell_diffraction_sigma, truncate = gaussian_filter_truncate)
+                diffraction_mask[cellmap_diff==0] += background_color
+                diffraction_mask[cellmap_diff>0] = cell_color + cell_opacity * diffraction_mask[cellmap_diff>0]
+                #print("diffraction mask shape: ", diffraction_mask.shape)
+                image[re_rendering_top:re_rendering_bottom, re_rendering_left:re_rendering_right] = diffraction_mask[re_rendering_top - re_diff_top:
+                                                                                                         re_rendering_bottom - re_diff_bottom if re_rendering_bottom - re_diff_bottom != 0 else None, 
+                                                                                                         re_rendering_left - re_diff_left:
+                                                                                                         re_rendering_right - re_diff_right if re_rendering_right - re_diff_right != 0 else None]
                 
         elif image_type == "binary":
             mask[body_mask] = True
