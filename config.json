@@ -45,8 +45,8 @@
         "modification.width.sigma":0.1,
         "modification.length.sigma":1.0,
         "modification.rotation.sigma":0.2,
-        "prob.opacity": 0.6,
+        "prob.opacity": 0.5,
         "modification.opacity.mu":0.0,
-        "modification.opacity.sigma":0.3
+        "modification.opacity.sigma":0.05
     }
 }

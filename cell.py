@@ -220,8 +220,8 @@ class Bacilli(Cell):
                 cellmap[top:bottom, left:right][mask] += 1
                 cellmap_diff = cellmap[re_diff_top:re_diff_bottom, re_diff_left:re_diff_right]
                 diffraction_mask = np.zeros(cellmap_diff.shape, dtype=float)
-                diffraction_mask[cellmap_diff>0] = cell_diffraction_strength
-                diffraction_mask = gaussian_filter(diffraction_mask, cell_diffraction_sigma, truncate = gaussian_filter_truncate)
+                diffraction_mask[cellmap_diff>0] = diffraction_strength
+                diffraction_mask = gaussian_filter(diffraction_mask, gaussian_filter_sigma, truncate = gaussian_filter_truncate)
                 diffraction_mask[cellmap_diff==0] += background_color
                 diffraction_mask[cellmap_diff>0] = cell_color + cell_opacity * diffraction_mask[cellmap_diff>0]
                 #print("diffraction mask shape: ", diffraction_mask.shape)
@@ -233,8 +233,8 @@ class Bacilli(Cell):
                 cellmap[top:bottom, left:right][mask] -= 1
                 cellmap_diff = cellmap[re_diff_top:re_diff_bottom, re_diff_left:re_diff_right]
                 diffraction_mask = np.zeros(cellmap_diff.shape, dtype=float)
-                diffraction_mask[cellmap_diff>0] = cell_diffraction_strength
-                diffraction_mask = gaussian_filter(diffraction_mask, cell_diffraction_sigma, truncate = gaussian_filter_truncate)
+                diffraction_mask[cellmap_diff>0] = diffraction_strength
+                diffraction_mask = gaussian_filter(diffraction_mask, gaussian_filter_sigma, truncate = gaussian_filter_truncate)
                 diffraction_mask[cellmap_diff==0] += background_color
                 diffraction_mask[cellmap_diff>0] = cell_color + cell_opacity * diffraction_mask[cellmap_diff>0]
                 #print("diffraction mask shape: ", diffraction_mask.shape)
