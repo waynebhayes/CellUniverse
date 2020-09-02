@@ -190,9 +190,11 @@ def perturb_bacilli(node, config, imageshape):
         
         if not (0 <= x < imageshape[1] and 0 <= y < imageshape[0]) or (displacement > max_displacement)\
             or width < min_width or width > max_width or (abs(rotation - prior.rotation) > max_rotation) or \
-            not (min_length < length < max_length) or not (min_growth < length - prior.length < max_growth) or \
-            (simulation_config["image.type"] == "graySynthetic" and cell_opacity < 0):
+            not (min_length < length < max_length) or not (min_growth < length - prior.length < max_growth):
                 badcount += 1
+        elif simulation_config["image.type"] == "graySynthetic" and cell_opacity < 0:
+            badcount += 1
+            print(cell_opacity)
         else:
             break
         
@@ -205,12 +207,12 @@ def perturb_bacilli(node, config, imageshape):
 def split_proba(length):
     """Returns the split probability given the length of the cell."""
     # Determined empirically based on previous runs
-    return min(1, math.sin((length - 14) / (2 * math.pi * math.pi)) + 0.1) if 14 <= length <= 45 else 0
+    return min(1, math.sin((length - 14) / (2 * math.pi * math.pi))) if 14 < length else 0
 
 def bacilli_split(node, config, imageshape):
     """Split the cell and push both onto the stack for testing."""
 
-    if random.random() < split_proba(node.cell.length):
+    if random.random() > split_proba(node.cell.length):
         return False
 
     max_displacement = config['bacilli.maxSpeed']/config['global.framesPerSecond']
