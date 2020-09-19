@@ -197,7 +197,8 @@ class Perturbation(Change):
     def costdiff(self):
         new_synth = self.synthimage.copy()
         new_cellmap = self.cellmap.copy()
-        region = self.node.cell.region.union(self.replacement_cell.region)
+        region = self.node.cell.simulated_region(self.config["simulation"]).\
+            union(self.replacement_cell.simulated_region(self.config["simulation"]))
         self.node.cell.draw(new_synth, new_cellmap, optimization.is_background, self.config['simulation'])
         self.replacement_cell.draw(new_synth, new_cellmap, optimization.is_cell, self.config['simulation'])
 
@@ -289,10 +290,10 @@ class Combination(Change):
     def costdiff(self) -> float:
         new_synth = self.synthimage.copy()
         new_cellmap = self.cellmap.copy()
-        region = self.combination.region
+        region = self.combination.simulated_region(self.config["simulation"])
 
         for child in self.node.children:
-            region = region.union(child.cell.region)
+            region = region.union(child.cell.simulated_region(self.config["simulation"]))
 
         for child in self.node.children:
             child.cell.draw(new_synth, new_cellmap, optimization.is_background, self.config['simulation'])
@@ -382,7 +383,9 @@ class Split(Change):
     def costdiff(self) -> float:
         new_synth = self.synthimage.copy()
         new_cellmap = self.cellmap.copy()
-        region = self.node.children[0].cell.region.union(self.s1.region).union(self.s2.region)
+        region = self.node.children[0].cell.simulated_region(self.config["simulation"]).\
+            union(self.s1.simulated_region(self.config["simulation"])).\
+                union(self.s2.simulated_region(self.config["simulation"]))
         self.node.children[0].cell.draw(new_synth, new_cellmap, optimization.is_background, self.config['simulation'])
         self.s1.draw(new_synth, new_cellmap, optimization.is_cell, self.config['simulation'])
         self.s2.draw(new_synth, new_cellmap, optimization.is_cell, self.config['simulation'])
@@ -476,7 +479,7 @@ def gerp(a, b, t):
     return a * (b / a) ** t
 
 
-def optimize(imagefiles, lineageframes, lineagefile, args, config, window=5):
+def optimize(imagefiles, lineageframes, lineagefile, args, config):
     global useDistanceObjective
     useDistanceObjective = args.dist
 
@@ -486,6 +489,7 @@ def optimize(imagefiles, lineageframes, lineagefile, args, config, window=5):
     synthimages = []
     cellmaps = []
     distmaps = []
+    window = config["global_optimizer.window_size"]
     if not useDistanceObjective:
         distmaps = [None] * len(realimages)
 
@@ -525,12 +529,12 @@ def optimize(imagefiles, lineageframes, lineagefile, args, config, window=5):
             node = random.choice(frame.nodes)
             change = None
 
-            if frame_index > 0 and random.random() < 1/3:
+            if frame_index > 0 and random.random() < 0.1:
                 change = Combination(node.parent, config, realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], lineage.frames[frame_index], distmaps[frame_index])
                 if not change.is_valid:
                     change = None
 
-            if not change and frame_index > 0 and random.random() < 2/3:
+            if not change and frame_index > 0 and random.random() < optimization.split_proba(node.cell.length):
                 change = Split(node.parent, config, realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], lineage.frames[frame_index], distmaps[frame_index])
                 if not change.is_valid:
                     change = None
@@ -553,5 +557,13 @@ def optimize(imagefiles, lineageframes, lineagefile, args, config, window=5):
                 if acceptance < 1:
                     bad_accepted += 1
                 change.apply()
+        if window_start >= 0:
+            best_fit_frame = np.empty((shape[0], shape[1], 3))
+            best_fit_frame[..., 0] = synthimages[window_start]
+            best_fit_frame[..., 1] = best_fit_frame[...,0]
+            best_fit_frame[..., 2] = best_fit_frame[...,0]
+            best_fit_frame = np.clip(best_fit_frame, 0, 1)
+            best_fit_frame = Image.fromarray((255* best_fit_frame). astype(np.uint8))
+            best_fit_frame.save(args.bestfit / imagefiles[window_start].name)
 
     save_output(imagefiles, realimages, cellmaps, lineage, args, lineagefile, config['simulation'])

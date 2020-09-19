@@ -48,5 +48,7 @@
         "prob.opacity": 0.5,
         "modification.opacity.mu":0.0,
         "modification.opacity.sigma":0.05
-    }
+    },
+
+    "global_optimizer.window_size": 1
 }
