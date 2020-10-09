@@ -22,12 +22,15 @@
         "image.type": "To be Set", 
         "background.color": "auto", // 0.39 for gary scale image
         "cell.color" : "auto", // 0.15 for gray scale image
-        "light.diffraction.sigma": "auto",  
-        "light.diffraction.strength": "auto",
+        "light.diffraction.sigma": "auto",  //11
+        "light.diffraction.strength": "auto", //0.6
         "light.diffraction.truncate": 3,
         "cell.opacity": "auto"
     },
     
+    "prob.perturbation": 0.89,
+    "prob.combine": 0.05,
+    "prob.split" : 0.05,
     "perturbation":
     {
         "prob.x": 0.35,
@@ -45,10 +48,18 @@
         "modification.width.sigma":0.1,
         "modification.length.sigma":1.0,
         "modification.rotation.sigma":0.2,
-        "prob.opacity": 0.5,
+        "prob.opacity": 0.2,
         "modification.opacity.mu":0.0,
-        "modification.opacity.sigma":0.05
+        "modification.opacity.sigma":0.001,
+        "prob.background_offset": 0.01, //This should be set to 0 if the algorithm runs in binary version
+        "modification.background_offset.mu": 0.0,
+        "modification.background_offset.sigma": 0.01
     },
 
-    "global_optimizer.window_size": 1
+    "global_optimizer.window_size": 1,
+    "output.format": "png", //must be png or jpeg. If jpeg is chosen, then the output image quality can be set.
+    "output.quality": 80, // range [0, 100]
+    //residual.vmin must equal -residual.vmax
+    "residual.vmin": -0.3,
+    "residual.vmax": 0.3
 }

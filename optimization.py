@@ -165,7 +165,7 @@ def perturb_bacilli(node, config, imageshape):
             
         p = np.random.uniform(0.0, 1.0, size= p_decision.size)
         
-        # generate a sequence such that an attribute must be modified
+        # generate a sequence such that at least an attribute must be modified
         while (p > p_decision).all():
             p = np.random.uniform(0.0, 1.0, size= p_decision.size)
         
@@ -194,15 +194,11 @@ def perturb_bacilli(node, config, imageshape):
                 badcount += 1
         elif simulation_config["image.type"] == "graySynthetic" and cell_opacity < 0:
             badcount += 1
-            print(cell_opacity)
         else:
             break
         
     # push the new cell over the previous in the node
-    if simulation_config["image.type"] == "graySynthetic":
-        node.push(Bacilli(cell.name, x, y, width, length, rotation, cell_opacity))
-    else:
-        node.push(Bacilli(cell.name, x, y, width, length, rotation))
+    node.push(Bacilli(cell.name, x, y, width, length, rotation, cell.split_alpha, cell_opacity))
 
 def split_proba(length):
     """Returns the split probability given the length of the cell."""
@@ -338,7 +334,7 @@ def auto_temp_schedule_factor(cell_num, prev_num, factor):
 def auto_temp_schedule_const(cell_num, prev_num, constant):
     return True if cell_num - prev_num >= constant else False
 
-def optimize_core(imagefile, colony, args, config, iterations_per_cell=2000, auto_temp_complete=True, auto_const_temp = 1):
+def optimize_core(imagefile, colony, args, config, iterations_per_cell=6000, auto_temp_complete=True, auto_const_temp = 1):
     """Core of the optimization routine."""
     global debugcount, badcount  # DEBUG
 
