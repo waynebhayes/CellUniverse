@@ -52,7 +52,7 @@ class Bacilli(Cell):
         'bacilli.maxLength'
     ]
 
-    def __init__(self, name, x, y, width, length, rotation, opacity=0):
+    def __init__(self, name, x, y, width, length, rotation, split_alpha=None, opacity=0):
         #upper left corner is the origin
         #x,y are index of the array
         #x:column index y:row index
@@ -62,6 +62,7 @@ class Bacilli(Cell):
         self._length = length
         self._rotation = rotation
         self._opacity = opacity
+        self._split_alpha = split_alpha
         self._needs_refresh = True
 
     def _refresh(self):
@@ -305,13 +306,13 @@ class Bacilli(Cell):
             self._name + '0',
             position1.x, position1.y,
             self._width, self._length*alpha,
-            self._rotation, self._opacity)
+            self._rotation, alpha, self._opacity)
 
         cell2 = Bacilli(
             self._name + '1',
             position2.x, position2.y,
             self._width, self._length*(1 - alpha),
-            self._rotation, self._opacity)
+            self._rotation, alpha, self._opacity)
 
         return cell1, cell2
 
@@ -356,7 +357,7 @@ class Bacilli(Cell):
             self._name[:-1],
             position.x, position.y,
             width, length,
-            rotation, (self._opacity + cell.opacity)/2)
+            rotation, "combined alpha unknown", (self._opacity + cell.opacity)/2)
 
     def __repr__(self):
         return (f'Bacilli('
@@ -439,6 +440,14 @@ class Bacilli(Cell):
     @property
     def rotation(self):
         return self._rotation
+    
+    @property
+    def split_alpha(self):
+        return self._split_alpha
+    
+    @split_alpha.setter
+    def split_alpha(self, value):
+        self._split_alpha = value
     
     @property
     def opacity(self):
