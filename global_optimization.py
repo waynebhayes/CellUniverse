@@ -234,6 +234,7 @@ class Perturbation(Change):
 
     @property
     def costdiff(self):
+        overlap_cost = self.config["overlap.cost"]
         new_synth = self.synthimage.copy()
         new_cellmap = self.cellmap.copy()
         region = self.node.cell.simulated_region(self.frame.simulation_config).\
@@ -245,18 +246,22 @@ class Perturbation(Change):
             start_cost = optimization.dist_objective(self.realimage[region.top:region.bottom, region.left:region.right],
                                                      self.synthimage[region.top:region.bottom, region.left:region.right],
                                                      self.distmap[region.top:region.bottom, region.left:region.right],
-                                                     self.cellmap[region.top:region.bottom, region.left:region.right])
+                                                     self.cellmap[region.top:region.bottom, region.left:region.right],
+                                                     overlap_cost)
             end_cost = optimization.dist_objective(self.realimage[region.top:region.bottom, region.left:region.right],
                                                    new_synth[region.top:region.bottom, region.left:region.right],
                                                    self.distmap[region.top:region.bottom, region.left:region.right],
-                                                   new_cellmap[region.top:region.bottom, region.left:region.right])
+                                                   new_cellmap[region.top:region.bottom, region.left:region.right],
+                                                   overlap_cost)
         else:
             start_cost = optimization.objective(self.realimage[region.top:region.bottom, region.left:region.right],
                                 self.synthimage[region.top:region.bottom, region.left:region.right],
-                                self.cellmap[region.top:region.bottom, region.left:region.right])
+                                self.cellmap[region.top:region.bottom, region.left:region.right],
+                                overlap_cost, self.config["cell.importance"])
             end_cost = optimization.objective(self.realimage[region.top:region.bottom, region.left:region.right],
                               new_synth[region.top:region.bottom, region.left:region.right],
-                              new_cellmap[region.top:region.bottom, region.left:region.right])
+                              new_cellmap[region.top:region.bottom, region.left:region.right],
+                              overlap_cost, self.config["cell.importance"])
 
         return end_cost - start_cost
 
@@ -327,6 +332,7 @@ class Combination(Change):
 
     @property
     def costdiff(self) -> float:
+        overlap_cost = self.config["overlap.cost"]
         new_synth = self.synthimage.copy()
         new_cellmap = self.cellmap.copy()
         region = self.combination.simulated_region(self.frame.simulation_config)
@@ -343,20 +349,24 @@ class Combination(Change):
             start_cost = optimization.dist_objective(self.realimage[region.top:region.bottom, region.left:region.right],
                                                      self.synthimage[region.top:region.bottom, region.left:region.right],
                                                      self.distmap[region.top:region.bottom, region.left:region.right],
-                                                     self.cellmap[region.top:region.bottom, region.left:region.right])
+                                                     self.cellmap[region.top:region.bottom, region.left:region.right],
+                                                     overlap_cost)
             end_cost = optimization.dist_objective(self.realimage[region.top:region.bottom, region.left:region.right],
                                                    new_synth[region.top:region.bottom, region.left:region.right],
                                                    self.distmap[region.top:region.bottom, region.left:region.right],
-                                                   new_cellmap[region.top:region.bottom, region.left:region.right])
+                                                   new_cellmap[region.top:region.bottom, region.left:region.right],
+                                                   overlap_cost)
         else:
             start_cost = optimization.objective(self.realimage[region.top:region.bottom, region.left:region.right],
                                 self.synthimage[region.top:region.bottom, region.left:region.right],
-                                self.cellmap[region.top:region.bottom, region.left:region.right])
+                                self.cellmap[region.top:region.bottom, region.left:region.right],
+                                overlap_cost, self.config["cell.importance"])
             end_cost = optimization.objective(self.realimage[region.top:region.bottom, region.left:region.right],
                               new_synth[region.top:region.bottom, region.left:region.right],
-                              new_cellmap[region.top:region.bottom, region.left:region.right])
+                              new_cellmap[region.top:region.bottom, region.left:region.right],
+                              overlap_cost, self.config["cell.importance"])
 
-        return end_cost - start_cost
+        return end_cost - start_cost - self.config["split.cost"]
 
     def apply(self) -> None:
         self.combination.draw(self.synthimage, self.cellmap, optimization.is_cell, self.frame.simulation_config)
@@ -421,6 +431,7 @@ class Split(Change):
 
     @property
     def costdiff(self) -> float:
+        overlap_cost = self.config["overlap.cost"]
         new_synth = self.synthimage.copy()
         new_cellmap = self.cellmap.copy()
         region = self.node.children[0].cell.simulated_region(self.frame.simulation_config).\
@@ -434,20 +445,24 @@ class Split(Change):
             start_cost = optimization.dist_objective(self.realimage[region.top:region.bottom, region.left:region.right],
                                                      self.synthimage[region.top:region.bottom, region.left:region.right],
                                                      self.distmap[region.top:region.bottom, region.left:region.right],
-                                                     self.cellmap[region.top:region.bottom, region.left:region.right])
+                                                     self.cellmap[region.top:region.bottom, region.left:region.right],
+                                                     overlap_cost)
             end_cost = optimization.dist_objective(self.realimage[region.top:region.bottom, region.left:region.right],
                                                    new_synth[region.top:region.bottom, region.left:region.right],
                                                    self.distmap[region.top:region.bottom, region.left:region.right],
-                                                   new_cellmap[region.top:region.bottom, region.left:region.right])
+                                                   new_cellmap[region.top:region.bottom, region.left:region.right],
+                                                   overlap_cost)
         else:
             start_cost = optimization.objective(self.realimage[region.top:region.bottom, region.left:region.right],
                                 self.synthimage[region.top:region.bottom, region.left:region.right],
-                                self.cellmap[region.top:region.bottom, region.left:region.right])
+                                self.cellmap[region.top:region.bottom, region.left:region.right],
+                                overlap_cost, self.config["cell.importance"])
             end_cost = optimization.objective(self.realimage[region.top:region.bottom, region.left:region.right],
                               new_synth[region.top:region.bottom, region.left:region.right],
-                              new_cellmap[region.top:region.bottom, region.left:region.right])
+                              new_cellmap[region.top:region.bottom, region.left:region.right],
+                              overlap_cost, self.config["cell.importance"])
 
-        return end_cost - start_cost
+        return end_cost - start_cost + self.config["split.cost"]
 
     def apply(self) -> None:
         self.node.children[0].cell.draw(self.synthimage, self.cellmap, optimization.is_background, self.frame.simulation_config)
@@ -477,6 +492,7 @@ class BackGround_luminosity_offset(Change):
         self.cellmap = cellmap
         self.old_simulation_config = frame.simulation_config
         self.new_simulation_config = frame.simulation_config.copy()
+        self.config = config
         
         offset_mu = config["perturbation"]["modification.background_offset.mu"]
         offset_sigma = config["perturbation"]["modification.background_offset.sigma"]
@@ -488,24 +504,26 @@ class BackGround_luminosity_offset(Change):
         return self.frame.simulation_config["background.color"] > 0
     @property
     def costdiff(self) -> float:
+        overlap_cost = self.config["overlap.cost"]
         if useDistanceObjective:
-            start_cost = optimization.dist_objective(self.realimage,self.old_synthimage,self.distmap,self.cellmap)
-            end_cost = optimization.dist_objective(self.realimage,self.new_synthimage,self.distmap,self.cellmap)
+            start_cost = optimization.dist_objective(self.realimage,self.old_synthimage,self.distmap,self.cellmap,overlap_cost)
+            end_cost = optimization.dist_objective(self.realimage,self.new_synthimage,self.distmap,self.cellmap,overlap_cost)
         else:
-            start_cost = optimization.objective(self.realimage,self.old_synthimage,self.cellmap)
-            end_cost = optimization.objective(self.realimage,self.new_synthimage,self.cellmap)
+            start_cost = optimization.objective(self.realimage,self.old_synthimage,self.cellmap,overlap_cost, self.config["cell.importance"])
+            end_cost = optimization.objective(self.realimage,self.new_synthimage,self.cellmap,overlap_cost, self.config["cell.importance"])
         return end_cost-start_cost
     
     def apply(self):
         self.old_synthimage[:]= self.new_synthimage
         self.old_simulation_config["background.color"] = self.new_simulation_config["background.color"]
-def save_output(imagefiles, realimages, synthimages, cellmaps, lineage: LineageM, args, lineagefile, simulation_config):
+        
+def save_output(imagefiles, realimages, synthimages, cellmaps, lineage: LineageM, args, lineagefile, config):
     for frame_index in range(len(lineage.frames)):
         realimage = realimages[frame_index]
         cellnodes = lineage.frames[frame_index].nodes
         cellmap = cellmaps[frame_index]
         synthimage = synthimages[frame_index]
-        cost = optimization.objective(realimage, synthimage, cellmap)
+        cost = optimization.objective(realimage, synthimage, cellmap, config["overlap.cost"], config["cell.importance"])
         print('Final Cost:', cost)
         for node in cellnodes:
             properties = [imagefiles[frame_index].name, node.cell.name]
@@ -532,7 +550,7 @@ def gerp(a, b, t):
     return a * (b / a) ** t
 
 
-def optimize(imagefiles, lineageframes, lineagefile, args, config, iteration_per_cell=3000, in_auto_temp_schedule=False, const_temp=None):
+def optimize(imagefiles, lineageframes, lineagefile, args, config, iteration_per_cell=6000, in_auto_temp_schedule=False, const_temp=None):
     global useDistanceObjective
     useDistanceObjective = args.dist
     
@@ -609,7 +627,7 @@ def optimize(imagefiles, lineageframes, lineagefile, args, config, iteration_per
                 change = Combination(node.parent, config, realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], lineage.frames[frame_index], distmaps[frame_index])
 
             elif change_option == "background_offset" and frame_index > 0 and config["simulation"]["image.type"] == "graySynthetic":
-                change = BackGround_luminosity_offset(lineage.frames[frame_index], realimages[frame_index], synthimages[frame_index], cellmap[frame_index], config)
+                change = BackGround_luminosity_offset(lineage.frames[frame_index], realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], config)
             
             if change and change.is_valid:
                 # apply if acceptable
@@ -647,7 +665,7 @@ def optimize(imagefiles, lineageframes, lineagefile, args, config, iteration_per
                                                                                        residual_vmin, residual_vmax))), "RGBA")
                 residual_frame.save(args.residual / imagefiles[window_start].name)
 
-    save_output(imagefiles, realimages, synthimages, cellmaps, lineage, args, lineagefile, config['simulation'])
+    save_output(imagefiles, realimages, synthimages, cellmaps, lineage, args, lineagefile, config)
 
 def auto_temp_schedule(imagefiles, lineageframes, lineagefile, args, config):
     initial_temp = 1
