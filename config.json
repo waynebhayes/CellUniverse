@@ -61,5 +61,10 @@
     "output.quality": 80, // range [0, 100]
     //residual.vmin must equal -residual.vmax
     "residual.vmin": -0.3,
-    "residual.vmax": 0.3
+    "residual.vmax": 0.3,
+    //objective parameter
+    "split.cost": 0,
+    "overlap.cost": 0.2,
+    //cell.importance = importance of synthetic cell region/importance of synthetic diffraction region
+    "cell.importance": 1
 }

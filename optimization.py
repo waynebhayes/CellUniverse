@@ -24,14 +24,16 @@ is_background = False
 
 
 
-def objective(realimage, synthimage, cellmap):
+def objective(realimage, synthimage, cellmap, overlap_cost, cell_importance):
     """Full objective function between two images."""
     overlap_map = cellmap[cellmap>1] - 1
-    return np.sum(np.square(realimage - synthimage)) + 0.1 * np.sum(np.square(overlap_map))
+    return cell_importance * np.sum(np.square((realimage - synthimage)[cellmap>0])) \
+        + overlap_cost * np.sum(np.square(overlap_map)) \
+            + np.sum(np.square((realimage - synthimage)[cellmap==0]))
 
-def dist_objective(realimage, synthimage, distmap, cellmap):
+def dist_objective(realimage, synthimage, distmap, cellmap, overlap_cost):
     overlap_map = cellmap[cellmap>1] - 1
-    return np.sum(np.square((realimage-synthimage)*distmap)) + 0.1 * np.sum(np.square(overlap_map))
+    return np.sum(np.square((realimage-synthimage)*distmap)) + overlap_cost * np.sum(np.square(overlap_map))
 
 def find_optimal_simulation_conf(simulation_config, realimage1, cellnodes):
     shape = realimage1.shape
@@ -183,8 +185,8 @@ def perturb_bacilli(node, config, imageshape):
     
         if p[4] < p_decision[4]: #perturb rotation
             rotation = cell.rotation + random.gauss(mu=rotation_mu, sigma=rotation_sigma)
-        if simulation_config["image.type"] == "graySynthetic" and p[5] < p_decision[5]:
-            cell_opacity = cell.opacity + (random.gauss(mu=opacity_mu, sigma=opacity_sigma))
+        #if simulation_config["image.type"] == "graySynthetic" and p[5] < p_decision[5]:
+            #cell_opacity = cell.opacity + (random.gauss(mu=opacity_mu, sigma=opacity_sigma))
             
         displacement = sqrt(np.sum((np.array([x, y, 0] - prior.position))**2))
         
@@ -334,7 +336,7 @@ def auto_temp_schedule_factor(cell_num, prev_num, factor):
 def auto_temp_schedule_const(cell_num, prev_num, constant):
     return True if cell_num - prev_num >= constant else False
 
-def optimize_core(imagefile, colony, args, config, iterations_per_cell=6000, auto_temp_complete=True, auto_const_temp = 1):
+def optimize_core(imagefile, colony, args, config, iterations_per_cell=3000, auto_temp_complete=True, auto_const_temp = 1):
     """Core of the optimization routine."""
     global debugcount, badcount  # DEBUG
 
@@ -356,9 +358,9 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=6000, aut
         distmap = distance_transform_edt(realimage < .5)
         distmap /= config[f'{celltype}.distanceCostDivisor']*config['global.pixelsPerMicron']
         distmap += 1
-        cost = dist_objective(realimage, synthimage, distmap, cellmap)
+        cost = dist_objective(realimage, synthimage, distmap, cellmap, config["overlap.cost"])
     else:
-        cost = objective(realimage, synthimage, cellmap)
+        cost = objective(realimage, synthimage, cellmap, config["overlap.cost"], config["cell.importance"])
 
     # setup temperature schedule
     run_count = int(iterations_per_cell*len(cellnodes))
@@ -412,11 +414,14 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=6000, aut
                         realimage[region.top:region.bottom, region.left:region.right],
                         synthimage[region.top:region.bottom, region.left:region.right],
                         distmap[region.top:region.bottom, region.left:region.right],
-                        cellmap[region.top:region.bottom, region.left:region.right])
+                        cellmap[region.top:region.bottom, region.left:region.right],
+                        config["overlap.cost"])
                 else:
                     start_cost = objective(realimage[region.top:region.bottom,region.left:region.right],
                                            synthimage[region.top:region.bottom,region.left:region.right],
-                                           cellmap[region.top:region.bottom,region.left:region.right])
+                                           cellmap[region.top:region.bottom,region.left:region.right],
+                                           config["overlap.cost"],
+                                           config["cell.importance"])
 
                 # subtract the previous cells
                 snode1.cell.draw(synthimage, cellmap, is_background, simulation_config)
@@ -437,11 +442,14 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=6000, aut
                         realimage[region.top:region.bottom, region.left:region.right],
                         synthimage[region.top:region.bottom, region.left:region.right],
                         distmap[region.top:region.bottom, region.left:region.right],
-                        cellmap[region.top:region.bottom, region.left:region.right])
+                        cellmap[region.top:region.bottom, region.left:region.right],
+                        config["overlap.cost"])
                 else:
                     start_cost = objective(realimage[region.top:region.bottom,region.left:region.right],
                                            synthimage[region.top:region.bottom,region.left:region.right],
-                                           cellmap[region.top:region.bottom,region.left:region.right])
+                                           cellmap[region.top:region.bottom,region.left:region.right],
+                                           config["overlap.cost"],
+                                           config["cell.importance"])
                 
                 # subtract the previous cell
                 node.cell.draw(synthimage, cellmap, is_background, simulation_config)
@@ -459,11 +467,14 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=6000, aut
                         realimage[region.top:region.bottom, region.left:region.right],
                         synthimage[region.top:region.bottom, region.left:region.right],
                         distmap[region.top:region.bottom, region.left:region.right],
-                        cellmap[region.top:region.bottom, region.left:region.right])
+                        cellmap[region.top:region.bottom, region.left:region.right],
+                        config["overlap.cost"])
                 else:
                     start_cost = objective(realimage[region.top:region.bottom,region.left:region.right],
                                            synthimage[region.top:region.bottom,region.left:region.right],
-                                           cellmap[region.top:region.bottom,region.left:region.right])
+                                           cellmap[region.top:region.bottom,region.left:region.right],
+                                           config["overlap.cost"],
+                                           config["cell.importance"])
 
                 # subtract the previous cell
                 node.cell.draw(synthimage, cellmap, is_background, simulation_config)
@@ -476,11 +487,14 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=6000, aut
                         realimage[region.top:region.bottom, region.left:region.right],
                         synthimage[region.top:region.bottom, region.left:region.right],
                         distmap[region.top:region.bottom, region.left:region.right],
-                        cellmap[region.top:region.bottom, region.left:region.right])
+                        cellmap[region.top:region.bottom, region.left:region.right],
+                        config["overlap.cost"])
             else:
                 end_cost = objective(realimage[region.top:region.bottom,region.left:region.right],
                                        synthimage[region.top:region.bottom,region.left:region.right],
-                                       cellmap[region.top:region.bottom,region.left:region.right])
+                                       cellmap[region.top:region.bottom,region.left:region.right],
+                                       config["overlap.cost"],
+                                       config["cell.importance"])
             costdiff = end_cost - start_cost
 
             # compute the acceptance threshold
@@ -558,9 +572,9 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=6000, aut
         return bad_prob_tot/bad_count
 
     if useDistanceObjective:
-        new_cost = dist_objective(realimage, synthimage, distmap, cellmap)
+        new_cost = dist_objective(realimage, synthimage, distmap, cellmap, config["overlap.cost"])
     else:
-        new_cost = objective(realimage, synthimage, cellmap)
+        new_cost = objective(realimage, synthimage, cellmap, config["overlap.cost"], config["cell.importance"])
     print(f'Incremental Cost: {cost}')
     print(f'Actual Cost:      {new_cost}')
     if abs(new_cost - cost) > 1e-7:
