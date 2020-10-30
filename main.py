@@ -12,8 +12,10 @@ import cProfile
 import argparse
 import multiprocessing
 from pathlib import Path
-from optimization import auto_temp_schedule, auto_temp_schedule_frame, auto_temp_schedule_factor, auto_temp_schedule_const, find_optimal_simulation_conf, load_image
-
+from optimization import (auto_temp_schedule, auto_temp_schedule_frame,
+                          auto_temp_schedule_factor, auto_temp_schedule_const,
+                          find_optimal_simulation_conf, load_image,
+                          update_cost_diff, auto_temp_shcedule_cost)
 
 def parse_args():
     """Reads and parses the command-line arguments."""
@@ -51,7 +53,7 @@ def parse_args():
                           help='auto temperature scheduling for the simulated annealing')
     parser.add_argument('-ts', '--start_temp', type=float, help='starting temperature for the simulated annealing')
     parser.add_argument('-te', '--end_temp', type=float, help='ending temperature for the simulated annealing')
-    parser.add_argument('-am', '--auto_meth', type=str, default='none', choices=('none', 'frame', 'factor', 'const'),
+    parser.add_argument('-am', '--auto_meth', type=str, default='none', choices=('none', 'frame', 'factor', 'const', 'cost'),
                         help='method for auto-temperature scheduling')
     parser.add_argument('-r', "--residual", metavar="FILE", type=Path, required=False,
                           help="path to the residual image output directory")
@@ -201,6 +203,7 @@ def main(args):
         lineageframes = LineageFrames()
         colony = lineageframes.forward()
         load_colony(colony, args.initial, config)
+        cost_diff = (-1, -1)
 
         # open the lineage file for writing
         lineagefile = open(args.output/'lineage.csv', 'w')
@@ -257,8 +260,17 @@ def main(args):
                     print("starting temperature is ", args.start_temp, "ending temperature is ", args.end_temp)
                     prev_cell_num = len(colony)
 
+            elif args.auto_meth == "cost":
+                print(cost_diff, frame_num, auto_temp_shcedule_cost(cost_diff))
+                if frame_num >= 2 and auto_temp_shcedule_cost(cost_diff):
+                    print("auto temperature schedule started cost_diff (recomputed)")
+                    args.start_temp, args.end_temp = auto_temp_schedule(imagefile, colony, args, config)
+                    print("auto temperature schedule finished")
+                    print("starting temperature is ", args.start_temp, "ending temperature is ", args.end_temp)
 
             colony = optimize(imagefile, lineageframes, args, config, client)
+
+            cost_diff = update_cost_diff(colony, cost_diff)
 
             # flatten modifications and save cell properties
             colony.flatten()

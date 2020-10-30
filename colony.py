@@ -89,6 +89,7 @@ class Colony(object):
 
     def __init__(self):
         self._nodes = []
+        self._cost = 0
 
     def __len__(self):
         return len(self._nodes)
@@ -101,6 +102,13 @@ class Colony(object):
         for node in self._nodes:
             for leaf in node.leaves:
                 yield leaf
+
+    def set_cost(self, value):
+        self._cost = value
+
+    @property
+    def cost(self):
+        return self._cost
 
     def flatten(self):
         """Flatten the colony in place."""
