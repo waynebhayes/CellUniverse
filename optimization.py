@@ -336,6 +336,9 @@ def auto_temp_schedule_factor(cell_num, prev_num, factor):
 def auto_temp_schedule_const(cell_num, prev_num, constant):
     return True if cell_num - prev_num >= constant else False
 
+def auto_temp_shcedule_cost(cost_diff):
+    return True if ((cost_diff[1] - cost_diff[0]) / cost_diff[0]) > 0.2 else False
+
 def optimize_core(imagefile, colony, args, config, iterations_per_cell=3000, auto_temp_complete=True, auto_const_temp = 1):
     """Core of the optimization routine."""
     global debugcount, badcount  # DEBUG
@@ -575,6 +578,9 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=3000, aut
         new_cost = dist_objective(realimage, synthimage, distmap, cellmap, config["overlap.cost"])
     else:
         new_cost = objective(realimage, synthimage, cellmap, config["overlap.cost"], config["cell.importance"])
+
+    colony.set_cost(cost)
+
     print(f'Incremental Cost: {cost}')
     print(f'Actual Cost:      {new_cost}')
     if abs(new_cost - cost) > 1e-7:
@@ -690,3 +696,13 @@ def optimize(imagefile, lineageframes, args, config, client):
         debugimage.save(args.output/'{:03d}-{}'.format(i, imagefile.name))
 
     return colony
+
+def update_cost_diff(colony, cost_diff):
+    if -1 == cost_diff[0]:
+        cost_diff = (colony.cost, cost_diff[1])
+    elif -1 == cost_diff[1]:
+        cost_diff = (cost_diff[0], colony.cost)
+    else:
+        cost_diff = (cost_diff[1], colony.cost)
+
+    return cost_diff
