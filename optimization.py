@@ -6,7 +6,6 @@ from itertools import chain
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
-import matplotlib.pyplot as plt
 from scipy.ndimage import distance_transform_edt
 from scipy.optimize import leastsq
 

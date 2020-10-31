@@ -7,15 +7,13 @@ cellanneal
 
 The entry point for CellAnneal program.
 """
-
-import cProfile
 import argparse
 import multiprocessing
 from pathlib import Path
-from optimization import (auto_temp_schedule, auto_temp_schedule_frame,
-                          auto_temp_schedule_factor, auto_temp_schedule_const,
-                          find_optimal_simulation_conf, load_image,
-                          update_cost_diff, auto_temp_shcedule_cost)
+import optimization
+import global_optimization
+from scipy.ndimage import distance_transform_edt
+from colony import LineageFrames
 
 def parse_args():
     """Reads and parses the command-line arguments."""
@@ -130,7 +128,7 @@ def load_colony(colony, initial_file, config):
                     cell = Bacilli(name, x, y, width, length, rotation, opacity = opacity)
                 else:
                     cell = Bacilli(name, x, y, width, length, rotation)
-            colony.add(CellNode(cell))
+            colony.add(optimization.CellNode(cell))
 
 
 def get_inputfiles(args):
@@ -192,10 +190,13 @@ def main(args):
             simulation_config["image.type"] = "binary"
         else:
             raise ValueError("Invalid Command: Synthetic image type must be specified")
-            
-        if args.debug:
-            debugmode = True
-
+        
+        if not args.output.is_dir():
+            args.output.mkdir()
+        if not args.bestfit.is_dir():
+            args.bestfit.mkdir()
+        if args.residual and not args.residual.is_dir():
+            args.residual.mkdir()
         
         celltype = config['global.cellType'].lower()
 
@@ -213,21 +214,58 @@ def main(args):
         print(','.join(header), file=lineagefile)
 
         #optimze configuration
-        config["simulation"] = find_optimal_simulation_conf(config["simulation"], load_image(get_inputfiles(args)[0]), list(colony))
+        config["simulation"] = optimization.find_optimal_simulation_conf(config["simulation"], optimization.load_image(get_inputfiles(args)[0]), list(colony))
+        
         if args.global_optimization:
-            import global_optimization
-            if args.auto_temp == 1:
-                print("auto temperature schedule started")
-                args.start_temp, args.end_temp = \
-                    global_optimization.auto_temp_schedule(get_inputfiles(args), lineageframes, lineagefile, args, config)
-                print("auto temperature schedule finished")
-                print("starting temperature is ", args.start_temp, "ending temperature is ", args.end_temp)
-            global_optimization.optimize(get_inputfiles(args), lineageframes, lineagefile, args, config)
+            global useDistanceObjective
+            useDistanceObjective = args.dist
+            imagefiles =  get_inputfiles(args)
+            realimages = [optimization.load_image(imagefile) for imagefile in imagefiles]
+            window = config["global_optimizer.window_size"]
+            lineage = global_optimization.build_initial_lineage(colony, args, config)
+            shape = realimages[0].shape
+            synthimages = []
+            cellmaps = []
+            distmaps = []
+            if not useDistanceObjective:
+                distmaps = [None] * len(realimages)
+            for window_start in range(1 - window, len(realimages)):
+                window_end = window_start + window
+                print(window_start, window_end)
+                
+                if window_end <= len(realimages):
+                    # get initial estimate
+                    if window_end > 1:
+                        lineage.copy_forward()
+                    realimage = realimages[window_end - 1]
+                    synthimage, cellmap = optimization.generate_synthetic_image(lineage.frames[-1].nodes, shape, lineage.frames[-1].simulation_config)
+                    synthimages.append(synthimage)
+                    cellmaps.append(cellmap)
+                    if useDistanceObjective:
+                        distmap = distance_transform_edt(realimage < .5)
+                        distmap /= config[f'{config["global.cellType"].lower()}.distanceCostDivisor'] * config[
+                            'global.pixelsPerMicron']
+                        distmap += 1
+                        distmaps.append(distmap)
+                    if args.auto_temp == 1 and window_end == 1:
+                        print("auto temperature schedule started")
+                        args.start_temp, args.end_temp = \
+                            global_optimization.auto_temp_schedule(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, 0, 1, lineagefile, args, config)
+                        print("auto temperature schedule finished")
+                        print("starting temperature is ", args.start_temp, "ending temperature is ", args.end_temp)
+                    if args.auto_meth == "frame" and optimization.auto_temp_schedule_frame(window_end, 5):
+                        print("auto temperature schedule restarted")
+                        args.start_temp, args.end_temp = \
+                            global_optimization.auto_temp_schedule(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config)
+                        print("auto temperature schedule finished")
+                        print("starting temperature is ", args.start_temp, "ending temperature is ", args.end_temp)
+            
+                global_optimization.optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config)
             return 0
 
         if args.auto_temp == 1:
             print("auto temperature schedule started")
-            args.start_temp, args.end_temp = auto_temp_schedule(get_inputfiles(args)[0], lineageframes.forward(), args, config)
+            args.start_temp, args.end_temp = optimization.auto_temp_schedule(get_inputfiles(args)[0], lineageframes.forward(), args, config)
             print("auto temperature schedule finished")
             print("starting temperature is ", args.start_temp, "ending temperature is ", args.end_temp)
 
@@ -238,41 +276,42 @@ def main(args):
             frame_num += 1
 
             if args.auto_meth == "frame":
-                if auto_temp_schedule_frame(frame_num, 8):
+                if optimization.auto_temp_schedule_frame(frame_num, 8):
                     print("auto temperature schedule started (recomputed)")
-                    args.start_temp, args.end_temp = auto_temp_schedule(imagefile, colony, args, config)
+                    args.start_temp, args.end_temp = optimization.auto_temp_schedule(imagefile, colony, args, config)
                     print("auto temperature schedule finished")
                     print("starting temperature is ", args.start_temp, "ending temperature is ", args.end_temp)
 
             elif args.auto_meth == "factor":
-                if auto_temp_schedule_factor(len(colony), prev_cell_num, 1.1):
+                if optimization.auto_temp_schedule_factor(len(colony), prev_cell_num, 1.1):
                     print("auto temperature schedule started (recomputed)")
-                    args.start_temp, args.end_temp = auto_temp_schedule(imagefile, colony, args, config)
+                    args.start_temp, args.end_temp = optimization.auto_temp_schedule(imagefile, colony, args, config)
                     print("auto temperature schedule finished")
                     print("starting temperature is ", args.start_temp, "ending temperature is ", args.end_temp)
                     prev_cell_num = len(colony)
 
             elif args.auto_meth == "const":
-                if auto_temp_schedule_const(len(colony), prev_cell_num, 10):
+                if optimization.auto_temp_schedule_const(len(colony), prev_cell_num, 10):
                     print("auto temperature schedule started (recomputed)")
-                    args.start_temp, args.end_temp = auto_temp_schedule(imagefile, colony, args, config)
+                    args.start_temp, args.end_temp = optimization.auto_temp_schedule(imagefile, colony, args, config)
                     print("auto temperature schedule finished")
                     print("starting temperature is ", args.start_temp, "ending temperature is ", args.end_temp)
                     prev_cell_num = len(colony)
 
             elif args.auto_meth == "cost":
-                print(cost_diff, frame_num, auto_temp_shcedule_cost(cost_diff))
-                if frame_num >= 2 and auto_temp_shcedule_cost(cost_diff):
+                print(cost_diff, frame_num, optimization.auto_temp_shcedule_cost(cost_diff))
+                if frame_num >= 2 and optimization.auto_temp_shcedule_cost(cost_diff):
                     print("auto temperature schedule started cost_diff (recomputed)")
-                    args.start_temp, args.end_temp = auto_temp_schedule(imagefile, colony, args, config)
+                    args.start_temp, args.end_temp = optimization.auto_temp_schedule(imagefile, colony, args, config)
                     print("auto temperature schedule finished")
                     print("starting temperature is ", args.start_temp, "ending temperature is ", args.end_temp)
 
             colony = optimize(imagefile, lineageframes, args, config, client)
 
-            cost_diff = update_cost_diff(colony, cost_diff)
+            cost_diff = optimization.update_cost_diff(colony, cost_diff)
 
             # flatten modifications and save cell properties
+
             colony.flatten()
             for cellnode in colony:
                 properties = [imagefile.name, cellnode.cell.name]
@@ -303,12 +342,8 @@ if __name__ == '__main__':
     import time
     from itertools import count
 
-    import numpy as np
-    from PIL import Image
-
     import jsonc
     from cell import Bacilli
-    from colony import CellNode, Colony, LineageFrames
     from optimization import optimize
     from sys import exit
     # pr = cProfile.Profile()
