@@ -7,7 +7,6 @@ from matplotlib import cm
 from matplotlib.colors import Normalize
 import numpy as np
 from PIL import Image
-from scipy.ndimage import distance_transform_edt
 
 import cell
 import optimization
@@ -535,10 +534,8 @@ def save_output(imagefiles, realimages, synthimages, cellmaps, lineage: LineageM
                 str(node.cell.rotation)])
             print(','.join(properties), file=lineagefile)
 
-def build_initial_lineage(imagefiles, lineageframes, args, config):
+def build_initial_lineage(colony, args, config):
     lineage = LineageM(config["simulation"])
-
-    colony = lineageframes.latest
     for cellnode in colony:
         lineage.frames[0].add_cell(cellnode.cell)
 
@@ -550,150 +547,120 @@ def gerp(a, b, t):
     return a * (b / a) ** t
 
 
-def optimize(imagefiles, lineageframes, lineagefile, args, config, iteration_per_cell=6000, in_auto_temp_schedule=False, const_temp=None):
-    global useDistanceObjective
-    useDistanceObjective = args.dist
-    
-    if not args.output.is_dir():
-        args.output.mkdir()
-    if not args.bestfit.is_dir():
-        args.bestfit.mkdir()
-    if args.residual and not args.output.is_dir():
-        args.residual.mkdir()
+def optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config,
+             iteration_per_cell=3000, in_auto_temp_schedule=False, const_temp=None):
+    if in_auto_temp_schedule:
+        lineage = deepcopy(lineage)
+        synthimages = deepcopy(synthimages)
+        distmaps = deepcopy(distmaps)
+        cellmaps = deepcopy(cellmaps)
         
-    lineage = build_initial_lineage(imagefiles, lineageframes, args, config)
-    realimages = [optimization.load_image(imagefile) for imagefile in imagefiles]
-    shape = realimages[0].shape
-    synthimages = []
-    cellmaps = []
-    distmaps = []
     pbad_total = 0
-    window = config["global_optimizer.window_size"]
+    
     perturbation_prob = config["prob.perturbation"]
     combine_prob = config["prob.combine"]
     split_prob = config["prob.split"]
     background_offset_prob = config["perturbation"]["prob.background_offset"]
     residual_vmin = config["residual.vmin"]
     residual_vmax = config["residual.vmax"]
+    window = window_end - window_start
     if args.residual:
         colormap = cm.ScalarMappable(norm = Normalize(vmin=residual_vmin, vmax=residual_vmax), cmap = "bwr")
-    if not useDistanceObjective:
-        distmaps = [None] * len(realimages)
-
-    for window_start in range(1 - window, len(realimages)):
-        window_end = window_start + window
-        print(window_start, window_end)
-
-        if window_end <= len(realimages):
-            # get initial estimate
-            if window_end > 1:
-                lineage.copy_forward()
-
-            # add next diffimage
-            realimage = realimages[window_end - 1]
-            synthimage, cellmap = optimization.generate_synthetic_image(lineage.frames[-1].nodes, shape, lineage.frames[-1].simulation_config)
-            synthimages.append(synthimage)
-            cellmaps.append(cellmap)
-            if useDistanceObjective:
-                distmap = distance_transform_edt(realimage < .5)
-                distmap /= config[f'{config["global.cellType"].lower()}.distanceCostDivisor'] * config[
-                    'global.pixelsPerMicron']
-                distmap += 1
-                distmaps.append(distmap)
-
-        # simulated annealing
-        run_count = iteration_per_cell*lineage.count_cells_in(window_start, window_end)//window
-        print(run_count)
-        bad_count = 0
-        for iteration in range(run_count):
-            frame_index = lineage.choose_random_frame_index(window_start, window_end)
-            if in_auto_temp_schedule:
-                temperature = const_temp
-            else:
-                frame_start_temp = gerp(args.end_temp, args.start_temp, (frame_index - window_start + 1)/window)
-                frame_end_temp = gerp(args.end_temp, args.start_temp, (frame_index - window_start)/window)
-                temperature = gerp(frame_start_temp, frame_end_temp, iteration/(run_count - 1))                
-            frame = lineage.frames[frame_index]
-            node = random.choice(frame.nodes)
-            change_option = np.random.choice(["split", "perturbation", "combine", "background_offset"], p=[split_prob, perturbation_prob, combine_prob, background_offset_prob])
-            change = None
-            if change_option == "split" and random.random() < optimization.split_proba(node.cell.length) and frame_index > 0:
-                change = Split(node.parent, config, realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], lineage.frames[frame_index], distmaps[frame_index])
-                
-            elif change_option == "perturbation":
-                change = Perturbation(node, config, realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], lineage.frames[frame_index], distmaps[frame_index])
-                
-            elif change_option == "combine" and frame_index > 0:
-                change = Combination(node.parent, config, realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], lineage.frames[frame_index], distmaps[frame_index])
-
-            elif change_option == "background_offset" and frame_index > 0 and config["simulation"]["image.type"] == "graySynthetic":
-                change = BackGround_luminosity_offset(lineage.frames[frame_index], realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], config)
-            
-            if change and change.is_valid:
-                # apply if acceptable
-                costdiff = change.costdiff
-    
-                if costdiff <= 0:
-                    acceptance = 1.0
-                else:
-                    bad_count += 1
-                    acceptance = np.exp(-costdiff / temperature)
-                    pbad_total += acceptance
-    
-                if acceptance > random.random():
-                    change.apply()
+    # simulated annealing
+    total_iterations = iteration_per_cell*lineage.count_cells_in(window_start, window_end)//window
+    print(total_iterations)
+    bad_count = 0
+    current_iteration = 1
+    while current_iteration<total_iterations:
+        frame_index = lineage.choose_random_frame_index(window_start, window_end)
         if in_auto_temp_schedule:
-           print("pbad is ", pbad_total/bad_count)
-           return pbad_total/bad_count
+            temperature = const_temp
+        else:
+            frame_start_temp = gerp(args.end_temp, args.start_temp, (frame_index - window_start + 1)/window)
+            frame_end_temp = gerp(args.end_temp, args.start_temp, (frame_index - window_start)/window)
+            temperature = gerp(frame_start_temp, frame_end_temp, current_iteration/(total_iterations))                
+        frame = lineage.frames[frame_index]
+        node = random.choice(frame.nodes)
+        change_option = np.random.choice(["split", "perturbation", "combine", "background_offset"], p=[split_prob, perturbation_prob, combine_prob, background_offset_prob])
+        change = None
+        if change_option == "split" and random.random() < optimization.split_proba(node.cell.length) and frame_index > 0:
+            change = Split(node.parent, config, realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], lineage.frames[frame_index], distmaps[frame_index])
+            
+        elif change_option == "perturbation":
+            change = Perturbation(node, config, realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], lineage.frames[frame_index], distmaps[frame_index])
+            
+        elif change_option == "combine" and frame_index > 0:
+            change = Combination(node.parent, config, realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], lineage.frames[frame_index], distmaps[frame_index])
+
+        elif change_option == "background_offset" and frame_index > 0 and config["simulation"]["image.type"] == "graySynthetic":
+            change = BackGround_luminosity_offset(lineage.frames[frame_index], realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], config)
+        
+        if change and change.is_valid:
+            # apply if acceptable
+            costdiff = change.costdiff
+
+            if costdiff <= 0:
+                acceptance = 1.0
+            else:
+                bad_count += 1
+                acceptance = np.exp(-costdiff / temperature)
+                pbad_total += acceptance
+
+            if acceptance > random.random():
+                change.apply()
+                if type(change) == Split:
+                    current_iteration = max(0, current_iteration-iteration_per_cell)
+        current_iteration += 1
+        
+    if in_auto_temp_schedule:
+        print("pbad is ", pbad_total/bad_count)
+        return pbad_total/bad_count
        
         #output module
-        if window_start >= 0:
-            bestfit_frame = Image.fromarray(np.uint8(255*synthimages[window_start]), "L")
-            bestfit_frame.save(args.bestfit / imagefiles[window_start].name)
+    if window_start >= 0 and not in_auto_temp_schedule:
+        bestfit_frame = Image.fromarray(np.uint8(255*synthimages[window_start]), "L")
+        bestfit_frame.save(args.bestfit / imagefiles[window_start].name)
+        
+        output_frame = np.empty((realimages[frame_index].shape[0], realimages[frame_index].shape[1], 3))
+        output_frame[..., 0] = realimages[frame_index]
+        output_frame[..., 1] = output_frame[..., 0]
+        output_frame[..., 2] = output_frame[..., 0]
+        for node in lineage.frames[frame_index].nodes:
+            node.cell.drawoutline(output_frame, (1, 0, 0))
+        output_frame = Image.fromarray(np.uint8(255*output_frame))
+        output_frame.save(args.output / imagefiles[window_start].name)
             
-            output_frame = np.empty((realimages[frame_index].shape[0], realimages[frame_index].shape[1], 3))
-            output_frame[..., 0] = realimages[frame_index]
-            output_frame[..., 1] = output_frame[..., 0]
-            output_frame[..., 2] = output_frame[..., 0]
-            for node in lineage.frames[frame_index].nodes:
-                node.cell.drawoutline(output_frame, (1, 0, 0))
-            output_frame = Image.fromarray(np.uint8(255*output_frame))
-            output_frame.save(args.output / imagefiles[window_start].name)
-                
-            if args.residual:
-                residual_frame = Image.fromarray(np.uint8(255*colormap.to_rgba(np.clip(realimages[window_start] - synthimages[window_start],
-                                                                                       residual_vmin, residual_vmax))), "RGBA")
-                residual_frame.save(args.residual / imagefiles[window_start].name)
+        if args.residual:
+            residual_frame = Image.fromarray(np.uint8(255*colormap.to_rgba(np.clip(realimages[window_start] - synthimages[window_start],
+                                                                                   residual_vmin, residual_vmax))), "RGBA")
+            residual_frame.save(args.residual / imagefiles[window_start].name)
 
-    save_output(imagefiles, realimages, synthimages, cellmaps, lineage, args, lineagefile, config)
-
-def auto_temp_schedule(imagefiles, lineageframes, lineagefile, args, config):
+def auto_temp_schedule(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config):
     initial_temp = 1
     iteration_per_cell = 500
     count=0
-    window_imagefiles = imagefiles[:config["global_optimizer.window_size"]]
     
-    while(optimize(window_imagefiles, lineageframes, lineagefile, args, config, iteration_per_cell, 
-                   in_auto_temp_schedule=True, const_temp=initial_temp)<0.40):
+    while(optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config,
+                   iteration_per_cell=iteration_per_cell, in_auto_temp_schedule=True, const_temp=initial_temp)<0.40):
         count += 1
         initial_temp *= 10.0
         print(f"count: {count}")
     print("finished < 0.4")
-    while(optimize(window_imagefiles, lineageframes, lineagefile, args, config, iteration_per_cell, 
-                   in_auto_temp_schedule=True, const_temp=initial_temp)>0.40):
+    while(optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config,
+                   iteration_per_cell=iteration_per_cell, in_auto_temp_schedule=True, const_temp=initial_temp)>0.40):
         count += 1 
         initial_temp /= 10.0
         print(f"count: {count}")
     print("finished > 0.4")
-    while(optimize(window_imagefiles, lineageframes, lineagefile, args, config, iteration_per_cell, 
-                   in_auto_temp_schedule=True, const_temp=initial_temp)<0.40):
+    while(optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config,
+                   iteration_per_cell=iteration_per_cell, in_auto_temp_schedule=True, const_temp=initial_temp)<0.40):
         count += 1
         initial_temp *= 1.1
         print(f"count: {count}")
     end_temp = initial_temp
     print("finished < 0.4")
-    while(optimize(window_imagefiles, lineageframes, lineagefile, args, config, iteration_per_cell, 
-                   in_auto_temp_schedule=True, const_temp=end_temp)>1e-10):
+    while(optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config,
+                   iteration_per_cell=iteration_per_cell, in_auto_temp_schedule=True, const_temp=end_temp)>1e-10):
         count += 1
         end_temp /= 10.0
 
