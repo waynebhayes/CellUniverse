@@ -28,9 +28,9 @@
         "cell.opacity": "auto"
     },
     
-    "prob.perturbation": 0.89,
-    "prob.combine": 0.05,
-    "prob.split" : 0.05,
+    "prob.perturbation": 0.59,
+    "prob.combine": 0.15,
+    "prob.split" : 0.25,
     "perturbation":
     {
         "prob.x": 0.35,
@@ -40,13 +40,13 @@
         "prob.rotation":0.2,
         "modification.x.mu":0.0,
         "modification.y.mu":0.0,
-        "modification.width.mu":0.0,
-        "modification.length.mu":0.0,
+        "modification.width.mu":0.05,
+        "modification.length.mu":0.1,
         "modification.rotation.mu":0.0,
         "modification.x.sigma":0.5,
         "modification.y.sigma":0.5,
         "modification.width.sigma":0.1,
-        "modification.length.sigma":1.0,
+        "modification.length.sigma":0.2,
         "modification.rotation.sigma":0.2,
         "prob.opacity": 0.2,
         "modification.opacity.mu":0.0,
@@ -63,7 +63,7 @@
     "residual.vmin": -0.3,
     "residual.vmax": 0.3,
     //objective parameter
-    "split.cost": 0,
+    "split.cost": 1,
     "overlap.cost": 0.2,
     //cell.importance = importance of synthetic cell region/importance of synthetic diffraction region
     "cell.importance": 1
