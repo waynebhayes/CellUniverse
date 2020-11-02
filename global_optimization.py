@@ -614,7 +614,7 @@ def optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, w
                 if type(change) == Combination:
                     total_iterations -= iteration_per_cell
         current_iteration += 1
-        print(current_iteration, total_iterations)
+        #print(current_iteration, total_iterations)
         
     if in_auto_temp_schedule:
         print("pbad is ", pbad_total/bad_count)
