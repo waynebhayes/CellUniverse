@@ -55,6 +55,8 @@ def parse_args():
                         help='method for auto-temperature scheduling')
     parser.add_argument('-r', "--residual", metavar="FILE", type=Path, required=False,
                           help="path to the residual image output directory")
+    parser.add_argument('--lineage_file', metavar='FILE', type=Path, required=False,
+                        help='path to previous lineage file')
 
     # required arguments
 
@@ -110,11 +112,13 @@ def load_config(config_file):
     return config
 
 
-def load_colony(colony, initial_file, config):
+def load_colony(colony, initial_file, config, initial_frame = None):
     """Loads the initial colony of cells."""
     with open(initial_file, newline='') as fp:
         reader = csv.DictReader(fp, skipinitialspace=True)
         for row in reader:
+            if initial_frame != None and row['file'] != initial_frame:
+                continue
             name = row['name']
             celltype = config['global.cellType'].lower()
             if celltype == 'bacilli':
@@ -203,7 +207,11 @@ def main(args):
         # setup the colony from a file with the initial properties
         lineageframes = LineageFrames()
         colony = lineageframes.forward()
-        load_colony(colony, args.initial, config)
+        imagefiles =  get_inputfiles(args)
+        if args.lineage_file:
+            load_colony(colony, args.lineage_file, config, initial_frame = imagefiles[0].name)
+        else:
+            load_colony(colony, args.initial, config)
         cost_diff = (-1, -1)
 
         # open the lineage file for writing
@@ -214,12 +222,11 @@ def main(args):
         print(','.join(header), file=lineagefile)
 
         #optimze configuration
-        config["simulation"] = optimization.find_optimal_simulation_conf(config["simulation"], optimization.load_image(get_inputfiles(args)[0]), list(colony))
+        config["simulation"] = optimization.find_optimal_simulation_conf(config["simulation"], optimization.load_image(imagefiles[0]), list(colony))
         
         if args.global_optimization:
             global useDistanceObjective
             useDistanceObjective = args.dist
-            imagefiles =  get_inputfiles(args)
             realimages = [optimization.load_image(imagefile) for imagefile in imagefiles]
             window = config["global_optimizer.window_size"]
             lineage = global_optimization.build_initial_lineage(colony, args, config)
@@ -265,13 +272,13 @@ def main(args):
 
         if args.auto_temp == 1:
             print("auto temperature schedule started")
-            args.start_temp, args.end_temp = optimization.auto_temp_schedule(get_inputfiles(args)[0], lineageframes.forward(), args, config)
+            args.start_temp, args.end_temp = optimization.auto_temp_schedule(imagefiles[0], lineageframes.forward(), args, config)
             print("auto temperature schedule finished")
             print("starting temperature is ", args.start_temp, "ending temperature is ", args.end_temp)
 
         frame_num = 0
         prev_cell_num = len(colony)
-        for imagefile in get_inputfiles(args): # Recomputing temperature when needed
+        for imagefile in imagefiles: # Recomputing temperature when needed
 
             frame_num += 1
 
