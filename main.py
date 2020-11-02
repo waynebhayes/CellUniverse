@@ -260,7 +260,7 @@ def main(args):
                             global_optimization.auto_temp_schedule(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, 0, 1, lineagefile, args, config)
                         print("auto temperature schedule finished")
                         print("starting temperature is ", args.start_temp, "ending temperature is ", args.end_temp)
-                    if args.auto_meth == "frame" and optimization.auto_temp_schedule_frame(window_end, 5):
+                    if args.auto_meth == "frame" and optimization.auto_temp_schedule_frame(window_end, 3):
                         print("auto temperature schedule restarted")
                         args.start_temp, args.end_temp = \
                             global_optimization.auto_temp_schedule(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config)

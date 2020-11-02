@@ -262,7 +262,9 @@ class Perturbation(Change):
                               new_cellmap[region.top:region.bottom, region.left:region.right],
                               overlap_cost, self.config["cell.importance"])
 
-        return end_cost - start_cost
+        return end_cost - start_cost + \
+             (np.sqrt((self.node.cell.x - self.replacement_cell.x)**2 + (self.node.cell.y - self.replacement_cell.y)**2)) \
+            + abs(self.node.cell.rotation - self.replacement_cell.rotation)
 
     def apply(self):
         self.node.cell.draw(self.synthimage, self.cellmap, optimization.is_background, self.frame.simulation_config)
@@ -365,7 +367,7 @@ class Combination(Change):
                               new_cellmap[region.top:region.bottom, region.left:region.right],
                               overlap_cost, self.config["cell.importance"])
 
-        return end_cost - start_cost - self.config["split.cost"]
+        return end_cost - start_cost - 0.6*self.config["split.cost"]
 
     def apply(self) -> None:
         self.combination.draw(self.synthimage, self.cellmap, optimization.is_cell, self.frame.simulation_config)
@@ -398,7 +400,7 @@ class Split(Change):
         self.distmap = distmap
 
         if len(self.node.children) == 1:
-            alpha = random.random()/5 + 2/5
+            alpha = random.random()/2 + 3/10
             self.s1, self.s2 = self.node.children[0].cell.split(alpha)
 
     def get_checks(self):
@@ -568,7 +570,6 @@ def optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, w
         colormap = cm.ScalarMappable(norm = Normalize(vmin=residual_vmin, vmax=residual_vmax), cmap = "bwr")
     # simulated annealing
     total_iterations = iteration_per_cell*lineage.count_cells_in(window_start, window_end)//window
-    print(total_iterations)
     bad_count = 0
     current_iteration = 1
     while current_iteration<total_iterations:
@@ -609,8 +610,11 @@ def optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, w
             if acceptance > random.random():
                 change.apply()
                 if type(change) == Split:
-                    current_iteration = max(0, current_iteration-iteration_per_cell)
+                    total_iterations += iteration_per_cell
+                if type(change) == Combination:
+                    total_iterations -= iteration_per_cell
         current_iteration += 1
+        print(current_iteration, total_iterations)
         
     if in_auto_temp_schedule:
         print("pbad is ", pbad_total/bad_count)
@@ -621,11 +625,11 @@ def optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, w
         bestfit_frame = Image.fromarray(np.uint8(255*synthimages[window_start]), "L")
         bestfit_frame.save(args.bestfit / imagefiles[window_start].name)
         
-        output_frame = np.empty((realimages[frame_index].shape[0], realimages[frame_index].shape[1], 3))
-        output_frame[..., 0] = realimages[frame_index]
+        output_frame = np.empty((realimages[window_start].shape[0], realimages[window_start].shape[1], 3))
+        output_frame[..., 0] = realimages[window_start]
         output_frame[..., 1] = output_frame[..., 0]
         output_frame[..., 2] = output_frame[..., 0]
-        for node in lineage.frames[frame_index].nodes:
+        for node in lineage.frames[window_start].nodes:
             node.cell.drawoutline(output_frame, (1, 0, 0))
         output_frame = Image.fromarray(np.uint8(255*output_frame))
         output_frame.save(args.output / imagefiles[window_start].name)
@@ -641,24 +645,21 @@ def auto_temp_schedule(imagefiles, lineage, realimages, synthimages, cellmaps, d
     count=0
     
     while(optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config,
-                   iteration_per_cell=iteration_per_cell, in_auto_temp_schedule=True, const_temp=initial_temp)<0.40):
+                   iteration_per_cell=iteration_per_cell, in_auto_temp_schedule=True, const_temp=initial_temp)<0.6):
         count += 1
         initial_temp *= 10.0
-        print(f"count: {count}")
-    print("finished < 0.4")
+    #print("finished < 0.4")
     while(optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config,
-                   iteration_per_cell=iteration_per_cell, in_auto_temp_schedule=True, const_temp=initial_temp)>0.40):
+                   iteration_per_cell=iteration_per_cell, in_auto_temp_schedule=True, const_temp=initial_temp)>0.6):
         count += 1 
         initial_temp /= 10.0
-        print(f"count: {count}")
-    print("finished > 0.4")
+    #print("finished > 0.4")
     while(optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config,
-                   iteration_per_cell=iteration_per_cell, in_auto_temp_schedule=True, const_temp=initial_temp)<0.40):
+                   iteration_per_cell=iteration_per_cell, in_auto_temp_schedule=True, const_temp=initial_temp)<0.6):
         count += 1
         initial_temp *= 1.1
-        print(f"count: {count}")
     end_temp = initial_temp
-    print("finished < 0.4")
+    #print("finished < 0.4")
     while(optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config,
                    iteration_per_cell=iteration_per_cell, in_auto_temp_schedule=True, const_temp=end_temp)>1e-10):
         count += 1
