@@ -1,7 +1,7 @@
 die() { echo "$@" >&2; exit 1;
 }
 
-echo "Testing simulated annealing global optimization"
+echo "Testing simulated annealing global optimization and auto temperature scheduling within gray scale global optimizer"
 
 [ -d "$REG_DIR" ] || die "Must run from the repository's root directory!"
 
@@ -19,11 +19,8 @@ if python3 "./main.py" \
     --input "./input/frame%03d.png" \
     --output "$REG_DIR/output" \
     --bestfit "$REG_DIR/bestfit" \
-    --config "./config.json" \
+    --config "./global_optimizer_config.json" \
     --initial "./cells.0.csv" \
-    --start_temp 0.459 \
-    --end_temp 4.59e-8 \
-    --auto_temp 0 \
     --no_parallel --global_optimization --graySynthetic; then
     :
 else

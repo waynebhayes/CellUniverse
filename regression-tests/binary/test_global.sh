@@ -2,7 +2,7 @@
 die() { echo "$@" >&2; exit 1;
 }
 
-echo "Testing simulated annealing global optimization"
+echo "Testing binary simulated annealing global optimization"
 
 [ -d "$REG_DIR" ] || die "Must run from the repository's root directory!"
 
@@ -20,11 +20,8 @@ if python3 "./main.py" \
     --input "./input/frame%03d.png" \
     --output "$REG_DIR/output" \
     --bestfit "$REG_DIR/bestfit" \
-    --config "./config.json" \
+    --config "./global_optimizer_config.json" \
     --initial "./cells.0.csv" \
-    --start_temp 10 \
-    --end_temp 0.1 \
-    --auto_temp 0 \
     --no_parallel --global_optimization; then
     :
 else
