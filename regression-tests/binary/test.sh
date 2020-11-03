@@ -2,7 +2,7 @@
 die() { echo "$@" >&2; exit 1;
 }
 
-echo "Testing simulated annealing"
+echo "Testing binary local simulated annealing"
 
 [ -d "$REG_DIR" ] || die "Must run from the repository's root directory!"
 
@@ -20,7 +20,7 @@ if python3 "./main.py" \
     --input "./input/frame%03d.png" \
     --output "$REG_DIR/output" \
     --bestfit "$REG_DIR/bestfit" \
-    --config "./config.json" \
+    --config "./local_optimizer_config.json" \
     --initial "./cells.0.csv" ; then
     :
 else
