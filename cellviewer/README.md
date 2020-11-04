@@ -3,7 +3,7 @@ User Interface for Cell Universe
 
 ### Usage
 #### Using Sample Data
-For only viewing, can open at https://metanovitia.github.io/cellviewer/#/.
+For only viewing, can open at https://celluniverse.github.io/cellviewer/#/.
 
 For local copy:
 - Requirements: npm

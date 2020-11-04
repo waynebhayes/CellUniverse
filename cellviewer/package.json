@@ -2,16 +2,25 @@
   "name": "cellviewer",
   "version": "0.1.0",
   "private": true,
-  "homepage": "http://waynebhayes.github.io/CellUniverse/",
+  "homepage": "http://celluniverse.github.io/cellviewer",
   "dependencies": {
     "@material-ui/core": "^3.9.3",
+    "@material-ui/icons": "^4.5.1",
     "@material-ui/lab": "^3.0.0-alpha.30",
+    "babel-core": "^6.26.0",
+    "babel-loader": "^7.1.4",
+    "babel-preset-env": "^1.6.1",
     "jquery": "^3.3.1",
+    "konva": "^4.0.18",
     "react": "^16.8.6",
+    "react-color": "^2.17.3",
     "react-dom": "^16.8.6",
+    "react-konva": "^16.10.1-0",
     "react-router-dom": "^5.0.0",
     "react-scripts": "2.1.8",
-    "reactstrap": "^8.0.0"
+    "reactstrap": "^8.0.0",
+    "webpack": "^4.17.1",
+    "webpack-cli": "^3.1.0"
   },
   "scripts": {
     "start": "react-scripts start",
@@ -19,7 +28,7 @@
     "test": "react-scripts test",
     "eject": "react-scripts eject",
     "predeploy": "npm run build",
-    "deploy": "gh-pages -b cellviewer-gh-pages -d build"
+    "deploy": "gh-pages -d build"
   },
   "eslintConfig": {
     "extends": "react-app"

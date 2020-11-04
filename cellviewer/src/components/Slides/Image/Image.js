@@ -4,14 +4,6 @@ import RadialTree from '../RadialTree/RadialTree';
 import Cell from "./Cell/Cell.js"
 import './Image.css';
 
-
-const colors={
-    "00": [1,0,0], // red
-    "01": [0,1,0], // green
-    "10": [0,0,1], // blue
-    "11": [1,1,0]  // yellow
-}
-
 export default class ImageCell extends Component {
     constructor(props) {
         super(props);
@@ -39,7 +31,8 @@ export default class ImageCell extends Component {
 
     render() {
         this.labels=[];
-        var color = "";
+        var c = 0;
+        var color = "white";
 
         var h = window.innerHeight * 0.4;
         var w = window.innerHeight * 0.4;
@@ -49,15 +42,15 @@ export default class ImageCell extends Component {
         }
         for(var i=0; i<this.props.colony.length; i++){
             var cell = this.props.colony[i];
-            var code = cell[0][1]+cell[0][2];
-
-            color = "rgb(" +
-                (255*colors[code][0]).toString() + "," +
-                (255*colors[code][1]).toString() + "," +
-                (255*colors[code][2]).toString() + ")";
+            c = cell[0].length
+            while(!this.props.colors.hasOwnProperty(cell[0].slice(1,c))){
+                c--;
+            }
+            color = this.props.colors[cell[0].slice(1,c)];
             
             this.labels.push(
                 <Cell
+                colors={this.props.colors}
                 key={cell[0]} k={cell[0]} color={color} 
                 bottomR={window.innerHeight*0.5 + (Math.sin(this.props.angles[cell[0]])*this.props.pos*h)}
                 leftR={window.innerWidth*0.75 + (Math.cos(this.props.angles[cell[0]])*this.props.pos*w)}
@@ -69,9 +62,11 @@ export default class ImageCell extends Component {
             return (
                 <div>
                     <RadialTree
+                        curr={this.props.curr}
                         pos={this.props.pos}
-                        src={this.props.srcTree}
-                        src_pie={this.props.src_pie}/>
+                        frames={this.props.frames}
+                        angles={this.props.angles}
+                        colors={this.props.colors}/>
                     <Container  style={{
                                     margin:"0", 
                                     padding:"0",

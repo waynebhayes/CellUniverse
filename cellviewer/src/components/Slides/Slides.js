@@ -2,8 +2,7 @@
 
 Props:
 - imgs      = [[imageSrc,framename]]    (main)
-- srcTree   = tree SVG                  (radialtree)
-- src_pie   = pie SVG                   (radialtree)
+- frames    = {} from frames.JSON       (radialtree)
 - colony    = {} from colony.JSON       (parseColony)
 - angles    = {} from angles.JSON       (radialtree)
 
@@ -11,9 +10,18 @@ Props:
 
 
 import React, { Component } from 'react';
-import { Button, Row } from 'reactstrap';
+import { Row } from 'reactstrap';
 import ImageCell from './Image/Image';
 import Slider from '@material-ui/lab/Slider';
+import PlayIcon from '@material-ui/icons/PlayArrow';
+import PauseIcon from '@material-ui/icons/Pause';
+import Fab from '@material-ui/core/Fab';
+import Grid from '@material-ui/core/Grid';
+
+const status_map = {
+    "play": 1,
+    "pause": 0
+}
 
 export default class Slides extends Component {
     constructor(props) {
@@ -86,39 +94,37 @@ export default class Slides extends Component {
             <div>
                 <Row>
                     <ImageCell
+                        curr={this.pos}
                         src={this.images[this.pos]} 
                         colony={this.colony[this.pos.toString()]["cells"]}
-                        srcTree={this.props.srcTree}
                         pos={(this.pos+1.5)/(this.images.length+2)}
-                        src_pie={this.props.src_pie}
-                        angles={this.props.angles}/>
-                    <Button
-                        onClick={this.click}
-                        style={{
-                            width:"5%",
-                            height:"3%",
-                            position:"absolute",
-                            bottom: "4.5%",
-                            left: "3%"
-                            }}
-                    >
-                        {this.status}
-                    </Button>
+                        colors = {this.props.colors}
+                        angles={this.props.angles}
+                        frames={this.props.frames}/>
 
-                    <Slider
-                        value={this.pos}
-                        min={0}
-                        max={this.images.length-1}
-                        step={1}
-                        onChange={this.change}
-                        style={{
-                            width:"80%",
-                            height:"5%",
+                    {/* --------------------------  Player and Progress Bar-------------------------- */}
+                    <Grid container direction="row" justify="center" alignItems="center" style={{
                             position:"absolute",
-                            bottom: "1%",
-                            right: "10%"
-                        }}
-                    />
+                            bottom: "4.5%"
+                            }}>
+                        <Grid item xs={1}>
+                            <Fab onClick={this.click}
+                                size="medium" aria-label="Add">
+                                {[<PauseIcon />,<PlayIcon />][status_map[this.status]]}
+                            </Fab>
+                        </Grid>
+                        
+                        <Grid item xs={10}>
+                            <Slider 
+                                    value={this.pos}
+                                    style={{width:"100%"}}
+                                    aria-labelledby="discrete-slider"
+                                    step={1}
+                                    onChange={this.change}
+                                    min={0}
+                                    max={this.images.length-1}/>
+                        </Grid>
+                    </Grid>
                 </Row>
             </div>
         );
