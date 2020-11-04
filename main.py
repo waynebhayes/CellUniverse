@@ -268,6 +268,7 @@ def main(args):
                         print("starting temperature is ", args.start_temp, "ending temperature is ", args.end_temp)
             
                 global_optimization.optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config)
+            global_optimization.save_output(imagefiles, lineage, lineagefile)
             return 0
 
         if args.auto_temp == 1:

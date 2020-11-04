@@ -518,14 +518,9 @@ class BackGround_luminosity_offset(Change):
         self.old_synthimage[:]= self.new_synthimage
         self.old_simulation_config["background.color"] = self.new_simulation_config["background.color"]
         
-def save_output(imagefiles, realimages, synthimages, cellmaps, lineage: LineageM, args, lineagefile, config):
+def save_output(imagefiles, lineage: LineageM,  lineagefile):
     for frame_index in range(len(lineage.frames)):
-        realimage = realimages[frame_index]
         cellnodes = lineage.frames[frame_index].nodes
-        cellmap = cellmaps[frame_index]
-        synthimage = synthimages[frame_index]
-        cost = optimization.objective(realimage, synthimage, cellmap, config["overlap.cost"], config["cell.importance"])
-        print('Final Cost:', cost)
         for node in cellnodes:
             properties = [imagefiles[frame_index].name, node.cell.name]
             properties.extend([
@@ -614,7 +609,7 @@ def optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, w
                 if type(change) == Combination:
                     total_iterations -= iteration_per_cell
         current_iteration += 1
-        print(current_iteration, total_iterations)
+        #print(current_iteration, total_iterations)
         
     if in_auto_temp_schedule:
         print("pbad is ", pbad_total/bad_count)

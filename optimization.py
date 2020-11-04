@@ -26,9 +26,8 @@ is_background = False
 def objective(realimage, synthimage, cellmap, overlap_cost, cell_importance):
     """Full objective function between two images."""
     overlap_map = cellmap[cellmap>1] - 1
-    return cell_importance * np.sum(np.square((realimage - synthimage)[cellmap>0])) \
-        + overlap_cost * np.sum(np.square(overlap_map)) \
-            + np.sum(np.square((realimage - synthimage)[cellmap==0]))
+    return np.sum(np.square((realimage - synthimage))) \
+        + overlap_cost * np.sum(np.square(overlap_map)) 
 
 def dist_objective(realimage, synthimage, distmap, cellmap, overlap_cost):
     overlap_map = cellmap[cellmap>1] - 1
@@ -101,7 +100,7 @@ def load_image(imagefile):
     return realimage.astype(np.float)/255
 
 
-def perturb_bacilli(node, config, imageshape):
+def perturb_bacilli(node, config, imageshape, invalid_limit = 50):
     """Create a new perturbed bacilli cell."""
     global badcount  # DEBUG
     cell = node.cell
@@ -144,13 +143,14 @@ def perturb_bacilli(node, config, imageshape):
     length_sigma = perturb_conf["modification.length.sigma"]
     rotation_sigma = perturb_conf["modification.rotation.sigma"]
     
+    invalid_count = 0
     simulation_config = config["simulation"]
     if simulation_config["image.type"] == "graySynthetic":
         p_opacity = perturb_conf["prob.opacity"]
         opacity_mu = perturb_conf["modification.opacity.mu"]
         opacity_sigma = perturb_conf["modification.opacity.sigma"]
     
-    while True:
+    while invalid_count < invalid_limit:
         # set starting properties
         x = cell.x
         y = cell.y
@@ -193,8 +193,10 @@ def perturb_bacilli(node, config, imageshape):
             or width < min_width or width > max_width or (abs(rotation - prior.rotation) > max_rotation) or \
             not (min_length < length < max_length) or not (min_growth < length - prior.length < max_growth):
                 badcount += 1
+                invalid_count+=1
         elif simulation_config["image.type"] == "graySynthetic" and cell_opacity < 0:
             badcount += 1
+            invalid_count+=1
         else:
             break
         
