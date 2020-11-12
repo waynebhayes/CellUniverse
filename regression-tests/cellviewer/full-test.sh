@@ -19,7 +19,7 @@ python3 "./main.py" \
     --input "./input/frame%03d.png" \
     --output "./cellviewer/src/output" \
     --bestfit "./cellviewer/src/bestfit" \
-    --config "./config.json" \
+    --config "./local_optimizer_config.json" \
     --initial "./cells.0.csv" || die "main.py failed"
 
 python3 "./cellviewer/radialtree.py" \
