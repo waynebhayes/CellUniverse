@@ -40,8 +40,8 @@
         "prob.rotation":0.2,
         "modification.x.mu":0.0,
         "modification.y.mu":0.0,
-        "modification.width.mu":0.05,
-        "modification.length.mu":0.1,
+        "modification.width.mu":0.0,
+        "modification.length.mu":0.0,
         "modification.rotation.mu":0.0,
         "modification.x.sigma":0.5,
         "modification.y.sigma":0.5,
@@ -50,21 +50,26 @@
         "modification.rotation.sigma":0.2,
         "prob.opacity": 0.2,
         "modification.opacity.mu":0.0,
-        "modification.opacity.sigma":0.001,
-        "prob.background_offset": 0.01, //This should be set to 0 if the algorithm runs in binary version
-        "modification.background_offset.mu": 0.0,
-        "modification.background_offset.sigma": 0.01
+        "modification.opacity.sigma":0.001
     },
 
     "global_optimizer.window_size": 1,
+    "iteration_per_cell": 2000,
+    "auto_temp_scheduler.iteration_per_cell": 500,
     "output.format": "png", //must be png or jpeg. If jpeg is chosen, then the output image quality can be set.
     "output.quality": 80, // range [0, 100]
     //residual.vmin must equal -residual.vmax
     "residual.vmin": -0.3,
     "residual.vmax": 0.3,
     //objective parameter
-    "split.cost": 1,
+    "split.cost": 0.0,
+    "combine.cost": 0.5,
     "overlap.cost": 0.2,
     //cell.importance = importance of synthetic cell region/importance of synthetic diffraction region
-    "cell.importance": 1
+    "cell.importance": 1,
+    "prob.background_offset": 0.01, //This should be set to 0 if the algorithm runs in binary version
+    "background_offset.mu": 0.0,
+    "background_offset.sigma": 0.01,
+    "cell_brightness.mu": 0.0,
+    "cell_brightness.sigma": 0.01
 }

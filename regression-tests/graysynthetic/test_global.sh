@@ -20,7 +20,7 @@ if python3 "./main.py" \
     --output "$REG_DIR/output" \
     --bestfit "$REG_DIR/bestfit" \
     --config "./global_optimizer_config.json" \
-    --initial "./cells.0.csv" \
+    --initial "./global_optimizer_initial.csv"  \
     --no_parallel --global_optimization --graySynthetic; then
     :
 else

@@ -7,6 +7,7 @@ from matplotlib import cm
 from matplotlib.colors import Normalize
 import numpy as np
 from PIL import Image
+import pandas as pd
 
 import cell
 import optimization
@@ -69,7 +70,7 @@ class CellNodeM:
 
 
 class FrameM:
-    def __init__(self, simulation_config, prev: 'FrameM' = None):
+    def __init__(self, simulation_config=None, prev: 'FrameM' = None):
         #simulation_config is passed by value and modified within the object
         self.node_map: Dict[str, CellNodeM] = {}
         self.prev = prev
@@ -94,7 +95,7 @@ class FrameM:
 
 
 class LineageM:
-    def __init__(self, simulation_config):
+    def __init__(self, simulation_config=None):
         self.frames = [FrameM(simulation_config)]
 
     def __repr__(self):
@@ -263,8 +264,8 @@ class Perturbation(Change):
                               overlap_cost, self.config["cell.importance"])
 
         return end_cost - start_cost + \
-             (np.sqrt((self.node.cell.x - self.replacement_cell.x)**2 + (self.node.cell.y - self.replacement_cell.y)**2)) \
-            + abs(self.node.cell.rotation - self.replacement_cell.rotation)
+              0 * (np.sqrt((self.node.cell.x - self.replacement_cell.x)**2 + (self.node.cell.y - self.replacement_cell.y)**2) 
+            + 0 * abs(self.node.cell.rotation - self.replacement_cell.rotation))
 
     def apply(self):
         self.node.cell.draw(self.synthimage, self.cellmap, optimization.is_background, self.frame.simulation_config)
@@ -367,7 +368,7 @@ class Combination(Change):
                               new_cellmap[region.top:region.bottom, region.left:region.right],
                               overlap_cost, self.config["cell.importance"])
 
-        return end_cost - start_cost - 0.6*self.config["split.cost"]
+        return end_cost - start_cost + self.config["combine.cost"]
 
     def apply(self) -> None:
         self.combination.draw(self.synthimage, self.cellmap, optimization.is_cell, self.frame.simulation_config)
@@ -400,7 +401,7 @@ class Split(Change):
         self.distmap = distmap
 
         if len(self.node.children) == 1:
-            alpha = random.random()/2 + 3/10
+            alpha = random.uniform(0.2, 0.8)
             self.s1, self.s2 = self.node.children[0].cell.split(alpha)
 
     def get_checks(self):
@@ -495,9 +496,14 @@ class BackGround_luminosity_offset(Change):
         self.new_simulation_config = frame.simulation_config.copy()
         self.config = config
         
-        offset_mu = config["perturbation"]["modification.background_offset.mu"]
-        offset_sigma = config["perturbation"]["modification.background_offset.sigma"]
+        offset_mu = config["background_offset.mu"]
+        offset_sigma = config["background_offset.sigma"]
+        
+        cell_brightness_mu = config["cell_brightness.mu"]
+        cell_brightness_sigma = config["cell_brightness.sigma"]
+        
         self.new_simulation_config["background.color"] += random.gauss(mu=offset_mu, sigma=offset_sigma)
+        self.new_simulation_config["cell.color"] += random.gauss(mu = cell_brightness_mu, sigma=cell_brightness_sigma)
         self.new_synthimage, _ = optimization.generate_synthetic_image(frame.nodes, realimage.shape, self.new_simulation_config)
         
     @property
@@ -517,27 +523,69 @@ class BackGround_luminosity_offset(Change):
     def apply(self):
         self.old_synthimage[:]= self.new_synthimage
         self.old_simulation_config["background.color"] = self.new_simulation_config["background.color"]
+        self.old_simulation_config["cell.color"] = self.new_simulation_config["cell.color"]
         
-def save_output(imagefiles, lineage: LineageM,  lineagefile):
-    for frame_index in range(len(lineage.frames)):
-        cellnodes = lineage.frames[frame_index].nodes
+def save_lineage(filename, cellnodes: List[CellNodeM],  lineagefile):
         for node in cellnodes:
-            properties = [imagefiles[frame_index].name, node.cell.name]
+            properties = [filename, node.cell.name]
             properties.extend([
                 str(node.cell.x),
                 str(node.cell.y),
                 str(node.cell.width),
                 str(node.cell.length),
-                str(node.cell.rotation)])
+                str(node.cell.rotation),
+                str(node.cell.split_alpha),
+                str(node.cell.opacity)])
             print(','.join(properties), file=lineagefile)
 
-def build_initial_lineage(colony, args, config):
-    lineage = LineageM(config["simulation"])
-    for cellnode in colony:
-        lineage.frames[0].add_cell(cellnode.cell)
-
+def build_initial_lineage(imagefiles, lineagefile, continue_from, simulation_config):
+    #create a lineage given the path of the lineagefile and requiring imagefiles. The output lineage will contain frame number up to the continue_from(exclude)
+    cells_data = pd.read_csv(lineagefile)
+    cells_data = cells_data.replace('None', None)
+    lineage = LineageM(simulation_config)
+    for i in range(len(imagefiles)):
+        filename = imagefiles[i].name
+        #this is some what a ugly way to find out frame number contained in a string. Should be inproved later?
+        current_frame_number = int(filename.split('.')[0][-3:])
+        if current_frame_number > max(0, continue_from - 1):
+            break
+        if i > 0:
+            lineage.forward()
+        for index, row in cells_data[cells_data["file"]==filename].iterrows():
+            acell = cell.Bacilli(row["name"], row["x"], row["y"], row["width"], row["length"], row["rotation"], row["split_alpha"], row["opacity"])
+            lineage.frames[-1].add_cell(acell) 
     return lineage
 
+def find_optimal_simulation_confs(imagefiles, lineage, realimages, up_to_frame):
+    for i in range(len(imagefiles)):
+        filename = imagefiles[i].name
+        current_frame_number = int(filename.split('.')[0][-3:])
+        if current_frame_number >  max(0, up_to_frame - 1):
+            break
+        lineage.frames[i].simulation_config = optimization.find_optimal_simulation_conf(lineage.frames[i].simulation_config, realimages[i], lineage.frames[i].nodes)
+    return lineage
+
+def save_output(image_name, synthimage, realimage, cellnodes, args, config):
+    residual_vmin = config["residual.vmin"]
+    residual_vmax = config["residual.vmax"]
+    if args.residual:
+        colormap = cm.ScalarMappable(norm = Normalize(vmin=residual_vmin, vmax=residual_vmax), cmap = "bwr")
+    bestfit_frame = Image.fromarray(np.uint8(255*synthimage), "L")
+    bestfit_frame.save(args.bestfit / image_name)
+    shape = realimage.shape
+    output_frame = np.empty((shape[0], shape[1], 3))
+    output_frame[..., 0] = realimage
+    output_frame[..., 1] = output_frame[..., 0]
+    output_frame[..., 2] = output_frame[..., 0]
+    for node in cellnodes:
+        node.cell.drawoutline(output_frame, (1, 0, 0))
+    output_frame = Image.fromarray(np.uint8(255*output_frame))
+    output_frame.save(args.output / image_name)
+        
+    if args.residual:
+        residual_frame = Image.fromarray(np.uint8(255*colormap.to_rgba(np.clip(realimage - synthimage,
+                                                                               residual_vmin, residual_vmax))), "RGBA")
+        residual_frame.save(args.residual / image_name)
 
 def gerp(a, b, t):
     """Geometric interpolation"""
@@ -545,7 +593,9 @@ def gerp(a, b, t):
 
 
 def optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config,
-             iteration_per_cell=3000, in_auto_temp_schedule=False, const_temp=None):
+             iteration_per_cell, in_auto_temp_schedule=False, const_temp=None):
+    
+    
     if in_auto_temp_schedule:
         lineage = deepcopy(lineage)
         synthimages = deepcopy(synthimages)
@@ -557,12 +607,10 @@ def optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, w
     perturbation_prob = config["prob.perturbation"]
     combine_prob = config["prob.combine"]
     split_prob = config["prob.split"]
-    background_offset_prob = config["perturbation"]["prob.background_offset"]
-    residual_vmin = config["residual.vmin"]
-    residual_vmax = config["residual.vmax"]
+    background_offset_prob = config["prob.background_offset"]
+    
     window = window_end - window_start
-    if args.residual:
-        colormap = cm.ScalarMappable(norm = Normalize(vmin=residual_vmin, vmax=residual_vmax), cmap = "bwr")
+    
     # simulated annealing
     total_iterations = iteration_per_cell*lineage.count_cells_in(window_start, window_end)//window
     bad_count = 0
@@ -604,10 +652,10 @@ def optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, w
 
             if acceptance > random.random():
                 change.apply()
-                if type(change) == Split:
-                    total_iterations += iteration_per_cell
-                if type(change) == Combination:
-                    total_iterations -= iteration_per_cell
+                #if type(change) == Split:
+                    #total_iterations = min(total_iterations + iteration_per_cell, lineage.count_cells_in(window_start, window_end))
+                #if type(change) == Combination:
+                    #total_iterations -= iteration_per_cell
         current_iteration += 1
         #print(current_iteration, total_iterations)
         
@@ -616,41 +664,24 @@ def optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, w
         return pbad_total/bad_count
        
         #output module
-    if window_start >= 0 and not in_auto_temp_schedule:
-        bestfit_frame = Image.fromarray(np.uint8(255*synthimages[window_start]), "L")
-        bestfit_frame.save(args.bestfit / imagefiles[window_start].name)
-        
-        output_frame = np.empty((realimages[window_start].shape[0], realimages[window_start].shape[1], 3))
-        output_frame[..., 0] = realimages[window_start]
-        output_frame[..., 1] = output_frame[..., 0]
-        output_frame[..., 2] = output_frame[..., 0]
-        for node in lineage.frames[window_start].nodes:
-            node.cell.drawoutline(output_frame, (1, 0, 0))
-        output_frame = Image.fromarray(np.uint8(255*output_frame))
-        output_frame.save(args.output / imagefiles[window_start].name)
-            
-        if args.residual:
-            residual_frame = Image.fromarray(np.uint8(255*colormap.to_rgba(np.clip(realimages[window_start] - synthimages[window_start],
-                                                                                   residual_vmin, residual_vmax))), "RGBA")
-            residual_frame.save(args.residual / imagefiles[window_start].name)
 
 def auto_temp_schedule(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config):
     initial_temp = 1
-    iteration_per_cell = 500
+    iteration_per_cell = config["auto_temp_scheduler.iteration_per_cell"]
     count=0
     
     while(optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config,
-                   iteration_per_cell=iteration_per_cell, in_auto_temp_schedule=True, const_temp=initial_temp)<0.6):
+                   iteration_per_cell=iteration_per_cell, in_auto_temp_schedule=True, const_temp=initial_temp)<0.3):
         count += 1
         initial_temp *= 10.0
     #print("finished < 0.4")
     while(optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config,
-                   iteration_per_cell=iteration_per_cell, in_auto_temp_schedule=True, const_temp=initial_temp)>0.6):
+                   iteration_per_cell=iteration_per_cell, in_auto_temp_schedule=True, const_temp=initial_temp)>0.3):
         count += 1 
         initial_temp /= 10.0
     #print("finished > 0.4")
     while(optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config,
-                   iteration_per_cell=iteration_per_cell, in_auto_temp_schedule=True, const_temp=initial_temp)<0.6):
+                   iteration_per_cell=iteration_per_cell, in_auto_temp_schedule=True, const_temp=initial_temp)<0.3):
         count += 1
         initial_temp *= 1.1
     end_temp = initial_temp
