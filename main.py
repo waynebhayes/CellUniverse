@@ -57,6 +57,8 @@ def parse_args():
                           help="path to the residual image output directory")
     parser.add_argument('--lineage_file', metavar='FILE', type=Path, required=False,
                         help='path to previous lineage file')
+    parser.add_argument('--continue_from', metavar='N', type=int, default=0,
+                        help="load already found orientation of cells and start from the continue_from frame")
 
     # required arguments
 
@@ -139,7 +141,7 @@ def get_inputfiles(args):
     """Gets the list of images that are to be analyzed."""
     inputfiles = []
 
-    if args.frame_first < args.frame_first and args.frame_last >= 0:
+    if args.frame_first > args.frame_last and args.frame_last >= 0:
         raise ValueError('Invalid interval: frame_first must be less than frame_last')
     elif args.frame_first < 0:
         raise ValueError('Invalid interval: frame_first must be greater or equal to 0')
@@ -218,34 +220,37 @@ def main(args):
         lineagefile = open(args.output/'lineage.csv', 'w')
         header = ['file', 'name']
         if celltype == 'bacilli':
-            header.extend(['x', 'y', 'width', 'length', 'rotation'])
+            header.extend(['x', 'y', 'width', 'length', 'rotation', "split_alpha", "opacity"])
         print(','.join(header), file=lineagefile)
 
-        #optimze configuration
-        config["simulation"] = optimization.find_optimal_simulation_conf(config["simulation"], optimization.load_image(imagefiles[0]), list(colony))
-        
         if args.global_optimization:
             global useDistanceObjective
             useDistanceObjective = args.dist
             realimages = [optimization.load_image(imagefile) for imagefile in imagefiles]
             window = config["global_optimizer.window_size"]
-            lineage = global_optimization.build_initial_lineage(colony, args, config)
+            if args.lineage_file:
+                lineage = global_optimization.build_initial_lineage(imagefiles, args.lineage_file, args.continue_from, config["simulation"])
+            else:
+                lineage = global_optimization.build_initial_lineage(imagefiles, args.initial, args.continue_from, config["simulation"])
+            lineage = global_optimization.find_optimal_simulation_confs(imagefiles, lineage, realimages, args.continue_from)
+            sim_start = args.continue_from - args.frame_first
             shape = realimages[0].shape
             synthimages = []
             cellmaps = []
             distmaps = []
+            iteration_per_cell = config["iteration_per_cell"]
             if not useDistanceObjective:
                 distmaps = [None] * len(realimages)
             for window_start in range(1 - window, len(realimages)):
-                window_end = window_start + window
-                print(window_start, window_end)
-                
-                if window_end <= len(realimages):
-                    # get initial estimate
-                    if window_end > 1:
-                        lineage.copy_forward()
+                 window_end = window_start + window
+                 print(window_start, window_end)
+                 if window_end <= len(realimages):
+                        # get initial estimate
+                    if window_start >= sim_start:
+                        if window_end > 1:
+                            lineage.copy_forward()
                     realimage = realimages[window_end - 1]
-                    synthimage, cellmap = optimization.generate_synthetic_image(lineage.frames[-1].nodes, shape, lineage.frames[-1].simulation_config)
+                    synthimage, cellmap = optimization.generate_synthetic_image(lineage.frames[window_end - 1].nodes, shape, lineage.frames[window_end - 1].simulation_config)
                     synthimages.append(synthimage)
                     cellmaps.append(cellmap)
                     if useDistanceObjective:
@@ -266,11 +271,14 @@ def main(args):
                             global_optimization.auto_temp_schedule(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config)
                         print("auto temperature schedule finished")
                         print("starting temperature is ", args.start_temp, "ending temperature is ", args.end_temp)
-            
-                global_optimization.optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config)
-            global_optimization.save_output(imagefiles, lineage, lineagefile)
+                 if window_start >= sim_start:
+                        global_optimization.optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config, iteration_per_cell)
+                 if window_start >= 0:
+                    global_optimization.save_lineage(imagefiles[window_start].name, lineage.frames[window_start].nodes, lineagefile)
+                    global_optimization.save_output(imagefiles[window_start].name, synthimages[window_start], realimages[window_start], lineage.frames[window_start].nodes, args, config)
             return 0
-
+        
+        config["simulation"] = optimization.find_optimal_simulation_conf(config["simulation"], optimization.load_image(imagefiles[0]), list(colony))
         if args.auto_temp == 1:
             print("auto temperature schedule started")
             args.start_temp, args.end_temp = optimization.auto_temp_schedule(imagefiles[0], lineageframes.forward(), args, config)
