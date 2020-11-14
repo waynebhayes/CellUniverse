@@ -328,17 +328,16 @@ class CellLabeling(Frame):
         
     def rotation_angle(self,x0,y0,x1,y1):
         # compute rotation angle
-        x = x0 - x1
+        x = x1 - x0
         y = y1 - y0
         #print(x)
-        angle = np.degrees(np.arctan(y/x))
+        angle = np.degrees(np.arctan2(y, x))
         if angle < 0:
             angle = 360 + angle
         angle = np.radians(angle)
         return angle
     
     def new_y(self,x0,y0,x1,y1,angle):
-        angle = np.radians(360 - np.degrees(angle))
         y1_new = ((x0-x1)/np.tan(angle)) + y0
         return y1_new
     
