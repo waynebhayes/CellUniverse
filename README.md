@@ -6,6 +6,7 @@ Tracks the movement of cells from a video source. Currently the code has only be
 Once you clone the repo onto your machine, you should test if Cell Universe is working on your system by running the script ./regression-test-all.sh
 
 Steps to get a new video running:
+---------------------------------
 1. Separate your video into still images, one image per frame and put them in a directory with names frame000.png, frame001.png, etc.
 2. Cell Universe needs a starting "guess" for the number, location, size, and orientation of the cells in the first frame. You can do this visually using the Python program cell_labeling_tool/cell_labeling_tool.py. This will create an "Initial Properties File" similar to that described below.
 3. Run Cell Universe, giving it the input directory containing the frames, as well as the Initial Properties file created above.
