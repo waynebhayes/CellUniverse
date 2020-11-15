@@ -623,6 +623,7 @@ def optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, w
             frame_start_temp = gerp(args.end_temp, args.start_temp, (frame_index - window_start + 1)/window)
             frame_end_temp = gerp(args.end_temp, args.start_temp, (frame_index - window_start)/window)
             temperature = gerp(frame_start_temp, frame_end_temp, current_iteration/(total_iterations))                
+            total_iterations = iteration_per_cell * lineage.count_cells_in(window_start, window_end) // window
         frame = lineage.frames[frame_index]
         node = random.choice(frame.nodes)
         change_option = np.random.choice(["split", "perturbation", "combine", "background_offset"], p=[split_prob, perturbation_prob, combine_prob, background_offset_prob])
