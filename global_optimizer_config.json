@@ -28,9 +28,9 @@
         "cell.opacity": "auto"
     },
     
-    "prob.perturbation": 0.59,
-    "prob.combine": 0.15,
-    "prob.split" : 0.25,
+    "prob.perturbation": 0.89,
+    "prob.combine": 0.05,
+    "prob.split" : 0.05,
     "perturbation":
     {
         "prob.x": 0.35,
