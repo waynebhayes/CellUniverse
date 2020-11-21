@@ -27,10 +27,13 @@ def check_constraints(config, imageshape, cells: List[cell.Bacilli], pairs: List
 
     for cell in cells:
         if not (0 <= cell.x < imageshape[1] and 0 <= cell.y < imageshape[0]):
+            #print("shape")
             return False
         elif cell.width < min_width or cell.width > max_width:
+            #print("width")
             return False
         elif not (min_length < cell.length < max_length):
+            #print("length")
             return False
         elif config["simulation"]["image.type"] == "graySynthetic" and cell.opacity < 0:
             return False
@@ -486,6 +489,52 @@ class Split(Change):
                 gc.parent = s2_node
                 s2_node.children = [gc]
 
+class Opacity_Diffraction_offset(Change):
+    def __init__(self, frame, realimage, synthimage, cellmap, config, distmap=None):
+        self.frame = frame
+        self.realimage = realimage
+        self.old_synthimage = synthimage
+        self.cellmap = cellmap
+        self.old_simulation_config = frame.simulation_config
+        self.new_simulation_config = frame.simulation_config.copy()
+        self.config = config
+        
+        opacity_offset_mu = config["opacity_offset.mu"]
+        opacity_offset_sigma = config["opacity_offset.sigma"]
+        
+        diffraction_strength_offset_mu = config["diffraction_strength_offset.mu"]
+        diffraction_strength_offset_sigma = config["diffraction_strength_offset.sigma"]
+        
+        diffraction_sigma_offset_mu = config["diffraction_sigma_offset.mu"]
+        diffraction_sigma_offset_sigma = config["diffraction_sigma_offset.sigma"]
+        
+        self.new_simulation_config["cell.opacity"] += random.gauss(mu=opacity_offset_mu, sigma=opacity_offset_sigma)
+        self.new_simulation_config["light.diffraction.strength"] += random.gauss(mu = diffraction_strength_offset_mu, sigma = diffraction_strength_offset_sigma)
+        self.new_simulation_config["light.diffraction.sigma"] += random.gauss(mu = diffraction_sigma_offset_mu, sigma = diffraction_sigma_offset_sigma)
+        self.new_synthimage, _ = optimization.generate_synthetic_image(frame.nodes, realimage.shape, self.new_simulation_config)
+        
+    @property
+    def is_valid(self) -> bool:
+        return self.new_simulation_config["cell.opacity"] >= 0 and \
+        self.new_simulation_config["light.diffraction.strength"] >= 0 and \
+        self.new_simulation_config["light.diffraction.sigma"] >= 0
+    @property
+    def costdiff(self) -> float:
+        overlap_cost = self.config["overlap.cost"]
+        if useDistanceObjective:
+            start_cost = optimization.dist_objective(self.realimage,self.old_synthimage,self.distmap,self.cellmap,overlap_cost)
+            end_cost = optimization.dist_objective(self.realimage,self.new_synthimage,self.distmap,self.cellmap,overlap_cost)
+        else:
+            start_cost = optimization.objective(self.realimage,self.old_synthimage,self.cellmap,overlap_cost, self.config["cell.importance"])
+            end_cost = optimization.objective(self.realimage,self.new_synthimage,self.cellmap,overlap_cost, self.config["cell.importance"])
+        return end_cost-start_cost
+    
+    def apply(self):
+        self.old_synthimage[:]= self.new_synthimage
+        self.old_simulation_config["cell.opacity"] = self.new_simulation_config["cell.opacity"]
+        self.old_simulation_config["light.diffraction.strength"] = self.new_simulation_config["light.diffraction.strength"]
+        self.old_simulation_config["light.diffraction.sigma"] = self.new_simulation_config["light.diffraction.sigma"]
+
 class BackGround_luminosity_offset(Change):
     def __init__(self, frame, realimage, synthimage, cellmap, config, distmap=None):
         self.frame = frame
@@ -545,9 +594,9 @@ def build_initial_lineage(imagefiles, lineagefile, continue_from, simulation_con
     lineage = LineageM(simulation_config)
     for i in range(len(imagefiles)):
         filename = imagefiles[i].name
-        #this is some what a ugly way to find out frame number contained in a string. Should be inproved later?
+        #this is some what a ugly way to find out frame number contained in a string. Should be improved later?
         current_frame_number = int(filename.split('.')[0][-3:])
-        if current_frame_number > max(0, continue_from - 1):
+        if current_frame_number > continue_from - 1:
             break
         if i > 0:
             lineage.forward()
@@ -560,7 +609,7 @@ def find_optimal_simulation_confs(imagefiles, lineage, realimages, up_to_frame):
     for i in range(len(imagefiles)):
         filename = imagefiles[i].name
         current_frame_number = int(filename.split('.')[0][-3:])
-        if current_frame_number >  max(0, up_to_frame - 1):
+        if current_frame_number >  up_to_frame - 1:
             break
         lineage.frames[i].simulation_config = optimization.find_optimal_simulation_conf(lineage.frames[i].simulation_config, realimages[i], lineage.frames[i].nodes)
     return lineage
@@ -584,7 +633,7 @@ def save_output(image_name, synthimage, realimage, cellnodes, args, config):
         
     if args.residual:
         residual_frame = Image.fromarray(np.uint8(255*colormap.to_rgba(np.clip(realimage - synthimage,
-                                                                               residual_vmin, residual_vmax))), "RGBA")
+                                                                               residual_vmin, residual_vmax))), "RGB")
         residual_frame.save(args.residual / image_name)
 
 def gerp(a, b, t):
@@ -616,7 +665,8 @@ def optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, w
     combine_prob = config["prob.combine"]
     split_prob = config["prob.split"]
     background_offset_prob = config["prob.background_offset"]
-    
+    opacity_diffraction_offset_prob = config["prob.opacity_diffraction_offset"]
+    #block_comb_remaining = 0
     window = window_end - window_start
     
     # simulated annealing
@@ -635,20 +685,27 @@ def optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, w
             if (updated_iterations > total_iterations): total_iterations = updated_iterations
         frame = lineage.frames[frame_index]
         node = random.choice(frame.nodes)
-        change_option = np.random.choice(["split", "perturbation", "combine", "background_offset"], p=[split_prob, perturbation_prob, combine_prob, background_offset_prob])
+        change_option = np.random.choice(["split", "perturbation", "combine", "background_offset", "opacity_diffraction_offset"], 
+                                         p=[split_prob, perturbation_prob, combine_prob, background_offset_prob, opacity_diffraction_offset_prob])
         change = None
         if change_option == "split" and random.random() < optimization.split_proba(node.cell.length) and frame_index > 0:
+            #print("split")
             change = Split(node.parent, config, realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], lineage.frames[frame_index], distmaps[frame_index])
             
         elif change_option == "perturbation":
             change = Perturbation(node, config, realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], lineage.frames[frame_index], distmaps[frame_index])
             
-        elif change_option == "combine" and frame_index > 0:
+        elif change_option == "combine" and frame_index > 0: #and block_comb_remaining ==0:
+            #print("combine")
             change = Combination(node.parent, config, realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], lineage.frames[frame_index], distmaps[frame_index])
 
         elif change_option == "background_offset" and frame_index > 0 and config["simulation"]["image.type"] == "graySynthetic":
+            #print("background")
             change = BackGround_luminosity_offset(lineage.frames[frame_index], realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], config)
         
+        elif change_option == "opacity_diffraction_offset" and frame_index > 0 and config["simulation"]["image.type"] == "graySynthetic":
+            #print("opacity change")
+            change = Opacity_Diffraction_offset(lineage.frames[frame_index], realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], config)
         if change and change.is_valid:
             # apply if acceptable
             costdiff = change.costdiff
@@ -668,8 +725,9 @@ def optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, w
             if acceptance > random.random():
                 totalCostDiff += costdiff
                 change.apply()
-                #if type(change) == Split:
-                    #total_iterations = min(total_iterations + iteration_per_cell, lineage.count_cells_in(window_start, window_end))
+                if type(change) == Split:
+                    total_iterations = lineage.count_cells_in(window_start, window_end)
+
                 #if type(change) == Combination:
                     #total_iterations -= iteration_per_cell
 

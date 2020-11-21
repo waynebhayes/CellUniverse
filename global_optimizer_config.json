@@ -66,10 +66,12 @@
     "residual.vmax": 0.3,
     //objective parameter
     "split.cost": 0,
+
     "combine.cost": 0,
     "overlap.cost": 0.2,
     //cell.importance = importance of synthetic cell region/importance of synthetic diffraction region
     "cell.importance": 1,
+
     "background_offset.mu": 0.0,
     "background_offset.sigma": 0.01,
     "cell_brightness.mu": 0.0,
