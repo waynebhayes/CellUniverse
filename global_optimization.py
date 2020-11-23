@@ -602,6 +602,10 @@ def optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, w
         distmaps = deepcopy(distmaps)
         cellmaps = deepcopy(cellmaps)
         
+    debugfile = None
+    if args.debug:
+        debugfile = open(args.debug/'debug.csv', 'a')
+        
     pbad_total = 0
     
     perturbation_prob = config["prob.perturbation"]
@@ -658,13 +662,19 @@ def optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, w
                     #total_iterations = min(total_iterations + iteration_per_cell, lineage.count_cells_in(window_start, window_end))
                 #if type(change) == Combination:
                     #total_iterations -= iteration_per_cell
+
+        if debugfile and not in_auto_temp_schedule:
+            print("{},{},{},{},{},{},{}".format(window_start, window_end, pbad_total, bad_count, temperature, current_iteration, total_iterations), file=debugfile)
         current_iteration += 1
         #print(current_iteration, total_iterations)
-        
+
     if in_auto_temp_schedule:
         print("pbad is ", pbad_total/bad_count)
         return pbad_total/bad_count
-       
+
+    if debugfile:
+        debugfile.close()
+
         #output module
 
 def auto_temp_schedule(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config):
@@ -694,4 +704,3 @@ def auto_temp_schedule(imagefiles, lineage, realimages, synthimages, cellmaps, d
         end_temp /= 10.0
 
     return initial_temp, end_temp
-    
