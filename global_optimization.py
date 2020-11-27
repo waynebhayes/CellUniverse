@@ -603,6 +603,9 @@ def optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, w
         cellmaps = deepcopy(cellmaps)
         
     pbad_total = 0
+    circular_buffer_capacity = config["pbad_max_size"]
+    circular_buffer = np.empty(circular_buffer_capacity, float)
+    circular_buffer_cursor = 0
     
     perturbation_prob = config["prob.perturbation"]
     combine_prob = config["prob.combine"]
@@ -648,9 +651,14 @@ def optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, w
             if costdiff <= 0:
                 acceptance = 1.0
             else:
-                bad_count += 1
                 acceptance = np.exp(-costdiff / temperature)
                 pbad_total += acceptance
+                if (bad_count >= circular_buffer_capacity):
+                    pbad_total -= circular_buffer[circular_buffer_cursor]
+                else:
+                    bad_count += 1
+                circular_buffer[circular_buffer_cursor] = acceptance
+                circular_buffer_cursor = (circular_buffer_cursor + 1) % circular_buffer_capacity
 
             if acceptance > random.random():
                 change.apply()

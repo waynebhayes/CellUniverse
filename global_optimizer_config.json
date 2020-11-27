@@ -56,6 +56,7 @@
     },
 
     "global_optimizer.window_size": 1,
+    "pbad_max_size": 1000, // must be greater than 0
     "iteration_per_cell": 2000,
     "auto_temp_scheduler.iteration_per_cell": 500,
     "output.format": "png", //must be png or jpeg. If jpeg is chosen, then the output image quality can be set.
