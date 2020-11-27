@@ -223,6 +223,11 @@ def main(args):
             header.extend(['x', 'y', 'width', 'length', 'rotation', "split_alpha", "opacity"])
         print(','.join(header), file=lineagefile)
 
+        if args.debug:
+            with open(args.debug/'debug.csv', 'w') as debugfile:
+                print(','.join(['window_start', 'window_end', 'pbad_total', 'bad_count', 'temperature', 'current_iteration', 'total_iterations']), file=debugfile)
+
+
         if args.global_optimization:
             global useDistanceObjective
             useDistanceObjective = args.dist
