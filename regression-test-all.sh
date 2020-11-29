@@ -11,7 +11,7 @@ case "$1" in
 esac
 
 USAGE="USAGE: $0 [ list of tests to run, defaults to regression-tests/*/*.sh ]"
-source ~/bin/misc.sh
+
 PATH=`pwd`:`pwd`/scripts:$PATH
 export PATH
 
