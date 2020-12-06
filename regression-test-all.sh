@@ -39,16 +39,20 @@ TMP=`mktemp /tmp/$BASENAME.XXXXXX`
 TMPDIR=`mktemp -d /tmp/$BASENAME.XXXXXX`
 trap "/bin/rm -rf $TMP $TMPDIR; exit" 0 1 2 3 15 # call trap "" N to remove the trap for signal N
 
-case "$1" in
--use-git-at)
-    if [ -f git-at ] && [ `wc -l < git-at` -eq 2 -a `git log -1 --format=%at` -eq `tail -1 git-at` ]; then
-	echo -n "Repo unchanged; returning same status code as "
-	tail -1 git-at | xargs -I{} date -d @{} +%Y-%m-%d-%H:%M:%S
-	exit `head -1 git-at`
-    fi
+while [ $# -gt 0 ]; do
+    case "$1" in
+    -use-git-at)
+	if [ -f git-at ] && [ `wc -l < git-at` -eq 2 -a `git log -1 --format=%at` -eq `tail -1 git-at` ]; then
+	    echo -n "Repo unchanged; returning same status code as "
+	    tail -1 git-at | xargs -I{} date -d @{} +%Y-%m-%d-%H:%M:%S
+	    exit `head -1 git-at`
+	fi
+	;;
+    -make) echo "Nothing to make" >&2;;
+    *) break;;
+    esac
     shift
-    ;;
-esac
+done
 
 USAGE="USAGE: $0 [ list of tests to run, defaults to regression-tests/*/*.sh ]"
 
