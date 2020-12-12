@@ -13,7 +13,7 @@ import cell
 import optimization
 
 useDistanceObjective = False
-
+totalCostDiff = 0.0
 
 def check_constraints(config, imageshape, cells: List[cell.Bacilli], pairs: List[Tuple[cell.Bacilli, cell.Bacilli]] = None):
     max_displacement = config['bacilli.maxSpeed'] / config['global.framesPerSecond']
@@ -595,7 +595,8 @@ def gerp(a, b, t):
 def optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config,
              iteration_per_cell, in_auto_temp_schedule=False, const_temp=None):
     
-    
+    global totalCostDiff
+        
     if in_auto_temp_schedule:
         lineage = deepcopy(lineage)
         synthimages = deepcopy(synthimages)
@@ -665,6 +666,7 @@ def optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, w
                 circular_buffer_cursor = (circular_buffer_cursor + 1) % circular_buffer_capacity
 
             if acceptance > random.random():
+                totalCostDiff += costdiff
                 change.apply()
                 #if type(change) == Split:
                     #total_iterations = min(total_iterations + iteration_per_cell, lineage.count_cells_in(window_start, window_end))
@@ -672,7 +674,7 @@ def optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, w
                     #total_iterations -= iteration_per_cell
 
         if debugfile and not in_auto_temp_schedule:
-            print("{},{},{},{},{},{},{}".format(window_start, window_end, pbad_total, bad_count, temperature, current_iteration, total_iterations), file=debugfile)
+            print("{},{},{},{},{},{},{},{}".format(window_start, window_end, pbad_total, bad_count, temperature, totalCostDiff, current_iteration, total_iterations), file=debugfile)
         current_iteration += 1
         #print(current_iteration, total_iterations)
 
@@ -712,4 +714,3 @@ def auto_temp_schedule(imagefiles, lineage, realimages, synthimages, cellmaps, d
         end_temp /= 10.0
 
     return initial_temp, end_temp
-
