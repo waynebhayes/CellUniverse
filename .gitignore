@@ -340,6 +340,9 @@ Temporary Items
 # Input directory
 [fF]rames/
 
+# Debug directory
+[dD]ebug/
+
 # Text files (except examples)
 # *.txt
 !*.init.txt

@@ -225,11 +225,12 @@ def main(args):
 
         if args.debug:
             with open(args.debug/'debug.csv', 'w') as debugfile:
-                print(','.join(['window_start', 'window_end', 'pbad_total', 'bad_count', 'temperature', 'current_iteration', 'total_iterations']), file=debugfile)
+                print(','.join(['window_start', 'window_end', 'pbad_total', 'bad_count', 'temperature', 'total_cost_diff', 'current_iteration', 'total_iterations']), file=debugfile)
 
 
         if args.global_optimization:
             global useDistanceObjective
+            
             useDistanceObjective = args.dist
             realimages = [optimization.load_image(imagefile) for imagefile in imagefiles]
             window = config["global_optimizer.window_size"]
@@ -277,7 +278,11 @@ def main(args):
                         print("auto temperature schedule finished")
                         print("starting temperature is ", args.start_temp, "ending temperature is ", args.end_temp)
                  if window_start >= sim_start:
-                        global_optimization.optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config, iteration_per_cell)
+                    if useDistanceObjective:
+                        global_optimization.totalCostDiff = optimization.dist_objective(realimage, synthimage, distmap, cellmap, config["overlap.cost"])
+                    else:
+                        global_optimization.totalCostDiff = optimization.objective(realimage, synthimage, cellmap, config["overlap.cost"], config["cell.importance"])
+                    global_optimization.optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config, iteration_per_cell)
                  if window_start >= 0:
                     global_optimization.save_lineage(imagefiles[window_start].name, lineage.frames[window_start].nodes, lineagefile)
                     global_optimization.save_output(imagefiles[window_start].name, synthimages[window_start], realimages[window_start], lineage.frames[window_start].nodes, args, config)
