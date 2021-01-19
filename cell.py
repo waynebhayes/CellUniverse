@@ -199,7 +199,7 @@ class Bacilli(Cell):
             gaussian_filter_truncate = simulation_config["light.diffraction.truncate"]
             gaussian_filter_sigma = simulation_config["light.diffraction.sigma"]
             diffraction_strength = simulation_config["light.diffraction.strength"]
-            cell_opacity = self._opacity if self._opacity != "auto" else simulation_config["cell.opacity"]
+            cell_opacity = self._opacity if self._opacity != "auto" and self._opacity != "None" else simulation_config["cell.opacity"]
             #in order to use optimze funtion
             gaussian_filter_sigma = max(gaussian_filter_sigma, 0)
             extension = ceil(gaussian_filter_truncate * gaussian_filter_sigma - 0.5)

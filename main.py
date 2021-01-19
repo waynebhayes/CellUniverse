@@ -57,7 +57,7 @@ def parse_args():
                           help="path to the residual image output directory")
     parser.add_argument('--lineage_file', metavar='FILE', type=Path, required=False,
                         help='path to previous lineage file')
-    parser.add_argument('--continue_from', metavar='N', type=int, default=0,
+    parser.add_argument('--continue_from', metavar='N', type=int, default=1,
                         help="load already found orientation of cells and start from the continue_from frame")
 
     # required arguments
