@@ -1,4 +1,3 @@
-import random
 import time
 import math
 from math import sqrt, atan
@@ -171,21 +170,21 @@ def perturb_bacilli(node, config, imageshape, invalid_limit = 50):
             p = np.random.uniform(0.0, 1.0, size= p_decision.size)
         
         if p[0] < p_decision[0]: #perturb x
-            x = cell.x + random.gauss(mu=x_mu, sigma=x_sigma)
+            x = cell.x + np.random.normal(x_mu, x_sigma)
     
         if p[1] < p_decision[1]: #perturb y
-            y = cell.y + random.gauss(mu=y_mu, sigma=y_sigma)
+            y = cell.y + np.random.normal(y_mu, y_sigma)
     
         if p[2] < p_decision[2]: #perturb width
-            width = cell.width + random.gauss(mu=width_mu, sigma=width_sigma)
+            width = cell.width + np.random.normal(width_mu, width_sigma)
     
         if p[3] < p_decision[3]: #perturb length
-            length = cell.length + random.gauss(mu=length_mu, sigma=length_sigma)
+            length = cell.length + np.random.normal(length_mu, length_sigma)
     
         if p[4] < p_decision[4]: #perturb rotation
-            rotation = cell.rotation + random.gauss(mu=rotation_mu, sigma=rotation_sigma)
+            rotation = cell.rotation + np.random.normal(rotation_mu, rotation_sigma)
         #if simulation_config["image.type"] == "graySynthetic" and p[5] < p_decision[5]:
-            #cell_opacity = cell.opacity + (random.gauss(mu=opacity_mu, sigma=opacity_sigma))
+            #cell_opacity = cell.opacity + (np.random.normal(opacity_mu, opacity_sigma))
             
         displacement = sqrt(np.sum((np.array([x, y, 0] - prior.position))**2))
         
@@ -211,7 +210,7 @@ def split_proba(length):
 def bacilli_split(node, config, imageshape):
     """Split the cell and push both onto the stack for testing."""
 
-    if random.random() > split_proba(node.cell.length):
+    if np.random.random_sample() > split_proba(node.cell.length):
         return False
 
     max_displacement = config['bacilli.maxSpeed']/config['global.framesPerSecond']
@@ -221,7 +220,7 @@ def bacilli_split(node, config, imageshape):
     min_length = config['bacilli.minLength']
     max_length = config['bacilli.maxLength']
 
-    alpha = random.random()/5 + 2/5     # TODO choose from config
+    alpha = np.random.random_sample()/5 + 2/5     # TODO choose from config
     cell1, cell2 = node.cell.split(alpha)
 
     # make sure that the lengths are within constraints
@@ -267,7 +266,7 @@ def bacilli_split(node, config, imageshape):
 
 def bacilli_combine(node, config, imageshape):
     """Split the cell and push both onto the stack for testing."""
-    if random.random() > 0.2:
+    if np.random.random_sample() > 0.2:
         return False, None
 
     max_displacement = config['bacilli.maxSpeed']/config['global.framesPerSecond']
@@ -383,7 +382,7 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=3000, aut
         #    print(f'{imagefile.name}: Progress: {100*i/run_count:.02f}%', flush=True)
 
         # choose a cell at random
-        index = random.randint(0, len(cellnodes) - 1)
+        index = np.random.randint(0, len(cellnodes))
         node = cellnodes[index]
 
         # perturb the cell and push it onto the stack
@@ -510,7 +509,7 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=3000, aut
                 bad_prob_tot += acceptance
 
             # check if the acceptance threshold was met; pop if not
-            if acceptance <= random.random():
+            if acceptance <= np.random.random_sample():
                 # restore the previous cells
                 if combined:
                     presplit.pop()

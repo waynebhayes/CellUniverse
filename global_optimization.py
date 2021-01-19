@@ -1,4 +1,3 @@
-import random
 from copy import deepcopy
 from math import sqrt
 from time import time
@@ -127,7 +126,7 @@ class LineageM:
         if end is None or end > len(self.frames):
             end = len(self.frames)
 
-        threshold = int(random.random() * self.count_cells_in(start, end))
+        threshold = int(np.random.random_sample() * self.count_cells_in(start, end))
 
         for i in range(start, end):
             frame = self.frames[i]
@@ -205,22 +204,22 @@ class Perturbation(Change):
                 p = np.random.uniform(0.0, 1.0, size= p_decision.size)
         
             if p[0] < p_decision[0]: #perturb x
-                new_cell.x = cell.x + random.gauss(mu=x_mu, sigma=x_sigma)
+                new_cell.x = cell.x + np.random.normal(x_mu, x_sigma)
     
             if p[1] < p_decision[1]: #perturb y
-                new_cell.y = cell.y + random.gauss(mu=y_mu, sigma=y_sigma)
+                new_cell.y = cell.y + np.random.normal(y_mu, y_sigma)
         
             if p[2] < p_decision[2]: #perturb width
-                new_cell.width = cell.width + random.gauss(mu=width_mu, sigma=width_sigma)
+                new_cell.width = cell.width + np.random.normal(width_mu, width_sigma)
         
             if p[3] < p_decision[3]: #perturb length
-                new_cell.length = cell.length + random.gauss(mu=length_mu, sigma=length_sigma)
+                new_cell.length = cell.length + np.random.normal(length_mu, length_sigma)
                 
             if p[4] < p_decision[4]: #perturb rotation
-                new_cell.rotation = cell.rotation + random.gauss(mu=rotation_mu, sigma=rotation_sigma)
+                new_cell.rotation = cell.rotation + np.random.normal(rotation_mu, rotation_sigma)
                 
             #if simulation_config["image.type"] == "graySynthetic" and p[5] < p_decision[5]:
-                #new_cell.opacity = cell.opacity + (random.gauss(mu=opacity_mu, sigma=opacity_sigma))
+                #new_cell.opacity = cell.opacity + (np.random.normal(opacity_mu, opacity_sigma))
 
             # ensure that those changes fall within constraints
             valid = self.is_valid
@@ -401,7 +400,7 @@ class Split(Change):
         self.distmap = distmap
 
         if len(self.node.children) == 1:
-            alpha = random.uniform(0.2, 0.8)
+            alpha = np.random.uniform(0.2, 0.8)
             self.s1, self.s2 = self.node.children[0].cell.split(alpha)
 
     def get_checks(self):
@@ -502,8 +501,8 @@ class BackGround_luminosity_offset(Change):
         cell_brightness_mu = config["cell_brightness.mu"]
         cell_brightness_sigma = config["cell_brightness.sigma"]
         
-        self.new_simulation_config["background.color"] += random.gauss(mu=offset_mu, sigma=offset_sigma)
-        self.new_simulation_config["cell.color"] += random.gauss(mu = cell_brightness_mu, sigma=cell_brightness_sigma)
+        self.new_simulation_config["background.color"] += np.random.normal(offset_mu, offset_sigma)
+        self.new_simulation_config["cell.color"] += np.random.normal(cell_brightness_mu, cell_brightness_sigma)
         self.new_synthimage, _ = optimization.generate_synthetic_image(frame.nodes, realimage.shape, self.new_simulation_config)
         
     @property
@@ -634,10 +633,10 @@ def optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, w
             updated_iterations = iteration_per_cell * lineage.count_cells_in(window_start, window_end) // window
             if (updated_iterations > total_iterations): total_iterations = updated_iterations
         frame = lineage.frames[frame_index]
-        node = random.choice(frame.nodes)
+        node = np.random.choice(frame.nodes)
         change_option = np.random.choice(["split", "perturbation", "combine", "background_offset"], p=[split_prob, perturbation_prob, combine_prob, background_offset_prob])
         change = None
-        if change_option == "split" and random.random() < optimization.split_proba(node.cell.length) and frame_index > 0:
+        if change_option == "split" and np.random.random_sample() < optimization.split_proba(node.cell.length) and frame_index > 0:
             change = Split(node.parent, config, realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], lineage.frames[frame_index], distmaps[frame_index])
             
         elif change_option == "perturbation":
@@ -665,7 +664,7 @@ def optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, w
                 circular_buffer[circular_buffer_cursor] = acceptance
                 circular_buffer_cursor = (circular_buffer_cursor + 1) % circular_buffer_capacity
 
-            if acceptance > random.random():
+            if acceptance > np.random.random_sample():
                 totalCostDiff += costdiff
                 change.apply()
                 #if type(change) == Split:
