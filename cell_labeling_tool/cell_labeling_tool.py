@@ -6,6 +6,7 @@ import numpy as np
 import tkinter.messagebox
 from collections import defaultdict
 import csv
+import platform
 
 class CellLabeling(Frame):
     def __init__(self,root):
@@ -21,6 +22,7 @@ class CellLabeling(Frame):
         self.new_flag = False
         self.delete_flag = False
         self.cell_dict = defaultdict(dict)
+        self.plt = platform.system()
     
     def init_menu(self):
         self.menu = Menu(self.root)
@@ -228,7 +230,10 @@ class CellLabeling(Frame):
         #print(self.x0,self.y0)
         #print(self.x1,self.y1)
         self.temp_item = self.canvas.create_line(self.x0,self.y0,self.x1,self.y1,fill='green',width=3)
-        self.canvas.bind('<ButtonPress-3>',self.start_right_move)
+        if self.plt == "Darwin":
+            self.canvas.bind('<ButtonPress-2>',self.start_right_move) #2 for MacOS Right-Click, 3 for Windows
+        else:
+            self.canvas.bind('<ButtonPress-3>',self.start_right_move)
         
     def start_right_move(self,event):
         if self.new_flag is not True:
@@ -236,7 +241,10 @@ class CellLabeling(Frame):
         self.x1 = self.canvas.canvasx(event.x) 
         self.y1 = self.canvas.canvasy(event.y)
 
-        self.canvas.bind('<B3-Motion>',self.right_motion)
+        if self.plt == "Darwin":
+            self.canvas.bind('<B2-Motion>', self.right_motion)
+        else:
+            self.canvas.bind('<B3-Motion>',self.right_motion)
 
     def draw_outside_error(self):
         tkinter.messagebox.showerror('Error','The center of the bounding box is outside of the image! Please draw again.')
@@ -310,7 +318,10 @@ class CellLabeling(Frame):
                                           self.p2[0],self.p2[1],
                                           self.p3[0],self.p3[1],
                                           fill='',outline='green',width=3)
-        self.canvas.bind('<ButtonRelease-3>',self.stop_right_move)
+        if self.plt == "Darwin":
+            self.canvas.bind('<ButtonRelease-2>',self.stop_right_move)
+        else:
+            self.canvas.bind('<ButtonRelease-3>',self.stop_right_move)
         
     def calculate_vertices2(self,x0,y0,x1,y1,x2,y2):
         self.angle = self.rotation_angle(x0,y0,x1,y1)
