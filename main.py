@@ -14,6 +14,7 @@ import optimization
 import global_optimization
 from scipy.ndimage import distance_transform_edt
 from colony import LineageFrames
+import numpy as np
 
 def parse_args():
     """Reads and parses the command-line arguments."""
@@ -59,6 +60,7 @@ def parse_args():
                         help='path to previous lineage file')
     parser.add_argument('--continue_from', metavar='N', type=int, default=0,
                         help="load already found orientation of cells and start from the continue_from frame")
+    parser.add_argument('--seed', metavar='N', type=int, default=None, help='seed for random number generation')
 
     # required arguments
 
@@ -203,6 +205,13 @@ def main(args):
             args.bestfit.mkdir()
         if args.residual and not args.residual.is_dir():
             args.residual.mkdir()
+            
+        seed = int(start * 1000) % (2**32)
+        if args.seed != None:
+            seed = args.seed
+        np.random.seed(seed)
+        print("Seed: {}".format(seed))
+        
         
         celltype = config['global.cellType'].lower()
 
