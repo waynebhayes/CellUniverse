@@ -57,7 +57,7 @@ def parse_args():
                           help="path to the residual image output directory")
     parser.add_argument('--lineage_file', metavar='FILE', type=Path, required=False,
                         help='path to previous lineage file')
-    parser.add_argument('--continue_from', metavar='N', type=int, default=1,
+    parser.add_argument('--continue_from', metavar='N', type=int, default=0,
                         help="load already found orientation of cells and start from the continue_from frame")
 
     # required arguments
@@ -240,6 +240,7 @@ def main(args):
                 lineage = global_optimization.build_initial_lineage(imagefiles, args.initial, args.continue_from, config["simulation"])
             lineage = global_optimization.find_optimal_simulation_confs(imagefiles, lineage, realimages, args.continue_from)
             sim_start = args.continue_from - args.frame_first
+            print(sim_start)
             shape = realimages[0].shape
             synthimages = []
             cellmaps = []
