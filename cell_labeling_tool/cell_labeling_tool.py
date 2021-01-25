@@ -7,6 +7,7 @@ import tkinter.messagebox
 from collections import defaultdict
 import csv
 import platform
+import os
 
 class CellLabeling(Frame):
     def __init__(self,root):
@@ -85,7 +86,6 @@ class CellLabeling(Frame):
             initialfile='cells.0.labeled',                 #init file name              
             title="Save current cell image"                      
         )
-        
         ImageGrab.grab().crop((x,y,x1,y1)).save(self.save_image)
 
     
@@ -111,12 +111,13 @@ class CellLabeling(Frame):
         if self.csv_file is not None:
             f = open(self.csv_file,'w',encoding='utf-8',newline='')
             csv_writer = csv.writer(f)
-            csv_writer.writerow(["name","x","y","width","length","rotation"])
+            csv_writer.writerow(["file","name","x","y","width","length","rotation","split_alpha","opacity"])
             
             if self.cell_dict != {}:
                 cell_num = len(self.cell_dict.keys())
                 digit_n = len(bin(cell_num)[2:])
                 data = list(self.cell_dict.values())
+                filename = os.path.basename(self.filename)
                 for i in range(cell_num):
                     name = self.dec_to_bin(i,digit=digit_n)
                     x = data[i]["center"][0]
@@ -125,7 +126,7 @@ class CellLabeling(Frame):
                     length = data[i]["length"]
                     rotation = data[i]["rotation"]
                     #print(name)
-                    csv_writer.writerow([name,x,y,width,length,rotation])
+                    csv_writer.writerow([filename,name,x,y,width,length,rotation,"None", "None"])
             else:
                 pass
             

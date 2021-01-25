@@ -189,17 +189,19 @@ class Perturbation(Change):
         length_sigma = perturb_conf["modification.length.sigma"]
         rotation_sigma = perturb_conf["modification.rotation.sigma"]
         
-        simulation_config = config["simulation"]
-        if simulation_config["image.type"] == "graySynthetic":
-            p_opacity = perturb_conf["prob.opacity"]
-            opacity_mu = perturb_conf["modification.opacity.mu"]
-            opacity_sigma = perturb_conf["modification.opacity.sigma"]
+        #functionality to change individual cell opacity commented.
+        #simulation_config = config["simulation"]
+        #if simulation_config["image.type"] == "graySynthetic":
+            #p_opacity = perturb_conf["prob.opacity"]
+            #opacity_mu = perturb_conf["modification.opacity.mu"]
+            #opacity_sigma = perturb_conf["modification.opacity.sigma"]
             
         # set starting properties
-        if simulation_config["image.type"] == "graySynthetic":
-            p_decision = np.array([p_x, p_y, p_width, p_length, p_rotation, p_opacity])
-        else:
-            p_decision = np.array([p_x, p_y, p_width, p_length, p_rotation])
+        #if simulation_config["image.type"] == "graySynthetic":
+            #p_decision = np.array([p_x, p_y, p_width, p_length, p_rotation, p_opacity])
+        #else:
+            #p_decision = np.array([p_x, p_y, p_width, p_length, p_rotation])
+        p_decision = np.array([p_x, p_y, p_width, p_length, p_rotation])       
             
         p = np.random.uniform(0.0, 1.0, size= p_decision.size)
         # generate a sequence such that at least an attribute must be modified
@@ -588,7 +590,7 @@ def save_lineage(filename, cellnodes: List[CellNodeM],  lineagefile):
             print(','.join(properties), file=lineagefile)
 
 def build_initial_lineage(imagefiles, lineagefile, continue_from, simulation_config):
-    #create a lineage given the path of the lineagefile and requiring imagefiles. The output lineage will contain frame number up to the continue_from(exclude)
+    #create a lineage given the path of the lineagefile and requiring imagefiles. The output lineage will contain frame number up to the continue_from(include)
     cells_data = pd.read_csv(lineagefile)
     cells_data = cells_data.replace('None', None)
     lineage = LineageM(simulation_config)
@@ -596,7 +598,7 @@ def build_initial_lineage(imagefiles, lineagefile, continue_from, simulation_con
         filename = imagefiles[i].name
         #this is some what a ugly way to find out frame number contained in a string. Should be improved later?
         current_frame_number = int(filename.split('.')[0][-3:])
-        if current_frame_number > continue_from - 1:
+        if current_frame_number > continue_from:
             break
         if i > 0:
             lineage.forward()
@@ -609,7 +611,7 @@ def find_optimal_simulation_confs(imagefiles, lineage, realimages, up_to_frame):
     for i in range(len(imagefiles)):
         filename = imagefiles[i].name
         current_frame_number = int(filename.split('.')[0][-3:])
-        if current_frame_number >  up_to_frame - 1:
+        if current_frame_number >  up_to_frame:
             break
         lineage.frames[i].simulation_config = optimization.find_optimal_simulation_conf(lineage.frames[i].simulation_config, realimages[i], lineage.frames[i].nodes)
     return lineage
