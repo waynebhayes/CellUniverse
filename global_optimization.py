@@ -509,9 +509,9 @@ class Opacity_Diffraction_offset(Change):
         diffraction_sigma_offset_mu = config["diffraction_sigma_offset.mu"]
         diffraction_sigma_offset_sigma = config["diffraction_sigma_offset.sigma"]
         
-        self.new_simulation_config["cell.opacity"] += random.gauss(mu=opacity_offset_mu, sigma=opacity_offset_sigma)
-        self.new_simulation_config["light.diffraction.strength"] += random.gauss(mu = diffraction_strength_offset_mu, sigma = diffraction_strength_offset_sigma)
-        self.new_simulation_config["light.diffraction.sigma"] += random.gauss(mu = diffraction_sigma_offset_mu, sigma = diffraction_sigma_offset_sigma)
+        self.new_simulation_config["cell.opacity"] += np.random.normal(opacity_offset_mu, opacity_offset_sigma)
+        self.new_simulation_config["light.diffraction.strength"] += np.random.normal(diffraction_strength_offset_mu, diffraction_strength_offset_sigma)
+        self.new_simulation_config["light.diffraction.sigma"] += np.random.normal(diffraction_sigma_offset_mu, diffraction_sigma_offset_sigma)
         self.new_synthimage, _ = optimization.generate_synthetic_image(frame.nodes, realimage.shape, self.new_simulation_config)
         
     @property
