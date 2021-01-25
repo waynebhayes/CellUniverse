@@ -64,6 +64,8 @@ def find_optimal_simulation_conf(simulation_config, realimage1, cellnodes):
         
         for i, param in enumerate(variables):
             simulation_config[param] = optimal_values[i]
+        simulation_config["cell.opacity"] = max(0, simulation_config["cell.opacity"])
+        simulation_config["light.diffraction.sigma"] = max(0, simulation_config["light.diffraction.sigma"])
         
         if auto_opacity:
             for node in cellnodes:
@@ -94,9 +96,11 @@ def load_image(imagefile):
     """Open the image file and convert to a floating-point grayscale array."""
     with open(imagefile, 'rb') as fp:
         realimage = np.array(Image.open(fp))
-    if len(realimage.shape) > 2 or realimage.dtype != np.uint8:
-        raise ValueError(f'Expects 8-bit grayscale images: "{imagefile}"')
-    return realimage.astype(np.float)/255
+    if realimage.dtype == np.uint8:
+        realimage = realimage.astype(float)/255
+    if len(realimage.shape) == 3:
+        realimage = np.mean(realimage, axis=-1)
+    return realimage
 
 
 def perturb_bacilli(node, config, imageshape, invalid_limit = 50):
