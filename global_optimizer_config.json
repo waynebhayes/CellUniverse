@@ -28,11 +28,11 @@
         "cell.opacity": "auto"
     },
     
-    "prob.perturbation": 0.89,
-    "prob.combine": 0.05,
-    "prob.split" : 0.05,
-    "prob.opacity_diffraction_offset": 0.0,
-    "prob.background_offset": 0.01, //This should be set to 0 if the algorithm runs in binary version
+    "prob.perturbation": 0.70,
+    "prob.combine": 0.1,
+    "prob.split" : 0.1,
+    "prob.opacity_diffraction_offset": 0.05,
+    "prob.background_offset": 0.05, //This should be set to 0 if the algorithm runs in binary version
     "perturbation":
     {
         "prob.x": 0.35,

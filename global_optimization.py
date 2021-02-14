@@ -673,7 +673,7 @@ def optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, w
     # simulated annealing
     total_iterations = iteration_per_cell*lineage.count_cells_in(window_start, window_end)//window
     bad_count = 0
-    current_iteration = 1
+    current_iteration = 0
     while current_iteration < total_iterations:
         frame_index = lineage.choose_random_frame_index(window_start, window_end)
         if in_auto_temp_schedule:
@@ -682,8 +682,6 @@ def optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, w
             frame_start_temp = gerp(args.end_temp, args.start_temp, (frame_index - window_start + 1)/window)
             frame_end_temp = gerp(args.end_temp, args.start_temp, (frame_index - window_start)/window)
             temperature = gerp(frame_start_temp, frame_end_temp, current_iteration/(total_iterations))                
-            updated_iterations = iteration_per_cell * lineage.count_cells_in(window_start, window_end) // window
-            if (updated_iterations > total_iterations): total_iterations = updated_iterations
         frame = lineage.frames[frame_index]
         node = np.random.choice(frame.nodes)
         change_option = np.random.choice(["split", "perturbation", "combine", "background_offset", "opacity_diffraction_offset"], 
@@ -727,7 +725,7 @@ def optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, w
                 totalCostDiff += costdiff
                 change.apply()
                 if type(change) == Split:
-                    total_iterations = lineage.count_cells_in(window_start, window_end)
+                    total_iterations += iteration_per_cell//window
 
                 #if type(change) == Combination:
                     #total_iterations -= iteration_per_cell
