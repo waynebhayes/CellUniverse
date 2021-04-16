@@ -16,7 +16,7 @@ if python3 "./main.py" \
     --frame_first 0 \
     --frame_last 13 \
     --debug "./debug" \
-    --input "./input/frame%03d.png" \
+    --input "./input_gray/frame%03d.png" \
     --output "$REG_DIR/output" \
     --bestfit "$REG_DIR/bestfit" \
     --config "./global_optimizer_config.json" \
