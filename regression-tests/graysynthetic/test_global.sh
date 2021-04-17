@@ -16,11 +16,11 @@ if python3 "./main.py" \
     --frame_first 0 \
     --frame_last 13 \
     --debug "./debug" \
-    --input "./input_gray/frame%03d.png" \
+    --input "./examples/canonical/input/gray/frame%03d.png" \
     --output "$REG_DIR/output" \
     --bestfit "$REG_DIR/bestfit" \
-    --config "./global_optimizer_config.json" \
-    --initial "./global_optimizer_initial.csv"  \
+    --config "./examples/canonical/global_optimizer_config.json" \
+    --initial "./examples/canonical/initial.csv"  \
     --no_parallel --global_optimization --graySynthetic; then
     :
 else
