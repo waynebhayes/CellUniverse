@@ -16,6 +16,10 @@ from scipy.ndimage import distance_transform_edt
 from colony import LineageFrames
 import numpy as np
 
+import sys
+sys.setrecursionlimit(10000)
+# bootleg fix to prevent recursion error when pickling large lineages
+
 def parse_args():
     """Reads and parses the command-line arguments."""
     parser = argparse.ArgumentParser()
@@ -61,6 +65,7 @@ def parse_args():
     parser.add_argument('--continue_from', metavar='N', type=int, default=0,
                         help="load already found orientation of cells and start from the continue_from frame")
     parser.add_argument('--seed', metavar='N', type=int, default=None, help='seed for random number generation')
+    parser.add_argument('--batches', metavar='N', type=int, default=1, help='number of batches to split each frame into for multithreading')
 
     # required arguments
 
@@ -168,19 +173,27 @@ def main(args):
     if (args.start_temp is not None or args.end_temp is not None) and args.auto_temp == 1:
         raise Exception("when auto_temp is set to 1(default value), starting temperature or ending temperature should not be set manually")
 
-    # if not args.no_parallel:
-    #     import dask
-    #     from dask.distributed import Client, LocalCluster
-    #     if not args.cluster:
-    #         cluster = LocalCluster(
-    #             n_workers=args.workers,local_dir="/tmp/CellUniverse/dask-worker-space"
-    #         )
-    #     else:
-    #         cluster = args.cluster
-    #
-    #     client = Client(cluster)
-    # else:
-    client = None
+    if not args.no_parallel:
+        import dask
+        from dask.distributed import Client, LocalCluster
+        if not args.cluster:
+            cluster = LocalCluster(
+                n_workers = args.workers, threads_per_worker = 1,
+            )
+            client = Client(cluster)
+        else:
+            cluster = args.cluster
+            client = Client(cluster)
+            client.restart()
+            client.upload_file('drawing.py')
+            client.upload_file('mathhelper.py')
+            client.upload_file('cell.py')
+            client.upload_file('colony.py')
+            client.upload_file('optimization.py')
+            client.upload_file('drawing.py')
+            client.upload_file('global_optimization.py')
+    else:
+        client = None
 
     lineagefile = None
     start = time.time()
@@ -292,7 +305,7 @@ def main(args):
                         global_optimization.totalCostDiff = optimization.dist_objective(realimage, synthimage, distmap, cellmap, config["overlap.cost"])
                     else:
                         global_optimization.totalCostDiff = optimization.objective(realimage, synthimage, cellmap, config["overlap.cost"], config["cell.importance"])
-                    global_optimization.optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config, iteration_per_cell)
+                    lineage, synthimages, distmaps, cellmaps = global_optimization.optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config, iteration_per_cell, client = client)
                  if window_start >= 0:
                     global_optimization.save_lineage(imagefiles[window_start].name, lineage.frames[window_start].nodes, lineagefile)
                     global_optimization.save_output(imagefiles[window_start].name, synthimages[window_start], realimages[window_start], lineage.frames[window_start].nodes, args, config)
@@ -367,6 +380,8 @@ def main(args):
             lineagefile.close()
 
     print(f'{time.time() - start} seconds')
+    if client and not cluster:
+        client.shutdown()
 
     return 0
 

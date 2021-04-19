@@ -297,7 +297,7 @@ class Bacilli(Cell):
 
         front = self._position + unit/2
         back = self._position - unit/2
-        center = self._position + (0.5 - alpha)*unit
+        center = self._position + (0.5 - float(alpha))*unit
 
         position1 = (front + center)/2
         position2 = (center + back)/2
@@ -305,13 +305,13 @@ class Bacilli(Cell):
         cell1 = Bacilli(
             self._name + '0',
             position1.x, position1.y,
-            self._width, self._length*alpha,
+            self._width, self._length*float(alpha),
             self._rotation, alpha, self._opacity)
 
         cell2 = Bacilli(
             self._name + '1',
             position2.x, position2.y,
-            self._width, self._length*(1 - alpha),
+            self._width, self._length*(1 - float(alpha)),
             self._rotation, alpha, self._opacity)
 
         return cell1, cell2

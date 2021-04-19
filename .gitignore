@@ -359,3 +359,4 @@ cellviewer*.sh
 .idea
 .vs
 .dask-worker-space
+dask-worker-space/
