@@ -13,7 +13,7 @@ cp -r $REG_DIR/original_data/* $REG_DIR/test
 rm -rf $REG_DIR/results
 mkdir $REG_DIR/results
 
-python3 "./cellviewer/radialtree.py" $REG_DIR/test || die "Python died on radialtree.py unexpectedly"
+python3 "$REG_DIR/radialtree.py" $REG_DIR/test || die "Python died on radialtree.py unexpectedly"
 
 python3 "$REG_DIR/checkerCellViewer.py" "-checkLevel=1" "-wd=$REG_DIR" || die "Python died on checkerCellViewer.py"
 

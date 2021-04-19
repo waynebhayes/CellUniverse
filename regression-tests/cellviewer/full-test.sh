@@ -12,7 +12,7 @@ rm -rf node_modules/gh-pages/.cache
 mkdir ./cellviewer/src/output
 mkdir ./cellviewer/src/bestfit
 
-python3 "./main.py" \
+python3 "$REG_DIR/main.py" \
     --frame_first 0 \
     --frame_last 13 \
     --debug "./debug" \
@@ -22,7 +22,7 @@ python3 "./main.py" \
     --config "./local_optimizer_config.json" \
     --initial "./cells.0.csv" || die "main.py failed"
 
-python3 "./cellviewer/radialtree.py" \
+python3 "$REG_DIR/radialtree.py" \
     "./cellviewer/src/output" || die "radialtree failed"
 
 npm run --prefix cellviewer deploy || die "2nd npm failed"
