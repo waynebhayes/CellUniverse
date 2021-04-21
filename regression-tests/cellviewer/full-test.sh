@@ -16,7 +16,7 @@ python3 "src/main.py" \
     --frame_first 0 \
     --frame_last 13 \
     --debug "./debug" \
-    --input "./examples/canonical/frame%03d.png" \
+    --input "./examples/canonical/input/gray/frame%03d.png" \
     --output "./tools/cellviewer/src/output" \
     --bestfit "./tools/cellviewer/src/bestfit" \
     --config "./examples/canonical/local_optimizer_config.json" \
