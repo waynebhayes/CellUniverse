@@ -34,7 +34,10 @@ def isequal(obj,obj2):
         for i in range(len(obj)): 
             if not isequal(obj[i],obj2[i]): return False
         return True
-    else: return obj==obj2
+    elif type(obj)==int or type(obj)==float:
+        return abs((obj-obj2)/obj2) < 0.001
+    else:
+        return obj==obj2
 
 # checks for line differences
 def lineCheck(testLines, expectedLines):

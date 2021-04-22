@@ -17,4 +17,11 @@ python3 "./tools/cellviewer/radialtree.py" $REG_DIR/test || die "Python died on 
 
 python3 "$REG_DIR/checkerCellViewer.py" "-checkLevel=1" "-wd=$REG_DIR" || die "Python died on checkerCellViewer.py"
 
-echo "Done testing cellviewer"
+awk '
+    /CHECK$/{X=$1; ++TEST[X]}
+    /Test.*Passed/{++PASS[X]}
+    END{missed=0;
+	for(i in TEST)if(PASS[i]!=2){++missed; print "Missed",i}
+	exit(missed);
+    }' $REG_DIR/results/results.txt
+exit $?

@@ -289,10 +289,10 @@ def main():
 
 
     # Draw the SVG radial tree plot
-    # save_radial_tree_plot(args.output_path+"/"+treeFilename, root_list, step_size)
+    save_radial_tree_plot(args.output_path+"/"+treeFilename, root_list, step_size)
     
     # Draw the SVG pie color chart
-    # save_pie_chart(args.output_path+"/"+pieFilename, root_list, step_size)
+    save_pie_chart(args.output_path+"/"+pieFilename, root_list, step_size)
     
 
 if __name__ == '__main__':
