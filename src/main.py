@@ -185,13 +185,15 @@ def main(args):
             cluster = args.cluster
             client = Client(cluster)
             client.restart()
-            client.upload_file('drawing.py')
-            client.upload_file('mathhelper.py')
-            client.upload_file('cell.py')
-            client.upload_file('colony.py')
-            client.upload_file('optimization.py')
-            client.upload_file('drawing.py')
-            client.upload_file('global_optimization.py')
+            cwd = Path(__file__).parent.absolute()
+            client.upload_file(cwd / 'drawing.py')
+            client.upload_file(cwd / 'mathhelper.py')
+            client.upload_file(cwd / 'cell.py')
+            client.upload_file(cwd / 'colony.py')
+            client.upload_file(cwd / 'optimization.py')
+            client.upload_file(cwd / 'drawing.py')
+            client.upload_file(cwd / 'global_optimization.py')
+            client.upload_file(cwd / 'main.py')
     else:
         client = None
 
