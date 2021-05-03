@@ -28,6 +28,6 @@ else
     die "Python quit unexpectedly!"
 fi
 
-python3 "$REG_DIR/compare.py" "$REG_DIR/expected_lineage.csv" "$REG_DIR/output/lineage.csv" || die "compare failed"
+python3 "$REG_DIR/compare.py" "$REG_DIR/output/lineage.csv" "$REG_DIR/expected_lineage.csv" || die "compare failed"
 
 echo "Done testing simulated annealing dist."
