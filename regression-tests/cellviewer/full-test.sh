@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/sh -x
 die() { echo "FATAL ERROR: $@" >&2; exit 1;
 }
 npm() { echo "Not running npm, since it seems to be broken" >&2
