@@ -5,9 +5,18 @@ Tracks the movement of cells from a video source. Currently the code has only be
 
 Once you clone the repo onto your machine, you should test if Cell Universe is working on your system by installing the requirements and running the script `./regression-test-all.sh`.
 
+Prerequisites:
+-----------
+Requires Python 3.7+.
+https://www.python.org/getit/
+
+Requires Pip.
+https://pip.pypa.io/en/stable/quickstart/
+
+
 Quickstart:
 -----------
-1. (Optional) Create a virtual environment.
+1. (Optional) Create a Python 3 virtual environment.
 ```bash
 $ pip3 install virtualenv
 $ virtualenv -p python3 venv
