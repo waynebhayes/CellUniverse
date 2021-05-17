@@ -216,6 +216,8 @@ def main():
         out.write('===================================================================\n')
         for tRes in range(1,len(testResult)):
             if testResult[tRes]:
+                out.write('Test ' + str(tRes) + ' Failed\n')
+                out.write('------------------------------------------------------------\n')
                 for diff in testResult[tRes]:
                     out.write(diff["type"]+" at "+diff["key"]+':\n')  
                     out.write('TEST:\n')
