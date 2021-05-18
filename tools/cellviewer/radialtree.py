@@ -15,12 +15,7 @@ from svgwrite import Drawing
 from parseColony import parseColony
 
 import random
-
-number_of_colors = 50
-colors = set()
-while len(colors)!=number_of_colors:
-    colors.add("#"+''.join([random.choice('0123456789ABCDEF') for j in range(6)]))
-colors = list(colors)
+import time
 
 SVG_SIZE = 512
 
@@ -64,6 +59,13 @@ class CellNode(object):
     @property
     def children(self):
         return self._children
+
+def generateRandomColors(number_of_colors):
+    colors = set()
+    while len(colors) < number_of_colors:
+        colors.add("#"+''.join([random.choice('0123456789ABCDEF') for j in range(6)]))
+    colors = sorted(list(colors))
+    return colors
 
 def getGenerations(node):
     if not node.children: return 1
@@ -212,7 +214,7 @@ def save_radial_tree_plot(filename, root_list, step_size):
 
     svg_drawing.save()  
     
-def save_pie_chart(filename, root_list, step_size):
+def save_pie_chart(filename, all_angles, step_size, colors):
     
     #  create the drawing surface
     svg_drawing = Drawing(
@@ -223,11 +225,6 @@ def save_pie_chart(filename, root_list, step_size):
     start_x = SVG_SIZE//2
     start_y = SVG_SIZE//2
     radius = SVG_SIZE//2
-
-    all_angles = []
-    for node in root_list:
-        all_angles += node.pie_angle
-    all_angles = sorted(all_angles)
     
     radians0 = all_angles[-1]
     for i in range(len(all_angles)):
@@ -254,9 +251,17 @@ def save_pie_chart(filename, root_list, step_size):
 def main():
     # Get the path to the output directory from the command-line
     parser = argparse.ArgumentParser(description='Generate a radial tree plot.')
+    parser.add_argument('-seed', metavar='N', type=int, default=None, help='seed for random colors')
     parser.add_argument('output_path', metavar='OUTPUT_PATH', type=str,
                         help='the desired output path') 
     args = parser.parse_args()
+
+    # Set rng seed
+    seed = int(time.time() * 1000) % (2**32)
+    if args.seed != None:
+        seed = args.seed
+    random.seed(seed)
+    print(f'Seed: {seed}')
 
     # Load the data into memory
     rows = parseColony(args.output_path)
@@ -292,7 +297,11 @@ def main():
     save_radial_tree_plot(args.output_path+"/"+treeFilename, root_list, step_size)
     
     # Draw the SVG pie color chart
-    save_pie_chart(args.output_path+"/"+pieFilename, root_list, step_size)
+    all_angles = []
+    for node in root_list:
+        all_angles += node.pie_angle
+    all_angles = sorted(all_angles)
+    save_pie_chart(args.output_path+"/"+pieFilename, all_angles, step_size, generateRandomColors(len(all_angles)))
     
 
 if __name__ == '__main__':
