@@ -44,7 +44,7 @@ def parse_args():
     parser.add_argument('--cluster', type=str, default='',
                         help='dask cluster address (defaults to local cluster)')
 
-    parser.add_argument('--no_parallel', action='store_true', default=False, help='disable parallelism')
+    parser.add_argument('--no_parallel', action='store_true', default=True, help='disable parallelism')
     parser.add_argument('--global_optimization', action='store_true', default=False, help='global optimization')
     parser.add_argument('--binary', action='store_true', default=True,
                         help = "input image is binary")
