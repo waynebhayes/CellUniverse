@@ -22,6 +22,7 @@ if python3 "./src/main.py" \
     --bestfit "$REG_DIR/bestfit" \
     --config "./examples/canonical/local_optimizer_config.json" \
     --initial "./examples/canonical/initial.csv" \
+    --no_parallel \
     --dist; then
     :
 else
