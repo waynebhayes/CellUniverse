@@ -20,6 +20,7 @@ python3 "src/main.py" \
     --output "./tools/cellviewer/src/output" \
     --bestfit "./tools/cellviewer/src/bestfit" \
     --config "./examples/canonical/local_optimizer_config.json" \
+    --no_parallel \
     --initial "./examples/canonical/initial.csv" || die "main.py failed"
 
 python3 "./tools/cellviewer/radialtree.py" \
