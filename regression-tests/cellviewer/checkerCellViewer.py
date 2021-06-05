@@ -24,18 +24,27 @@ def revert(obj):
         else:
             return [revert(x) for x in obj]
     else: return obj
+    
+def isfloat(obj):
+    try:
+        float(obj)
+        return True
+    except ValueError:
+        return False
 
 # helper function to compare ordered list
 def isequal(obj,obj2):
-    if type(obj)!=type(obj2): 
+    if type(obj) != type(obj2): 
         return False
     if isinstance(obj,list) or isinstance(obj,tuple):
         if len(obj)!=len(obj2): return False
         for i in range(len(obj)): 
             if not isequal(obj[i],obj2[i]): return False
         return True
+    elif isinstance(obj, str) and isfloat(obj) and isfloat(obj2):
+        return isequal(float(obj), float(obj2))
     elif type(obj)==float:
-        return abs((obj-obj2)/obj2) < 0.001
+        return abs(obj - obj2) <= 1e-09 * max(abs(obj), abs(obj2)) # check if floats are same within 9 digits
     else:
         return obj==obj2
 
@@ -67,29 +76,30 @@ def valueCheck(test, expected):
     i=j=0
     diffValues = []
     while i<len(test) and j<len(expected):
-        if test[i][0] < expected[j][0]:
-            diffValues.append({      
-                "type":"Extra Value", 
-                "key" :str(test[i][0]), 
-                "test":json.dumps(revert(test[i]), indent=4),
-                "expected":""
-            })
-            j-=1
-        elif test[i][0] > expected[j][0]:
-            diffValues.append({      
-                "type":"Missing Value",
-                "key" :str(expected[j][0]), 
-                "test":"",
-                "expected":json.dumps(revert(expected[j]), indent=4)
-            })
-            i-=1
-        elif not isequal(test[i], expected[j]):
-            diffValues.append({      
-                "type":"Different Values", 
-                "key" :str(test[i][0]), 
-                "test":json.dumps(revert(test[i]), indent=4),
-                "expected":json.dumps(revert(expected[j]), indent=4)
-            })
+        if not isequal(test[i], expected[j]):
+            if test[i][0] < expected[j][0]:
+                diffValues.append({      
+                    "type":"Extra Value", 
+                    "key" :str(test[i][0]), 
+                    "test":json.dumps(revert(test[i]), indent=4),
+                    "expected":""
+                })
+                j-=1
+            elif test[i][0] > expected[j][0]:
+                diffValues.append({      
+                    "type":"Missing Value",
+                    "key" :str(expected[j][0]), 
+                    "test":"",
+                    "expected":json.dumps(revert(expected[j]), indent=4)
+                })
+                i-=1
+            else:
+                diffValues.append({      
+                    "type":"Different Values", 
+                    "key" :str(test[i][0]), 
+                    "test":json.dumps(revert(test[i]), indent=4),
+                    "expected":json.dumps(revert(expected[j]), indent=4)
+                })
         i+=1
         j+=1
 
@@ -154,7 +164,9 @@ def checkSVG(test_path, expected_path, lvl, file):
     try:
         with open(test_path,'r') as tFile:
             tData = tFile.read().split("<")
-            tData = sorted([sorted(tag.split())] for tag in tData)
+            tData = [tag.split() for tag in tData]
+            tData = sorted([sorted([sorted(attr.split(",")) for attr in tag]) for tag in tData])
+            tData = [tag for tag in tData if isinstance(tag, list) and len(tag) > 0]
     
     except IOError as e:
         err = 'Test SVG: An IOError occurred. '+e.args[-1]+'. File: '+test_path
@@ -164,7 +176,9 @@ def checkSVG(test_path, expected_path, lvl, file):
     try:
         with open(expected_path,'r') as eFile:
             eData = eFile.read().split("<")
-            eData = sorted([sorted(tag.split())] for tag in eData)
+            eData = [tag.split() for tag in eData]
+            eData = sorted([sorted([sorted(attr.split(",")) for attr in tag]) for tag in eData])
+            eData = [tag for tag in eData if isinstance(tag, list) and len(tag) > 0]
 
     except IOError as e:
         err = 'Expected SVG: An IOError occurred. '+e.args[-1]+'. File: '+expected_path
