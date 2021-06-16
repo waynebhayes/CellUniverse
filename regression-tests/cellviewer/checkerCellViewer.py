@@ -75,23 +75,15 @@ def lineCheck(testLines, expectedLines):
 def valueCheck(test, expected):
     i=j=0
     diffValues = []
+    extraValues = []
+    missingValues = []
     while i<len(test) and j<len(expected):
         if not isequal(test[i], expected[j]):
             if test[i][0] < expected[j][0]:
-                diffValues.append({      
-                    "type":"Extra Value", 
-                    "key" :str(test[i][0]), 
-                    "test":json.dumps(revert(test[i]), indent=4),
-                    "expected":""
-                })
+                extraValues.append(test[i])
                 j-=1
             elif test[i][0] > expected[j][0]:
-                diffValues.append({      
-                    "type":"Missing Value",
-                    "key" :str(expected[j][0]), 
-                    "test":"",
-                    "expected":json.dumps(revert(expected[j]), indent=4)
-                })
+                missingValues.append(expected[j])
                 i-=1
             else:
                 diffValues.append({      
@@ -102,24 +94,32 @@ def valueCheck(test, expected):
                 })
         i+=1
         j+=1
-
+                
     while i<len(test):
+        extraValues.append(test[i])
+    while j<len(expected):
+        missingValues.append(expected[i])
+        
+    for i in range(len(extraValues)):
         diffValues.append({      
             "type":"Extra Value", 
-            "key" :str(test[i][0]), 
-            "test":json.dumps(revert(test[i]), indent=4),
+            "key" :str(extraValues[i][0]), 
+            "test":json.dumps(revert(extraValues[i]), indent=4),
             "expected":""
         })
-        i+=1
-
-    while j<len(expected):
+        for j in range(len(missingValues)):
+            if isequal(extraValues[i], missingValues[j]):
+                missingValues.pop(j);
+                diffValues.pop()
+                break;
+                
+    for i in range(len(missingValues)):
         diffValues.append({      
             "type":"Missing Value",
-            "key" :str(expected[j][0]), 
+            "key" :str(missingValues[i][0]), 
             "test":"",
-            "expected":json.dumps(revert(expected[j]), indent=4)
+            "expected":json.dumps(revert(missingValues[i]), indent=4)
         })
-        j+=1
 
     return diffValues
 

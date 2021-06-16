@@ -157,7 +157,7 @@ def draw_radial_tree_node(svg_drawing, tree_plot, node, rad_grad, step_size):
         start=(step_size*node.start_frame, 0),
         end=(step_size*node.end_frame, 0),
         transform=f'translate({SVG_SIZE/2} {SVG_SIZE/2}) '
-                  f'rotate({-180*node.angle/math.pi})'))
+                  f'rotate({round(-180*node.angle/math.pi, 9)})'))
 
     if node.children:
         for child in node.children:
@@ -168,14 +168,14 @@ def draw_radial_tree_node(svg_drawing, tree_plot, node, rad_grad, step_size):
         min_angle = min(angles)
 
         path = svg_drawing.path(
-            f'M{step_size*node.end_frame*math.cos(-max_angle)},'
-            f'{step_size*node.end_frame*math.sin(-max_angle)}',
+            f'M{round(step_size*node.end_frame*math.cos(-max_angle), 9)},'
+            f'{round(step_size*node.end_frame*math.sin(-max_angle), 9)}',
             transform=f'translate({SVG_SIZE/2} {SVG_SIZE/2})')
         path.push_arc(
-            (step_size*node.end_frame*math.cos(-min_angle),
-             step_size*node.end_frame*math.sin(-min_angle)),
+            (round(step_size*node.end_frame*math.cos(-min_angle), 9),
+             round(step_size*node.end_frame*math.sin(-min_angle), 9)),
             0,
-            (step_size*node.end_frame, step_size*node.end_frame),
+            (round(step_size*node.end_frame, 9), round(step_size*node.end_frame, 9)),
             large_arc=False,
             absolute=True)
         tree_plot.add(path)
@@ -234,10 +234,10 @@ def save_pie_chart(filename, all_angles, step_size, colors):
         dx1 = radius*(math.sin(radians1))
         dy1 = radius*(math.cos(radians1))
     
-        m0 = dy0 
-        n0 = -dx0 
-        m1 = -dy0 + dy1 
-        n1 = dx0 - dx1 
+        m0 = round(dy0, 9) 
+        n0 = round(-dx0, 9) 
+        m1 = round(-dy0 + dy1, 9)
+        n1 = round(dx0 - dx1, 9)
     
         w = svg_drawing.path(d="M {0},{1} l {2},{3} a {4},{4} 0 0,0 {5},{6} z".format(start_x, start_y, m0, n0, radius, m1, n1),
                  fill = colors[i], 
