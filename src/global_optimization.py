@@ -688,7 +688,7 @@ def optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, w
 
         try:
             # sometimes this doesn't catch the errors
-            dask.distributed.wait(futures, 360)
+            dask.distributed.wait(futures, 3600)
         except Exception as e:
             print(e)
 
