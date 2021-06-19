@@ -30,7 +30,7 @@ threshold now will change it for the current page and all the following pages.
 for each page can be viewed on the right side of the window.
 
 
-![Main window](https://user-images.githubusercontent.com/33084827/115973181-f6dd8980-a507-11eb-93bd-3dc394c49c6a.jpg)
+![Screen Shot 2021-06-18 at 7 03 08 PM](https://user-images.githubusercontent.com/33084827/122627949-de9d6d00-d067-11eb-914f-cdf32a49cc7c.jpg)
 
 
 - Once you have gone through all the pages and are satisfied with the previewed images. It's time to save all the binarized images. Click File > save segmented images. Select a directory you want to save binarized images to. Depending on the number of images, it'll take few seconds to save binarized images.
