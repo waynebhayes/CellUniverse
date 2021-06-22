@@ -4,15 +4,15 @@
     "global.pixelsPerMicron": 1.0,
     "global.framesPerSecond": 1.0,
 
-    // Bacilli settings
+    // Bacilli settings	
     "bacilli.maxSpeed":  24.0,  // microns per second
     "bacilli.maxSpin":    1.57, // radians per second
-    "bacilli.minGrowth": -10.0,  // microns
-    "bacilli.maxGrowth": 13.0,  // microns
+    "bacilli.minGrowth": -1.0,  // microns
+    "bacilli.maxGrowth": 9.0,  // microns
     "bacilli.minWidth":   4.0,  // microns
-    "bacilli.maxWidth":   1000.0,  // microns
-    "bacilli.minLength": 14.0,  // microns
-    "bacilli.maxLength": 1000.0,  // microns
+    "bacilli.maxWidth":   20.0,  // microns
+    "bacilli.minLength": 30.0,  // microns
+    "bacilli.maxLength": 75.0,  // microns
     "bacilli.distanceCostDivisor": 24,  // microns
     
     // simulation settings. NOTE: Image are converted to grayscale float32. 
@@ -28,26 +28,26 @@
         "cell.opacity": "auto"
     },
     
-    "prob.perturbation": 0.57,
-    "prob.combine": 0.2,
-    "prob.split" : 0.2,
+    "prob.perturbation": 0.90,
+    "prob.combine": 0.02,
+    "prob.split" : 0.08,
     "perturbation":
     {
-        "prob.x": 0.35,
-        "prob.y": 0.35,
+        "prob.x": 0.45,
+        "prob.y": 0.45,
         "prob.width":0.1,
         "prob.length":0.2,
         "prob.rotation":0.2,
         "modification.x.mu":0.0,
         "modification.y.mu":0.0,
         "modification.width.mu":0.0,
-        "modification.length.mu":0.0,
+        "modification.length.mu":0.01,
         "modification.rotation.mu":0.0,
-        "modification.x.sigma":0.5,
-        "modification.y.sigma":0.5,
+        "modification.x.sigma":1.2,
+        "modification.y.sigma":1.2,
         "modification.width.sigma":0.1,
         "modification.length.sigma":0.2,
-        "modification.rotation.sigma":0.2,
+        "modification.rotation.sigma":0.15,
         "prob.opacity": 0.2
     },
 
@@ -61,12 +61,12 @@
     "residual.vmin": -0.3,
     "residual.vmax": 0.3,
     //objective parameter
-    "split.cost": 2,
-    "combine.cost": 2,
-    "overlap.cost": 0.1,
+    "split.cost": 0,
+    "combine.cost": 0,
+    "overlap.cost": 0.15,
     //cell.importance = importance of synthetic cell region/importance of synthetic diffraction region
     "cell.importance": 1,
-    "prob.background_offset": 0.01, //This should be set to 0 if the algorithm runs in binary version
+    "prob.background_offset": 0.00, //This should be set to 0 if the algorithm runs in binary version
     "background_offset.mu": 0.0,
     "background_offset.sigma": 0.01,
     "opacity_offset.mu": 0,
@@ -77,5 +77,5 @@
     "diffraction_sigma_offset.sigma": 0.1,
     "cell_brightness.mu": 0.0,
     "cell_brightness.sigma": 0.1,
-    "prob.opacity_diffraction_offset": 0.02
+    "prob.opacity_diffraction_offset": 0.00
 }
