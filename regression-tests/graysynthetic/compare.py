@@ -1,7 +1,6 @@
 import sys
 import os
 
-
 class CSVFile:
     def __init__(self, file):
         next_line = next(file,None)
@@ -53,7 +52,7 @@ class Lineage(CSVFile):
         other_points = [(float(row[2]), float(row[3])) for row in other_last_frame_data]
         for x,y in my_points:
             (x2,y2) = min(other_points, key=lambda pt: dist(x, y, *pt))
-            if dist(x, y, x2, y2) > 25:
+            if dist(x, y, x2, y2) > 30:
                 print("Distance between pair of positions too big!", file=sys.stderr)
                 return False
 
