@@ -17,7 +17,7 @@ if python3 "./src/main.py" \
     --frame_first 0 \
     --frame_last 13 \
     --debug "./debug" \
-    --input "./examples/canonical/input/gray/frame%03d.png" \
+    --input "./examples/canonical/input/binary/frame%03d.png" \
     --output "$REG_DIR/output" \
     --bestfit "$REG_DIR/bestfit" \
     --config "./examples/canonical/global_optimizer_config.json" \
