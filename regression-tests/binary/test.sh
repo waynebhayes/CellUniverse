@@ -22,7 +22,8 @@ if python3 "./src/main.py" \
     --bestfit "$REG_DIR/bestfit" \
     --config "./examples/canonical/local_optimizer_config.json" \
     --no_parallel \
-    --initial "./examples/canonical/initial.csv" ; then
+    --initial "./examples/canonical/initial.csv"
+then
     :
 else
     die "Python quit unexpectedly!"

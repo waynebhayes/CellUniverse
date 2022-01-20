@@ -8,7 +8,7 @@ echo "Testing binary local simulated annealing distance objective"
 
 # create the test output dir if it doesn't exist
 rm -rf $REG_DIR/output
-mkdir $REG_DIR/output
+mkdir  $REG_DIR/output
 
 rm -rf $REG_DIR/bestfit
 mkdir $REG_DIR/bestfit
@@ -21,9 +21,9 @@ if python3 "./src/main.py" \
     --output "$REG_DIR/output" \
     --bestfit "$REG_DIR/bestfit" \
     --config "./examples/canonical/local_optimizer_config.json" \
-    --initial "./examples/canonical/initial.csv" \
     --no_parallel \
-    --dist; then
+    --initial "./examples/canonical/initial.csv" --dist
+then
     :
 else
     die "Python quit unexpectedly!"

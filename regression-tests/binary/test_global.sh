@@ -8,7 +8,7 @@ echo "Testing binary simulated annealing global optimization"
 
 # create the test output dir if it doesn't exist
 rm -rf $REG_DIR/output
-mkdir $REG_DIR/output
+mkdir  $REG_DIR/output
 
 rm -rf $REG_DIR/bestfit
 mkdir $REG_DIR/bestfit
@@ -21,8 +21,9 @@ if python3 "./src/main.py" \
     --output "$REG_DIR/output" \
     --bestfit "$REG_DIR/bestfit" \
     --config "./examples/canonical/global_optimizer_config.json" \
-    --initial "./examples/canonical/initial.csv" \
-    --no_parallel --global_optimization; then
+    --no_parallel --global_optimization \
+    --initial "./examples/canonical/initial.csv"
+then
     :
 else
     die "Python quit unexpectedly!"
