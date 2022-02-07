@@ -575,6 +575,53 @@ class BackGround_luminosity_offset(Change):
         self.old_synthimage[:]= self.new_synthimage
         self.old_simulation_config["background.color"] = self.new_simulation_config["background.color"]
         self.old_simulation_config["cell.color"] = self.new_simulation_config["cell.color"]
+
+class Camera_Shift(Change):
+    def __init__(self, frame, realimage, synthimage, cellmap, config, distmap=None):
+        self.frame = frame
+        self.realimage = realimage
+        self.old_synthimage = synthimage
+        self.old_cellmap = cellmap
+        self.simulation_config = frame.simulation_config
+        self.config = config
+        self.new_node_map = deepcopy(frame.node_map)
+
+        camera_shift_x_sigma = config["camera"]["modification.x.sigma"]
+        camera_shift_y_sigma = config["camera"]["modification.y.sigma"]
+
+        shift_x = np.random.normal(0, camera_shift_x_sigma)
+        shift_y = np.random.normal(0, camera_shift_y_sigma)
+
+        for node in self.new_node_map.values():
+            node.cell.x += shift_x
+            node.cell.y += shift_y
+        
+    @property
+    def is_valid(self) -> bool:
+        for node in self.new_node_map.values():
+            if not (0 <= node.cell.x < self.realimage.shape[1] and 0 <= node.cell.y < self.realimage.shape[0]):
+                return False
+        return True
+
+    @property
+    def costdiff(self) -> float:
+        overlap_cost = self.config["overlap.cost"]
+
+        self.new_synthimage, self.new_cellmap = optimization.generate_synthetic_image(self.new_node_map.values(), self.realimage.shape, self.simulation_config)
+
+        if useDistanceObjective:
+            start_cost = optimization.dist_objective(self.realimage, self.old_synthimage, self.distmap, self.old_cellmap, overlap_cost)
+            end_cost = optimization.dist_objective(self.realimage, self.new_synthimage, self.distmap, self.new_cellmap, overlap_cost)
+        else:
+            start_cost = optimization.objective(self.realimage, self.old_synthimage, self.old_cellmap, overlap_cost, self.config["cell.importance"])
+            end_cost = optimization.objective(self.realimage, self.new_synthimage, self.new_cellmap, overlap_cost, self.config["cell.importance"])
+        return end_cost - start_cost
+    
+    def apply(self):
+        self.old_synthimage[:] = self.new_synthimage
+        self.old_cellmap[:] = self.new_cellmap
+        self.frame.node_map = self.new_node_map
+        
         
 def save_lineage(filename, cellnodes: List[CellNodeM],  lineagefile):
         for node in cellnodes:
@@ -739,6 +786,7 @@ def optimize_core(lineage, realimages, synthimages, cellmaps, distmaps, window_s
     split_prob = config["prob.split"]
     background_offset_prob = config["prob.background_offset"]
     opacity_diffraction_offset_prob = config["prob.opacity_diffraction_offset"]
+    camera_shift_prob = config["prob.camera_shift"]
 
     run_iterations = min(current_iteration + batch_size, total_iterations)
     while current_iteration < run_iterations:
@@ -751,8 +799,8 @@ def optimize_core(lineage, realimages, synthimages, cellmaps, distmaps, window_s
             temperature = gerp(frame_start_temp, frame_end_temp, current_iteration/(total_iterations))                
         frame = lineage.frames[frame_index]
         node = np.random.choice(frame.nodes)
-        change_option = np.random.choice(["split", "perturbation", "combine", "background_offset", "opacity_diffraction_offset"], 
-                                         p=[split_prob, perturbation_prob, combine_prob, background_offset_prob, opacity_diffraction_offset_prob])
+        change_option = np.random.choice(["split", "perturbation", "combine", "background_offset", "opacity_diffraction_offset", "camera_shift"], 
+                                         p=[split_prob, perturbation_prob, combine_prob, background_offset_prob, opacity_diffraction_offset_prob, camera_shift_prob])
         change = None
         if change_option == "split" and np.random.random_sample() < optimization.split_proba(node.cell.length) and not (window_start <= 0 and frame_index <= 0):
             # print("split")
@@ -772,6 +820,10 @@ def optimize_core(lineage, realimages, synthimages, cellmaps, distmaps, window_s
         elif change_option == "opacity_diffraction_offset" and not (window_start <= 0 and frame_index <= 0 ) and config["simulation"]["image.type"] == "graySynthetic":
             #print("opacity change")
             change = Opacity_Diffraction_offset(lineage.frames[frame_index], realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], config)
+
+        elif change_option == "camera_shift" and not (window_start <= 0 and frame_index <= 0 ):
+            change = Camera_Shift(lineage.frames[frame_index], realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], config)
+
         if change and change.is_valid:
             # apply if acceptable
             costdiff = change.costdiff

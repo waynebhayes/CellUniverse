@@ -31,6 +31,7 @@
     "prob.perturbation": 0.92,
     "prob.combine": 0.02,
     "prob.split" : 0.06,
+    "prob.camera_shift": 0.0,
     "prob.opacity_diffraction_offset": 0.0,
     "prob.background_offset": 0.0, //This should be set to 0 if the algorithm runs in binary version
     "perturbation":
@@ -56,6 +57,12 @@
 		"prob.color": 0.0,
         "modification.color.mu":0.0,
         "modification.color.sigma":0.001
+    },
+
+    "camera":
+    {
+        "modification.x.sigma": 0,
+        "modification.y.sigma": 0
     },
 
     "global_optimizer.window_size": 1,

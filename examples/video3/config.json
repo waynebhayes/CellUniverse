@@ -5,8 +5,8 @@
     "global.framesPerSecond": 1.0,
 
     // Bacilli settings	
-    "bacilli.maxSpeed":  24.0,  // microns per second
-    "bacilli.maxSpin":    1.57, // radians per second
+    "bacilli.maxSpeed":  10.0,  // microns per second
+    "bacilli.maxSpin":    0.57, // radians per second
     "bacilli.minGrowth": -1.0,  // microns
     "bacilli.maxGrowth": 9.0,  // microns
     "bacilli.minWidth":   4.0,  // microns
@@ -28,9 +28,10 @@
         "cell.opacity": "auto"
     },
     
-    "prob.perturbation": 0.90,
+    "prob.perturbation": 0.89,
     "prob.combine": 0.02,
-    "prob.split" : 0.08,
+    "prob.split" : 0.07,
+    "prob.camera_shift": 0.02,
     "perturbation":
     {
         "prob.x": 0.45,
@@ -43,12 +44,18 @@
         "modification.width.mu":0.0,
         "modification.length.mu":0.01,
         "modification.rotation.mu":0.0,
-        "modification.x.sigma":1.2,
-        "modification.y.sigma":1.2,
-        "modification.width.sigma":0.1,
-        "modification.length.sigma":0.2,
-        "modification.rotation.sigma":0.15,
+        "modification.x.sigma":0.2,
+        "modification.y.sigma":0.2,
+        "modification.width.sigma":0.05,
+        "modification.length.sigma":0.1,
+        "modification.rotation.sigma":0.1,
         "prob.opacity": 0.2
+    },
+
+    "camera":
+    {
+        "modification.x.sigma": 5,
+        "modification.y.sigma": 5
     },
 
     "global_optimizer.window_size": 1,
