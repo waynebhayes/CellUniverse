@@ -8,7 +8,7 @@ This module contains the Cell class which stores the properties of cells and
 related functions.
 """
 
-from math import atan2, ceil, floor, cos, ceil, sin, sqrt
+from math import atan2, ceil, floor, cos, sin, sqrt
 import time
 import numpy as np
 from skimage.draw import polygon
@@ -19,7 +19,7 @@ from drawing import draw_arc, draw_line, circle
 from mathhelper import Rectangle, Vector
 
 
-class Cell(object):
+class Cell():
     """The Cell class stores information about a particular cell."""
 
     _REQUIRED_CONFIG = []
