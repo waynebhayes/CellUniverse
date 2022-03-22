@@ -13,9 +13,32 @@ https://www.python.org/getit/
 Requires Pip.
 https://pip.pypa.io/en/stable/quickstart/
 
-
 Quickstart:
+
+1. Install Pipenv
+```bash
+$ pip install pipenv
+```
+
+2. Install required packages using Pipenv
+```bash
+$ pipenv install
+```
+This will create a virtual environment with all the required Python packages
+
+3. Activate Pipenv environment
+```bash
+$ pipenv shell
+```
+
+3. Run Cell Universe on an example video (look inside the `run.sh` script to see the command used).
+```bash
+$ cd examples/canonical && ./run.sh
+```
+
 -----------
+Alternative:
+
 1. (Optional) Create a Python 3 virtual environment.
 ```bash
 $ pip3 install virtualenv
