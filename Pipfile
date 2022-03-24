@@ -13,8 +13,6 @@ scikit-learn = "*"
 scipy = "*"
 matplotlib = "*"
 Pillow = "*"
-dask = {extras = ["all"],version = "*"}
+dask = "*"
 distributed = "*"
-
-[requires]
-python_version = "3.7"
+pandas = "*"
