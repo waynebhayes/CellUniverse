@@ -157,6 +157,8 @@ def save_output(image_name, synthimage, realimage, cellnodes, args, config):
     output_frame[..., 1] = output_frame[..., 0]
     output_frame[..., 2] = output_frame[..., 0]
     for node in cellnodes:
+        if node.cell.dormant:
+            continue
         node.cell.drawoutline(output_frame, (1, 0, 0))
     output_frame = Image.fromarray(np.uint8(255 * output_frame))
     output_frame.save(args.output / image_name)
@@ -244,6 +246,13 @@ def main(args):
             sim_start = args.continue_from - args.frame_first
             print(sim_start)
             shape = realimages[0].shape
+            if 'padding' in config["simulation"]:
+                pad = config["simulation"]["padding"]
+                shape = (shape[0] + 2 * pad, shape[1] + 2 * pad)
+                for i in range(len(lineage.frames)):
+                    for cellnode in lineage.frames[i].node_map.values():
+                        cellnode.cell.x = cellnode.cell.x + pad
+                        cellnode.cell.y = cellnode.cell.y + pad
             synthimages = []
             cellmaps = []
             distmaps = []
@@ -258,6 +267,8 @@ def main(args):
                     if window_start >= sim_start:
                         if window_end > 1:
                             lineage.copy_forward()
+                    if pad > 0:
+                        realimages[window_end - 1] = np.pad(realimages[window_end - 1], [(pad, pad), (pad, pad)], mode='constant', constant_values=lineage.frames[window_end - 1].simulation_config['background.color'])
                     realimage = realimages[window_end - 1]
                     synthimage, cellmap = optimization.generate_synthetic_image(lineage.frames[window_end - 1].nodes, shape, lineage.frames[window_end - 1].simulation_config)
                     synthimages.append(synthimage)

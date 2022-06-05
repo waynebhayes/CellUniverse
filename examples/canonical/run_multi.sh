@@ -2,7 +2,7 @@ dir=$(pwd)
 cd ../..
 if python "./src/main.py" \
     --frame_first 0 \
-    --frame_last 30 \
+    --frame_last 100 \
     --input "$dir/input/gray/frame%03d.png" \
     --bestfit "$dir/output/bestfit" \
     --output "$dir/output" \
