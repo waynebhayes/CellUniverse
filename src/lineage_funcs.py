@@ -5,9 +5,10 @@ from global_optimization.Modules import CellNodeM, LineageM
 import pandas as pd
 from colony import LineageFrames, CellNode
 import csv
+import numpy as np
 
 
-def build_initial_lineage(imagefiles, lineagefile, continue_from, simulation_config):
+def build_initial_lineage(imagefiles, realimages, lineagefile, continue_from, simulation_config):
     # create a lineage given the path of the lineagefile and requiring imagefiles. The output lineage will contain frame number up to the continue_from(include)
     cells_data = pd.read_csv(lineagefile)
     cells_data = cells_data.replace('None', None)
@@ -23,18 +24,8 @@ def build_initial_lineage(imagefiles, lineagefile, continue_from, simulation_con
         for _, row in cells_data[cells_data["file"] == filename].iterrows():
             new_cell = Bacilli(row["name"], row["x"], row["y"], row["width"], row["length"], row["rotation"], row["split_alpha"], row["opacity"])
             lineage.frames[-1].add_cell(new_cell)
-    return lineage
-
-
-def find_optimal_simulation_confs(imagefiles, lineage, realimages, up_to_frame):
-    for i in range(len(imagefiles)):
-        filename = imagefiles[i].name
-        current_frame_number = int(filename.split('.')[0][-3:])
-        if current_frame_number > up_to_frame:
-            break
         lineage.frames[i].simulation_config = optimization.find_optimal_simulation_conf(lineage.frames[i].simulation_config, realimages[i], lineage.frames[i].nodes)
     return lineage
-
 
 def load_colony(colony, initial_file, config, initial_frame=None):
     """Loads the initial colony of cells."""
@@ -64,11 +55,10 @@ def create_lineage(imagefiles, realimages, config, args):
     colony = lineageframes.forward()
     if args.lineage_file:
         load_colony(colony, args.lineage_file, config, initial_frame=imagefiles[0].name)
-        lineage = build_initial_lineage(imagefiles, args.lineage_file, args.continue_from, config["simulation"])
+        lineage = build_initial_lineage(imagefiles, realimages, args.lineage_file, args.continue_from, config["simulation"])
     else:
         load_colony(colony, args.initial, config)
-        lineage = build_initial_lineage(imagefiles, args.initial, args.continue_from, config["simulation"])
-    lineage = find_optimal_simulation_confs(imagefiles, lineage, realimages, args.continue_from)
+        lineage = build_initial_lineage(imagefiles, realimages, args.initial, args.continue_from, config["simulation"])
     return lineage
 
 

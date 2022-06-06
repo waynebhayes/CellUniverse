@@ -120,6 +120,8 @@ def optimize_core(lineage, realimages, synthimages, cellmaps, distmaps, window_s
             temperature = gerp(frame_start_temp, frame_end_temp, current_iteration / (total_iterations))
         frame = lineage.frames[frame_index]
         node = np.random.choice(frame.nodes)
+        if node.cell.dormant:
+            continue
         change_option = np.random.choice(["split", "perturbation", "combine", "background_offset", "opacity_diffraction_offset", "camera_shift"],
                                          p=[split_prob, perturbation_prob, combine_prob, background_offset_prob, opacity_diffraction_offset_prob, camera_shift_prob])
         change = None
@@ -172,7 +174,7 @@ def optimize_core(lineage, realimages, synthimages, cellmaps, distmaps, window_s
         print("pbad is ", pbad_total / bad_count)
         return pbad_total / bad_count
 
-    realimage = realimages[-1]
+    realimage = realimages[0]
     shape = realimages[0].shape
     synthimage, cellmap = optimization.generate_synthetic_image(lineage.frames[-1].nodes, shape, lineage.frames[-1].simulation_config)
     cost = optimization.objective(realimage, synthimage, cellmap, config["overlap.cost"], config["cell.importance"])

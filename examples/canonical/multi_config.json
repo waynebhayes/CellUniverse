@@ -7,12 +7,12 @@
     // Bacilli settings
     "bacilli.maxSpeed":  13.0,  // microns per second
     "bacilli.maxSpin":    1.57, // radians per second
-    "bacilli.minGrowth": -2.0,  // microns
+    "bacilli.minGrowth": -1.0,  // microns
     "bacilli.maxGrowth": 13.0,  // microns
     "bacilli.minWidth":   4.0,  // microns
     "bacilli.maxWidth":   9.0,  // microns
     "bacilli.minLength": 14.0,  // microns
-    "bacilli.maxLength": 48.0,  // microns
+    "bacilli.maxLength": 58.0,  // microns
     "bacilli.distanceCostDivisor": 24,  // microns
     
     // simulation settings. NOTE: Image are converted to grayscale float32. 
@@ -24,36 +24,37 @@
         "cell.color" : "auto", // 0.15 for gray scale image
         "light.diffraction.sigma": "auto",  //11
         "light.diffraction.strength": "auto", //0.6
-        "light.diffraction.truncate": 3,
-        "cell.opacity": "auto"
+        "light.diffraction.truncate": 1,
+        "cell.opacity": "auto",
+        "padding": 48
     },
     
-    "prob.perturbation": 0.89,
-    "prob.combine": 0.05,
-    "prob.split" : 0.05,
+    "prob.perturbation": 0.88,
+    "prob.combine": 0.01,
+    "prob.split" : 0.06,
     "prob.camera_shift": 0.0,
-    "prob.opacity_diffraction_offset": 0.0,
-    "prob.background_offset": 0.01, //This should be set to 0 if the algorithm runs in binary version
+    "prob.opacity_diffraction_offset": 0.01,
+    "prob.background_offset": 0.04, //This should be set to 0 if the algorithm runs in binary version
     "perturbation":
     {
-        "prob.x": 0.35,
-        "prob.y": 0.35,
+        "prob.x": 0.38,
+        "prob.y": 0.38,
         "prob.width":0.1,
         "prob.length":0.2,
-        "prob.rotation":0.2,
+        "prob.rotation":0.25,
         "modification.x.mu":0.0,
         "modification.y.mu":0.0,
         "modification.width.mu":0.0,
         "modification.length.mu":0.0,
         "modification.rotation.mu":0.0,
-        "modification.x.sigma":2.0,
-        "modification.y.sigma":2.0,
+        "modification.x.sigma":2.5,
+        "modification.y.sigma":2.5,
         "modification.width.sigma":0.1,
-        "modification.length.sigma":1.1,
-        "modification.rotation.sigma":0.30,
-        "prob.opacity": 0.2,
+        "modification.length.sigma":1.5,
+        "modification.rotation.sigma":0.50,
+        "prob.opacity": 0.3,
         "modification.opacity.mu":0.0,
-        "modification.opacity.sigma":0.001
+        "modification.opacity.sigma":0.002
     },
 
     "camera":

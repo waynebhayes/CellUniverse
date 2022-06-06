@@ -64,6 +64,7 @@ class Bacilli(Cell):
         self._opacity = opacity
         self._split_alpha = split_alpha
         self._needs_refresh = True
+        self.dormant = False
 
     def _refresh(self):
         # get the positions of the centers of the head and tail circles
@@ -95,6 +96,9 @@ class Bacilli(Cell):
 
     def draw(self, image, cellmap, is_cell, simulation_config):
         """Draws the cell by adding the given value to the image."""
+        if self.dormant:
+            return
+
         if self._needs_refresh:
             self._refresh()
         
@@ -156,110 +160,111 @@ class Bacilli(Cell):
             radius=self._width / 2,
             shape=mask.shape)
         #phaseContrast unchanged
-        if image_type == "phaseContrast":
-            if not is_cell:
+        try:
+            if image_type == "phaseContrast":
+                if not is_cell:
+                    mask[body_mask] = True
+                    mask[head_mask] = True
+                    mask[tail_mask] = True
+
+                    image[self._region.top:self._region.bottom,
+                    self._region.left:self._region.right][mask] = 0.39  # 0.39*255=100
+
+                else:
+                    mask = np.zeros((height, width), dtype=np.bool)
+                    mask[body_mask] = True
+                    image[self._region.top:self._region.bottom,
+                    self._region.left:self._region.right][mask] = 0.25  # 0.25*255=65
+
+                    mask = np.zeros((height, width), dtype=np.bool)
+                    mask[head_mask] = True
+                    image[self._region.top:self._region.bottom,
+                    self._region.left:self._region.right][mask] = 0.25
+
+                    mask = np.zeros((height, width), dtype=np.bool)
+                    mask[tail_mask] = True
+                    image[self._region.top:self._region.bottom,
+                    self._region.left:self._region.right][mask] = 0.25
+
+                    mask = np.zeros((height, width), dtype=np.bool)
+                    mask[body_mask_up] = True
+                    image[self._region.top:self._region.bottom,
+                    self._region.left:self._region.right][mask] = 0.63  # 0.63*255=160
+
+                    mask = np.zeros((height, width), dtype=np.bool)
+                    mask[body_mask_middle] = True
+                    image[self._region.top:self._region.bottom,
+                    self._region.left:self._region.right][mask] = 0.39  # 0.39*255=100
+
+            elif image_type == "graySynthetic":
                 mask[body_mask] = True
                 mask[head_mask] = True
                 mask[tail_mask] = True
-
-                image[self._region.top:self._region.bottom,
-                self._region.left:self._region.right][mask] = 0.39  # 0.39*255=100
-
-            else:
-                mask = np.zeros((height, width), dtype=np.bool)
-                mask[body_mask] = True
-                image[self._region.top:self._region.bottom,
-                self._region.left:self._region.right][mask] = 0.25  # 0.25*255=65
-
-                mask = np.zeros((height, width), dtype=np.bool)
-                mask[head_mask] = True
-                image[self._region.top:self._region.bottom,
-                self._region.left:self._region.right][mask] = 0.25
-
-                mask = np.zeros((height, width), dtype=np.bool)
-                mask[tail_mask] = True
-                image[self._region.top:self._region.bottom,
-                self._region.left:self._region.right][mask] = 0.25
-
-                mask = np.zeros((height, width), dtype=np.bool)
-                mask[body_mask_up] = True
-                image[self._region.top:self._region.bottom,
-                self._region.left:self._region.right][mask] = 0.63  # 0.63*255=160
-
-                mask = np.zeros((height, width), dtype=np.bool)
-                mask[body_mask_middle] = True
-                image[self._region.top:self._region.bottom,
-                self._region.left:self._region.right][mask] = 0.39  # 0.39*255=100
-
-        elif image_type == "graySynthetic":
-            mask[body_mask] = True
-            mask[head_mask] = True
-            mask[tail_mask] = True
-            
-            gaussian_filter_truncate = simulation_config["light.diffraction.truncate"]
-            gaussian_filter_sigma = simulation_config["light.diffraction.sigma"]
-            diffraction_strength = simulation_config["light.diffraction.strength"]
-            cell_opacity = self._opacity if self._opacity != "auto" and self._opacity != "None" else simulation_config["cell.opacity"]
-            #in order to use optimze funtion
-            gaussian_filter_sigma = max(gaussian_filter_sigma, 0)
-            extension = ceil(gaussian_filter_truncate * gaussian_filter_sigma - 0.5)
-            diff_top = top - (2 * extension)
-            diff_left = left - (2 * extension)
-            diff_bottom = bottom + (2 * extension)
-            diff_right = right + (2 * extension)
-            
-            rendering_top = top - extension
-            rendering_left = left - extension
-            rendering_bottom = bottom + extension
-            rendering_right = right + extension
-            
-            re_diff_top, re_diff_left, re_rendering_top, re_rendering_left = [max(i, 0) for i in [diff_top, diff_left, rendering_top, rendering_left]]
-            re_diff_bottom, re_rendering_bottom = [min(i, image.shape[0]) for i in [diff_bottom, rendering_bottom]]
-            re_diff_right, re_rendering_right = [min(i, image.shape[1]) for i in [diff_right, rendering_right]]
-            
-            if is_cell:  
-                cellmap[top:bottom, left:right][mask] += 1
-                cellmap_diff = cellmap[re_diff_top:re_diff_bottom, re_diff_left:re_diff_right]
-                diffraction_mask = np.zeros(cellmap_diff.shape, dtype=float)
-                diffraction_mask[cellmap_diff>0] = diffraction_strength
-                diffraction_mask = gaussian_filter(diffraction_mask, gaussian_filter_sigma, truncate = gaussian_filter_truncate)
-                diffraction_mask[cellmap_diff==0] += background_color
-                diffraction_mask[cellmap_diff>0] = cell_color + cell_opacity * diffraction_mask[cellmap_diff>0]
-                #print("diffraction mask shape: ", diffraction_mask.shape)
-                image[re_rendering_top:re_rendering_bottom, re_rendering_left:re_rendering_right] = diffraction_mask[re_rendering_top - re_diff_top:
-                                                                                                         re_rendering_bottom - re_diff_bottom if re_rendering_bottom - re_diff_bottom != 0 else None, 
-                                                                                                         re_rendering_left - re_diff_left:
-                                                                                                         re_rendering_right - re_diff_right if re_rendering_right - re_diff_right != 0 else None]
-            else:
-                cellmap[top:bottom, left:right][mask] -= 1
-                cellmap_diff = cellmap[re_diff_top:re_diff_bottom, re_diff_left:re_diff_right]
-                diffraction_mask = np.zeros(cellmap_diff.shape, dtype=float)
-                diffraction_mask[cellmap_diff>0] = diffraction_strength
-                diffraction_mask = gaussian_filter(diffraction_mask, gaussian_filter_sigma, truncate = gaussian_filter_truncate)
-                diffraction_mask[cellmap_diff==0] += background_color
-                diffraction_mask[cellmap_diff>0] = cell_color + cell_opacity * diffraction_mask[cellmap_diff>0]
-                #print("diffraction mask shape: ", diffraction_mask.shape)
-                image[re_rendering_top:re_rendering_bottom, re_rendering_left:re_rendering_right] = diffraction_mask[re_rendering_top - re_diff_top:
-                                                                                                         re_rendering_bottom - re_diff_bottom if re_rendering_bottom - re_diff_bottom != 0 else None, 
-                                                                                                         re_rendering_left - re_diff_left:
-                                                                                                         re_rendering_right - re_diff_right if re_rendering_right - re_diff_right != 0 else None]
                 
-        elif image_type == "binary":
-            mask[body_mask] = True
-            mask[head_mask] = True
-            mask[tail_mask] = True
-            if is_cell:
-                image[self._region.top:self._region.bottom,
-                      self._region.left:self._region.right][mask] += 1.0
-                cellmap[self._region.top:self._region.bottom,
-                      self._region.left:self._region.right][mask] += 1
-            else:
-                image[self._region.top:self._region.bottom,
-                      self._region.left:self._region.right][mask] -= 1.0
-                cellmap[self._region.top:self._region.bottom,
-                      self._region.left:self._region.right][mask] -= 1
-
-
+                gaussian_filter_truncate = simulation_config["light.diffraction.truncate"]
+                gaussian_filter_sigma = simulation_config["light.diffraction.sigma"]
+                diffraction_strength = simulation_config["light.diffraction.strength"]
+                cell_opacity = self._opacity if self._opacity != "auto" and self._opacity != "None" and self._opacity != None else simulation_config["cell.opacity"]
+                #in order to use optimze funtion
+                gaussian_filter_sigma = max(gaussian_filter_sigma, 0)
+                extension = ceil(gaussian_filter_truncate * gaussian_filter_sigma - 0.5)
+                diff_top = top - (2 * extension)
+                diff_left = left - (2 * extension)
+                diff_bottom = bottom + (2 * extension)
+                diff_right = right + (2 * extension)
+                
+                rendering_top = top - extension
+                rendering_left = left - extension
+                rendering_bottom = bottom + extension
+                rendering_right = right + extension
+                
+                re_diff_top, re_diff_left, re_rendering_top, re_rendering_left = [max(i, 0) for i in [diff_top, diff_left, rendering_top, rendering_left]]
+                re_diff_bottom, re_rendering_bottom = [min(i, image.shape[0]) for i in [diff_bottom, rendering_bottom]]
+                re_diff_right, re_rendering_right = [min(i, image.shape[1]) for i in [diff_right, rendering_right]]
+                
+                if is_cell:  
+                    cellmap[top:bottom, left:right][mask] += 1
+                    cellmap_diff = cellmap[re_diff_top:re_diff_bottom, re_diff_left:re_diff_right]
+                    diffraction_mask = np.zeros(cellmap_diff.shape, dtype=float)
+                    diffraction_mask[cellmap_diff>0] = diffraction_strength
+                    diffraction_mask = gaussian_filter(diffraction_mask, gaussian_filter_sigma, truncate = gaussian_filter_truncate)
+                    diffraction_mask[cellmap_diff==0] += background_color
+                    diffraction_mask[cellmap_diff>0] = cell_color + cell_opacity * diffraction_mask[cellmap_diff>0]
+                    #print("diffraction mask shape: ", diffraction_mask.shape)
+                    image[re_rendering_top:re_rendering_bottom, re_rendering_left:re_rendering_right] = diffraction_mask[re_rendering_top - re_diff_top:
+                                                                                                             re_rendering_bottom - re_diff_bottom if re_rendering_bottom - re_diff_bottom != 0 else None, 
+                                                                                                             re_rendering_left - re_diff_left:
+                                                                                                             re_rendering_right - re_diff_right if re_rendering_right - re_diff_right != 0 else None]
+                else:
+                    cellmap[top:bottom, left:right][mask] -= 1
+                    cellmap_diff = cellmap[re_diff_top:re_diff_bottom, re_diff_left:re_diff_right]
+                    diffraction_mask = np.zeros(cellmap_diff.shape, dtype=float)
+                    diffraction_mask[cellmap_diff>0] = diffraction_strength
+                    diffraction_mask = gaussian_filter(diffraction_mask, gaussian_filter_sigma, truncate = gaussian_filter_truncate)
+                    diffraction_mask[cellmap_diff==0] += background_color
+                    diffraction_mask[cellmap_diff>0] = cell_color + cell_opacity * diffraction_mask[cellmap_diff>0]
+                    #print("diffraction mask shape: ", diffraction_mask.shape)
+                    image[re_rendering_top:re_rendering_bottom, re_rendering_left:re_rendering_right] = diffraction_mask[re_rendering_top - re_diff_top:
+                                                                                                             re_rendering_bottom - re_diff_bottom if re_rendering_bottom - re_diff_bottom != 0 else None, 
+                                                                                                             re_rendering_left - re_diff_left:
+                                                                                                             re_rendering_right - re_diff_right if re_rendering_right - re_diff_right != 0 else None]
+                    
+            elif image_type == "binary":
+                mask[body_mask] = True
+                mask[head_mask] = True
+                mask[tail_mask] = True
+                if is_cell:
+                    image[self._region.top:self._region.bottom,
+                          self._region.left:self._region.right][mask] += 1.0
+                    cellmap[self._region.top:self._region.bottom,
+                          self._region.left:self._region.right][mask] += 1
+                else:
+                    image[self._region.top:self._region.bottom,
+                          self._region.left:self._region.right][mask] -= 1.0
+                    cellmap[self._region.top:self._region.bottom,
+                          self._region.left:self._region.right][mask] -= 1
+        except:
+            self.dormant = True
 
 
 
