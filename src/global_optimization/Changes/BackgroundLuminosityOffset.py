@@ -25,7 +25,7 @@ class BackGroundLuminosityOffset(Change):
 
     @property
     def is_valid(self) -> bool:
-        return self.frame.simulation_config["background.color"] > 0
+        return self.frame.simulation_config["background.color"] > 0 and self.frame.simulation_config["cell.color"] - self.frame.simulation_config["background.color"] > 0.2
 
     @property
     def costdiff(self) -> float:
