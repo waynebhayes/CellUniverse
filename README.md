@@ -1,7 +1,7 @@
 Cell Universe
 =============
 
-Tracks the movement of cells from a video source. Currently the code has only been verified to work in 2D, with bacteria-shaped cells. More to come.
+Tracks the movement of cells from a video source. Currently the code has only been verified to work in 2D, with bacteria-shaped cells. More to come. Our first paper can be found at https://www.mdpi.com/1999-4893/15/2/51, and the PDF is available is available in the top directory of the repo.
 
 Once you clone the repo onto your machine, you should test if Cell Universe is working on your system by installing the requirements and running the script `./regression-test-all.sh`.
 
