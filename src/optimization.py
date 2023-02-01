@@ -1,14 +1,14 @@
 import time
 import math
-from math import sqrt, atan
+from math import sqrt
 from itertools import chain
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageFont
 from scipy.ndimage import distance_transform_edt
 from scipy.optimize import leastsq
 
-from cell import Bacilli
+from Cells.Bacilli import Bacilli
 from colony import LineageFrames
 from lineage_funcs import load_colony
 

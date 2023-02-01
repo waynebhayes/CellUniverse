@@ -1,7 +1,7 @@
 useDistanceObjective = False
 
 
-class Change:
+class Change():
     @property
     def is_valid(self) -> bool:
         pass

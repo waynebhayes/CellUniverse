@@ -1,11 +1,10 @@
-from cell import Bacilli
+from Cells.Bacilli import Bacilli
 import optimization
 from typing import List
 from global_optimization.Modules import CellNodeM, LineageM
 import pandas as pd
 from colony import LineageFrames, CellNode
 import csv
-import numpy as np
 
 
 def build_initial_lineage(imagefiles, realimages, lineagefile, continue_from, simulation_config):

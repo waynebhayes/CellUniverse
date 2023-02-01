@@ -1,9 +1,8 @@
 from typing import List
-import cell
-
+from Cells.Bacilli import Bacilli
 
 class CellNodeM:
-    def __init__(self, cell: cell.Bacilli, parent: 'CellNodeM' = None):
+    def __init__(self, cell: Bacilli, parent: 'CellNodeM' = None):
         self.cell = cell
         self.parent = parent
         self.children: List[CellNodeM] = []
@@ -18,7 +17,7 @@ class CellNodeM:
             grandchildren.extend(child.children)
         return grandchildren
 
-    def make_child(self, cell: cell.Bacilli):
+    def make_child(self, cell: Bacilli):
         child = CellNodeM(cell, self)
         self.children.append(child)
         return child

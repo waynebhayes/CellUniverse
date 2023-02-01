@@ -1,42 +1,12 @@
-# -*- coding: utf-8 -*-
-
-"""
-cellanneal.cell
-~~~~~~~~~~~~~~~
-
-This module contains the Cell class which stores the properties of cells and
-related functions.
-"""
-
 from math import atan2, ceil, floor, cos, sin, sqrt
-import time
 import numpy as np
 from skimage.draw import polygon
-# from skimage.draw import circle, polygon
 from scipy.ndimage import gaussian_filter
 
 from drawing import draw_arc, draw_line, circle
 from mathhelper import Rectangle, Vector
 
-
-class Cell():
-    """The Cell class stores information about a particular cell."""
-
-    _REQUIRED_CONFIG = []
-
-    def __init__(self, name):
-        self._name = name
-
-    @classmethod
-    def checkconfig(cls, config):
-        for required in cls._REQUIRED_CONFIG:
-            if required not in config:
-                raise ValueError(f'Invalid config: missing "{required}"')
-
-    @property
-    def name(self):
-        return self._name
-
+from .Cell import Cell
 
 class Bacilli(Cell):
     """The Bacilli class represents a bacilli bacterium."""
@@ -83,7 +53,7 @@ class Bacilli(Cell):
         self._head_left = self._head_center - radius*side
         self._tail_right = self._tail_center + radius*side
         self._tail_left = self._tail_center - radius*side
-        
+
 
         # compute the region of interest
         self._region = Rectangle(
@@ -101,20 +71,20 @@ class Bacilli(Cell):
 
         if self._needs_refresh:
             self._refresh()
-        
+
         #Diffraction pattern currently only applies to graySynthetic image
         image_type = simulation_config["image.type"]
         background_color = simulation_config["background.color"]
         cell_color = simulation_config["cell.color"]
-        
-        top = self._region.top 
-        bottom = self._region.bottom 
-        left = self._region.left 
-        right = self._region.right 
+
+        top = self._region.top
+        bottom = self._region.bottom
+        left = self._region.left
+        right = self._region.right
         width = right - left
         height = bottom - top
         mask = np.zeros((height, width), dtype=bool)
-        
+
         body_mask = polygon(
             r=(self._head_left.y - top,
                self._head_right.y - top,
@@ -125,7 +95,7 @@ class Bacilli(Cell):
                self._tail_right.x - left,
                self._tail_left.x - left),
             shape=mask.shape)
-        
+
         body_mask_up = polygon(
             r=(self._head_left.y - self._region.top,
                ceil((self._head_right.y + self._head_left.y) / 2) - self._region.top,
@@ -136,7 +106,7 @@ class Bacilli(Cell):
                ceil((self._tail_right.x + self._tail_left.x) / 2) - self._region.left,
                self._tail_left.x - self._region.left),
             shape=mask.shape)
-        
+
         body_mask_middle = polygon(
             r=(ceil((self._head_right.y + self._head_left.y * 2) / 3) - self._region.top,
                ceil((self._head_right.y * 2 + self._head_left.y) / 3) - self._region.top,
@@ -147,7 +117,7 @@ class Bacilli(Cell):
                ceil((self._tail_right.x * 2 + self._tail_left.x) / 3) - self._region.left,
                ceil((self._tail_right.x + self._tail_left.x * 2) / 3) - self._region.left),
             shape=mask.shape)
-        
+
         head_mask = circle(
             x=self._head_center.x - left,
             y=self._head_center.y - top,
@@ -200,7 +170,7 @@ class Bacilli(Cell):
                 mask[body_mask] = True
                 mask[head_mask] = True
                 mask[tail_mask] = True
-                
+
                 gaussian_filter_truncate = simulation_config["light.diffraction.truncate"]
                 gaussian_filter_sigma = simulation_config["light.diffraction.sigma"]
                 diffraction_strength = simulation_config["light.diffraction.strength"]
@@ -212,17 +182,17 @@ class Bacilli(Cell):
                 diff_left = left - (2 * extension)
                 diff_bottom = bottom + (2 * extension)
                 diff_right = right + (2 * extension)
-                
+
                 rendering_top = top - extension
                 rendering_left = left - extension
                 rendering_bottom = bottom + extension
                 rendering_right = right + extension
-                
+
                 re_diff_top, re_diff_left, re_rendering_top, re_rendering_left = [max(i, 0) for i in [diff_top, diff_left, rendering_top, rendering_left]]
                 re_diff_bottom, re_rendering_bottom = [min(i, image.shape[0]) for i in [diff_bottom, rendering_bottom]]
                 re_diff_right, re_rendering_right = [min(i, image.shape[1]) for i in [diff_right, rendering_right]]
-                
-                if is_cell:  
+
+                if is_cell:
                     cellmap[top:bottom, left:right][mask] += 1
                     cellmap_diff = cellmap[re_diff_top:re_diff_bottom, re_diff_left:re_diff_right]
                     diffraction_mask = np.zeros(cellmap_diff.shape, dtype=float)
@@ -232,9 +202,9 @@ class Bacilli(Cell):
                     diffraction_mask[cellmap_diff>0] = cell_color + cell_opacity * diffraction_mask[cellmap_diff>0]
                     #print("diffraction mask shape: ", diffraction_mask.shape)
                     image[re_rendering_top:re_rendering_bottom, re_rendering_left:re_rendering_right] = diffraction_mask[re_rendering_top - re_diff_top:
-                                                                                                             re_rendering_bottom - re_diff_bottom if re_rendering_bottom - re_diff_bottom != 0 else None, 
-                                                                                                             re_rendering_left - re_diff_left:
-                                                                                                             re_rendering_right - re_diff_right if re_rendering_right - re_diff_right != 0 else None]
+                                                                                                                         re_rendering_bottom - re_diff_bottom if re_rendering_bottom - re_diff_bottom != 0 else None,
+                                                                                                        re_rendering_left - re_diff_left:
+                                                                                                        re_rendering_right - re_diff_right if re_rendering_right - re_diff_right != 0 else None]
                 else:
                     cellmap[top:bottom, left:right][mask] -= 1
                     cellmap_diff = cellmap[re_diff_top:re_diff_bottom, re_diff_left:re_diff_right]
@@ -245,24 +215,24 @@ class Bacilli(Cell):
                     diffraction_mask[cellmap_diff>0] = cell_color + cell_opacity * diffraction_mask[cellmap_diff>0]
                     #print("diffraction mask shape: ", diffraction_mask.shape)
                     image[re_rendering_top:re_rendering_bottom, re_rendering_left:re_rendering_right] = diffraction_mask[re_rendering_top - re_diff_top:
-                                                                                                             re_rendering_bottom - re_diff_bottom if re_rendering_bottom - re_diff_bottom != 0 else None, 
-                                                                                                             re_rendering_left - re_diff_left:
-                                                                                                             re_rendering_right - re_diff_right if re_rendering_right - re_diff_right != 0 else None]
-                    
+                                                                                                                         re_rendering_bottom - re_diff_bottom if re_rendering_bottom - re_diff_bottom != 0 else None,
+                                                                                                        re_rendering_left - re_diff_left:
+                                                                                                        re_rendering_right - re_diff_right if re_rendering_right - re_diff_right != 0 else None]
+
             elif image_type == "binary":
                 mask[body_mask] = True
                 mask[head_mask] = True
                 mask[tail_mask] = True
                 if is_cell:
                     image[self._region.top:self._region.bottom,
-                          self._region.left:self._region.right][mask] += 1.0
+                    self._region.left:self._region.right][mask] += 1.0
                     cellmap[self._region.top:self._region.bottom,
-                          self._region.left:self._region.right][mask] += 1
+                    self._region.left:self._region.right][mask] += 1
                 else:
                     image[self._region.top:self._region.bottom,
-                          self._region.left:self._region.right][mask] -= 1.0
+                    self._region.left:self._region.right][mask] -= 1.0
                     cellmap[self._region.top:self._region.bottom,
-                          self._region.left:self._region.right][mask] -= 1
+                    self._region.left:self._region.right][mask] -= 1
         except:
             self.dormant = True
 
@@ -274,23 +244,23 @@ class Bacilli(Cell):
             self._refresh()
 
         draw_line(image, int(self._tail_left.x), int(self._tail_left.y),
-                         int(self._head_left.x), int(self._head_left.y), color)
+                  int(self._head_left.x), int(self._head_left.y), color)
         draw_line(image, int(self._tail_right.x), int(self._tail_right.y),
-                         int(self._head_right.x), int(self._head_right.y), color)
+                  int(self._head_right.x), int(self._head_right.y), color)
 
         r0 = self._head_right - self._head_center
         r1 = self._head_left - self._head_center
         t1 = atan2(r0.y, r0.x)
         t0 = atan2(r1.y, r1.x)
         draw_arc(image, self._head_center.x, self._head_center.y,
-                        self._width/2, t0, t1, color)
+                 self._width/2, t0, t1, color)
 
         r0 = self._tail_right - self._tail_center
         r1 = self._tail_left - self._tail_center
         t0 = atan2(r0.y, r0.x)
         t1 = atan2(r1.y, r1.x)
         draw_arc(image, self._tail_center.x, self._tail_center.y,
-                        self._width/2, t0, t1, color)
+                 self._width/2, t0, t1, color)
 
     def split(self, alpha):
         """Splits a cell into two cells with a ratio determined by alpha."""
@@ -380,19 +350,19 @@ class Bacilli(Cell):
             gaussian_filter_truncate = simulation_config["light.diffraction.truncate"]
             gaussian_filter_sigma = simulation_config["light.diffraction.sigma"]
             diffraction_strength = simulation_config["light.diffraction.strength"]
-            
+
             extension = max(floor(gaussian_filter_truncate * gaussian_filter_sigma - 0.5),0)
             diff_top = self._region.top  - extension
             diff_left = self._region.left  - extension
             diff_bottom = self._region.bottom + extension
             diff_right = self._region.right + extension
-            
+
             region = Rectangle(diff_left, diff_top, diff_right, diff_bottom)
             return region
         else:
             raise ValueError("Cell:simulated_region: unsupported image type")
-            
-            
+
+
     @property
     def region(self):
         if self._needs_refresh:
@@ -445,23 +415,23 @@ class Bacilli(Cell):
     @property
     def rotation(self):
         return self._rotation
-    
+
     @property
     def split_alpha(self):
         return self._split_alpha
-    
+
     @split_alpha.setter
     def split_alpha(self, value):
         self._split_alpha = value
-    
+
     @property
     def opacity(self):
         return self._opacity
-    
+
     @opacity.setter
     def opacity(self, value):
         self._opacity = value
-        
+
     @rotation.setter
     def rotation(self, value):
         if value != self._rotation:

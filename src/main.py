@@ -175,7 +175,6 @@ def main(args):
         raise Exception("when auto_temp is set to 1(default value), starting temperature or ending temperature should not be set manually")
 
     if not args.no_parallel:
-        import dask
         from dask.distributed import Client, LocalCluster
         if not args.cluster:
             cluster = LocalCluster(
@@ -326,7 +325,7 @@ if __name__ == '__main__':
     from itertools import count
 
     import jsonc
-    from cell import Bacilli
+    from Cells.Bacilli import Bacilli
     from sys import exit
     # pr = cProfile.Profile()
     # pr.enable()
