@@ -35,6 +35,10 @@ $ pipenv shell
 ```bash
 $ cd examples/canonical && ./run.sh
 ```
+similarly for video 1, 2, 3 (in `run.sh` you can change the starting and ending frame)
+```bash
+$ cd examples/video1 && ./run.sh
+```
 
 -----------
 Alternative:
@@ -52,6 +56,10 @@ $ source venv/bin/activate
 3. Run Cell Universe on an example video (look inside the `run.sh` script to see the command used).
 ```bash
 (venv)$ cd examples/canonical && ./run.sh
+```
+similarly for video 1, 2, 3 (in `run.sh` you can change the starting and ending frame)
+```bash
+(venv)$ cd examples/video1 && ./run.sh
 ```
 
 Steps to get a new video running:
