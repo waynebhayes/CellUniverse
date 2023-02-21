@@ -1,6 +1,6 @@
 {
     // Global settings
-    "global.cellType": "bacilli",
+    "global.cellType": "sphere",
     "global.pixelsPerMicron": 1.0,
     "global.framesPerSecond": 1.0,
 
@@ -20,8 +20,8 @@
     "simulation":
     {
         "image.type": "To be Set", 
-        "background.color": 0.59, // 0.39 for gary scale image
-        "cell.color" : 0.1, // 0.15 for gray scale image
+        "background.color": "auto", // 0.39 for gary scale image
+        "cell.color" : "auto", // 0.15 for gray scale image
         "light.diffraction.sigma": "auto",  //11
         "light.diffraction.strength": "auto", //0.6
         "light.diffraction.truncate": 1,

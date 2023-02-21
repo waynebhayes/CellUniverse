@@ -9,6 +9,7 @@ from scipy.ndimage import distance_transform_edt
 from scipy.optimize import leastsq
 
 from Cells.Bacilli import Bacilli
+from Cells.Sphere import Sphere
 from colony import LineageFrames
 from lineage_funcs import load_colony
 
@@ -80,14 +81,26 @@ def find_optimal_simulation_conf(simulation_config, realimage1, cellnodes):
 
 def generate_synthetic_image(cellnodes, shape, simulation_config):
     image_type = simulation_config["image.type"]
-    cellmap = np.zeros(shape, dtype=int)
     if image_type == "graySynthetic" or image_type == "phaseContrast":
         background_color = simulation_config["background.color"]
-        synthimage = np.full(shape, background_color)
-        for node in cellnodes:
-            node.cell.draw(synthimage, cellmap, is_cell, simulation_config)
-        return synthimage, cellmap
+        if 'image.slices' in simulation_config:
+            zs = range(-1 * (simulation_config['image.slices'] // 2), simulation_config['image.slices'] // 2 + 1)
+            synthimages = []
+            for z in zs:
+                synthimage = np.full(shape, background_color)
+                cellmap = np.zeros(shape, dtype=int)
+                for node in cellnodes:
+                    node.cell.draw(synthimage, cellmap, is_cell, simulation_config, z = z)
+                synthimages.append(synthimage)
+            return synthimages, cellmap
+        else:
+            cellmap = np.zeros(shape, dtype=int)
+            synthimage = np.full(shape, background_color)
+            for node in cellnodes:
+                node.cell.draw(synthimage, cellmap, is_cell, simulation_config)
+            return synthimage, cellmap
     else:
+        cellmap = np.zeros(shape, dtype=int)
         synthimage = np.zeros(shape)
         for node in cellnodes:
             node.cell.draw(synthimage, cellmap, is_cell, simulation_config)
@@ -204,7 +217,7 @@ def perturb_bacilli(node, config, imageshape, invalid_limit=50):
             break
 
     # push the new cell over the previous in the node
-    node.push(Bacilli(cell.name, x, y, width, length, rotation, cell.split_alpha, cell_opacity))
+    node.push(Sphere(cell.name, x, y, width, length, rotation, cell.split_alpha, cell_opacity))
 
 
 def split_proba(length):

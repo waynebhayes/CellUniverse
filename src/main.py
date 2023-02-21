@@ -18,6 +18,8 @@ from matplotlib import cm
 from matplotlib.colors import Normalize
 from PIL import Image
 from lineage_funcs import create_lineage, save_lineage
+from Cells.Bacilli import Bacilli
+from Cells.Sphere import Sphere
 
 import sys
 sys.setrecursionlimit(10000)
@@ -113,6 +115,8 @@ def load_config(config_file):
 
     if config['global.cellType'].lower() == 'bacilli':
         celltype = Bacilli
+    elif config['global.cellType'].lower() == 'sphere':
+        celltype = Sphere
     else:
         raise ValueError('Invalid config: unsupported cell type')
 
@@ -149,19 +153,37 @@ def save_output(image_name, synthimage, realimage, cellnodes, args, config):
     residual_vmax = config["residual.vmax"]
     if args.residual:
         colormap = cm.ScalarMappable(norm=Normalize(vmin=residual_vmin, vmax=residual_vmax), cmap="bwr")
-    bestfit_frame = Image.fromarray(np.uint8(255 * synthimage), "L")
-    bestfit_frame.save(args.bestfit / image_name)
-    shape = realimage.shape
-    output_frame = np.empty((shape[0], shape[1], 3))
-    output_frame[..., 0] = realimage
-    output_frame[..., 1] = output_frame[..., 0]
-    output_frame[..., 2] = output_frame[..., 0]
-    for node in cellnodes:
-        if node.cell.dormant:
-            continue
-        node.cell.drawoutline(output_frame, (1, 0, 0))
-    output_frame = Image.fromarray(np.uint8(255 * output_frame))
-    output_frame.save(args.output / image_name)
+    if 'image.slices' in config['simulation']:
+        zs = range(-1 * (config['simulation']['image.slices'] // 2), config['simulation']['image.slices'] // 2 + 1)
+        shape = realimage.shape
+        for i, z in enumerate(zs):
+            bestfit_frame = Image.fromarray(np.uint8(255 * synthimage[i]), "L")
+            bestfit_frame.save(args.bestfit / (image_name[:-4] + '_' + str(z) + image_name[-4:]))
+            output_frame = np.empty((shape[0], shape[1], 3))
+            output_frame[..., 0] = realimage
+            output_frame[..., 1] = output_frame[..., 0]
+            output_frame[..., 2] = output_frame[..., 0]
+            for node in cellnodes:
+                if node.cell.dormant:
+                    continue
+                node.cell.drawoutline(output_frame, (1, 0, 0), z)
+            output_frame = Image.fromarray(np.uint8(255 * output_frame))
+            output_frame.save(args.output / (image_name[:-4] + '_' + str(z) + image_name[-4:] ))
+            print('saved', str(z) + image_name)
+    else:
+        bestfit_frame = Image.fromarray(np.uint8(255 * synthimage), "L")
+        bestfit_frame.save(args.bestfit / image_name)
+        shape = realimage.shape
+        output_frame = np.empty((shape[0], shape[1], 3))
+        output_frame[..., 0] = realimage
+        output_frame[..., 1] = output_frame[..., 0]
+        output_frame[..., 2] = output_frame[..., 0]
+        for node in cellnodes:
+            if node.cell.dormant:
+                continue
+            node.cell.drawoutline(output_frame, (1, 0, 0))
+        output_frame = Image.fromarray(np.uint8(255 * output_frame))
+        output_frame.save(args.output / image_name)
 
     if args.residual:
         residual_frame = Image.fromarray(np.uint8(255 * colormap.to_rgba(np.clip(realimage - synthimage,
