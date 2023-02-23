@@ -143,13 +143,39 @@ required arguments:
   -b FILE, --bestfit FILE
                         path to the best fit synthetic image output directory
 ```
-
-Examples
---------
-
+Example 
 ``` sourceCode
 python3 src/main.py --frame_first 0 --frame_last 13 --input "./examples/canonical/input/gray/frame%03d.png" \
   --output "./examples/canonical/output" --bestfit "./examples/canonical/output/bestfit" --config \
   "./examples/canonical/global_optimizer_config.json" --initial "./examples/canonical/initial.csv" --no_parallel \
   --graySynthetic --global_optimization
 ```
+--------
+Guide of running the examples
+-----
+There are currently four running examples located in the example folders. Each example is packed into a folder, which consists the input images, the initial cell configuration file, the configuration files, and the scripts to run the example. The scripts doesn't do anything magic. It's simply a wrapper of the command to run the program.
+
+To run the examples:
+
+Step 1: Activate the python environment. To do this, first locate to the root directory of this project, and run
+```
+pipenv shell
+```
+
+Step 2: Move to the folder consists the example that you want to run. Here, use the canonical one as an example.
+```
+cd examples/canonical
+```
+Step 3: Use the script to run the example
+
+For Windows Users (Powershell):
+```
+.\run.ps1
+```
+For Linux Users (Bash):
+```
+.\run.sh
+```
+
+Step 4: Wait until the program finish. The output is located in the output folder in the example folder.
+

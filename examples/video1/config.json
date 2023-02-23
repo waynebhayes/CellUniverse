@@ -53,7 +53,7 @@
         "modification.length.sigma":0.21,
         "modification.rotation.sigma":0.3,
         "prob.opacity": 0.3,
-	"modification.opacity.mu":0.0,
+	    "modification.opacity.mu":0.0,
         "modification.opacity.sigma":0.0001
     },
 
