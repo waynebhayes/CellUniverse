@@ -9,8 +9,13 @@ import csv
 import platform
 import os
 import math
+import uuid
+from typing import Dict
+
+from tkinter import ttk
 
 from dataclasses import dataclass
+import copy
 
 
 '''
@@ -20,13 +25,30 @@ from dataclasses import dataclass
         - when generating sphere associate each sphere with a tag
 
     - to go back to working uncomment #self.canvas.bind('<ButtonRelease-1>',self.stop_left_move) and change the right side
+    - List[CellLabelList] -> loop through each time we want to draw, and check for frame number to see if there is something to draw
+    - to delete, just remove {tag:CellLabelList}
 
 '''
+
+mouseX = 0
+mouseY = 0
+
 @dataclass
 class CellLabel:
     x: float
     y: float
     r: float
+    tag: str
+
+class CellLabelList:
+    def __init__(self, cell_labels: Dict[str, CellLabel] = dict()):
+        self.cell_labels = cell_labels
+    
+    def get_labeled_frame(self, frame_num: int) -> CellLabel:
+        return self.cell_labels.get(frame_num)
+    
+    def add_label(self, frame_num: int, cell_label: CellLabel) -> None:
+        self.cell_labels[frame_num] = cell_label
 
 class CellLabeling(Frame):
     def __init__(self,root):
@@ -42,7 +64,7 @@ class CellLabeling(Frame):
         self.new_flag = False
         self.delete_flag = False
         self.cell_dict = defaultdict(dict)
-        self.frame_drawings = defaultdict(dict)
+        self.frame_drawings = defaultdict(CellLabelList)
         self.plt = platform.system()
 
         self.right_clicked = False
@@ -102,17 +124,31 @@ class CellLabeling(Frame):
             self.new_button.config(state=NORMAL)
 
     def draw_frame(self, canvas, z_level):
-        for obj_id, circle in list(self.frame_drawings[z_level].items()):
+        cell_labels = list(self.frame_drawings.values())
+
+        for cell_label in cell_labels:
+            circle = cell_label.get_labeled_frame(z_level)
+
+            if circle == None:
+                continue
+
             x = circle.x
             y = circle.y
             r = circle.r
-            new_frame_id = canvas.create_oval(x - r, y - r, x + r, y + r, outline="green", width=4, tag="temp")
+            tag = circle.tag
+            new_frame_id = canvas.create_oval(x - r, y - r, x + r, y + r, outline="green", width=4, tags=["temp", tag])
 
-            print("new: ", new_frame_id, "old: ", obj_id)
-            # update the id for frame drawings
-            self.frame_drawings[z_level][new_frame_id] = circle
-            if not new_frame_id == obj_id:
-                del self.frame_drawings[z_level][obj_id]
+            '''
+            # generate tags only for center frame
+            if z_level == self.cur_frame:
+                random = StringVar()
+                temp = list(self.frame_drawings)
+                test = ttk.Combobox(self.canvas, width = 15, values=temp)
+                
+                test.set(tag)
+                test.current(len(temp) - 1)
+                test.place(x=x,y=y)
+            '''
 
     def update_frames(self):
         self.canvas_prev.delete("temp")
@@ -160,8 +196,6 @@ class CellLabeling(Frame):
         self.cur_frame =  (self.cur_frame - 1) if self.cur_frame > 0 else self.cur_img.n_frames - 1
         self.prev_frame = (self.cur_frame - 1) if (self.cur_frame - 1) >= 0 else self.cur_img.n_frames - 1
 
-        print(self.next_frame, self.cur_frame, self.prev_frame)
-
         self.z_level.config(text=f"current Z-level: {self.cur_frame}")
 
         self.update_frames()
@@ -175,9 +209,9 @@ class CellLabeling(Frame):
         y1 = y + self.resize_h
         self.save_image  = tkinter.filedialog.asksaveasfilename(
             defaultextension='.png',            
-            filetypes=[("PNG", ".png"), #other file type
+            filetypes=[("PNG", ".png"),                    #other file type
                ('JPG', '.jpg')],   
-            initialdir='',                      #default dir
+            initialdir='',                                 #default dir
             initialfile='cells.0.labeled',                 #init file name              
             title="Save current cell image"                      
         )
@@ -220,7 +254,6 @@ class CellLabeling(Frame):
                     width = data[i]["width"]
                     length = data[i]["length"]
                     rotation = data[i]["rotation"]
-                    #print(name)
                     csv_writer.writerow([filename,name,x,y,width,length,rotation,"None", "None"])
             else:
                 pass
@@ -251,6 +284,8 @@ class CellLabeling(Frame):
         self.p2 = None
         self.p3 = None
         self.current_id = None
+        self.cur_obj_tag = None
+        self.right_clicked = False
         
     def init_mouse_binding(self):
         self.canvas.bind('<Motion>',self.mouse_move)
@@ -279,24 +314,25 @@ class CellLabeling(Frame):
             return 
         if self.temp_item is not None:
             self.canvas.delete(self.temp_item)
-        self.x1 = self.canvas.canvasx(event.x) 
+        self.x1 = self.canvas.canvasx(event.x)
         self.y1 = self.canvas.canvasy(event.y) 
         # self.temp_item = self.canvas.create_line(self.x0,self.y0,self.x1,self.y1,fill='green',width=3)
+        # print(f"x0: {self.x0} y0: {self.y0}, x1: {self.x1}, y1: {self.y1}")
         r = math.dist([self.x0,self.y0], [self.x1,self.y1])
         self.temp_item = self.canvas.create_oval(self.x0 - r, self.y0 - r, self.x0 + r, self.y0 + r, outline="green", width=4, tag="temp")
 
-        self.canvas.bind('<ButtonRelease-1>',self.stop_left_move)
+        #self.canvas.bind('<ButtonRelease-1>',self.stop_left_move)
 
         # right click to increase z-level for drawing sphere
-        #self.canvas.bind('<ButtonPress-3>', self.start_right_move)
+        self.canvas.bind('<ButtonPress-3>', self.start_right_move)
     
     def left_press_down(self,event):
         if self.temp_item is not None:
             self.canvas.delete(self.temp_item)
             
         if self.new_flag is True:
-            self.x0 = self.canvas.canvasx(event.x) 
-            self.y0 = self.canvas.canvasy(event.y) 
+            self.x0 = self.canvas.canvasx(event.x)
+            self.y0 = self.canvas.canvasy(event.y)
             
             self.canvas.bind('<B1-Motion>',self.left_motion)
         
@@ -312,11 +348,14 @@ class CellLabeling(Frame):
                 self.canvas.itemconfig(canvasobject[0], outline='red')
                 delete = self.delete_warning()
                 if delete is True:
-                    self.canvas.delete(canvasobject[0])
-                    #del self.cell_dict[canvasobject[0]]
-                    del self.frame_drawings[self.cur_frame][canvasobject[0]]
-                    #print("delete: {}".format(canvasobject[0]))
-                    #print(self.cell_dict)
+                    obj_tag = self.canvas.gettags(canvasobject[0])[1]
+                    
+                    # delete object from all 3 frames
+                    self.canvas_prev.delete(obj_tag)
+                    self.canvas.delete(obj_tag)
+                    self.canvas_next.delete(obj_tag)
+
+                    del self.frame_drawings[obj_tag]
                 else:
                     self.canvas.itemconfig(canvasobject[0], outline='green')
                     pass
@@ -324,9 +363,7 @@ class CellLabeling(Frame):
     def stop_left_move(self,event):
         if self.new_flag is not True:
             return 
-        if self.temp_item is not None:
-            self.canvas.delete(self.temp_item)
-            
+
         self.x1 = self.canvas.canvasx(event.x) 
         self.y1 = self.canvas.canvasy(event.y) 
         
@@ -341,21 +378,12 @@ class CellLabeling(Frame):
         
         # draw the circle representing a cell
         r = math.dist([self.x0,self.y0], [self.x1,self.y1])
-        self.temp_item = self.canvas.create_oval(self.x0 - r, self.y0 - r, self.x0 + r, self.y0 + r, outline="green", width=4, tag="temp")
+        self.cur_obj_tag = uuid.uuid4().hex
+        self.temp_item = self.canvas.create_oval(self.x0 - r, self.y0 - r, self.x0 + r, self.y0 + r, outline="green", width=4, tags=["temp", self.cur_obj_tag])
+        cell_label_list = CellLabelList()
+        cell_label_list.add_label(self.cur_frame, CellLabel(x=self.x0, y=self.y0, r=r, tag=self.cur_obj_tag))
+        self.frame_drawings[self.cur_obj_tag] = copy.deepcopy(cell_label_list)
 
-        # save the Cell label for the current frame
-        self.frame_drawings[self.cur_frame][self.temp_item] = CellLabel(x=self.x0, y=self.y0, r=r)
-
-        self.reset_var()
-
-        # start right move to create sphere
-        '''
-        self.temp_item = self.canvas.create_line(self.x0,self.y0,self.x1,self.y1,fill='green',width=3)
-        if self.plt == "Darwin":
-            self.canvas.bind('<ButtonPress-2>',self.start_right_move) #2 for MacOS Right-Click, 3 for Windows
-        else:
-            self.canvas.bind('<ButtonPress-3>',self.start_right_move)
-        '''
         
     def start_right_move(self,event):
         if self.new_flag is not True:
@@ -365,63 +393,61 @@ class CellLabeling(Frame):
 
         self.right_clicked = True
 
-        self.reset_var()
+        #self.reset_var()
 
         if self.plt == "Darwin":
             self.canvas.bind('<B2-Motion>', self.right_motion)
         else:
             self.canvas.bind('<B3-Motion>',self.right_motion)
     
+    def _create_sphere(self, num_frames, slice_pos=None):
+        
+        if slice_pos == 'center':
+            if num_frames < 3:
+                print("num_frames cannot be less than 3 for center slice!")
+            else:
+                cur_cell = self.frame_drawings[self.cur_obj_tag].get_labeled_frame(self.cur_frame)
+                
+                tag = cur_cell.tag
+                center_x = cur_cell.x
+                center_y = cur_cell.y
+                center_r = cur_cell.r
+
+                slices_from_center = num_frames // 2
+
+                for z in range(1, slices_from_center + 1):
+                    try:
+                        r = math.sqrt((center_r ** 2) - ((z * (center_r/slices_from_center)) ** 2))
+                    except:
+                        print(f"sqrt of {(center_r ** 2)} - ({z} * {center_r} / {slices_from_center}  ** 2")
+                    below_level = self.cur_frame - z
+                    above_level = self.cur_frame + z
+
+                    if  0 <= below_level < self.cur_img.n_frames:
+                        self.frame_drawings[self.cur_obj_tag].add_label(below_level, CellLabel(x=center_x, y=center_y, r=r, tag=tag))
+                    
+                    if 0 <= above_level < self.cur_img.n_frames:
+                        self.frame_drawings[self.cur_obj_tag].add_label(above_level, CellLabel(x=center_x, y=center_y, r=r, tag=tag))
+
+
     def stop_right_move(self,event):
         if self.new_flag is not True:
             return 
-        if self.temp_item is not None:
-            self.canvas.delete(self.temp_item)
     
-            
         self.x2 = self.canvas.canvasx(event.x) 
         self.y2 = self.canvas.canvasy(event.y) 
+
+        print(f"difference: {(mouseY - self.y2) / 20}")
+        self._create_sphere(10, slice_pos="center")
         
-        #print(self.x0,self.y0)
+        # for now update and draw circles on top and bottom frames
+        self.update_frames()
 
         # draw circle
         #self.canvas.create_oval(self.x1,self.y1,self.x2, self.y2)
         self.reset_var()
 
         self.right_clicked = False
-
-        '''
-        
-        self.calculate_vertices2(self.x0,self.y0,
-                                self.x1,self.y1,
-                                self.x2,self.y2)
-        self.current_id = self.canvas.create_polygon(self.p0[0],self.p0[1],
-                                          self.p1[0],self.p1[1],
-                                          self.p2[0],self.p2[1],
-                                          self.p3[0],self.p3[1],
-                                          fill='',outline='green',width=3)
-        #print(self.current_id)
-        
-        # check the center inside the image
-        if self.center[0] > self.resize_w or self.center[0] < 0 or \
-        self.center[1] > self.resize_h or self.center[1] < 0:
-            self.draw_outside_error()
-            self.canvas.delete(self.current_id)
-        else:
-            #print("add:{}".format(self.current_id))
-            # save to cell_dict
-            self.cell_dict[self.current_id]["center"] = np.array(self.center)/self.f
-            self.cell_dict[self.current_id]["width"] = round(self.width/self.f,0)
-            self.cell_dict[self.current_id]["length"] = round(self.length/self.f,0)
-            self.cell_dict[self.current_id]["rotation"] = round(self.angle,2)
-            
-            #print(self.cell_dict)
-            
-            # update cell label 
-            self.update_cell_label(self.current_id)
-        
-        self.reset_var()
-        '''
     
     def update_cell_label(self,current_id):
         if current_id in self.cell_dict.keys():
@@ -436,64 +462,17 @@ class CellLabeling(Frame):
     def right_motion(self,event):
         if self.new_flag is not True:
             return 
-        if self.temp_item is not None:
-            self.canvas.delete(self.temp_item)
             
         self.x2 = self.canvas.canvasx(event.x) 
         self.y2 = self.canvas.canvasy(event.y) 
-        
-        print(self.x2, self.y2)
 
-        '''
-        self.calculate_vertices2(self.x0,self.y0,
-                                self.x1,self.y1,
-                                self.x2,self.y2)
-        
-        self.temp_item = self.canvas.create_polygon(self.p0[0],self.p0[1],
-                                          self.p1[0],self.p1[1],
-                                          self.p2[0],self.p2[1],
-                                          self.p3[0],self.p3[1],
-                                          fill='',outline='green',width=3)
-        '''
+        # draw circles for top and bottom of sphere
+
+
         if self.plt == "Darwin":
             self.canvas.bind('<ButtonRelease-2>',self.stop_right_move)
         else:
             self.canvas.bind('<ButtonRelease-3>',self.stop_right_move)
-        
-    def calculate_vertices2(self,x0,y0,x1,y1,x2,y2):
-        self.angle = self.rotation_angle(x0,y0,x1,y1)
-        y2 = self.new_y(x1,y1,x2,y2,self.angle)
-        
-        self.width = self.compute_edge_length(x1,y1,x2,y2)
-        self.length = self.compute_edge_length(x0,y0,x1,y1)
-        
-        self.center = ((x0+x2)/2,(y0+y2)/2)
-        
-        self.p0 = (x0,y0)
-        self.p1 = (x1,y1)
-        self.p2 = (x2,y2)
-        self.p3 = ((x0+x2-x1),(y0+y2-y1))
-        
-    def rotation_angle(self,x0,y0,x1,y1):
-        # compute rotation angle
-        x = x1 - x0
-        y = y1 - y0
-        #print(x)
-        angle = np.degrees(np.arctan2(y, x))
-        if angle < 0:
-            angle = 360 + angle
-        angle = np.radians(angle)
-        return angle
-    
-    def new_y(self,x0,y0,x1,y1,angle):
-        y1_new = ((x0-x1)/np.tan(angle)) + y0
-        return y1_new
-    
-    def compute_edge_length(self,x0,y0,x1,y1):
-        x = abs(x1 - x0)
-        y = abs(y1 - y0)
-        length = np.sqrt(x**2 + y**2)
-        return length
         
     
     def resize_img(self, img):
@@ -546,6 +525,7 @@ class CellLabeling(Frame):
             
             self.root.update()
             '''
+            self.prev_frame = self.cur_img.n_frames - 1
             self.cur_img.seek(self.cur_img.n_frames - 1)
             self.tk_img_1 = ImageTk.PhotoImage(self.resize_img(self.cur_img))
             self.canvas_prev = Canvas(self.root,width=self.rescaled_w,height=self.rescaled_h)
@@ -565,6 +545,7 @@ class CellLabeling(Frame):
             self.root.update()
             
             # display frame 1
+            self.next_frame = 1
             self.cur_img.seek(1)
             self.tk_img_3 = ImageTk.PhotoImage(self.resize_img(self.cur_img))
             self.canvas_next = Canvas(self.root,width=self.rescaled_w,height=self.rescaled_h)
@@ -579,11 +560,15 @@ class CellLabeling(Frame):
             self.init_mouse_binding()
         else:
             pass
-    
+
     
 def close_escape(event=None):
     root.destroy()
-        
+
+def get_mouse_pos(event):
+    mouse_x = event.x
+    mouse_y = event.y
+
 if __name__=='__main__':
     root = Tk()
     root.attributes('-fullscreen', True)
@@ -593,6 +578,7 @@ if __name__=='__main__':
     screen_h = root.winfo_height()
     root.geometry(f"{screen_w}x{screen_h}")
     root.bind("<Escape>", close_escape)
+    root.bind("<Motion>", get_mouse_pos)
     #root.geometry('1280x680')
     cell_labeling = CellLabeling(root)
     root.mainloop()
