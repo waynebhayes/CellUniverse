@@ -9,16 +9,15 @@ import csv
 import platform
 import os
 
+WINDOW_WIDTH = 1280
+WINDOW_HEIGHT = 640
 
 class CellLabeling(Frame):
     def __init__(self, root):
         super().__init__(root)
         self.root = root
-        self.w = 1280
-        self.h = 640
-        #self.h = 680
-        self.x = self.y = 0
-        self.x1 = self.y1 = None
+        self.w = WINDOW_WIDTH
+        self.h = WINDOW_HEIGHT
         self.init_menu()
         self.init_component()
         self.new_flag = False
@@ -412,7 +411,6 @@ class CellLabeling(Frame):
 if __name__ == '__main__':
     root = Tk()
     root.title('Cell Labeling Tool')
-    root.geometry('1280x640')
-    # root.geometry('1280x680')
+    root.geometry(f'{WINDOW_WIDTH}x{WINDOW_HEIGHT}')
     cell_labeling = CellLabeling(root)
     root.mainloop()
