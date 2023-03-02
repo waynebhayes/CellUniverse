@@ -9,6 +9,7 @@ import csv
 import platform
 import os
 from point import Point
+import math
 
 WINDOW_WIDTH = 1280
 WINDOW_HEIGHT = 640
@@ -39,8 +40,10 @@ class CellLabeling(Frame):
         file_menu.add_command(label='open file', command=self.choose_file)
         file_menu.add_command(
             label='save cell data (csv file)', command=self.save_csv_file)
+        file_menu.add_command(label='load cell data (csv file)', command=self.load_csv_file)
         file_menu.add_command(
             label='save current cell image', command=self.get_screenshot)
+        
         # file_menu.add_command(label='exit',command=self.exit)
 
     def init_component(self):
@@ -94,6 +97,7 @@ class CellLabeling(Frame):
             self.image = self.canvas.create_image(
                 0, 0, anchor="nw", image=self.tk_img)
             self.reset_var()
+            self.cell_dict.clear()
             self.init_mouse_binding()
         else:
             pass
@@ -147,7 +151,73 @@ class CellLabeling(Frame):
             f.close()
         else:
             pass
+    ####################################################
+    #              MENU - Load Cell Data
+    ####################################################
+    def dec_to_bin(self, n, digit=2):
+        result = 'b'
+        for i in range(digit-1, -1, -1):
+            result += str((n >> i) & 1)
+        return result
 
+    def load_csv_file(self):
+        def rectangle_coordinates(c, w, h, angle):
+
+            # calculate the half width and half height
+            hw = w/2
+            hh = h/2
+
+            # u is the unit vector along the length direction
+            u = np.array([hh * math.cos(angle), hh * math.sin(angle)])
+            # b is the unit vector along the width direction
+            v = np.array([-hw * math.sin(angle), hw * math.cos(angle)])
+
+            # calculate the coordinates of the four corners
+            p1 = c - u + v
+            p2 = c + u + v
+            p3 = c + u - v
+            p4 = c - u - v
+
+            # return the coordinates as a list of tuples
+            return [p1, p2, p3, p4]
+                
+        def flush_canvas_objects(self):
+            """
+            Remove all objects from the given tkinter canvas,
+            except the image loaded.
+            """
+            for item in self.canvas.find_all():
+                # check if the item is the loaded image
+                if item != self.image:
+                    self.canvas.delete(item)
+
+        self.csv_file = tkinter.filedialog.askopenfilename(
+            defaultextension='.csv',
+            # filetypes=[('txt Files', '*.txt'), #other file type
+            #   ('pkl Files', '*.pkl'),
+            #   ('All Files', '*.*')],
+            initialdir='',  # default dir
+            initialfile='cells.0',  # init file name
+            # parent=self.master,
+            title="Save cell data as csv file"
+        )
+
+        if self.csv_file is not None:
+            f = open(self.csv_file, 'r', encoding='utf-8', newline='')
+            self.cell_dict.clear()
+            flush_canvas_objects(self)
+            csv_reader = csv.DictReader(f)
+
+            for row in csv_reader:
+                x, y, w, l, angle = float(row['x']), float(row['y']), float(row['width']), float(row['length']), float(row['rotation'])
+                x, y, w, l = x * self.f, y * self.f, w * self.f, l * self.f
+                coords = rectangle_coordinates(np.array([x, y]), w, l, angle)
+                object_id  = self.canvas.create_polygon(*coords[0], *coords[1], *coords[2], *coords[3], fill='', outline='green', width=3)
+                self.save_cell(object_id, (x, y), w, l, angle)
+
+            f.close()
+
+        
     ####################################################
     #      MENU - Save Current Cell Image
     ####################################################
@@ -195,6 +265,7 @@ class CellLabeling(Frame):
         if self.new_flag is True:
             self.p0 = Point([self.canvas.canvasx(event.x),
                             self.canvas.canvasy(event.y)])
+            print(self.p0)
             self.canvas.bind('<B1-Motion>', self.left_motion)
 
         elif self.delete_flag is True:
@@ -306,14 +377,7 @@ class CellLabeling(Frame):
         else:
             # print("add:{}".format(self.current_id))
             # save to cell_dict
-            self.cell_dict[self.current_id]["center"] = np.array(
-                self.center)/self.f
-            self.cell_dict[self.current_id]["width"] = round(
-                self.width/self.f, 0)
-            self.cell_dict[self.current_id]["length"] = round(
-                self.length/self.f, 0)
-            self.cell_dict[self.current_id]["rotation"] = round(self.angle, 2)
-
+            self.save_cell(self.current_id, self.center, self.width, self.length, self.angle)
             # print(self.cell_dict)
 
             # update cell label
@@ -366,6 +430,8 @@ class CellLabeling(Frame):
             Returns the equation of the line passing through the two points (x1, y1) and (x2, y2)
             in the form ax + by + c = 0.
             """
+            if x2 == x1:
+                return (1, 0, -x1)  # special case for vertical line
             m = (y2 - y1) / (x2 - x1)
             a = m
             b = -1
@@ -457,9 +523,12 @@ class CellLabeling(Frame):
                 self.cell_dict[current_id]["length"]))
             self.rotation_label.config(text="rotation: %s" % (
                 self.cell_dict[current_id]["rotation"]))
-        else:
-            pass
 
+    def save_cell(self, id, center, width, length, angle):
+        self.cell_dict[id]["center"] = np.array(center)/self.f
+        self.cell_dict[id]["width"] = round(width/self.f, 0)
+        self.cell_dict[id]["length"] = round(length/self.f, 0)
+        self.cell_dict[id]["rotation"] = round(angle, 2)
    
 
 
