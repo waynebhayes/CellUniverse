@@ -8,11 +8,16 @@ from collections import defaultdict
 import csv
 import platform
 import os
+from point import Point
 
 WINDOW_WIDTH = 1280
 WINDOW_HEIGHT = 640
 
+
 class CellLabeling(Frame):
+    ####################################################
+    #              REGISTER ALL COMPONENTS
+    ####################################################
     def __init__(self, root):
         super().__init__(root)
         self.root = root
@@ -64,35 +69,38 @@ class CellLabeling(Frame):
             self.root, text="rotation: ", relief='flat')
         self.rotation_label.grid(row=8, column=0, sticky=W, padx=10, pady=5)
 
-    def choose_operation(self, i):
-        if i == 1:
-            self.new_flag = True
-            self.delete_flag = False
-            self.new_button.config(state=DISABLED)
-            self.delete_button.config(state=NORMAL)
-        if i == 2:
-            self.new_flag = False
-            self.delete_flag = True
-            self.delete_button.config(state=DISABLED)
-            self.new_button.config(state=NORMAL)
+    ####################################################
+    #              MENU - Open File
+    ####################################################
+    def resize_img(self, img):
+        self.init_w, self.init_h = img.size
+        self.f = min([self.w/self.init_w, self.h/self.init_h])
+        return img.resize((int(self.init_w*self.f), int(self.init_h*self.f)), Image.Resampling.LANCZOS)
 
-    # Need to resacle your monitor's display setting to 100%
-    def get_screenshot(self):
-        self.canvas.update()
-        x = self.root.winfo_rootx() + self.canvas.winfo_x()
-        y = self.root.winfo_rooty() + self.canvas.winfo_y()
-        x1 = x + self.resize_w
-        y1 = y + self.resize_h
-        self.save_image = tkinter.filedialog.asksaveasfilename(
-            defaultextension='.png',
-            filetypes=[("PNG", ".png"),  # other file type
-                       ('JPG', '.jpg')],
-            initialdir='',  # default dir
-            initialfile='cells.0.labeled',  # init file name
-            title="Save current cell image"
-        )
-        ImageGrab.grab().crop((x, y, x1, y1)).save(self.save_image)
+    def init_mouse_binding(self):
+        self.canvas.bind('<Motion>', self.mouse_move)
+        self.canvas.bind('<ButtonPress-1>', self.left_press_down)
 
+    def choose_file(self):
+        self.filename = tkinter.filedialog.askopenfilename(title='choose file')
+        if self.filename is not None:
+            img_open = Image.open(self.filename)
+            resized = self.resize_img(img_open)
+            self.resize_w, self.resize_h = resized.size
+            self.tk_img = ImageTk.PhotoImage(resized)
+            self.canvas = Canvas(
+                self.root, width=self.resize_w, height=self.resize_h)
+            self.canvas.place(x=300, y=0)
+            self.image = self.canvas.create_image(
+                0, 0, anchor="nw", image=self.tk_img)
+            self.reset_var()
+            self.init_mouse_binding()
+        else:
+            pass
+
+    ####################################################
+    #              MENU - Save Cell Data
+    ####################################################
     def dec_to_bin(self, n, digit=2):
         result = 'b'
         for i in range(digit-1, -1, -1):
@@ -140,60 +148,53 @@ class CellLabeling(Frame):
         else:
             pass
 
-    def exit(self):
-        self.root.destroy()
+    ####################################################
+    #      MENU - Save Current Cell Image
+    ####################################################
+    # Need to resacle your monitor's display setting to 100%
+    def get_screenshot(self):
+        self.canvas.update()
+        x = self.root.winfo_rootx() + self.canvas.winfo_x()
+        y = self.root.winfo_rooty() + self.canvas.winfo_y()
+        x1 = x + self.resize_w
+        y1 = y + self.resize_h
+        print(x, y, x1, y1)
+        self.save_image = tkinter.filedialog.asksaveasfilename(
+            defaultextension='.png',
+            filetypes=[("PNG", ".png"),  # other file type
+                       ('JPG', '.jpg')],
+            initialdir='',  # default dir
+            initialfile='cells.0.labeled',  # init file name
+            title="Save current cell image"
+        )
+        ImageGrab.grab().crop((x, y, x1, y1)).save(self.save_image)
 
-    def reset_var(self):
-        self.temp_item = None
-        self.x0 = None
-        self.y0 = None
-        self.x1 = None
-        self.y1 = None
-        self.x2 = None
-        self.y2 = None
-        self.x3 = None
-        self.y3 = None
-        self.angle = None
-        self.width = None
-        self.length = None
-        self.center = None
-        self.p0 = None
-        self.p1 = None
-        self.p2 = None
-        self.p3 = None
-        self.current_id = None
+    ####################################################
+    #     Callback function New/Delete bounding box
+    ####################################################
 
-    def init_mouse_binding(self):
-        self.canvas.bind('<Motion>', self.mouse_move)
-        self.canvas.bind('<ButtonPress-1>', self.left_press_down)
+    def choose_operation(self, i):
+        if i == 1:
+            self.new_flag = True
+            self.delete_flag = False
+            self.new_button.config(state=DISABLED)
+            self.delete_button.config(state=NORMAL)
+        if i == 2:
+            self.new_flag = False
+            self.delete_flag = True
+            self.delete_button.config(state=DISABLED)
+            self.new_button.config(state=NORMAL)
 
-    def transfer_coordinate(self, x, y):
-        # Translate mouse x,y screen coordinate to canvas coordinate
-        mx = self.canvas.canvasx(x)
-        my = self.canvas.canvasy(y)
-        # Translate canvas coordinate to original image coordinate
-        mx = mx / self.f
-        my = my / self.f
-
-        return mx, my
-
-    def delete_warning(self):
-        a = tkinter.messagebox.askokcancel(
-            'Warning', 'Delete this bounding box?')
-        return a
-
-    def mouse_move(self, event):
-        mx, my = self.transfer_coordinate(event.x, event.y)
-        self.mouse_label.config(text="(%s,%s)" % (mx, my), fg='blue')
-
+    ####################################################
+    #      Callback functions for canvas
+    ####################################################
     def left_press_down(self, event):
         if self.temp_item is not None:
             self.canvas.delete(self.temp_item)
 
         if self.new_flag is True:
-            self.x0 = self.canvas.canvasx(event.x)
-            self.y0 = self.canvas.canvasy(event.y)
-
+            self.p0 = Point([self.canvas.canvasx(event.x),
+                            self.canvas.canvasy(event.y)])
             self.canvas.bind('<B1-Motion>', self.left_motion)
 
         elif self.delete_flag is True:
@@ -215,6 +216,17 @@ class CellLabeling(Frame):
                     # print(self.cell_dict)
                 else:
                     pass
+    
+    def left_motion(self, event):
+        if self.new_flag is not True:
+            return
+        if self.temp_item is not None:
+            self.canvas.delete(self.temp_item)
+        self.p1 = Point([self.canvas.canvasx(event.x),
+                        self.canvas.canvasy(event.y)])
+        self.temp_item = self.canvas.create_line(
+            *self.p0, *self.p1, fill='green', width=3)
+        self.canvas.bind('<ButtonRelease-1>', self.stop_left_move)
 
     def stop_left_move(self, event):
         if self.new_flag is not True:
@@ -222,22 +234,14 @@ class CellLabeling(Frame):
         if self.temp_item is not None:
             self.canvas.delete(self.temp_item)
 
-        self.x1 = self.canvas.canvasx(event.x)
-        self.y1 = self.canvas.canvasy(event.y)
+        self.p1 = Point([self.canvas.canvasx(event.x),
+                        self.canvas.canvasy(event.y)])
 
-        if self.x1 > self.resize_w:
-            self.x1 = self.resize_w
-        elif self.x1 < 0:
-            self.x1 = 0
-        elif self.y1 > self.resize_h:
-            self.y1 = self.resize_h
-        elif self.y1 < 0:
-            self.y1 = 0
+        # print(self.p0)
+        # print(self.p1)
 
-        # print(self.x0,self.y0)
-        # print(self.x1,self.y1)
         self.temp_item = self.canvas.create_line(
-            self.x0, self.y0, self.x1, self.y1, fill='green', width=3)
+            *self.p0, *self.p1, fill='green', width=3)
         if self.plt == "Darwin":
             # 2 for MacOS Right-Click, 3 for Windows
             self.canvas.bind('<ButtonPress-2>', self.start_right_move)
@@ -247,17 +251,33 @@ class CellLabeling(Frame):
     def start_right_move(self, event):
         if self.new_flag is not True:
             return
-        self.x1 = self.canvas.canvasx(event.x)
-        self.y1 = self.canvas.canvasy(event.y)
-
+        self.p2 = Point([self.canvas.canvasx(event.x),
+                        self.canvas.canvasy(event.y)])
         if self.plt == "Darwin":
             self.canvas.bind('<B2-Motion>', self.right_motion)
         else:
             self.canvas.bind('<B3-Motion>', self.right_motion)
+    
+    def right_motion(self, event):
+        if self.new_flag is not True:
+            return
+        if self.temp_item is not None:
+            self.canvas.delete(self.temp_item)
 
-    def draw_outside_error(self):
-        tkinter.messagebox.showerror(
-            'Error', 'The center of the bounding box is outside of the image! Please draw again.')
+        self.p2 = Point([self.canvas.canvasx(event.x),
+                        self.canvas.canvasy(event.y)])
+
+        self.calculate_vertices2(self.p0, self.p1, self.p2)
+
+        self.temp_item = self.canvas.create_polygon(self.p0[0], self.p0[1],
+                                                    self.p1[0], self.p1[1],
+                                                    self.p2[0], self.p2[1],
+                                                    self.p3[0], self.p3[1],
+                                                    fill='', outline='green', width=3)
+        if self.plt == "Darwin":
+            self.canvas.bind('<ButtonRelease-2>', self.stop_right_move)
+        else:
+            self.canvas.bind('<ButtonRelease-3>', self.stop_right_move)
 
     def stop_right_move(self, event):
         if self.new_flag is not True:
@@ -265,14 +285,12 @@ class CellLabeling(Frame):
         if self.temp_item is not None:
             self.canvas.delete(self.temp_item)
 
-        self.x2 = self.canvas.canvasx(event.x)
-        self.y2 = self.canvas.canvasy(event.y)
+        self.p2 = Point([self.canvas.canvasx(event.x),
+                        self.canvas.canvasy(event.y)])
 
-        # print(self.x0,self.y0)
+        # print(self.p0)
 
-        self.calculate_vertices2(self.x0, self.y0,
-                                 self.x1, self.y1,
-                                 self.x2, self.y2)
+        self.calculate_vertices2(self.p0, self.p1, self.p2)
         self.current_id = self.canvas.create_polygon(self.p0[0], self.p0[1],
                                                      self.p1[0], self.p1[1],
                                                      self.p2[0], self.p2[1],
@@ -302,6 +320,132 @@ class CellLabeling(Frame):
             self.update_cell_label(self.current_id)
 
         self.reset_var()
+    
+    def calculate_vertices2(self, p0, p1, p2):
+        self.angle = self.rotation_angle(p0, p1)
+        self.p2 = self.map_p2(p0, p1, p2)
+        p2 = self.p2
+        self.width = self.compute_edge_length(p1, p2)
+        self.length = self.compute_edge_length(p0, p1)
+        self.center = ((p0.x + p2.x) / 2, (p0.y + p2.y) / 2)
+        self.p3 = ((p0.x + p2.x - p1.x), (p0.y + p2.y - p1.y))
+
+    def rotation_angle(self, p0, p1):
+        # compute rotation angle
+        x = p1.x - p0.x
+        y = p1.y - p0.y
+        # print(x)
+        angle = np.degrees(np.arctan2(y, x))
+        if angle < 0:
+            angle = 360 + angle
+        angle = np.radians(angle)
+        return angle
+    
+    def compute_edge_length(self, p0, p1):
+        x = abs(p1.x - p0.x)
+        y = abs(p1.y - p0.y)
+        length = np.sqrt(x**2 + y**2)
+        return length
+    
+    def map_p2(self, p0, p1, p2):
+        def is_clockwise(p1, p2, p3):
+            """
+            Returns True if the three points p1, p2, and p3 are in clockwise order,
+            and False otherwise.
+            """
+            # Compute the cross product of the vectors formed by the points
+            cross_product = (p2[0] - p1[0]) * (p3[1] - p2[1]) - (p2[1] - p1[1]) * (p3[0] - p2[0])
+
+            # Check the sign of the cross product
+            if cross_product < 0:
+                return True
+            else:
+                return False
+        def line_equation(x1, y1, x2, y2):
+            """
+            Returns the equation of the line passing through the two points (x1, y1) and (x2, y2)
+            in the form ax + by + c = 0.
+            """
+            m = (y2 - y1) / (x2 - x1)
+            a = m
+            b = -1
+            c = -m * x1 + y1
+            return (a, b, c)
+        a, b, c = line_equation(*p0, *p1)
+
+        # the distance of a point (m, n) to the line ax + by +c =0
+        # is：|ma + nb + c| / sqrt(a^2 + b^2)
+        distance = (abs(p2.x * a + p2.y * b + c)) / (np.sqrt(a ** 2 + b ** 2))
+        
+        # determine the orientation of p2
+        p2_is_clockwise = is_clockwise(p0, p1, p2)
+
+        # get the perpendicular vector
+        if(p2_is_clockwise):
+            perpendicular_vec = ((p1.y - p0.y), -(p1.x - p0.x))
+        else:
+            perpendicular_vec = (-(p1.y - p0.y), (p1.x - p0.x))
+
+
+        # normalize it to unit vector
+        magnitude = np.sqrt(perpendicular_vec[0] ** 2 + perpendicular_vec[1] ** 2)
+
+        perpendicular_vec = (perpendicular_vec[0] / magnitude, perpendicular_vec[1] / magnitude)
+
+        mapped_p2 = Point([p1.x + distance * perpendicular_vec[0], p1.y + distance * perpendicular_vec[1]])
+
+        print(f'Point 0: {p0}, Point 1:{p1}, Point 2:{p2}')
+        print(f'equation: {a}x+{b}y+{c}=0')
+        print(f'is_clockwise: {p2_is_clockwise}')
+        print(f'distance: {distance}')
+        print(f'perpendicular_vec: {perpendicular_vec}')
+        return mapped_p2
+
+    ####################################################
+    #            Helper Functions
+    ####################################################
+
+    def exit(self):
+        self.root.destroy()
+
+    def reset_var(self):
+        self.temp_item = None
+        self.angle = None
+        self.width = None
+        self.length = None
+        self.center = None
+        # p0 is the cursor location when LB is pressed
+        # p1 is the cursor location when LB is stopped/released
+        # p2 is the cursor location when RB is pressed
+        # p3 is calculated according to previous three points
+        self.p0 = None
+        self.p1 = None
+        self.p2 = None
+        self.p3 = None
+        self.current_id = None
+
+    def transfer_coordinate(self, x, y):
+        # Translate mouse x,y screen coordinate to canvas coordinate
+        mx = self.canvas.canvasx(x)
+        my = self.canvas.canvasy(y)
+        # Translate canvas coordinate to original image coordinate
+        mx = mx / self.f
+        my = my / self.f
+
+        return mx, my
+
+    def delete_warning(self):
+        a = tkinter.messagebox.askokcancel(
+            'Warning', 'Delete this bounding box?')
+        return a
+
+    def mouse_move(self, event):
+        mx, my = self.transfer_coordinate(event.x, event.y)
+        self.mouse_label.config(text="(%s,%s)" % (mx, my), fg='blue')
+
+    def draw_outside_error(self):
+        tkinter.messagebox.showerror(
+            'Error', 'The center of the bounding box is outside of the image! Please draw again.')
 
     def update_cell_label(self, current_id):
         if current_id in self.cell_dict.keys():
@@ -316,96 +460,7 @@ class CellLabeling(Frame):
         else:
             pass
 
-    def right_motion(self, event):
-        if self.new_flag is not True:
-            return
-        if self.temp_item is not None:
-            self.canvas.delete(self.temp_item)
-
-        self.x2 = self.canvas.canvasx(event.x)
-        self.y2 = self.canvas.canvasy(event.y)
-
-        self.calculate_vertices2(self.x0, self.y0,
-                                 self.x1, self.y1,
-                                 self.x2, self.y2)
-
-        self.temp_item = self.canvas.create_polygon(self.p0[0], self.p0[1],
-                                                    self.p1[0], self.p1[1],
-                                                    self.p2[0], self.p2[1],
-                                                    self.p3[0], self.p3[1],
-                                                    fill='', outline='green', width=3)
-        if self.plt == "Darwin":
-            self.canvas.bind('<ButtonRelease-2>', self.stop_right_move)
-        else:
-            self.canvas.bind('<ButtonRelease-3>', self.stop_right_move)
-
-    def calculate_vertices2(self, x0, y0, x1, y1, x2, y2):
-        self.angle = self.rotation_angle(x0, y0, x1, y1)
-        y2 = self.new_y(x1, y1, x2, y2, self.angle)
-
-        self.width = self.compute_edge_length(x1, y1, x2, y2)
-        self.length = self.compute_edge_length(x0, y0, x1, y1)
-
-        self.center = ((x0+x2)/2, (y0+y2)/2)
-
-        self.p0 = (x0, y0)
-        self.p1 = (x1, y1)
-        self.p2 = (x2, y2)
-        self.p3 = ((x0+x2-x1), (y0+y2-y1))
-
-    def rotation_angle(self, x0, y0, x1, y1):
-        # compute rotation angle
-        x = x1 - x0
-        y = y1 - y0
-        # print(x)
-        angle = np.degrees(np.arctan2(y, x))
-        if angle < 0:
-            angle = 360 + angle
-        angle = np.radians(angle)
-        return angle
-
-    def new_y(self, x0, y0, x1, y1, angle):
-        y1_new = ((x0-x1)/np.tan(angle)) + y0
-        return y1_new
-
-    def compute_edge_length(self, x0, y0, x1, y1):
-        x = abs(x1 - x0)
-        y = abs(y1 - y0)
-        length = np.sqrt(x**2 + y**2)
-        return length
-
-    def left_motion(self, event):
-        if self.new_flag is not True:
-            return
-        if self.temp_item is not None:
-            self.canvas.delete(self.temp_item)
-        self.x1 = self.canvas.canvasx(event.x)
-        self.y1 = self.canvas.canvasy(event.y)
-        self.temp_item = self.canvas.create_line(
-            self.x0, self.y0, self.x1, self.y1, fill='green', width=3)
-        self.canvas.bind('<ButtonRelease-1>', self.stop_left_move)
-
-    def resize_img(self, img):
-        self.init_w, self.init_h = img.size
-        self.f = min([self.w/self.init_w, self.h/self.init_h])
-        return img.resize((int(self.init_w*self.f), int(self.init_h*self.f)), Image.ANTIALIAS)
-
-    def choose_file(self):
-        self.filename = tkinter.filedialog.askopenfilename(title='choose file')
-        if self.filename is not None:
-            img_open = Image.open(self.filename)
-            resized = self.resize_img(img_open)
-            self.resize_w, self.resize_h = resized.size
-            self.tk_img = ImageTk.PhotoImage(resized)
-            self.canvas = Canvas(
-                self.root, width=self.resize_w, height=self.resize_h)
-            self.canvas.place(x=300, y=0)
-            self.image = self.canvas.create_image(
-                0, 0, anchor="nw", image=self.tk_img)
-            self.reset_var()
-            self.init_mouse_binding()
-        else:
-            pass
+   
 
 
 if __name__ == '__main__':
