@@ -158,7 +158,7 @@ class CellLabeling(Frame):
         y = self.root.winfo_rooty() + self.canvas.winfo_y()
         x1 = x + self.resize_w
         y1 = y + self.resize_h
-        print(x, y, x1, y1)
+        # print(x, y, x1, y1)
         self.save_image = tkinter.filedialog.asksaveasfilename(
             defaultextension='.png',
             filetypes=[("PNG", ".png"),  # other file type
@@ -394,11 +394,11 @@ class CellLabeling(Frame):
 
         mapped_p2 = Point([p1.x + distance * perpendicular_vec[0], p1.y + distance * perpendicular_vec[1]])
 
-        print(f'Point 0: {p0}, Point 1:{p1}, Point 2:{p2}')
-        print(f'equation: {a}x+{b}y+{c}=0')
-        print(f'is_clockwise: {p2_is_clockwise}')
-        print(f'distance: {distance}')
-        print(f'perpendicular_vec: {perpendicular_vec}')
+        # print(f'Point 0: {p0}, Point 1:{p1}, Point 2:{p2}')
+        # print(f'equation: {a}x+{b}y+{c}=0')
+        # print(f'is_clockwise: {p2_is_clockwise}')
+        # print(f'distance: {distance}')
+        # print(f'perpendicular_vec: {perpendicular_vec}')
         return mapped_p2
 
     ####################################################
