@@ -113,7 +113,7 @@ class Bacilli(Cell):
         right = self._region.right 
         width = right - left
         height = bottom - top
-        mask = np.zeros((height, width), dtype=np.bool)
+        mask = np.zeros((height, width), dtype=bool)
         
         body_mask = polygon(
             r=(self._head_left.y - top,
@@ -171,27 +171,27 @@ class Bacilli(Cell):
                     self._region.left:self._region.right][mask] = 0.39  # 0.39*255=100
 
                 else:
-                    mask = np.zeros((height, width), dtype=np.bool)
+                    mask = np.zeros((height, width), dtype=bool)
                     mask[body_mask] = True
                     image[self._region.top:self._region.bottom,
                     self._region.left:self._region.right][mask] = 0.25  # 0.25*255=65
 
-                    mask = np.zeros((height, width), dtype=np.bool)
+                    mask = np.zeros((height, width), dtype=bool)
                     mask[head_mask] = True
                     image[self._region.top:self._region.bottom,
                     self._region.left:self._region.right][mask] = 0.25
 
-                    mask = np.zeros((height, width), dtype=np.bool)
+                    mask = np.zeros((height, width), dtype=bool)
                     mask[tail_mask] = True
                     image[self._region.top:self._region.bottom,
                     self._region.left:self._region.right][mask] = 0.25
 
-                    mask = np.zeros((height, width), dtype=np.bool)
+                    mask = np.zeros((height, width), dtype=bool)
                     mask[body_mask_up] = True
                     image[self._region.top:self._region.bottom,
                     self._region.left:self._region.right][mask] = 0.63  # 0.63*255=160
 
-                    mask = np.zeros((height, width), dtype=np.bool)
+                    mask = np.zeros((height, width), dtype=bool)
                     mask[body_mask_middle] = True
                     image[self._region.top:self._region.bottom,
                     self._region.left:self._region.right][mask] = 0.39  # 0.39*255=100
