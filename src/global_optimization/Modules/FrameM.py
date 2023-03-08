@@ -1,6 +1,9 @@
 from typing import Dict, List
+
+import numpy as np
+
 from .CellNodeM import CellNodeM
-from Cells.Bacilli import Bacilli
+from Cells import Cell
 
 
 class FrameM:
@@ -17,7 +20,7 @@ class FrameM:
     def nodes(self) -> List[CellNodeM]:
         return list(self.node_map.values())
 
-    def add_cell(self, cell: Bacilli):
+    def add_cell(self, cell: Cell):
         if cell.name in self.node_map:
             self.node_map[cell.name].cell = cell
         elif self.prev and cell.name in self.prev.node_map:
@@ -26,3 +29,4 @@ class FrameM:
             self.node_map[cell.name] = self.prev.node_map[cell.name[:-1]].make_child(cell)
         else:
             self.node_map[cell.name] = CellNodeM(cell)
+

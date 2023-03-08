@@ -5,23 +5,23 @@
     "global.framesPerSecond": 1.0,
 
     // Bacilli settings
-    "bacilli.maxSpeed":  24.0,  // microns per second
-    "bacilli.maxSpin":    1.57, // radians per second
-    "bacilli.minGrowth": -2.0,  // microns
-    "bacilli.maxGrowth": 13.0,  // microns
-    "bacilli.minWidth":   4.0,  // microns
-    "bacilli.maxWidth":   9.0,  // microns
-    "bacilli.minLength": 14.0,  // microns
-    "bacilli.maxLength": 48.0,  // microns
-    "bacilli.distanceCostDivisor": 24,  // microns
+    "sphere.maxSpeed":  200.0,  // microns per second
+    "sphere.maxSpin":    1.57, // radians per second
+    "sphere.minGrowth": -2.0,  // microns
+    "sphere.maxGrowth": 43.0,  // microns
+    "sphere.minWidth":   4.0,  // microns
+    "sphere.maxWidth":   800.0,  // microns
+    "sphere.minLength": 14.0,  // microns
+    "sphere.maxLength": 800.0,  // microns
+    "sphere.distanceCostDivisor": 24,  // microns
     
     // simulation settings. NOTE: Image are converted to grayscale float32. 
     // All settings should be floats.
     "simulation":
     {
         "image.type": "To be Set", 
-        "background.color": "auto", // 0.39 for gary scale image
-        "cell.color" : "auto", // 0.15 for gray scale image
+        "background.color": 0, // 0.39 for gary scale image
+        "cell.color" : 1, // 0.15 for gray scale image
         "light.diffraction.sigma": "auto",  //11
         "light.diffraction.strength": "auto", //0.6
         "light.diffraction.truncate": 1,
@@ -40,6 +40,7 @@
     {
         "prob.x": 0.35,
         "prob.y": 0.35,
+        "prob.z": 0.25,
         "prob.width":0.1,
         "prob.length":0.2,
         "prob.rotation":0.2,
@@ -48,8 +49,8 @@
         "modification.width.mu":0.0,
         "modification.length.mu":0.0,
         "modification.rotation.mu":0.0,
-        "modification.x.sigma":0.5,
-        "modification.y.sigma":0.5,
+        "modification.x.sigma":10.0,
+        "modification.y.sigma":10.0,
         "modification.width.sigma":0.1,
         "modification.length.sigma":1.0,
         "modification.rotation.sigma":0.2,
@@ -66,7 +67,7 @@
 
     "global_optimizer.window_size": 1,
     "pbad_max_size": 1000, // must be greater than 0
-    "iteration_per_cell": 0,
+    "iteration_per_cell": 10,
     "auto_temp_scheduler.iteration_per_cell": 500,
     "output.format": "png", //must be png or jpeg. If jpeg is chosen, then the output image quality can be set.
     "output.quality": 80, // range [0, 100]
@@ -77,7 +78,7 @@
     "split.cost": 0,
 
     "combine.cost": 0,
-    "overlap.cost": 0.2,
+    "overlap.cost": 1,
     //cell.importance = importance of synthetic cell region/importance of synthetic diffraction region
     "cell.importance": 1,
 

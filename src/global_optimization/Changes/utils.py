@@ -40,14 +40,14 @@ def generate_synthetic_image(cellnodes, shape, simulation_config):
 
 
 def check_constraints(config, imageshape, cells: List['Cell.Bacilli'], pairs: List[Tuple['cell.Bacilli', 'cell.Bacilli']] = None):
-    max_displacement = config['bacilli.maxSpeed'] / config['global.framesPerSecond']
-    max_rotation = config['bacilli.maxSpin'] / config['global.framesPerSecond']
-    min_growth = config['bacilli.minGrowth']
-    max_growth = config['bacilli.maxGrowth']
-    min_width = config['bacilli.minWidth']
-    max_width = config['bacilli.maxWidth']
-    min_length = config['bacilli.minLength']
-    max_length = config['bacilli.maxLength']
+    max_displacement = config['sphere.maxSpeed'] / config['global.framesPerSecond']
+    max_rotation = config['sphere.maxSpin'] / config['global.framesPerSecond']
+    min_growth = config['sphere.minGrowth']
+    max_growth = config['sphere.maxGrowth']
+    min_width = config['sphere.minWidth']
+    max_width = config['sphere.maxWidth']
+    min_length = config['sphere.minLength']
+    max_length = config['sphere.maxLength']
 
     for cell in cells:
         if not (0 <= cell.x < imageshape[1] and 0 <= cell.y < imageshape[0]):

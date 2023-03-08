@@ -15,8 +15,8 @@ class Sphere(Cell):
         'sphere.maxSpeed',
         'sphere.minGrowth',
         'sphere.maxGrowth',
-        'sphere.minRadius',
-        'sphere.maxRadius',
+        # 'sphere.minRadius',
+        # 'sphere.maxRadius',
     ]
 
     def __init__(self, name, x, y, width, length, rotation, split_alpha=None, opacity=0, z = 0):
@@ -72,8 +72,6 @@ class Sphere(Cell):
         if abs(self.position.z - z) > self.width / 2:
             return
 
-        radius = sqrt((self.width / 2) ** 2 - z ** 2)
-
         #Diffraction pattern currently only applies to graySynthetic image
         image_type = simulation_config["image.type"]
         background_color = simulation_config["background.color"]
@@ -86,7 +84,7 @@ class Sphere(Cell):
         width = right - left
         height = bottom - top
         mask = np.zeros((height, width), dtype=bool)
-        radius = sqrt((self.width / 2) ** 2 - z ** 2)
+        radius = sqrt((self.width / 2) ** 2 - (self.position.z - z) ** 2)
 
         if radius <= 0:
             return
@@ -198,9 +196,11 @@ class Sphere(Cell):
                     self._region.left:self._region.right][mask] -= 1.0
                     cellmap[self._region.top:self._region.bottom,
                     self._region.left:self._region.right][mask] -= 1
-        except:
-            self.dormant = True
-
+        except Exception as e:
+            if z == 0:
+                raise e
+            # self.dormant = True
+            pass
 
 
     def drawoutline(self, image, color, z = 0):
@@ -211,7 +211,7 @@ class Sphere(Cell):
         if abs(self.position.z - z) > self.width / 2:
             return
 
-        radius = sqrt((self.width / 2) ** 2 - z ** 2)
+        radius = sqrt((self.width / 2) ** 2 - (self.position.z - z) ** 2)
 
         draw_line(image, int(self._tail_left.x), int(self._tail_left.y),
                   int(self._head_left.x), int(self._head_left.y), color)
@@ -360,6 +360,16 @@ class Sphere(Cell):
     def y(self, value):
         if value != self._position.y:
             self._position.y = value
+            self._needs_refresh = True
+
+    @property
+    def z(self):
+        return self._position.y
+
+    @z.setter
+    def z(self, value):
+        if value != self._position.z:
+            self._position.z = value
             self._needs_refresh = True
 
     @property

@@ -10,7 +10,7 @@ from .Modules import CellNodeM, FrameM, LineageM
 totalCostDiff = 0.0
 
 
-def global_optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config,
+def global_optimize(lineage, window_start, window_end, args,
                     iteration_per_cell, client=None, in_auto_temp_schedule=False, const_temp=None):
 
     window = window_end - window_start
@@ -18,6 +18,7 @@ def global_optimize(imagefiles, lineage, realimages, synthimages, cellmaps, dist
     batch_size = total_iterations // args.batches
 
     if in_auto_temp_schedule:
+        return 0
         lineage = deepcopy(lineage)
         synthimages = deepcopy(synthimages)
         distmaps = deepcopy(distmaps)
@@ -25,10 +26,12 @@ def global_optimize(imagefiles, lineage, realimages, synthimages, cellmaps, dist
 
         return optimize_core(lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, args.start_temp, args.end_temp, config, iteration_per_cell, 0, total_iterations, total_iterations, in_auto_temp_schedule, const_temp)
 
-    if client is None:
+    # TODO: Remove this and fix multithreading
+    if True or client is None:
         # single threading
-        cost, lineage, synthimages, distmaps, cellmaps = optimize_core(lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, args.start_temp, args.end_temp, config, iteration_per_cell, 0, total_iterations, total_iterations, in_auto_temp_schedule, const_temp)
-        return lineage, synthimages, distmaps, cellmaps
+        return optimize_core(lineage, window_start, window_end, args.start_temp, args.end_temp, 0, total_iterations, total_iterations, in_auto_temp_schedule, const_temp)
+
+    raise NotImplementedError("Multithreading not implemented yet")
 
     # TODO: Figure out how to get debugfile back without messing with dask
     # debugfile = None
@@ -90,8 +93,10 @@ def global_optimize(imagefiles, lineage, realimages, synthimages, cellmaps, dist
     return lineage, synthimages, distmaps, cellmaps
 
 
-def optimize_core(lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, start_temp, end_temp, config,
-                  iteration_per_cell, current_iteration, batch_size, total_iterations, in_auto_temp_schedule, const_temp, offset=False):
+def optimize_core(lineage: LineageM, window_start, window_end, start_temp, end_temp,
+                  current_iteration, batch_size, total_iterations, in_auto_temp_schedule, const_temp, offset=False):
+
+    config = lineage.config
 
     if in_auto_temp_schedule:
         pbad_total = 0
@@ -122,30 +127,35 @@ def optimize_core(lineage, realimages, synthimages, cellmaps, distmaps, window_s
         node = np.random.choice(frame.nodes)
         if node.cell.dormant:
             continue
-        change_option = np.random.choice(["split", "perturbation", "combine", "background_offset", "opacity_diffraction_offset", "camera_shift"],
-                                         p=[split_prob, perturbation_prob, combine_prob, background_offset_prob, opacity_diffraction_offset_prob, camera_shift_prob])
+        # change_option = np.random.choice(["split", "perturbation", "combine", "background_offset", "opacity_diffraction_offset", "camera_shift"],
+        #                                  p=[split_prob, perturbation_prob, combine_prob, background_offset_prob, opacity_diffraction_offset_prob, camera_shift_prob])
+        change_option = "perturbation"
+
         change = None
         if change_option == "split" and np.random.random_sample() < optimization.split_proba(node.cell.length) and not (window_start <= 0 and frame_index <= 0):
-            change = Split(node.parent, config, realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], lineage.frames[frame_index], distmaps[frame_index])
+            # change = Split(node.parent, config, realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], lineage.frames[frame_index], distmaps[frame_index])
+            pass
 
         elif change_option == "perturbation":
-            change = Perturbation(node, config, realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], lineage.frames[frame_index], distmaps[frame_index])
+            change = Perturbation(node, config, lineage.frames[frame_index])
+        #
+        # elif change_option == "combine" and not (window_start <= 0 and frame_index <= 0):
+        #     change = Combination(node.parent, config, realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], lineage.frames[frame_index], distmaps[frame_index])
+        #
+        # elif change_option == "background_offset" and not (window_start <= 0 and frame_index <= 0) and config["simulation"]["image.type"] == "graySynthetic":
+        #     change = BackGroundLuminosityOffset(lineage.frames[frame_index], realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], config)
+        #
+        # elif change_option == "opacity_diffraction_offset" and not (window_start <= 0 and frame_index <= 0) and config["simulation"]["image.type"] == "graySynthetic":
+        #     change = OpacityDiffractionOffset(lineage.frames[frame_index], realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], config)
+        #
+        # elif change_option == "camera_shift" and not (window_start <= 0 and frame_index <= 0):
+        #     change = CameraShift(lineage.frames[frame_index], realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], config)
 
-        elif change_option == "combine" and not (window_start <= 0 and frame_index <= 0):
-            change = Combination(node.parent, config, realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], lineage.frames[frame_index], distmaps[frame_index])
+        if change and change.is_valid(lineage.real_images[frame_index][0].shape):
+            # calculate costdiff
+            costdiff = change.costdiff(lineage.get_frame_stacks_at_index(frame_index), lineage.z_slices)
+            costdiff /= len(lineage.z_slices)
 
-        elif change_option == "background_offset" and not (window_start <= 0 and frame_index <= 0) and config["simulation"]["image.type"] == "graySynthetic":
-            change = BackGroundLuminosityOffset(lineage.frames[frame_index], realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], config)
-
-        elif change_option == "opacity_diffraction_offset" and not (window_start <= 0 and frame_index <= 0) and config["simulation"]["image.type"] == "graySynthetic":
-            change = OpacityDiffractionOffset(lineage.frames[frame_index], realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], config)
-
-        elif change_option == "camera_shift" and not (window_start <= 0 and frame_index <= 0):
-            change = CameraShift(lineage.frames[frame_index], realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], config)
-
-        if change and change.is_valid:
-            # apply if acceptable
-            costdiff = change.costdiff
 
             if costdiff <= 0:
                 acceptance = 1.0
@@ -161,7 +171,7 @@ def optimize_core(lineage, realimages, synthimages, cellmaps, distmaps, window_s
                     circular_buffer_cursor = (circular_buffer_cursor + 1) % circular_buffer_capacity
 
             if acceptance > np.random.random_sample():
-                change.apply()
+                change.apply(lineage.get_frame_stacks_at_index(frame_index), lineage.z_slices)
                 # if type(change) == Split:
                 #     total_iterations += iteration_per_cell
 
@@ -174,11 +184,8 @@ def optimize_core(lineage, realimages, synthimages, cellmaps, distmaps, window_s
         print("pbad is ", pbad_total / bad_count)
         return pbad_total / bad_count
 
-    realimage = realimages[0]
-    shape = realimages[0].shape
-    synthimage, cellmap = optimization.generate_synthetic_image(lineage.frames[-1].nodes, shape, lineage.frames[-1].simulation_config)
-    cost = optimization.objective(realimage, synthimage, cellmap, config["overlap.cost"], config["cell.importance"])
-    return cost, lineage, synthimages, distmaps, cellmaps
+    # cost = optimization.objective(realimage, synthimage, cellmap, config["overlap.cost"], config["cell.importance"])
+    return lineage
 
 
 def optimize_old(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config,
