@@ -19,6 +19,7 @@ from matplotlib.colors import Normalize
 from PIL import Image
 from copy import deepcopy
 
+from global_optimization.CellUniverse import CellUniverse
 from global_optimization.Modules import LineageM
 from lineage_funcs import create_lineage, save_lineage
 from Cells.Bacilli import Bacilli
@@ -172,6 +173,11 @@ def save_output(image_name, synthimage, realimage, cellnodes, args, config):
 
 def main(args):
     """Main function of cellanneal."""
+
+    test = CellUniverse(args)
+    print(test.config)
+    return 0
+
     if (args.start_temp is not None or args.end_temp is not None) and args.auto_temp == 1:
         raise Exception("when auto_temp is set to 1(default value), starting temperature or ending temperature should not be set manually")
 
@@ -192,6 +198,7 @@ def main(args):
     lineagefile = None
     start = time.time()
 
+    # TODO: Change back to try/except
     if 1:
         config = load_config(args.config)
 

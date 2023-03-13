@@ -1,6 +1,6 @@
 from math import atan2, ceil, floor, cos, sin, sqrt
 import numpy as np
-from skimage.draw import polygon
+from pydantic import BaseModel
 from scipy.ndimage import gaussian_filter
 
 from drawing import draw_arc, draw_line, circle
@@ -8,16 +8,15 @@ from mathhelper import Rectangle, Vector
 
 from .Cell import Cell
 
+class SphereConfig(BaseModel):
+    maxSpeed: float
+    minGrowth: float
+    maxGrowth: float
+    minRadius: float
+    maxRadius: float
+
 class Sphere(Cell):
     """The Sphere class represents a spherical bacterium."""
-
-    _REQUIRED_CONFIG = [
-        'sphere.maxSpeed',
-        'sphere.minGrowth',
-        'sphere.maxGrowth',
-        # 'sphere.minRadius',
-        # 'sphere.maxRadius',
-    ]
 
     def __init__(self, name, x, y, width, length, rotation, split_alpha=None, opacity=0, z = 0):
         #upper left corner is the origin

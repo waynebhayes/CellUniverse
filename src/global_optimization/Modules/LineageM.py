@@ -45,7 +45,6 @@ class LineageM:
         cells_data = pd.read_csv(lineage_file)
         cells_data = cells_data.replace('None', None)
         for i in range(len(self.file_paths)):
-            # this is some what a ugly way to find out frame number contained in a string. Should be improved later?
             file_name = self.file_paths[i][0][0].name
             current_frame_number = self.file_paths[i][0][1]
             if current_frame_number > continue_from:

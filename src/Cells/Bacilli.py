@@ -3,25 +3,25 @@ import numpy as np
 from skimage.draw import polygon
 from scipy.ndimage import gaussian_filter
 
+from pydantic import BaseModel
+
 from drawing import draw_arc, draw_line, circle
 from mathhelper import Rectangle, Vector
 
 from .Cell import Cell
 
+class BacilliConfig(BaseModel):
+    maxSpeed: float
+    maxSpin: float
+    minGrowth: float
+    maxGrowth: float
+    minWidth: float
+    maxWidth: float
+    minLength: float
+    maxLength: float
+
 class Bacilli(Cell):
     """The Bacilli class represents a bacilli bacterium."""
-
-    _REQUIRED_CONFIG = [
-        'bacilli.maxSpeed',
-        'bacilli.maxSpin',
-        'bacilli.minGrowth',
-        'bacilli.maxGrowth',
-        'bacilli.minWidth',
-        'bacilli.maxWidth',
-        'bacilli.minLength',
-        'bacilli.maxLength'
-    ]
-
     def __init__(self, name, x, y, width, length, rotation, split_alpha=None, opacity=0):
         #upper left corner is the origin
         #x,y are index of the array
