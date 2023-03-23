@@ -3,7 +3,7 @@ from typing import Dict, List
 import numpy as np
 
 from .CellNodeM import CellNodeM
-from Cells import Cell
+from ..Cells import Cell
 
 
 class FrameM:

@@ -21,7 +21,7 @@ simulation:
   light_diffraction_truncate: 1
   cell_opacity: auto
   padding: 0
-  image_slices: 33
+  z_slices: 33
 
 # Probability of changes
 prob:

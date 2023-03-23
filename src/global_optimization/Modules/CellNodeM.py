@@ -1,5 +1,5 @@
 from typing import List
-from Cells import Cell
+from ..Cells import Cell
 
 class CellNodeM:
     def __init__(self, cell: Cell, parent: 'CellNodeM' = None):

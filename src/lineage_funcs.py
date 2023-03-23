@@ -1,8 +1,7 @@
-from Cells.Bacilli import Bacilli
 import optimization
 from typing import List
 
-from Cells.Sphere import Sphere
+from global_optimization.Cells import Sphere
 from global_optimization.Modules import CellNodeM, LineageM
 import pandas as pd
 from colony import LineageFrames, CellNode

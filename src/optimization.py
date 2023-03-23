@@ -8,8 +8,6 @@ from PIL import Image, ImageFont
 from scipy.ndimage import distance_transform_edt
 from scipy.optimize import leastsq
 
-from Cells.Bacilli import Bacilli
-from Cells.Sphere import Sphere
 from colony import LineageFrames
 from lineage_funcs import load_colony
 

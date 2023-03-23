@@ -8,8 +8,9 @@ import numpy as np
 import pandas as pd
 from .helper import get_input_file_paths, load_image
 
-from Cells.Sphere import Sphere
+from ..Cells.Sphere import Sphere
 
+SCALING = 6
 
 class LineageM:
     def __init__(self, config, args):
@@ -19,7 +20,7 @@ class LineageM:
         # self.real_images = real_images
 
         if 'image.slices' in self.config["simulation"]:
-            self.z_slices = list(map(lambda x: 10 * x, (range(-1 * (self.config["simulation"]['image.slices'] // 2), self.config["simulation"]['image.slices'] // 2 + 1))))
+            self.z_slices = list(map(lambda x: SCALING * x, (range(-1 * (self.config["simulation"]['image.slices'] // 2), self.config["simulation"]['image.slices'] // 2 + 1))))
         else:
             self.z_slices = [0]
 
@@ -52,7 +53,7 @@ class LineageM:
             if i > 0:
                 self.forward()
             for _, row in cells_data[cells_data["file"] == file_name].iterrows():
-                new_cell = Sphere(row["name"], row["x"], row["y"], row["width"], row["length"], row["rotation"], row["split_alpha"], row["opacity"], z = row["z"])
+                new_cell = Sphere(row["name"], row["x"], row["y"], 2 * row["r"], row["split_alpha"], row["opacity"], z = SCALING * (row["z"] - 16))
                 self.frames[i].add_cell(new_cell)
             self.frames[i].simulation_config = self.find_optimal_simulation_config(i)
             synth_image_stack, cell_map_stack = self.generate_synthetic_images(i)

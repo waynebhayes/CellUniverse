@@ -1,36 +1,54 @@
 from math import atan2, ceil, floor, cos, sin, sqrt
 import numpy as np
-from skimage.draw import polygon
+from pydantic import BaseModel
 from scipy.ndimage import gaussian_filter
 
-from pydantic import BaseModel
+from .drawing import draw_arc, draw_line, circle
+from .mathhelper import Rectangle, Vector
 
-from drawing import draw_arc, draw_line, circle
-from mathhelper import Rectangle, Vector
+from .Cell import Cell, CellParams
 
-from .Cell import Cell
-
-class BacilliConfig(BaseModel):
+class SphereConfig(BaseModel):
     maxSpeed: float
-    maxSpin: float
     minGrowth: float
     maxGrowth: float
-    minWidth: float
-    maxWidth: float
-    minLength: float
-    maxLength: float
+    minRadius: float
+    maxRadius: float
 
-class Bacilli(Cell):
-    """The Bacilli class represents a bacilli bacterium."""
-    def __init__(self, name, x, y, width, length, rotation, split_alpha=None, opacity=0):
+class SphereParams(CellParams):
+    x: float
+    y: float
+    z = 0.0
+    radius: float
+    opacity = 1.0
+    split_alpha = 0.0
+
+
+class Sphere(Cell):
+    """The Sphere class represents a spherical bacterium."""
+    paramClass = SphereParams
+
+    def __init__(self, init_props: SphereParams):
         #upper left corner is the origin
         #x,y are index of the array
         #x:column index y:row index
-        super().__init__(name)
-        self._position = Vector([x, y, 0])
-        self._width = width
-        self._length = length
-        self._rotation = rotation
+        #z:depth index
+
+        # destructure the properties of the sphere
+        name = init_props.name
+        x = init_props.x
+        y = init_props.y
+        z = init_props.z
+        radius = init_props.radius
+        opacity = init_props.opacity
+        split_alpha = init_props.split_alpha
+
+
+        self._name = name
+        self._position = Vector([x, y, z])
+        self._width = radius
+        self._length = radius
+        self._rotation = 0
         self._opacity = opacity
         self._split_alpha = split_alpha
         self._needs_refresh = True
@@ -64,13 +82,16 @@ class Bacilli(Cell):
 
         self._needs_refresh = False
 
-    def draw(self, image, cellmap, is_cell, simulation_config):
+    def draw(self, image, cellmap, is_cell, simulation_config, z = 0):
         """Draws the cell by adding the given value to the image."""
         if self.dormant:
             return
 
         if self._needs_refresh:
             self._refresh()
+
+        if abs(self.position.z - z) > self.width / 2:
+            return
 
         #Diffraction pattern currently only applies to graySynthetic image
         image_type = simulation_config["image.type"]
@@ -84,92 +105,57 @@ class Bacilli(Cell):
         width = right - left
         height = bottom - top
         mask = np.zeros((height, width), dtype=bool)
+        radius = sqrt((self.width / 2) ** 2 - (self.position.z - z) ** 2)
 
-        body_mask = polygon(
-            r=(self._head_left.y - top,
-               self._head_right.y - top,
-               self._tail_right.y - top,
-               self._tail_left.y - top),
-            c=(self._head_left.x - left,
-               self._head_right.x - left,
-               self._tail_right.x - left,
-               self._tail_left.x - left),
-            shape=mask.shape)
+        if radius <= 0:
+            return
 
-        body_mask_up = polygon(
-            r=(self._head_left.y - self._region.top,
-               ceil((self._head_right.y + self._head_left.y) / 2) - self._region.top,
-               ceil((self._tail_right.y + self._tail_left.y) / 2) - self._region.top,
-               self._tail_left.y - self._region.top),
-            c=(self._head_left.x - self._region.left,
-               ceil((self._head_right.x + self._head_left.x) / 2) - self._region.left,
-               ceil((self._tail_right.x + self._tail_left.x) / 2) - self._region.left,
-               self._tail_left.x - self._region.left),
-            shape=mask.shape)
-
-        body_mask_middle = polygon(
-            r=(ceil((self._head_right.y + self._head_left.y * 2) / 3) - self._region.top,
-               ceil((self._head_right.y * 2 + self._head_left.y) / 3) - self._region.top,
-               ceil((self._tail_right.y * 2 + self._tail_left.y) / 3) - self._region.top,
-               ceil((self._tail_right.y + self._tail_left.y * 2) / 3) - self._region.top),
-            c=(ceil((self._head_right.x + self._head_left.x * 2) / 3) - self._region.left,
-               ceil((self._head_right.x * 2 + self._head_left.x) / 3) - self._region.left,
-               ceil((self._tail_right.x * 2 + self._tail_left.x) / 3) - self._region.left,
-               ceil((self._tail_right.x + self._tail_left.x * 2) / 3) - self._region.left),
-            shape=mask.shape)
-
-        head_mask = circle(
+        body_mask = circle(
             x=self._head_center.x - left,
             y=self._head_center.y - top,
-            radius=self._width / 2,
+            radius=radius,
             shape=mask.shape)
 
-        tail_mask = circle(
-            x=self._tail_center.x - left,
-            y=self._tail_center.y - top,
-            radius=self._width / 2,
-            shape=mask.shape)
         #phaseContrast unchanged
         try:
             if image_type == "phaseContrast":
-                if not is_cell:
-                    mask[body_mask] = True
-                    mask[head_mask] = True
-                    mask[tail_mask] = True
-
-                    image[self._region.top:self._region.bottom,
-                    self._region.left:self._region.right][mask] = 0.39  # 0.39*255=100
-
-                else:
-                    mask = np.zeros((height, width), dtype=bool)
-                    mask[body_mask] = True
-                    image[self._region.top:self._region.bottom,
-                    self._region.left:self._region.right][mask] = 0.25  # 0.25*255=65
-
-                    mask = np.zeros((height, width), dtype=bool)
-                    mask[head_mask] = True
-                    image[self._region.top:self._region.bottom,
-                    self._region.left:self._region.right][mask] = 0.25
-
-                    mask = np.zeros((height, width), dtype=bool)
-                    mask[tail_mask] = True
-                    image[self._region.top:self._region.bottom,
-                    self._region.left:self._region.right][mask] = 0.25
-
-                    mask = np.zeros((height, width), dtype=bool)
-                    mask[body_mask_up] = True
-                    image[self._region.top:self._region.bottom,
-                    self._region.left:self._region.right][mask] = 0.63  # 0.63*255=160
-
-                    mask = np.zeros((height, width), dtype=bool)
-                    mask[body_mask_middle] = True
-                    image[self._region.top:self._region.bottom,
-                    self._region.left:self._region.right][mask] = 0.39  # 0.39*255=100
+                pass
+                # if not is_cell:
+                #     mask[body_mask] = True
+                #     mask[head_mask] = True
+                #     mask[tail_mask] = True
+                #
+                #     image[self._region.top:self._region.bottom,
+                #     self._region.left:self._region.right][mask] = 0.39  # 0.39*255=100
+                #
+                # else:
+                #     mask = np.zeros((height, width), dtype=bool)
+                #     mask[body_mask] = True
+                #     image[self._region.top:self._region.bottom,
+                #     self._region.left:self._region.right][mask] = 0.25  # 0.25*255=65
+                #
+                #     mask = np.zeros((height, width), dtype=bool)
+                #     mask[head_mask] = True
+                #     image[self._region.top:self._region.bottom,
+                #     self._region.left:self._region.right][mask] = 0.25
+                #
+                #     mask = np.zeros((height, width), dtype=bool)
+                #     mask[tail_mask] = True
+                #     image[self._region.top:self._region.bottom,
+                #     self._region.left:self._region.right][mask] = 0.25
+                #
+                #     mask = np.zeros((height, width), dtype=bool)
+                #     mask[body_mask_up] = True
+                #     image[self._region.top:self._region.bottom,
+                #     self._region.left:self._region.right][mask] = 0.63  # 0.63*255=160
+                #
+                #     mask = np.zeros((height, width), dtype=bool)
+                #     mask[body_mask_middle] = True
+                #     image[self._region.top:self._region.bottom,
+                #     self._region.left:self._region.right][mask] = 0.39  # 0.39*255=100
 
             elif image_type == "graySynthetic":
                 mask[body_mask] = True
-                mask[head_mask] = True
-                mask[tail_mask] = True
 
                 gaussian_filter_truncate = simulation_config["light.diffraction.truncate"]
                 gaussian_filter_sigma = simulation_config["light.diffraction.sigma"]
@@ -221,8 +207,6 @@ class Bacilli(Cell):
 
             elif image_type == "binary":
                 mask[body_mask] = True
-                mask[head_mask] = True
-                mask[tail_mask] = True
                 if is_cell:
                     image[self._region.top:self._region.bottom,
                     self._region.left:self._region.right][mask] += 1.0
@@ -233,15 +217,22 @@ class Bacilli(Cell):
                     self._region.left:self._region.right][mask] -= 1.0
                     cellmap[self._region.top:self._region.bottom,
                     self._region.left:self._region.right][mask] -= 1
-        except:
-            self.dormant = True
+        except Exception as e:
+            if z == 0:
+                raise e
+            # self.dormant = True
+            pass
 
 
-
-    def drawoutline(self, image, color):
+    def drawoutline(self, image, color, z = 0):
         """Draws the outline of the cell over a color image."""
         if self._needs_refresh:
             self._refresh()
+
+        if abs(self.position.z - z) > self.width / 2:
+            return
+
+        radius = sqrt((self.width / 2) ** 2 - (self.position.z - z) ** 2)
 
         draw_line(image, int(self._tail_left.x), int(self._tail_left.y),
                   int(self._head_left.x), int(self._head_left.y), color)
@@ -253,14 +244,14 @@ class Bacilli(Cell):
         t1 = atan2(r0.y, r0.x)
         t0 = atan2(r1.y, r1.x)
         draw_arc(image, self._head_center.x, self._head_center.y,
-                 self._width/2, t0, t1, color)
+                 radius, t0, t1, color)
 
         r0 = self._tail_right - self._tail_center
         r1 = self._tail_left - self._tail_center
         t0 = atan2(r0.y, r0.x)
         t1 = atan2(r1.y, r1.x)
         draw_arc(image, self._tail_center.x, self._tail_center.y,
-                 self._width/2, t0, t1, color)
+                 radius, t0, t1, color)
 
     def split(self, alpha):
         """Splits a cell into two cells with a ratio determined by alpha."""
@@ -277,13 +268,13 @@ class Bacilli(Cell):
         position1 = (front + center)/2
         position2 = (center + back)/2
 
-        cell1 = Bacilli(
+        cell1 = Sphere(
             self._name + '0',
             position1.x, position1.y,
             self._width, self._length*float(alpha),
             self._rotation, alpha, self._opacity)
 
-        cell2 = Bacilli(
+        cell2 = Sphere(
             self._name + '1',
             position2.x, position2.y,
             self._width, self._length*(1 - float(alpha)),
@@ -328,14 +319,14 @@ class Bacilli(Cell):
         width = (self._width + cell._width)/2
         length = sqrt((front - back)@(front - back))
 
-        return Bacilli(
+        return Sphere(
             self._name[:-1],
             position.x, position.y,
             width, length,
             rotation, "combined alpha unknown", (self._opacity + cell.opacity)/2)
 
     def __repr__(self):
-        return (f'Bacilli('
+        return (f'Sphere('
                 f'name="{self._name}", '
                 f'x={self._position.x}, y={self._position.y}, '
                 f'width={self._width}, length={self._length}, '
@@ -393,6 +384,16 @@ class Bacilli(Cell):
             self._needs_refresh = True
 
     @property
+    def z(self):
+        return self._position.y
+
+    @z.setter
+    def z(self, value):
+        if value != self._position.z:
+            self._position.z = value
+            self._needs_refresh = True
+
+    @property
     def width(self):
         return self._width
 
@@ -400,6 +401,7 @@ class Bacilli(Cell):
     def width(self, value):
         if value != self._width:
             self._width = value
+            self._length = value
             self._needs_refresh = True
 
     @property
@@ -408,9 +410,10 @@ class Bacilli(Cell):
 
     @length.setter
     def length(self, value):
-        if value != self._length:
-            self._length = value
-            self._needs_refresh = True
+        return
+        # if value != self._length:
+        #     self._length = value
+        #     self._needs_refresh = True
 
     @property
     def rotation(self):

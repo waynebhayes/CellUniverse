@@ -1,18 +1,17 @@
 import yaml
 
-from Cells.Bacilli import BacilliConfig
-from Cells.Sphere import SphereConfig
+from ..Cells import BacilliConfig
+from ..Cells import SphereConfig
 from .ConfigTypes import BaseConfig
 
-def load_config(path: str):
-    # Loads a config file from the path and returns a config object
 
+def load_config(path: str):
+    """Loads the configuration file and returns the appropriate config class and cell class."""
     with open(path, 'r') as file:
         config = yaml.safe_load(file)
     if config['cellType'] == 'sphere':
-        config_type = SphereConfig
+        return BaseConfig[SphereConfig](**config)
     elif config['cellType'] == 'bacilli':
-        config_type = BacilliConfig
+        return BaseConfig[BacilliConfig](**config)
     else:
         raise ValueError(f'Invalid cell type: "{config["cellType"]}"')
-    return BaseConfig[config_type](**config)

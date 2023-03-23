@@ -10,7 +10,8 @@ The entry point for CellAnneal program.
 import argparse
 import multiprocessing
 from pathlib import Path
-import optimization
+import jsonc
+# import optimization
 from global_optimization import global_optimize, auto_temp_schedule
 from scipy.ndimage import distance_transform_edt
 import numpy as np
@@ -22,8 +23,7 @@ from copy import deepcopy
 from global_optimization.CellUniverse import CellUniverse
 from global_optimization.Modules import LineageM
 from lineage_funcs import create_lineage, save_lineage
-from Cells.Bacilli import Bacilli
-from Cells.Sphere import Sphere
+from global_optimization.Cells import Sphere, Bacilli
 
 import sys
 sys.setrecursionlimit(10000)
@@ -71,7 +71,7 @@ def parse_args():
                         help="path to the residual image output directory")
     parser.add_argument('--lineage_file', metavar='FILE', type=Path, required=False,
                         help='path to previous lineage file')
-    parser.add_argument('--continue_from', metavar='N', type=int, default=0,
+    parser.add_argument('--continue_from', metavar='N', type=int, default=-1,
                         help="load already found orientation of cells and start from the continue_from frame")
     parser.add_argument('--seed', metavar='N', type=int, default=None, help='seed for random number generation')
     parser.add_argument('--batches', metavar='N', type=int, default=1, help='number of batches to split each frame into for multithreading')
@@ -124,7 +124,7 @@ def load_config(config_file):
     else:
         raise ValueError('Invalid config: unsupported cell type')
 
-    celltype.checkconfig(config)
+    # celltype.checkconfig(config)
 
     return config
 
@@ -175,7 +175,6 @@ def main(args):
     """Main function of cellanneal."""
 
     test = CellUniverse(args)
-    print(test.config)
     return 0
 
     if (args.start_temp is not None or args.end_temp is not None) and args.auto_temp == 1:
@@ -313,8 +312,6 @@ if __name__ == '__main__':
     import time
     from itertools import count
 
-    import jsonc
-    from Cells.Bacilli import Bacilli
     from sys import exit
     # pr = cProfile.Profile()
     # pr.enable()
