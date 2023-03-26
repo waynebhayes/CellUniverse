@@ -23,3 +23,15 @@ class Cell(ABC):
     @abstractmethod
     def __init__(self, initProps: CellParams):
         pass
+
+    @abstractmethod
+    def draw(self, image, simulation_config, z = 0):
+        pass
+
+    @abstractmethod
+    def draw_outline(self, image, color, z = 0):
+        pass
+
+    @abstractmethod
+    def get_cell_params(self) -> CellParams:
+        pass

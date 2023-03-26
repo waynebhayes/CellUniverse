@@ -146,7 +146,7 @@ def save_output(image_name, synthimage, realimage, cellnodes, args, config):
             for node in cellnodes:
                 if node.cell.dormant:
                     continue
-                node.cell.drawoutline(output_frame, (1, 0, 0), z)
+                node.cell.draw_outline(output_frame, (1, 0, 0), z)
             output_frame = Image.fromarray(np.uint8(255 * output_frame))
             output_frame.save(args.output / (image_name[:-4] + '_' + str(z) + image_name[-4:] ))
             print('saved', str(z) + image_name)
@@ -161,7 +161,7 @@ def save_output(image_name, synthimage, realimage, cellnodes, args, config):
         for node in cellnodes:
             if node.cell.dormant:
                 continue
-            node.cell.drawoutline(output_frame, (1, 0, 0))
+            node.cell.draw_outline(output_frame, (1, 0, 0))
         output_frame = Image.fromarray(np.uint8(255 * output_frame))
         output_frame.save(args.output / image_name)
 
@@ -175,6 +175,7 @@ def main(args):
     """Main function of cellanneal."""
 
     test = CellUniverse(args)
+    test.run()
     return 0
 
     if (args.start_temp is not None or args.end_temp is not None) and args.auto_temp == 1:

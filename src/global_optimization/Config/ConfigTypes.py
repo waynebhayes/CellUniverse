@@ -17,7 +17,7 @@ class SimulationConfig(BaseModel, extra = 'forbid'):
     cell_opacity: Union[float, str]
     padding = 0
     z_slices = 1  # Number of z slices in 3d image
-    scaling = 1
+    z_scaling = 1
     z_values: List[int] = []  # List of z values to use for each image slice. This is set automatically, do not specify
 
     @validator('z_values')

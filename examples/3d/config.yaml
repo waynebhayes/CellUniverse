@@ -19,9 +19,10 @@ simulation:
   light_diffraction_sigma: auto
   light_diffraction_strength: auto
   light_diffraction_truncate: 1
-  cell_opacity: auto
+  cell_opacity: 0
   padding: 0
   z_slices: 33
+  z_scaling: 6
 
 # Probability of changes
 prob:

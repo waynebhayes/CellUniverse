@@ -75,7 +75,7 @@ class Bacilli(Cell):
 
         self._needs_refresh = False
 
-    def draw(self, image, cellmap, is_cell, simulation_config):
+    def draw(self, image, cell_map, is_cell, simulation_config, z = 0):
         """Draws the cell by adding the given value to the image."""
         if self.dormant:
             return
@@ -249,7 +249,7 @@ class Bacilli(Cell):
 
 
 
-    def drawoutline(self, image, color):
+    def draw_outline(self, image, color):
         """Draws the outline of the cell over a color image."""
         if self._needs_refresh:
             self._refresh()

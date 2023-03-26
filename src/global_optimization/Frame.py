@@ -10,58 +10,82 @@ from .Cells import Cell
 from .Config import SimulationConfig
 
 
-# Helper functions
-def load_image(image_file: Path):
-    """Open the image file and return a floating-point grayscale array."""
-    with Image.open(image_file) as img:
-        # Convert the image to grayscale if it's in RGB mode
-        if img.mode == 'RGB':
-            img = img.convert('L')
-        # Convert the image to a NumPy array and normalize the pixel values
-        arr = np.array(img, dtype=np.float32) / 255.0
-    return arr
-
 
 class Frame:
-
-
-    def __init__(self, real_image_paths: List[Path], simulation_config: SimulationConfig, cells: List[Cell]):
-        real_images: List[npt.NDArray] = []
-        for path in real_image_paths:
-            real_images.append(load_image(path))
-        self._real_image_stack = np.array(real_images)  # original 3d array of images
-        self.real_image_stack = np.array(self._real_image_stack)  # create a copy of the original image stack
+    def __init__(self, real_image_stack: npt.NDArray, simulation_config: SimulationConfig, cells: List[Cell], output_path: Path, image_name: str):
+        self.z_slices = [simulation_config.z_scaling * (i - simulation_config.z_slices // 2) for i in range(simulation_config.z_slices)]
         self.cells = cells
         self.simulation_config = simulation_config
-        self.synth_image_stacks: Optional[npt.NDArray] = None  # 3D array of synthetic images
-        self.cell_map_stacks: Optional[npt.NDArray] = None  # 3D array of cell maps
-        self.update()
+        self.output_path = output_path
+        self.image_name = image_name  # name of image file for saving cell data
+
+        self._real_image_stack = real_image_stack  # original 3d array of images
+        self.real_image_stack = np.array(self._real_image_stack)  # create a copy of the original image stack
+
+        self.pad_real_image()
+        self.cell_map_stack = self.generate_cell_maps()
+        self.synth_image_stack = self.generate_synth_images()
 
     def update(self):
         """Update the frame."""
         self.pad_real_image()
-        self.update_synth_images()
-        self.update_cell_maps()
+        self.synth_image_stack = self.generate_synth_images()
+        self.cell_map_stack = self.generate_cell_maps()
 
     def update_simulation_config(self, simulation_config: SimulationConfig):
         """Update the simulation config and regenerate the synthetic images and cell maps."""
         self.simulation_config = simulation_config
         self.update()
 
-    def update_synth_images(self):
+    def generate_synth_images(self):
         """Generate synthetic images from the cells in the frame."""
-        if self.simulation_config is None:
-            raise ValueError("Simulation config is not set")
         if self.cells is None:
             raise ValueError("Cells are not set")
-        pass
 
-    def update_cell_maps(self):
+        shape = self.get_image_shape()
+        synth_image_stack = []
+
+        for i, z in enumerate(self.z_slices):
+            synth_image = np.full(shape, self.simulation_config.background_color)
+            for cell in self.cells:
+                cell.draw(synth_image, self.simulation_config, z = z)
+            synth_image_stack.append(synth_image)
+
+        return np.array(synth_image_stack)
+
+
+    def generate_cell_maps(self):
         """Generate cell maps from the cells in the frame. This should only be for binary images"""
         # TODO: Implement this
-        self.cell_map_stacks = np.zeros((0, 0))
+        return np.zeros(self.real_image_stack.shape)
 
     def pad_real_image(self):
         """Pad the real image to account for the padding in the synthetic images."""
         padding = ((0, 0), (self.simulation_config.padding, self.simulation_config.padding), (self.simulation_config.padding, self.simulation_config.padding))
         self.real_image_stack = np.pad(self.real_image_stack, padding, mode='constant', constant_values=self.simulation_config.background_color)
+
+    def get_image_shape(self):
+        """Get the shape of an individual image in the frame."""
+        return self.real_image_stack.shape[1:]
+
+    def generate_output_images(self):
+        """Generate the output images for the frame."""
+        real_images_with_outlines: List[Image.Image] = []
+        for real_image, z in zip(self.real_image_stack, self.z_slices):
+            output_frame = np.stack((real_image,) * 3, axis=-1)
+            for cell in self.cells:
+                cell.draw_outline(output_frame, (1, 0, 0), z)
+            output_frame = Image.fromarray(np.uint8(255 * output_frame))
+            real_images_with_outlines.append(output_frame)
+        return real_images_with_outlines
+
+    def generate_output_synth_images(self):
+        """Generate the output synthetic images for the frame."""
+        return [Image.fromarray(np.uint8(255 * synth_image), "L") for synth_image in self.synth_image_stack]
+
+    def get_cells_as_params(self):
+        """Convert the cells in the frame to a pandas dataframe."""
+        cell_params = pd.DataFrame([dict(cell.get_cell_params()) for cell in self.cells])
+        # set the file name for all cells to the same file name
+        cell_params["file"] = self.image_name
+        return cell_params

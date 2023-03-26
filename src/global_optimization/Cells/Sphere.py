@@ -1,10 +1,8 @@
-from math import atan2, ceil, floor, cos, sin, sqrt
-import numpy as np
+from math import sqrt
 from pydantic import BaseModel
-from scipy.ndimage import gaussian_filter
+from skimage.draw import disk, circle_perimeter_aa
 
-from .drawing import draw_arc, draw_line, circle
-from .mathhelper import Rectangle, Vector
+from .mathhelper import Vector
 
 from .Cell import Cell, CellParams
 
@@ -18,10 +16,10 @@ class SphereConfig(BaseModel):
 class SphereParams(CellParams):
     x: float
     y: float
-    z = 0.0
+    z: float = 0.0
     radius: float
-    opacity = 1.0
-    split_alpha = 0.0
+    opacity: float = 1.0
+    split_alpha: float = 0.0
 
 
 class Sphere(Cell):
@@ -43,400 +41,136 @@ class Sphere(Cell):
         opacity = init_props.opacity
         split_alpha = init_props.split_alpha
 
-
         self._name = name
         self._position = Vector([x, y, z])
-        self._width = radius
-        self._length = radius
+        self._radius = radius
         self._rotation = 0
         self._opacity = opacity
         self._split_alpha = split_alpha
-        self._needs_refresh = True
         self.dormant = False
 
-    def _refresh(self):
-        # get the positions of the centers of the head and tail circles
-        direction = Vector([cos(self._rotation), sin(self._rotation), 0])
-        distance = (self._length - self._width)/2
-        displacement = distance*direction
-
-        self._head_center = self._position + displacement
-        self._tail_center = self._position - displacement
-
-        # get the positions of the corners of the bacilli box
-        side = Vector([-sin(self._rotation), cos(self._rotation), 0])
-        radius = self._width/2
-
-        self._head_right = self._head_center + radius*side
-        self._head_left = self._head_center - radius*side
-        self._tail_right = self._tail_center + radius*side
-        self._tail_left = self._tail_center - radius*side
-
-
-        # compute the region of interest
-        self._region = Rectangle(
-            floor(min(self._head_center.x, self._tail_center.x) - radius), #left
-            floor(min(self._head_center.y, self._tail_center.y) - radius), #top
-            ceil(max(self._head_center.x, self._tail_center.x) + radius) + 1, #right
-            ceil(max(self._head_center.y, self._tail_center.y) + radius) + 1) #bottom
-
-        self._needs_refresh = False
-
-    def draw(self, image, cellmap, is_cell, simulation_config, z = 0):
+    def draw(self, image, simulation_config, z = 0):
         """Draws the cell by adding the given value to the image."""
         if self.dormant:
             return
 
-        if self._needs_refresh:
-            self._refresh()
-
-        if abs(self.position.z - z) > self.width / 2:
+        current_radius = self.get_radius_at(z)
+        if current_radius <= 0:
             return
 
-        #Diffraction pattern currently only applies to graySynthetic image
-        image_type = simulation_config["image.type"]
-        background_color = simulation_config["background.color"]
-        cell_color = simulation_config["cell.color"]
+        background_color = simulation_config.background_color
+        cell_color = simulation_config.cell_color
 
-        top = self._region.top
-        bottom = self._region.bottom
-        left = self._region.left
-        right = self._region.right
-        width = right - left
-        height = bottom - top
-        mask = np.zeros((height, width), dtype=bool)
-        radius = sqrt((self.width / 2) ** 2 - (self.position.z - z) ** 2)
-
-        if radius <= 0:
-            return
-
-        body_mask = circle(
-            x=self._head_center.x - left,
-            y=self._head_center.y - top,
-            radius=radius,
-            shape=mask.shape)
-
-        #phaseContrast unchanged
-        try:
-            if image_type == "phaseContrast":
-                pass
-                # if not is_cell:
-                #     mask[body_mask] = True
-                #     mask[head_mask] = True
-                #     mask[tail_mask] = True
-                #
-                #     image[self._region.top:self._region.bottom,
-                #     self._region.left:self._region.right][mask] = 0.39  # 0.39*255=100
-                #
-                # else:
-                #     mask = np.zeros((height, width), dtype=bool)
-                #     mask[body_mask] = True
-                #     image[self._region.top:self._region.bottom,
-                #     self._region.left:self._region.right][mask] = 0.25  # 0.25*255=65
-                #
-                #     mask = np.zeros((height, width), dtype=bool)
-                #     mask[head_mask] = True
-                #     image[self._region.top:self._region.bottom,
-                #     self._region.left:self._region.right][mask] = 0.25
-                #
-                #     mask = np.zeros((height, width), dtype=bool)
-                #     mask[tail_mask] = True
-                #     image[self._region.top:self._region.bottom,
-                #     self._region.left:self._region.right][mask] = 0.25
-                #
-                #     mask = np.zeros((height, width), dtype=bool)
-                #     mask[body_mask_up] = True
-                #     image[self._region.top:self._region.bottom,
-                #     self._region.left:self._region.right][mask] = 0.63  # 0.63*255=160
-                #
-                #     mask = np.zeros((height, width), dtype=bool)
-                #     mask[body_mask_middle] = True
-                #     image[self._region.top:self._region.bottom,
-                #     self._region.left:self._region.right][mask] = 0.39  # 0.39*255=100
-
-            elif image_type == "graySynthetic":
-                mask[body_mask] = True
-
-                gaussian_filter_truncate = simulation_config["light.diffraction.truncate"]
-                gaussian_filter_sigma = simulation_config["light.diffraction.sigma"]
-                diffraction_strength = simulation_config["light.diffraction.strength"]
-                cell_opacity = self._opacity if self._opacity != "auto" and self._opacity != "None" and self._opacity != None else simulation_config["cell.opacity"]
-                #in order to use optimze funtion
-                gaussian_filter_sigma = max(gaussian_filter_sigma, 0)
-                extension = ceil(gaussian_filter_truncate * gaussian_filter_sigma - 0.5)
-                diff_top = top - (2 * extension)
-                diff_left = left - (2 * extension)
-                diff_bottom = bottom + (2 * extension)
-                diff_right = right + (2 * extension)
-
-                rendering_top = top - extension
-                rendering_left = left - extension
-                rendering_bottom = bottom + extension
-                rendering_right = right + extension
-
-                re_diff_top, re_diff_left, re_rendering_top, re_rendering_left = [max(i, 0) for i in [diff_top, diff_left, rendering_top, rendering_left]]
-                re_diff_bottom, re_rendering_bottom = [min(i, image.shape[0]) for i in [diff_bottom, rendering_bottom]]
-                re_diff_right, re_rendering_right = [min(i, image.shape[1]) for i in [diff_right, rendering_right]]
-
-                if is_cell:
-                    cellmap[top:bottom, left:right][mask] += 1
-                    cellmap_diff = cellmap[re_diff_top:re_diff_bottom, re_diff_left:re_diff_right]
-                    diffraction_mask = np.zeros(cellmap_diff.shape, dtype=float)
-                    diffraction_mask[cellmap_diff>0] = diffraction_strength
-                    diffraction_mask = gaussian_filter(diffraction_mask, gaussian_filter_sigma, truncate = gaussian_filter_truncate)
-                    diffraction_mask[cellmap_diff==0] += background_color
-                    diffraction_mask[cellmap_diff>0] = cell_color + cell_opacity * diffraction_mask[cellmap_diff>0]
-                    #print("diffraction mask shape: ", diffraction_mask.shape)
-                    image[re_rendering_top:re_rendering_bottom, re_rendering_left:re_rendering_right] = diffraction_mask[re_rendering_top - re_diff_top:
-                                                                                                                         re_rendering_bottom - re_diff_bottom if re_rendering_bottom - re_diff_bottom != 0 else None,
-                                                                                                        re_rendering_left - re_diff_left:
-                                                                                                        re_rendering_right - re_diff_right if re_rendering_right - re_diff_right != 0 else None]
-                else:
-                    cellmap[top:bottom, left:right][mask] -= 1
-                    cellmap_diff = cellmap[re_diff_top:re_diff_bottom, re_diff_left:re_diff_right]
-                    diffraction_mask = np.zeros(cellmap_diff.shape, dtype=float)
-                    diffraction_mask[cellmap_diff>0] = diffraction_strength
-                    diffraction_mask = gaussian_filter(diffraction_mask, gaussian_filter_sigma, truncate = gaussian_filter_truncate)
-                    diffraction_mask[cellmap_diff==0] += background_color
-                    diffraction_mask[cellmap_diff>0] = cell_color + cell_opacity * diffraction_mask[cellmap_diff>0]
-                    #print("diffraction mask shape: ", diffraction_mask.shape)
-                    image[re_rendering_top:re_rendering_bottom, re_rendering_left:re_rendering_right] = diffraction_mask[re_rendering_top - re_diff_top:
-                                                                                                                         re_rendering_bottom - re_diff_bottom if re_rendering_bottom - re_diff_bottom != 0 else None,
-                                                                                                        re_rendering_left - re_diff_left:
-                                                                                                        re_rendering_right - re_diff_right if re_rendering_right - re_diff_right != 0 else None]
-
-            elif image_type == "binary":
-                mask[body_mask] = True
-                if is_cell:
-                    image[self._region.top:self._region.bottom,
-                    self._region.left:self._region.right][mask] += 1.0
-                    cellmap[self._region.top:self._region.bottom,
-                    self._region.left:self._region.right][mask] += 1
-                else:
-                    image[self._region.top:self._region.bottom,
-                    self._region.left:self._region.right][mask] -= 1.0
-                    cellmap[self._region.top:self._region.bottom,
-                    self._region.left:self._region.right][mask] -= 1
-        except Exception as e:
-            if z == 0:
-                raise e
-            # self.dormant = True
-            pass
+        rr, cc = disk((self._position.y, self._position.x), current_radius, shape=image.shape)
+        image[rr, cc] = cell_color
 
 
-    def drawoutline(self, image, color, z = 0):
+    def draw_outline(self, image, color, z = 0):
         """Draws the outline of the cell over a color image."""
-        if self._needs_refresh:
-            self._refresh()
-
-        if abs(self.position.z - z) > self.width / 2:
+        if self.dormant:
             return
 
-        radius = sqrt((self.width / 2) ** 2 - (self.position.z - z) ** 2)
+        current_radius = self.get_radius_at(z)
+        if current_radius <= 0:
+            return
 
-        draw_line(image, int(self._tail_left.x), int(self._tail_left.y),
-                  int(self._head_left.x), int(self._head_left.y), color)
-        draw_line(image, int(self._tail_right.x), int(self._tail_right.y),
-                  int(self._head_right.x), int(self._head_right.y), color)
-
-        r0 = self._head_right - self._head_center
-        r1 = self._head_left - self._head_center
-        t1 = atan2(r0.y, r0.x)
-        t0 = atan2(r1.y, r1.x)
-        draw_arc(image, self._head_center.x, self._head_center.y,
-                 radius, t0, t1, color)
-
-        r0 = self._tail_right - self._tail_center
-        r1 = self._tail_left - self._tail_center
-        t0 = atan2(r0.y, r0.x)
-        t1 = atan2(r1.y, r1.x)
-        draw_arc(image, self._tail_center.x, self._tail_center.y,
-                 radius, t0, t1, color)
+        rr, cc, val = circle_perimeter_aa(round(self._position.y), round(self._position.x), round(current_radius), shape=image.shape)
+        image[rr, cc] = color
 
     def split(self, alpha):
         """Splits a cell into two cells with a ratio determined by alpha."""
-        if self._needs_refresh:
-            self._refresh()
-
-        direction = Vector([cos(self._rotation), sin(self._rotation), 0])
-        unit = self._length*direction
-
-        front = self._position + unit/2
-        back = self._position - unit/2
-        center = self._position + (0.5 - float(alpha))*unit
-
-        position1 = (front + center)/2
-        position2 = (center + back)/2
-
-        cell1 = Sphere(
-            self._name + '0',
-            position1.x, position1.y,
-            self._width, self._length*float(alpha),
-            self._rotation, alpha, self._opacity)
-
-        cell2 = Sphere(
-            self._name + '1',
-            position2.x, position2.y,
-            self._width, self._length*(1 - float(alpha)),
-            self._rotation, alpha, self._opacity)
-
-        return cell1, cell2
+        pass
+        # if self._needs_refresh:
+        #     self._refresh()
+        #
+        # direction = Vector([cos(self._rotation), sin(self._rotation), 0])
+        # unit = self._length*direction
+        #
+        # front = self._position + unit/2
+        # back = self._position - unit/2
+        # center = self._position + (0.5 - float(alpha))*unit
+        #
+        # position1 = (front + center)/2
+        # position2 = (center + back)/2
+        #
+        # cell1 = Sphere(
+        #     self._name + '0',
+        #     position1.x, position1.y,
+        #     self._width, self._length*float(alpha),
+        #     self._rotation, alpha, self._opacity)
+        #
+        # cell2 = Sphere(
+        #     self._name + '1',
+        #     position2.x, position2.y,
+        #     self._width, self._length*(1 - float(alpha)),
+        #     self._rotation, alpha, self._opacity)
+        #
+        # return cell1, cell2
 
     def combine(self, cell):
         """Combines this cell with another cell."""
-        if self._needs_refresh:
-            self._refresh()
+        pass
+        # if self._needs_refresh:
+        #     self._refresh()
+        #
+        # if cell._needs_refresh:
+        #     cell._refresh()
+        #
+        # separation = self._position - cell._position
+        # direction = separation/sqrt(separation@separation)
+        #
+        # # get combined front
+        # direction1 = Vector([cos(self._rotation), sin(self._rotation), 0])
+        # distance1 = self._length - self._width
+        # if direction1@direction >= 0:
+        #     head1 = self._position + distance1*direction1/2
+        # else:
+        #     head1 = self._position - distance1*direction1/2
+        # extent1 = head1 + self._width*direction/2
+        # front = self._position + ((extent1 - self._position)@direction)*direction
+        #
+        # # get combined back
+        # direction2 = Vector([cos(cell._rotation), sin(cell._rotation), 0])
+        # distance2 = cell._length - cell._width
+        # if direction2@direction >= 0:
+        #     tail2 = cell._position - distance2*direction2/2
+        # else:
+        #     tail2 = cell._position + distance2*direction2/2
+        # extent2 = tail2 - cell._width*direction/2
+        # back = cell._position + ((extent2 - cell._position)@direction)*direction
+        #
+        # # create new cell
+        # position = (front + back)/2
+        # rotation = atan2(direction.y, direction.x)
+        # width = (self._width + cell._width)/2
+        # length = sqrt((front - back)@(front - back))
+        #
+        # return Sphere(
+        #     self._name[:-1],
+        #     position.x, position.y,
+        #     width, length,
+        #     rotation, "combined alpha unknown", (self._opacity + cell.opacity)/2)
 
-        if cell._needs_refresh:
-            cell._refresh()
-
-        separation = self._position - cell._position
-        direction = separation/sqrt(separation@separation)
-
-        # get combined front
-        direction1 = Vector([cos(self._rotation), sin(self._rotation), 0])
-        distance1 = self._length - self._width
-        if direction1@direction >= 0:
-            head1 = self._position + distance1*direction1/2
-        else:
-            head1 = self._position - distance1*direction1/2
-        extent1 = head1 + self._width*direction/2
-        front = self._position + ((extent1 - self._position)@direction)*direction
-
-        # get combined back
-        direction2 = Vector([cos(cell._rotation), sin(cell._rotation), 0])
-        distance2 = cell._length - cell._width
-        if direction2@direction >= 0:
-            tail2 = cell._position - distance2*direction2/2
-        else:
-            tail2 = cell._position + distance2*direction2/2
-        extent2 = tail2 - cell._width*direction/2
-        back = cell._position + ((extent2 - cell._position)@direction)*direction
-
-        # create new cell
-        position = (front + back)/2
-        rotation = atan2(direction.y, direction.x)
-        width = (self._width + cell._width)/2
-        length = sqrt((front - back)@(front - back))
-
-        return Sphere(
-            self._name[:-1],
-            position.x, position.y,
-            width, length,
-            rotation, "combined alpha unknown", (self._opacity + cell.opacity)/2)
+    def get_radius_at(self, z: float):
+        """Returns the radius of the sphere at a given z value."""
+        if abs(self._position.z - z) > self._radius:
+            return 0
+        return sqrt((self._radius) ** 2 - (self._position.z - z) ** 2)
 
     def __repr__(self):
         return (f'Sphere('
                 f'name="{self._name}", '
-                f'x={self._position.x}, y={self._position.y}, '
-                f'width={self._width}, length={self._length}, '
-                f'rotation={self._rotation})')
+                f'x={self._position.x:.2f}, y={self._position.y:.2f}, z={self._position.z:.2f}, '
+                f'radius={self._radius:.2f}')
 
-    def simulated_region(self, simulation_config):
-        if self._needs_refresh:
-            self._refresh()
-        if simulation_config["image.type"] == "binary":
-            return self._region
-        elif simulation_config["image.type"] == "graySynthetic":
-            gaussian_filter_truncate = simulation_config["light.diffraction.truncate"]
-            gaussian_filter_sigma = simulation_config["light.diffraction.sigma"]
-            diffraction_strength = simulation_config["light.diffraction.strength"]
-
-            extension = max(floor(gaussian_filter_truncate * gaussian_filter_sigma - 0.5),0)
-            diff_top = self._region.top  - extension
-            diff_left = self._region.left  - extension
-            diff_bottom = self._region.bottom + extension
-            diff_right = self._region.right + extension
-
-            region = Rectangle(diff_left, diff_top, diff_right, diff_bottom)
-            return region
-        else:
-            raise ValueError("Cell:simulated_region: unsupported image type")
-
-
-    @property
-    def region(self):
-        if self._needs_refresh:
-            self._refresh()
-        return self._region
-    @property
-    def position(self):
-        return self._position.copy()
-
-    @property
-    def x(self):
-        return self._position.x
-
-    @x.setter
-    def x(self, value):
-        if value != self._position.x:
-            self._position.x = value
-            self._needs_refresh = True
-
-    @property
-    def y(self):
-        return self._position.y
-
-    @y.setter
-    def y(self, value):
-        if value != self._position.y:
-            self._position.y = value
-            self._needs_refresh = True
-
-    @property
-    def z(self):
-        return self._position.y
-
-    @z.setter
-    def z(self, value):
-        if value != self._position.z:
-            self._position.z = value
-            self._needs_refresh = True
-
-    @property
-    def width(self):
-        return self._width
-
-    @width.setter
-    def width(self, value):
-        if value != self._width:
-            self._width = value
-            self._length = value
-            self._needs_refresh = True
-
-    @property
-    def length(self):
-        return self._length
-
-    @length.setter
-    def length(self, value):
-        return
-        # if value != self._length:
-        #     self._length = value
-        #     self._needs_refresh = True
-
-    @property
-    def rotation(self):
-        return self._rotation
-
-    @property
-    def split_alpha(self):
-        return self._split_alpha
-
-    @split_alpha.setter
-    def split_alpha(self, value):
-        self._split_alpha = value
-
-    @property
-    def opacity(self):
-        return self._opacity
-
-    @opacity.setter
-    def opacity(self, value):
-        self._opacity = value
-
-    @rotation.setter
-    def rotation(self, value):
-        if value != self._rotation:
-            self._rotation = value
-            self._needs_refresh = True
+    def get_cell_params(self):
+        return SphereParams(
+            file='placeholder',
+            name=self._name,
+            x=self._position.x,
+            y=self._position.y,
+            z=self._position.z,
+            radius=self._radius,
+            opacity=self._opacity,
+            split_alpha=self._split_alpha
+        )

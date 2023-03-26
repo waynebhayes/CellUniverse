@@ -612,7 +612,7 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=3000, aut
     frame[..., 2] = frame[..., 0]
 
     for node in cellnodes:
-        node.cell.drawoutline(frame, (1, 0, 0))
+        node.cell.draw_outline(frame, (1, 0, 0))
 
     frame = np.clip(frame, 0, 1)
 

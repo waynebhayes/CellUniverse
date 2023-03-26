@@ -88,12 +88,18 @@ class CellUniverse:
         # Cells
         # --------
         cellFactory = CellFactory(config.cellType)
-        cells = cellFactory.create_cells(args.initial)
+        cells = cellFactory.create_cells(args.initial, z_offset = config.simulation.z_slices // 2, z_scaling = config.simulation.z_scaling)
 
 
         # --------
         # Lineage
         # --------
         image_file_paths = get_image_file_paths(args.input, args.frame_first, args.frame_last, config)
-        self.lineage = Lineage(cells, image_file_paths, config, continue_from=args.continue_from)
+        self.lineage = Lineage(cells, image_file_paths, config, args.output, args.continue_from)
 
+    def run(self):
+        current_time = time.time()
+        self.lineage.save_images(0)
+        self.lineage.save_cells(0)
+
+        print(f"Time elapsed: {time.time() - current_time:.2f} seconds")

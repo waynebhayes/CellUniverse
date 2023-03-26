@@ -210,7 +210,7 @@ class LineageM:
             for node in self.frames[frame_index].nodes:
                 if node.cell.dormant:
                     continue
-                node.cell.drawoutline(output_frame, (1, 0, 0), z)
+                node.cell.draw_outline(output_frame, (1, 0, 0), z)
             output_frame = Image.fromarray(np.uint8(255 * output_frame))
             output_frame.save(self.args.output / self.file_paths[frame_index][i][0].name)
             print(f"saved {self.file_paths[frame_index][i][0].name} (z = {z})")
