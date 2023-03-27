@@ -60,7 +60,7 @@ def check_constraints(config, imageshape, cells: List['Cell.Bacilli'], pairs: Li
             return False
 
     for cell1, cell2 in pairs:
-        displacement = sqrt(np.sum((cell1.position - cell2.position)) ** 2)
+        displacement = sqrt(np.sum((cell1.position - cell2.position) ** 2))
         if displacement > max_displacement:
             return False
         elif abs(cell2.rotation - cell1.rotation) > max_rotation:
