@@ -25,7 +25,7 @@ class Cell(ABC):
         pass
 
     @abstractmethod
-    def draw(self, image, simulation_config, z = 0):
+    def draw(self, image, simulation_config, cell_map = None, z = 0):
         pass
 
     @abstractmethod

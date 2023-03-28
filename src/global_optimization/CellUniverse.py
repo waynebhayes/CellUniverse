@@ -40,27 +40,7 @@ class CellUniverse:
         # --------
         #   Args
         # --------
-        if (args.start_temp is not None or args.end_temp is not None) and args.auto_temp == 1:
-            raise Exception("when auto_temp is set to 1(default value), starting temperature or ending temperature should not be set manually")
-        if args.frame_first > args.frame_last and args.frame_last >= 0:
-            raise ValueError('Invalid interval: frame_first must be less than frame_last')
-        elif args.frame_first < 0:
-            raise ValueError('Invalid interval: frame_first must be greater or equal to 0')
-
-        # Make required folders
-        if not args.output.is_dir():
-            args.output.mkdir()
-        if not args.bestfit.is_dir():
-            args.bestfit.mkdir()
-        if args.residual and not args.residual.is_dir():
-            args.residual.mkdir()
-
-        # set seed
-        seed = int(time.time() * 1000) % (2**32)
-        if args.seed is not None:
-            seed = args.seed
-        np.random.seed(seed)
-        print(f"Seed: {seed}")
+        # TODO: move arg verification to the function that parses the args
 
         # set up dask client
         # if not args.no_parallel:
@@ -94,7 +74,7 @@ class CellUniverse:
         # --------
         # Lineage
         # --------
-        image_file_paths = get_image_file_paths(args.input, args.frame_first, args.frame_last, config)
+        image_file_paths = get_image_file_paths(args.input, args.first_frame, args.last_frame, config)
         self.lineage = Lineage(cells, image_file_paths, config, args.output, args.continue_from)
 
     def run(self):

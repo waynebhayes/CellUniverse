@@ -174,9 +174,6 @@ def save_output(image_name, synthimage, realimage, cellnodes, args, config):
 def main(args):
     """Main function of cellanneal."""
 
-    test = CellUniverse(args)
-    test.run()
-    return 0
 
     if (args.start_temp is not None or args.end_temp is not None) and args.auto_temp == 1:
         raise Exception("when auto_temp is set to 1(default value), starting temperature or ending temperature should not be set manually")

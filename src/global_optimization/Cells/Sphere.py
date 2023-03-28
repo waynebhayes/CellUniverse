@@ -49,7 +49,7 @@ class Sphere(Cell):
         self._split_alpha = split_alpha
         self.dormant = False
 
-    def draw(self, image, simulation_config, z = 0):
+    def draw(self, image, simulation_config, cell_map = None, z = 0):
         """Draws the cell by adding the given value to the image."""
         if self.dormant:
             return

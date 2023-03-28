@@ -51,14 +51,14 @@ class Lineage:
         print(f"Saving images for frame {frame_index}...")
 
         real_output_path = self.output_path / f"real/{frame_index}"
-        if not (real_output_path).exists():
+        if not real_output_path.exists():
             real_output_path.mkdir(parents=True, exist_ok=True)
         for i, image in enumerate(real_images):
             # create a directory for the frame if it doesn't exist
             image.save(real_output_path / f"{i}.png")
 
         synth_output_path = self.output_path / f"synth/{frame_index}"
-        if not (synth_output_path).exists():
+        if not synth_output_path.exists():
             synth_output_path.mkdir(parents=True, exist_ok=True)
         for i, image in enumerate(synth_images):
             # create a directory for the frame if it doesn't exist
