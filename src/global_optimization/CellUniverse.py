@@ -7,6 +7,7 @@ import numpy as np
 from .Cells import CellFactory
 from .Config import load_config, BaseConfig
 from .Lineage import Lineage
+from .Args import Args
 
 
 # Helper functions
@@ -36,12 +37,7 @@ def get_image_file_paths(input_pattern: str, first_frame: int, last_frame: int, 
 
 
 class CellUniverse:
-    def __init__(self, args):
-        # --------
-        #   Args
-        # --------
-        # TODO: move arg verification to the function that parses the args
-
+    def __init__(self, args: Args):
         # set up dask client
         # if not args.no_parallel:
         #     from dask.distributed import Client, LocalCluster
