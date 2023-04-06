@@ -169,7 +169,7 @@ class InputPanel(Frame):
 
         # Write the customized configuration to file
         with open(f'{output_folder}/config.json', 'w') as f:
-            json.dump(config_template, f)
+            json.dump(config_template, f, indent = 4)
     
 class MinMaxCellSizePanel(Frame):
     KWARGS = {
