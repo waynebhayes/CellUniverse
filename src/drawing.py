@@ -95,7 +95,7 @@ def circle(x, y, radius, shape):
     xx = x - xl
     yy = y - yl
     mask = ((X - xx)**2 + (Y - yy)**2) < radius**2
-    full = np.zeros(shape, dtype=np.bool)
+    full = np.zeros(shape, dtype=bool)
     cxl = max(xl, 0)
     cxh = min(xh, shape[1])
     cx0 = cxl - xl

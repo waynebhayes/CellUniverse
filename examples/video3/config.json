@@ -25,7 +25,8 @@
         "light.diffraction.sigma": "auto",  //11
         "light.diffraction.strength": "auto", //0.6
         "light.diffraction.truncate": 3,
-        "cell.opacity": "auto"
+        "cell.opacity": "auto",
+        "padding": 0
     },
     
     "prob.perturbation": 0.89,
