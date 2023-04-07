@@ -51,5 +51,5 @@ svgwrite==1.4.1
 tblib==1.6.0
 toolz==0.10.0
 tornado==6.0.4
-urllib3==1.25.2
+urllib3==1.26.5
 zict==2.0.0
