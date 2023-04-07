@@ -17,8 +17,6 @@ from tkinter import ttk
 from dataclasses import dataclass
 import copy
 
-# change export from binary string to hash
-
 mouseX = 0
 mouseY = 0
 
@@ -240,7 +238,6 @@ class CellLabeling(Frame):
             if z_level == self.cur_frame:
 
                 # get only the id's for labels that exist on current frame
-                #ids = [label_tag for label_tag in list(self.frame_drawings) if self.frame_drawings[label_tag].get_labeled_frame(self.cur_frame) is not None]
                 ids = list(self.frame_drawings)
 
                 self.comboboxes.append(ttk.Combobox(self.canvas, width = 5, values=ids))
@@ -466,8 +463,6 @@ class CellLabeling(Frame):
         self.cur_obj_tag = uuid.uuid4().hex
         self.temp_item = self.canvas.create_oval(x - r, y - r, x + r, y + r, outline="green", width=4, tags=["temp", self.cur_obj_tag])
         self.frame_drawings[self.cur_obj_tag].add_label(self.cur_frame, CellLabel(x=x, y=y, r=r, z=self.cur_frame, tag=self.cur_obj_tag))
-
-        # self.cell_centers[self.cur_obj_tag] = CellLabel(x=x, y=y, r=r, z=self.cur_frame, tag=self.cur_obj_tag)
 
         self.update_frames()
 
