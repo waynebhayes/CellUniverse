@@ -7,8 +7,11 @@ Once you clone the repo onto your machine, you should test if Cell Universe is w
 
 Prerequisites:
 -----------
-Requires Python 3.7+.
-https://www.python.org/getit/
+Requires Python 3.11+.
+
+Recommendations
+- [Conda](https://docs.conda.io/en/latest/miniconda.html)
+- [pyenv](https://github.com/pyenv/pyenv#homebrew-in-macos)
 
 Requires Pip.
 https://pip.pypa.io/en/stable/quickstart/
@@ -34,24 +37,6 @@ $ pipenv shell
 3. Run Cell Universe on an example video (look inside the `run.sh` script to see the command used).
 ```bash
 $ cd examples/canonical && ./run.sh
-```
-
------------
-Alternative:
-
-1. (Optional) Create a Python 3 virtual environment.
-```bash
-$ pip3 install virtualenv
-$ virtualenv -p python3 venv
-$ source venv/bin/activate
-```
-2. Install the requirements.
-```bash
-(venv)$ pip install -r requirements.txt
-```
-3. Run Cell Universe on an example video (look inside the `run.sh` script to see the command used).
-```bash
-(venv)$ cd examples/canonical && ./run.sh
 ```
 
 Steps to get a new video running:
