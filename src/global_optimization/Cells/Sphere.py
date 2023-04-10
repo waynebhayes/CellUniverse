@@ -27,11 +27,6 @@ class Sphere(Cell):
     paramClass = SphereParams
 
     def __init__(self, init_props: SphereParams):
-        #upper left corner is the origin
-        #x,y are index of the array
-        #x:column index y:row index
-        #z:depth index
-
         # destructure the properties of the sphere
         name = init_props.name
         x = init_props.x

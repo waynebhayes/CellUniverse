@@ -34,7 +34,7 @@ This will create a virtual environment with all the required Python packages
 $ pipenv shell
 ```
 
-3. Run Cell Universe on an example video (look inside the `run.sh` script to see the command used).
+4. Run Cell Universe on an example video (look inside the `run.sh` script to see the command used).
 ```bash
 $ cd examples/canonical && ./run.sh
 ```
