@@ -47,27 +47,6 @@ class ProbabilityConfig(BaseModel, extra = 'forbid'):
             print(Style.RESET_ALL, end='')
         return values
 
-class PerturbationConfig(BaseModel, extra = 'forbid'):
-    prob_x: float
-    prob_y: float
-    prob_z: float
-    prob_width: float
-    prob_length: float
-    prob_rotation: float
-    modification_x_mu: float
-    modification_y_mu: float
-    modification_width_mu: float
-    modification_length_mu: float
-    modification_rotation_mu: float
-    modification_x_sigma: float
-    modification_y_sigma: float
-    modification_width_sigma: float
-    modification_length_sigma: float
-    modification_rotation_sigma: float
-    prob_opacity: float
-    modification_opacity_mu: float
-    modification_opacity_sigma: float
-
 class CameraShiftConfig(BaseModel, extra = 'forbid'):
     modification_x_sigma = 0.0
     modification_y_sigma = 0.0
@@ -89,31 +68,28 @@ class BaseConfig(GenericModel, Generic[CellConfig], extra = 'forbid'):
     # Probability settings
     prob: ProbabilityConfig
 
-    # Perturbation settings
-    perturbation: PerturbationConfig
-
     # Camera shift settings
     camera = CameraShiftConfig()
 
     # Misc settings
-    global_optimizer_window_size: int
-    pbad_max_size: int
-    auto_temp_scheduler_iteration_per_cell: int
-    output_format: str
-    output_quality: int
-    residual_vmin: float
-    residual_vmax: float
-    split_cost: float
-    combine_cost: float
-    overlap_cost: float
-    cell_importance: float
-    background_offset_mu: float
-    background_offset_sigma: float
-    cell_brightness_mu: float
-    cell_brightness_sigma: float
-    opacity_offset_mu: float
-    opacity_offset_sigma: float
-    diffraction_strength_offset_mu: float
-    diffraction_strength_offset_sigma: float
-    diffraction_sigma_offset_mu: float
-    diffraction_sigma_offset_sigma: float
+    # global_optimizer_window_size: int
+    # pbad_max_size: int
+    # auto_temp_scheduler_iteration_per_cell: int
+    # output_format: str
+    # output_quality: int
+    # residual_vmin: float
+    # residual_vmax: float
+    # split_cost: float
+    # combine_cost: float
+    # overlap_cost: float
+    # cell_importance: float
+    # background_offset_mu: float
+    # background_offset_sigma: float
+    # cell_brightness_mu: float
+    # cell_brightness_sigma: float
+    # opacity_offset_mu: float
+    # opacity_offset_sigma: float
+    # diffraction_strength_offset_mu: float
+    # diffraction_strength_offset_sigma: float
+    # diffraction_sigma_offset_mu: float
+    # diffraction_sigma_offset_sigma: float

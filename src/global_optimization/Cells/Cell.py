@@ -16,6 +16,12 @@ class CellParams(BaseModel):
     file: str
     name: str
 
+class PerturbParams(BaseModel):
+    """Used with a CellConfig to add perturb parameters."""
+    prob: float
+    mu: float
+    sigma: float
+
 class Cell(ABC):
     """The Cell class stores information about a particular cell."""
     paramClass: Type[CellParams]

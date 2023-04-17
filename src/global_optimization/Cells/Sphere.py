@@ -4,12 +4,13 @@ from skimage.draw import disk, circle_perimeter_aa
 
 from .mathhelper import Vector
 
-from .Cell import Cell, CellParams
+from .Cell import Cell, CellParams, PerturbParams
 
 class SphereConfig(BaseModel):
-    maxSpeed: float
-    minGrowth: float
-    maxGrowth: float
+    x: PerturbParams
+    y: PerturbParams
+    z: PerturbParams
+    radius: PerturbParams
     minRadius: float
     maxRadius: float
 
@@ -18,8 +19,8 @@ class SphereParams(CellParams):
     y: float
     z: float = 0.0
     radius: float
-    opacity: float = 1.0
-    split_alpha: float = 0.0
+    # opacity: float = 1.0
+    # split_alpha: float = 0.0
 
 
 class Sphere(Cell):
@@ -33,15 +34,15 @@ class Sphere(Cell):
         y = init_props.y
         z = init_props.z
         radius = init_props.radius
-        opacity = init_props.opacity
-        split_alpha = init_props.split_alpha
+        # opacity = init_props.opacity
+        # split_alpha = init_props.split_alpha
 
         self._name = name
         self._position = Vector([x, y, z])
         self._radius = radius
         self._rotation = 0
-        self._opacity = opacity
-        self._split_alpha = split_alpha
+        # self._opacity = opacity
+        # self._split_alpha = split_alpha
         self.dormant = False
 
     def draw(self, image, simulation_config, cell_map = None, z = 0):
@@ -166,6 +167,6 @@ class Sphere(Cell):
             y=self._position.y,
             z=self._position.z,
             radius=self._radius,
-            opacity=self._opacity,
-            split_alpha=self._split_alpha
+            # opacity=self._opacity,
+            # split_alpha=self._split_alpha
         )

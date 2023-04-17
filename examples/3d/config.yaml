@@ -5,9 +5,22 @@ framesPerSecond: 1
 
 # Cell settings
 cell:
-  maxSpeed: 200
-  minGrowth: -2
-  maxGrowth: 43
+  x:
+    prob: 0.35
+    mu: 0
+    sigma: 10
+  y:
+    prob: 0.35
+    mu: 0
+    sigma: 10
+  z:
+    prob: 0.25
+    mu: 0
+    sigma: 10
+  radius:
+    prob: 0.2
+    mu: 0
+    sigma: 0.2
   minRadius: 4
   maxRadius: 800
 
@@ -33,51 +46,29 @@ prob:
   opacity_diffraction_offset: 0.05
   background_offset: 0.05
 
-# Perturbation settings
-perturbation:
-  prob_x: 0.35
-  prob_y: 0.35
-  prob_z: 0.25
-  prob_width: 0.1
-  prob_length: 0.2
-  prob_rotation: 0.2
-  modification_x_mu: 0
-  modification_y_mu: 0
-  modification_width_mu: 0
-  modification_length_mu: 0
-  modification_rotation_mu: 0
-  modification_x_sigma: 10
-  modification_y_sigma: 10
-  modification_width_sigma: 0.1
-  modification_length_sigma: 1
-  modification_rotation_sigma: 0.2
-  prob_opacity: 0.2
-  modification_opacity_mu: 0
-  modification_opacity_sigma: 0.001
-
 # Camera shift settings
 camera:
   modification_x_sigma: 0
   modification_y_sigma: 0
 
-global_optimizer_window_size: 1
-pbad_max_size: 1000
-auto_temp_scheduler_iteration_per_cell: 500
-output_format: png
-output_quality: 80
-residual_vmin: -0.3
-residual_vmax: 0.3
-split_cost: 0
-combine_cost: 0
-overlap_cost: 1
-cell_importance: 1
-background_offset_mu: 0
-background_offset_sigma: 0.01
-cell_brightness_mu: 0
-cell_brightness_sigma: 0.01
-opacity_offset_mu: 0
-opacity_offset_sigma: 0.01
-diffraction_strength_offset_mu: 0
-diffraction_strength_offset_sigma: 0.01
-diffraction_sigma_offset_mu: 0
-diffraction_sigma_offset_sigma: 0.01
+#global_optimizer_window_size: 1
+#pbad_max_size: 1000
+#auto_temp_scheduler_iteration_per_cell: 500
+#output_format: png
+#output_quality: 80
+#residual_vmin: -0.3
+#residual_vmax: 0.3
+#split_cost: 0
+#combine_cost: 0
+#overlap_cost: 1
+#cell_importance: 1
+#background_offset_mu: 0
+#background_offset_sigma: 0.01
+#cell_brightness_mu: 0
+#cell_brightness_sigma: 0.01
+#opacity_offset_mu: 0
+#opacity_offset_sigma: 0.01
+#diffraction_strength_offset_mu: 0
+#diffraction_strength_offset_sigma: 0.01
+#diffraction_sigma_offset_mu: 0
+#diffraction_sigma_offset_sigma: 0.01
