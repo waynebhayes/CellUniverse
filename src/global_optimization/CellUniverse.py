@@ -59,11 +59,10 @@ class CellUniverse:
         # --------
         config = load_config(args.config)
 
-
         # --------
         # Cells
         # --------
-        cellFactory = CellFactory(config.cellType)
+        cellFactory = CellFactory(config)
         cells = cellFactory.create_cells(args.initial, z_offset = config.simulation.z_slices // 2, z_scaling = config.simulation.z_scaling)
 
 

@@ -10,11 +10,15 @@ related functions.
 from pydantic import BaseModel
 from abc import ABC, abstractmethod
 from typing import TypeVar, Type
+import random
 
-class CellParams(BaseModel):
+class CellParams(BaseModel, ABC):
     """The CellParams class stores the parameters of a particular cell."""
-    file: str
     name: str
+
+class CellConfig(BaseModel, ABC):
+    """Abstract base class for cell configurations."""
+    pass
 
 class PerturbParams(BaseModel):
     """Used with a CellConfig to add perturb parameters."""
@@ -22,9 +26,17 @@ class PerturbParams(BaseModel):
     mu: float
     sigma: float
 
+    def get_perturb_offset(self):
+        if random.random() < self.prob:
+            return random.gauss(self.mu, self.sigma)
+        else:
+            return self.mu
+
+
 class Cell(ABC):
     """The Cell class stores information about a particular cell."""
     paramClass: Type[CellParams]
+    cellConfig: CellConfig
 
     @abstractmethod
     def __init__(self, initProps: CellParams):

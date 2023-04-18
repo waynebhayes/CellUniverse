@@ -1,12 +1,11 @@
 from math import sqrt
-from pydantic import BaseModel
 from skimage.draw import disk, circle_perimeter_aa
 
 from .mathhelper import Vector
 
-from .Cell import Cell, CellParams, PerturbParams
+from .Cell import Cell, CellParams, PerturbParams, CellConfig
 
-class SphereConfig(BaseModel):
+class SphereConfig(CellConfig):
     x: PerturbParams
     y: PerturbParams
     z: PerturbParams
@@ -26,6 +25,7 @@ class SphereParams(CellParams):
 class Sphere(Cell):
     """The Sphere class represents a spherical bacterium."""
     paramClass = SphereParams
+    cellConfig: SphereConfig
 
     def __init__(self, init_props: SphereParams):
         # destructure the properties of the sphere
@@ -147,6 +147,15 @@ class Sphere(Cell):
         #     width, length,
         #     rotation, "combined alpha unknown", (self._opacity + cell.opacity)/2)
 
+    def get_perturbed_parameters(self, config: SphereConfig):
+        return SphereParams(
+            name=self._name,
+            x=self._position.x + config.x.get_perturb_offset(),
+            y=self._position.y + config.y.get_perturb_offset(),
+            z=self._position.z + config.z.get_perturb_offset(),
+            radius=self._radius + config.radius.get_perturb_offset(),
+        )
+
     def get_radius_at(self, z: float):
         """Returns the radius of the sphere at a given z value."""
         if abs(self._position.z - z) > self._radius:
@@ -161,7 +170,6 @@ class Sphere(Cell):
 
     def get_cell_params(self):
         return SphereParams(
-            file='placeholder',
             name=self._name,
             x=self._position.x,
             y=self._position.y,
