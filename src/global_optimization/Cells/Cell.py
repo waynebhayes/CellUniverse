@@ -7,6 +7,7 @@ cellanneal.cell
 This module contains the Cell class which stores the properties of cells and
 related functions.
 """
+from __future__ import annotations
 from pydantic import BaseModel
 from abc import ABC, abstractmethod
 from typing import TypeVar, Type
@@ -48,6 +49,10 @@ class Cell(ABC):
 
     @abstractmethod
     def draw_outline(self, image, color, z = 0):
+        pass
+
+    @abstractmethod
+    def get_perturbed_cell(self) -> Cell:
         pass
 
     @abstractmethod

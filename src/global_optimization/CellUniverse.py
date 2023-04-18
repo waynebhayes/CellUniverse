@@ -74,6 +74,9 @@ class CellUniverse:
 
     def run(self):
         current_time = time.time()
+        for i in range(100):
+            self.lineage.perturb(0)
+
         self.lineage.save_images(0)
         self.lineage.save_cells(0)
 

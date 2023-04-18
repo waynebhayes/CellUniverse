@@ -42,6 +42,10 @@ class Lineage:
                 cells = []
             self.frames.append(Frame(np.array(real_images), config.simulation, cells, output_path, file_name))
 
+    def perturb(self, frame_index: int):
+        """Perturb the cells in the frame."""
+        self.frames[frame_index].perturb()
+
     def save_images(self, frame_index: int):
         """Save the images in the frame to the output path."""
         if frame_index < 0 or frame_index >= len(self.frames):

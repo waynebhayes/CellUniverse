@@ -147,14 +147,14 @@ class Sphere(Cell):
         #     width, length,
         #     rotation, "combined alpha unknown", (self._opacity + cell.opacity)/2)
 
-    def get_perturbed_parameters(self, config: SphereConfig):
-        return SphereParams(
+    def get_perturbed_cell(self):
+        return Sphere(SphereParams(
             name=self._name,
-            x=self._position.x + config.x.get_perturb_offset(),
-            y=self._position.y + config.y.get_perturb_offset(),
-            z=self._position.z + config.z.get_perturb_offset(),
-            radius=self._radius + config.radius.get_perturb_offset(),
-        )
+            x=self._position.x + Sphere.cellConfig.x.get_perturb_offset(),
+            y=self._position.y + Sphere.cellConfig.y.get_perturb_offset(),
+            z=self._position.z + Sphere.cellConfig.z.get_perturb_offset(),
+            radius=self._radius + Sphere.cellConfig.radius.get_perturb_offset(),
+        ))
 
     def get_radius_at(self, z: float):
         """Returns the radius of the sphere at a given z value."""

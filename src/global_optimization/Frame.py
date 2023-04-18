@@ -4,11 +4,11 @@ import numpy.typing as npt
 import numpy as np
 import pandas as pd
 from PIL import Image
+import random
 
 
 from .Cells import Cell
 from .Config import SimulationConfig
-
 
 
 class Frame:
@@ -53,6 +53,36 @@ class Frame:
 
         return np.array(synth_image_stack)
 
+    def perturb(self):
+        # randomly pick an index for a cell
+        index = random.randint(0, len(self.cells) - 1)
+
+        # store old cell
+        old_cell = self.cells[index]
+
+        # replace the cell at that index with a new cell
+        self.cells[index] = self.cells[index].get_perturbed_cell()
+
+        # synthesize new synthetic image
+        new_synth_image_stack = self.generate_synth_images()
+
+        # get the cost of the new synthetic image
+        new_cost = self.calculate_cost(new_synth_image_stack)
+
+        # if the difference is greater than the threshold, revert to the old cell
+        old_cost = self.calculate_cost(self.synth_image_stack)
+        print(f"old cost: {old_cost}, new cost: {new_cost}")
+        if new_cost > old_cost:
+            self.cells[index] = old_cell
+
+        # otherwise, update the synthetic image stack
+        else:
+            self.synth_image_stack = new_synth_image_stack
+
+
+    def calculate_cost(self, synth_image_stack: npt.NDArray):
+        """Calculate the L2 cost of the synthetic images."""
+        return np.linalg.norm(self.real_image_stack - synth_image_stack)
 
     def generate_cell_maps(self):
         """Generate cell maps from the cells in the frame. This should only be for binary images"""
