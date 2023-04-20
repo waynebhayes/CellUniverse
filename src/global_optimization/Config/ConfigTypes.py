@@ -16,16 +16,21 @@ class SimulationConfig(BaseModel, extra = 'forbid'):
     light_diffraction_truncate: float
     cell_opacity: Union[float, str]
     padding = 0
-    z_slices = 1  # Number of z slices in 3d image
+    z_slices: int = None  # Number of z slices in 3d image
     z_scaling = 1
     z_values: List[int] = []  # List of z values to use for each image slice. This is set automatically, do not specify
 
     @validator('z_values')
-    def set_z_values(cls, v, values):
+    def check_z_values(cls, v, values):
         if v != []:
             raise ValueError('z_values should not be set manually')
-        slices = values['z_slices']
-        return [i - slices // 2 for i in range(slices)]
+    
+    @validator('z_slices')
+    def check_z_slices(cls, v, values):
+        if v is not None:
+            raise ValueError('z_slices should not be set manually')
+        
+
 
 class ProbabilityConfig(BaseModel, extra = 'forbid'):
     perturbation: float

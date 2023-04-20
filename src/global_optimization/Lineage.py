@@ -10,36 +10,55 @@ from PIL import Image
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
+from skimage import io
 
 # Helper functions
 def load_image(image_file: Path):
-    """Open the image file and return a floating-point grayscale array."""
-    with Image.open(image_file) as img:
-        # Convert the image to grayscale if it's in RGB mode
-        if img.mode == 'RGB':
-            img = img.convert('L')
-        # Convert the image to a NumPy array and normalize the pixel values
-        arr = np.array(img, dtype=np.float32) / 255.0
-    return arr
+    imgs = []
+
+    # handle tif files
+    if image_file.suffix in ['.tiff', '.tif']:
+        img = io.imread(image_file)
+        slices = img.shape[0]
+
+        for i in range(slices):
+            pil_img = Image.fromarray(img[i].astype(np.uint8))
+            if pil_img.mode == 'RGB':
+                pil_img = pil_img.convert('L')
+            arr = np.array(pil_img, dtype=np.float32) / 255.0
+            imgs.append(arr)
+    else:
+        """Open the image file and return a floating-point grayscale array."""
+        with Image.open(image_file) as img:
+            # Convert the image to grayscale if it's in RGB mode
+            if img.mode == 'RGB':
+                img = img.convert('L')
+            # Convert the image to a NumPy array and normalize the pixel values
+            arr = np.array(img, dtype=np.float32) / 255.0
+            
+        imgs.append(arr)
+        
+    return imgs
 
 
 class Lineage:
-    def __init__(self, initial_cells: Dict[str, List[Cell]], image_paths_stack: List[List[Path]], config: BaseConfig, output_path: Path, continue_from=-1):
+    def __init__(self, initial_cells: Dict[str, List[Cell]], image_paths: List[Path], config: BaseConfig, output_path: Path, continue_from=-1):
         self.config = config
         self.frames: List[Frame] = []
         self.output_path = output_path
 
-        for i, image_paths in enumerate(image_paths_stack):
+        for i, image_path in enumerate(image_paths):
             # Load original images
             real_images: List[npt.NDArray] = []
-            for path in image_paths:
-                real_images.append(load_image(path))
+            real_images.extend(load_image(image_path))
 
-            file_name = image_paths[0].name
+            file_name = image_path.name
+
             if (continue_from == -1 or i < continue_from) and file_name in initial_cells:
                 cells = initial_cells[str(file_name)]
             else:
                 cells = []
+
             self.frames.append(Frame(np.array(real_images), config.simulation, cells, output_path, file_name))
 
     def perturb(self, frame_index: int):
