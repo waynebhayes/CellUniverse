@@ -78,10 +78,13 @@ class CellUniverse:
 
     def run(self):
         current_time = time.time()
-        # for i in range(100):
-        #     self.lineage.perturb(0)
-
-        self.lineage.save_images(0)
-        self.lineage.save_cells(0)
+        for frame in range(len(self.lineage)):
+            for i in range(500):
+                if i % 100 == 0:
+                    print(f"Frame {frame}, iteration {i}")
+                self.lineage.perturb(frame)
+            self.lineage.copy_cells_forward(frame + 1)
+            self.lineage.save_images(frame)
+            # self.lineage.save_cells(frame)
 
         print(f"Time elapsed: {time.time() - current_time:.2f} seconds")

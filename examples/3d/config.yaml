@@ -27,14 +27,13 @@ cell:
 # Simulation settings
 simulation:
   image_type: To be Set
-  background_color: 0
-  cell_color: 1
+  background_color: 0.376
+  cell_color: 0.496
   light_diffraction_sigma: auto
   light_diffraction_strength: auto
   light_diffraction_truncate: 1
   cell_opacity: 0
   padding: 0
-  z_slices: 33
   z_scaling: 6
 
 # Probability of changes

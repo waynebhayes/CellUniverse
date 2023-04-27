@@ -71,7 +71,6 @@ class Frame:
 
         # if the difference is greater than the threshold, revert to the old cell
         old_cost = self.calculate_cost(self.synth_image_stack)
-        print(f"old cost: {old_cost}, new cost: {new_cost}")
         if new_cost > old_cost:
             self.cells[index] = old_cell
 

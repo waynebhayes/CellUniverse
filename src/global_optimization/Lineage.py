@@ -11,6 +11,7 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 from skimage import io
+from copy import deepcopy
 
 # Helper functions
 def load_image(image_file: Path):
@@ -102,4 +103,13 @@ class Lineage:
         if to <= 0:
             raise ValueError("No previous frame to copy from")
         self.frames[to].update_simulation_config(self.frames[to-1].simulation_config)
+
+    def copy_cells_forward(self, to: int):
+        """Copy the cells from the previous frame to the next frame."""
+        if to >= len(self.frames):
+            return
+        self.frames[to].cells = deepcopy((self.frames[to - 1].cells))
+
+    def __len__(self):
+        return len(self.frames)
 
