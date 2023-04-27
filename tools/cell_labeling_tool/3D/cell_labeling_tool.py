@@ -16,6 +16,9 @@ from tkinter import ttk
 
 from dataclasses import dataclass
 import copy
+import cv2
+import numpy as np
+from pathlib import Path
 
 mouseX = 0
 mouseY = 0
@@ -29,11 +32,11 @@ class CellLabel:
     tag: StringVar
 
 class CellLabelList:
-    def __init__(self, cell_labels: Dict[str, CellLabel] = None):
+    def __init__(self, cell_labels: Dict[int, CellLabel] = None):
 
         self.cell_labels = cell_labels if cell_labels is not None else {}
     
-    def get_labels(self) -> Dict[str, CellLabel]:
+    def get_labels(self) -> Dict[int, CellLabel]:
         return self.cell_labels
 
     def get_labeled_frame(self, frame_num: int) -> CellLabel:
@@ -67,7 +70,6 @@ class CellLabeling(Frame):
         self.init_component()
         self.new_flag = False
         self.delete_flag = False
-        self.cell_dict = defaultdict(dict)
         self.frame_drawings = defaultdict(CellLabelList)
         self.plt = platform.system()
 
@@ -317,9 +319,15 @@ class CellLabeling(Frame):
         )
         
         if self.csv_file is not None:
+            # create csv for labeled data
             f = open(self.csv_file,'w',encoding='utf-8',newline='')
             csv_writer = csv.writer(f)
             csv_writer.writerow(["file","name","x","y","z","r","z_scaling","split_alpha","opacity"])
+
+            # create csv for initial color data
+            cell_colors = []
+            frame_zero_circles = []
+            
             
             if self.frame_drawings:
                 for cell_tag, cell_label_list in self.frame_drawings.items():
@@ -330,9 +338,40 @@ class CellLabeling(Frame):
                         z = z_level
                         r = cell_label.r
                         z_scaling = self.z_scaling
+
+
+                        # calculate the average cell color and average background color
+                        self.cur_img.seek(z)
+                        img = np.asarray(self.cur_img.copy(), dtype='uint8')
+                        mask = np.zeros_like(img, dtype='uint8')
+                        cv2.circle(mask, (int(x),int(y)), int(r), 255, -1)
+                        cell_colors.append(cv2.mean(img, mask=mask)[0])
+
+                        # collect all the circles for frame 0
+                        if z == 0:
+                            frame_zero_circles.append({'x': int(x), 'y': int(y), 'r': int(r)})
+
                         if self.filename is None:
                             self.filename = self.img_file
                         csv_writer.writerow([self.filename,name,x,y,z,r,z_scaling,"None", "None"])
+                
+                # mask all the drawn bounding boxes in image
+                for circle in frame_zero_circles:
+                    self.cur_img.seek(0)
+                    img = np.asarray(self.cur_img.copy(), dtype='uint8')
+                    cv2.circle(img, (int(circle.x),int(circle.y)), int(circle.r), 0, -1)
+                
+                # calculate average of background image
+                avg_bg_color = cv2.mean(img)[0]
+                avg_cell_color = np.average(cell_colors)
+
+                # write the initial colors to a different file
+                with open(f"{Path(self.csv_file).parent}/init_colors.txt", 'w') as f:
+                    f.write(f"avg_bg_color: {avg_bg_color / 256.0}\n")
+                    f.write(f"avg_cell_color: {avg_cell_color / 256.0}\n")
+
+
+
             else:
                 pass
             
