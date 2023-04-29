@@ -11,10 +11,10 @@ class SimulationConfig(BaseModel, extra = 'forbid'):
     iterations_per_cell: int
     background_color: float
     cell_color: float
-    light_diffraction_sigma: Union[float, str]
-    light_diffraction_strength: Union[float, str]
-    light_diffraction_truncate: float
-    cell_opacity: Union[float, str]
+    # light_diffraction_sigma: Union[float, str]
+    # light_diffraction_strength: Union[float, str]
+    # light_diffraction_truncate: float
+    # cell_opacity: Union[float, str]
     padding = 0
     z_scaling = 1
     blur_sigma = 0
@@ -33,37 +33,37 @@ class SimulationConfig(BaseModel, extra = 'forbid'):
         
 
 
-class ProbabilityConfig(BaseModel, extra = 'forbid'):
-    perturbation: float
-    combine: float
-    split: float
-    camera_shift: float
-    opacity_diffraction_offset: float
-    background_offset: float
-
-    @root_validator()
-    def check_probability(cls, values):
-        prob_sum = sum(values.values())
-        if prob_sum != 1:
-            for change in values:
-                values[change] /= prob_sum
-            print(Fore.YELLOW, end = '')
-            print(f'WARNING: Probability sum is {prob_sum}, scaling to 1')
-            print(f'New probabilities are {values}')
-            print(Style.RESET_ALL, end='')
-        return values
-
-class CameraShiftConfig(BaseModel, extra = 'forbid'):
-    modification_x_sigma = 0.0
-    modification_y_sigma = 0.0
+# class ProbabilityConfig(BaseModel, extra = 'forbid'):
+#     perturbation: float
+#     combine: float
+#     split: float
+#     camera_shift: float
+#     opacity_diffraction_offset: float
+#     background_offset: float
+#
+#     @root_validator()
+#     def check_probability(cls, values):
+#         prob_sum = sum(values.values())
+#         if prob_sum != 1:
+#             for change in values:
+#                 values[change] /= prob_sum
+#             print(Fore.YELLOW, end = '')
+#             print(f'WARNING: Probability sum is {prob_sum}, scaling to 1')
+#             print(f'New probabilities are {values}')
+#             print(Style.RESET_ALL, end='')
+#         return values
+#
+# class CameraShiftConfig(BaseModel, extra = 'forbid'):
+#     modification_x_sigma = 0.0
+#     modification_y_sigma = 0.0
 
 CellConfig = TypeVar('CellConfig', SphereConfig, BacilliConfig)
 
 class BaseConfig(GenericModel, Generic[CellConfig], extra = 'forbid'):
     # Global settings
     cellType: str
-    pixelsPerMicron: int
-    framesPerSecond: int
+    # pixelsPerMicron: int
+    # framesPerSecond: int
 
     # Cell settings
     cell: CellConfig
@@ -72,10 +72,10 @@ class BaseConfig(GenericModel, Generic[CellConfig], extra = 'forbid'):
     simulation: SimulationConfig
 
     # Probability settings
-    prob: ProbabilityConfig
+    # prob: ProbabilityConfig
 
     # Camera shift settings
-    camera = CameraShiftConfig()
+    # camera = CameraShiftConfig()
 
     # Misc settings
     # global_optimizer_window_size: int

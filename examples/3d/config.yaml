@@ -1,7 +1,7 @@
 # Global settings
 cellType: sphere
-pixelsPerMicron: 1
-framesPerSecond: 1
+#pixelsPerMicron: 1
+#framesPerSecond: 1
 
 # Cell settings
 cell:
@@ -29,27 +29,23 @@ simulation:
   iterations_per_cell: 10
   background_color: 0.376
   cell_color: 0.496
-  light_diffraction_sigma: auto
-  light_diffraction_strength: auto
-  light_diffraction_truncate: 1
-  cell_opacity: 0
   padding: 0
   z_scaling: 6.925
   blur_sigma: 2
 
 # Probability of changes
-prob:
-  perturbation: 0.7
-  combine: 0.1
-  split: 0.12
-  camera_shift: 0.0
-  opacity_diffraction_offset: 0.05
-  background_offset: 0.05
+#prob:
+#  perturbation: 0.7
+#  combine: 0.1
+#  split: 0.12
+#  camera_shift: 0.0
+#  opacity_diffraction_offset: 0.05
+#  background_offset: 0.05
 
 # Camera shift settings
-camera:
-  modification_x_sigma: 0
-  modification_y_sigma: 0
+#camera:
+#  modification_x_sigma: 0
+#  modification_y_sigma: 0
 
 #global_optimizer_window_size: 1
 #pbad_max_size: 1000
