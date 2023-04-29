@@ -67,9 +67,16 @@ class Lineage:
 
             self.frames.append(Frame(np.array(real_images), config.simulation, cells, output_path, file_name))
 
-    def perturb(self, frame_index: int):
+    def simulated_anneal(self, frame_index: int):
         """Perturb the cells in the frame."""
-        self.frames[frame_index].perturb()
+        for i in range(500):
+            if i % 100 == 0:
+                print(f"Frame {frame_index}, iteration {i}")
+            old_cost, new_cost, accept = self.frames[frame_index].perturb()
+            if old_cost < new_cost:
+                accept(True)
+            else:
+                accept(False)
 
     def save_images(self, frame_index: int):
         """Save the images in the frame to the output path."""
@@ -117,4 +124,3 @@ class Lineage:
 
     def __len__(self):
         return len(self.frames)
-

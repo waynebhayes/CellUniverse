@@ -71,17 +71,18 @@ class Frame:
 
         # if the difference is greater than the threshold, revert to the old cell
         old_cost = self.calculate_cost(self.synth_image_stack)
-        if new_cost > old_cost:
-            self.cells[index] = old_cell
 
-        # otherwise, update the synthetic image stack
-        else:
-            self.synth_image_stack = new_synth_image_stack
+        def callback(accept: bool):
+            if accept:
+                self.cells[index] = old_cell
+            else:
+                self.synth_image_stack = new_synth_image_stack
 
+        return old_cost, new_cost, callback
 
     def calculate_cost(self, synth_image_stack: npt.NDArray):
         """Calculate the L2 cost of the synthetic images."""
-        return np.linalg.norm(self.real_image_stack - synth_image_stack)
+        return float(np.linalg.norm(self.real_image_stack - synth_image_stack))
 
     def generate_cell_maps(self):
         """Generate cell maps from the cells in the frame. This should only be for binary images"""
