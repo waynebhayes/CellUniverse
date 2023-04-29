@@ -1,5 +1,7 @@
 from pathlib import Path
 
+from scipy.ndimage import gaussian_filter
+
 from .Cells import Cell
 
 from .Config import BaseConfig
@@ -14,7 +16,16 @@ from skimage import io
 from copy import deepcopy
 
 # Helper functions
-def load_image(image_file: Path):
+def process_image(image: Image.Image, config: BaseConfig):
+    """Convert the image to grayscale and normalize the pixel values."""
+    if image.mode == 'RGB':
+        image = image.convert('L')
+    arr = np.array(image, dtype=np.float32) / 255.0
+    # gaussian blur the image
+    arr = gaussian_filter(arr, sigma=config.simulation.blur_sigma)
+    return arr
+
+def load_image(image_file: Path, config: BaseConfig):
     imgs = []
 
     # handle tif files
@@ -24,10 +35,7 @@ def load_image(image_file: Path):
 
         for i in range(slices):
             pil_img = Image.fromarray(img[i].astype(np.uint8))
-            if pil_img.mode == 'RGB':
-                pil_img = pil_img.convert('L')
-            arr = np.array(pil_img, dtype=np.float32) / 255.0
-            imgs.append(arr)
+            imgs.append(process_image(pil_img, config))
     else:
         """Open the image file and return a floating-point grayscale array."""
         with Image.open(image_file) as img:
@@ -35,10 +43,7 @@ def load_image(image_file: Path):
             if img.mode == 'RGB':
                 img = img.convert('L')
             # Convert the image to a NumPy array and normalize the pixel values
-            arr = np.array(img, dtype=np.float32) / 255.0
-            
-        imgs.append(arr)
-        
+            imgs.append(process_image(img, config))
     return imgs
 
 
@@ -51,7 +56,7 @@ class Lineage:
         for i, image_path in enumerate(image_paths):
             # Load original images
             real_images: List[npt.NDArray] = []
-            real_images.extend(load_image(image_path))
+            real_images.extend(load_image(image_path, config))
 
             file_name = image_path.name
 

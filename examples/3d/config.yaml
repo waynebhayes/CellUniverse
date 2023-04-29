@@ -18,15 +18,14 @@ cell:
     mu: 0
     sigma: 10
   radius:
-    prob: 0.2
+    prob: 0.1
     mu: 0
-    sigma: 0.2
+    sigma: 3
   minRadius: 4
-  maxRadius: 800
+  maxRadius: 80
 
 # Simulation settings
 simulation:
-  image_type: To be Set
   background_color: 0.376
   cell_color: 0.496
   light_diffraction_sigma: auto
@@ -34,7 +33,8 @@ simulation:
   light_diffraction_truncate: 1
   cell_opacity: 0
   padding: 0
-  z_scaling: 6
+  z_scaling: 6.925
+  blur_sigma: 2
 
 # Probability of changes
 prob:

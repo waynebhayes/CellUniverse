@@ -8,7 +8,6 @@ from ..Cells import BacilliConfig
 from ..Cells import SphereConfig
 
 class SimulationConfig(BaseModel, extra = 'forbid'):
-    image_type: str
     background_color: float
     cell_color: float
     light_diffraction_sigma: Union[float, str]
@@ -16,8 +15,9 @@ class SimulationConfig(BaseModel, extra = 'forbid'):
     light_diffraction_truncate: float
     cell_opacity: Union[float, str]
     padding = 0
-    z_slices: int = None  # Number of z slices in 3d image
     z_scaling = 1
+    blur_sigma = 0
+    z_slices = -1  # Number of z slices in 3d image. This is set automatically, do not specify
     z_values: List[int] = []  # List of z values to use for each image slice. This is set automatically, do not specify
 
     @validator('z_values')
@@ -27,7 +27,7 @@ class SimulationConfig(BaseModel, extra = 'forbid'):
     
     @validator('z_slices')
     def check_z_slices(cls, v, values):
-        if v is not None:
+        if v != -1:
             raise ValueError('z_slices should not be set manually')
         
 
