@@ -79,7 +79,7 @@ class CellUniverse:
     def run(self):
         current_time = time.time()
         for frame in range(len(self.lineage)):
-            self.lineage.simulated_anneal(frame)
+            self.lineage.optimize(frame)
             self.lineage.copy_cells_forward(frame + 1)
             self.lineage.save_images(frame)
             # self.lineage.save_cells(frame) // TODO: Figure out why this isn't working

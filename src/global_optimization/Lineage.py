@@ -67,16 +67,24 @@ class Lineage:
 
             self.frames.append(Frame(np.array(real_images), config.simulation, cells, output_path, file_name))
 
-    def simulated_anneal(self, frame_index: int):
+    def optimize(self, frame_index: int):
         """Perturb the cells in the frame."""
-        for i in range(500):
+        frame = self.frames[frame_index]
+        algorithm = 'simulated annealing'
+        total_iterations = len(frame) * self.config.simulation.iterations_per_cell
+
+        for i in range(total_iterations):
             if i % 100 == 0:
                 print(f"Frame {frame_index}, iteration {i}")
-            old_cost, new_cost, accept = self.frames[frame_index].perturb()
-            if old_cost < new_cost:
-                accept(True)
+
+            if algorithm == 'simulated annealing':
+                cost_diff, accept = frame.perturb()
+                acceptance = np.exp(-cost_diff / ((i + 1) / total_iterations))
+                accept(acceptance > np.random.random_sample())
             else:
-                accept(False)
+                # Hill climbing
+                cost_diff, accept = frame.perturb()
+                accept(cost_diff < 0)
 
     def save_images(self, frame_index: int):
         """Save the images in the frame to the output path."""

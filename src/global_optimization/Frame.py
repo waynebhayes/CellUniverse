@@ -78,7 +78,7 @@ class Frame:
             else:
                 self.synth_image_stack = new_synth_image_stack
 
-        return old_cost, new_cost, callback
+        return old_cost - new_cost, callback
 
     def calculate_cost(self, synth_image_stack: npt.NDArray):
         """Calculate the L2 cost of the synthetic images."""
@@ -119,3 +119,6 @@ class Frame:
         # set the file name for all cells to the same file name
         cell_params["file"] = self.image_name
         return cell_params
+
+    def __len__(self):
+        return len(self.cells)

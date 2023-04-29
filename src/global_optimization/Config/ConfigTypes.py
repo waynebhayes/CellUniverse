@@ -8,6 +8,7 @@ from ..Cells import BacilliConfig
 from ..Cells import SphereConfig
 
 class SimulationConfig(BaseModel, extra = 'forbid'):
+    iterations_per_cell: int
     background_color: float
     cell_color: float
     light_diffraction_sigma: Union[float, str]

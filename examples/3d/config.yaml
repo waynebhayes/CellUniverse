@@ -26,6 +26,7 @@ cell:
 
 # Simulation settings
 simulation:
+  iterations_per_cell: 10
   background_color: 0.376
   cell_color: 0.496
   light_diffraction_sigma: auto
