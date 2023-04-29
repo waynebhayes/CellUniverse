@@ -80,6 +80,9 @@ class Frame:
 
         return old_cost - new_cost, callback
 
+    def gradient_descent(self):
+        pass
+
     def calculate_cost(self, synth_image_stack: npt.NDArray):
         """Calculate the L2 cost of the synthetic images."""
         return float(np.linalg.norm(self.real_image_stack - synth_image_stack))

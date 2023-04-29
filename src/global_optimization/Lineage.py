@@ -81,6 +81,8 @@ class Lineage:
                 cost_diff, accept = frame.perturb()
                 acceptance = np.exp(-cost_diff / ((i + 1) / total_iterations))
                 accept(acceptance > np.random.random_sample())
+            elif algorithm == 'gradient descent':
+                frame.gradient_descent()
             else:
                 # Hill climbing
                 cost_diff, accept = frame.perturb()
