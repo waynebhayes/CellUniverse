@@ -23,19 +23,19 @@ class Frame:
         self.real_image_stack = np.array(self._real_image_stack)  # create a copy of the original image stack
 
         self.pad_real_image()
-        self.cell_map_stack = self.generate_cell_maps()
+        # self.cell_map_stack = self.generate_cell_maps()
         self.synth_image_stack = self.generate_synth_images()
 
-    def update(self):
-        """Update the frame."""
-        self.pad_real_image()
-        self.synth_image_stack = self.generate_synth_images()
-        self.cell_map_stack = self.generate_cell_maps()
-
-    def update_simulation_config(self, simulation_config: SimulationConfig):
-        """Update the simulation config and regenerate the synthetic images and cell maps."""
-        self.simulation_config = simulation_config
-        self.update()
+    # def update(self):
+    #     """Update the frame."""
+    #     self.pad_real_image()
+    #     self.synth_image_stack = self.generate_synth_images()
+    #     self.cell_map_stack = self.generate_cell_maps()
+    #
+    # def update_simulation_config(self, simulation_config: SimulationConfig):
+    #     """Update the simulation config and regenerate the synthetic images and cell maps."""
+    #     self.simulation_config = simulation_config
+    #     self.update()
 
     def generate_synth_images(self):
         """Generate synthetic images from the cells in the frame."""
@@ -53,44 +53,14 @@ class Frame:
 
         return np.array(synth_image_stack)
 
-    def perturb(self):
-        # randomly pick an index for a cell
-        index = random.randint(0, len(self.cells) - 1)
-
-        # store old cell
-        old_cell = self.cells[index]
-
-        # replace the cell at that index with a new cell
-        self.cells[index] = self.cells[index].get_perturbed_cell()
-
-        # synthesize new synthetic image
-        new_synth_image_stack = self.generate_synth_images()
-
-        # get the cost of the new synthetic image
-        new_cost = self.calculate_cost(new_synth_image_stack)
-
-        # if the difference is greater than the threshold, revert to the old cell
-        old_cost = self.calculate_cost(self.synth_image_stack)
-
-        def callback(accept: bool):
-            if accept:
-                self.cells[index] = old_cell
-            else:
-                self.synth_image_stack = new_synth_image_stack
-
-        return old_cost - new_cost, callback
-
-    def gradient_descent(self):
-        pass
-
     def calculate_cost(self, synth_image_stack: npt.NDArray):
         """Calculate the L2 cost of the synthetic images."""
         return float(np.linalg.norm(self.real_image_stack - synth_image_stack))
 
-    def generate_cell_maps(self):
-        """Generate cell maps from the cells in the frame. This should only be for binary images"""
-        # TODO: Implement this
-        return np.zeros(self.real_image_stack.shape)
+    # def generate_cell_maps(self):
+    #     """Generate cell maps from the cells in the frame. This should only be for binary images"""
+    #     # TODO: Implement this
+    #     return np.zeros(self.real_image_stack.shape)
 
     def pad_real_image(self):
         """Pad the real image to account for the padding in the synthetic images."""
@@ -125,3 +95,34 @@ class Frame:
 
     def __len__(self):
         return len(self.cells)
+
+
+    def perturb(self):
+        # randomly pick an index for a cell
+        index = random.randint(0, len(self.cells) - 1)
+
+        # store old cell
+        old_cell = self.cells[index]
+
+        # replace the cell at that index with a new cell
+        self.cells[index] = self.cells[index].get_perturbed_cell()
+
+        # synthesize new synthetic image
+        new_synth_image_stack = self.generate_synth_images()
+
+        # get the cost of the new synthetic image
+        new_cost = self.calculate_cost(new_synth_image_stack)
+
+        # if the difference is greater than the threshold, revert to the old cell
+        old_cost = self.calculate_cost(self.synth_image_stack)
+
+        def callback(accept: bool):
+            if accept:
+                self.cells[index] = old_cell
+            else:
+                self.synth_image_stack = new_synth_image_stack
+
+        return old_cost - new_cost, callback
+
+    def gradient_descent(self):
+        pass
