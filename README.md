@@ -73,6 +73,7 @@ Steps to get a new video running:
 ```
 2b. Create a Cell Universe config file and fill it in with settings that fits your cell video. See `examples/canonical/global_optimizer_config.json` (and the comments in the file) and other config JSON files in the `examples` directory for examples.
     * It is important to change settings in the config file like the "Global Setttings" and the "Bacilli Settings" to match your cell video, or else Cell Universe will not function properly.
+    
 3. Run Cell Universe, giving it the input directory containing the frames, the initial properties file created above, the config file, as well as the other required arguments (see in the Usage section).
     * An example command is at the bottom of this README and more in the `run.sh` script files in the `examples` directory.
 
