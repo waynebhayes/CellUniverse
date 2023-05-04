@@ -93,20 +93,20 @@ class InputPanel(Frame):
         self.background_color_button.grid(row=0, column=1)
 
         self.background_color_frame.pack(side=TOP, padx=5, pady=5)
+        
+        # # Number of cells of the left canvas
+        # self.cell_count_label1 = Label(self, text="Cell count(Left):")
+        # self.cell_count_label1.pack(side=TOP, padx=5, pady=5)
 
-        # Number of cells of the left canvas
-        self.cell_count_label1 = Label(self, text="Cell count(Left):")
-        self.cell_count_label1.pack(side=TOP, padx=5, pady=5)
+        # self.cell_count_entry1 = Entry(self, width=20)
+        # self.cell_count_entry1.pack(side=TOP, padx=5, pady=5)
 
-        self.cell_count_entry1 = Entry(self, width=20)
-        self.cell_count_entry1.pack(side=TOP, padx=5, pady=5)
+        # # Number of cells of the right canvas
+        # self.cell_count_label2 = Label(self, text="Cell count(Right):")
+        # self.cell_count_label2.pack(side=TOP, padx=5, pady=5)
 
-        # Number of cells of the right canvas
-        self.cell_count_label2 = Label(self, text="Cell count(Right):")
-        self.cell_count_label2.pack(side=TOP, padx=5, pady=5)
-
-        self.cell_count_entry2 = Entry(self, width=20)
-        self.cell_count_entry2.pack(side=TOP, padx=5, pady=5)
+        # self.cell_count_entry2 = Entry(self, width=20)
+        # self.cell_count_entry2.pack(side=TOP, padx=5, pady=5)
         # Create the button for generate config
         self.generate_button = Button(self, text="Generate", command=self.generate)
         self.generate_button.pack(side=TOP, padx=5, pady=5)
