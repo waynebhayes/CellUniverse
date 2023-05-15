@@ -679,10 +679,10 @@ class BoundingBoxInfoFrame(Frame):
         self.rotation_label.grid(row=8, column=0, sticky=W, padx=10, pady=5)
 
     def set_bounding_box_info(self, info):
-        self.center_label.config(text=f'center: ({info["center"][0]:.2f}, {info["center"][0]:.2f})')
-        self.width_label.config(text=f'width: ({info["width"]:.2f}, {info["width"]:.2f})')
-        self.length_label.config(text=f'length: ({info["length"]:.2f}, {info["length"]:.2f})')
-        self.rotation_label.config(text=f'roation: ({info["rotation"]:.2f}, {info["rotation"]:.2f})')
+        self.center_label.config(text=f'center: ({info["center"][0]:.2f}, {info["center"][1]:.2f})')
+        self.width_label.config(text=f'width: ({info["width"]:.2f})')
+        self.length_label.config(text=f'length: ({info["length"]:.2f})')
+        self.rotation_label.config(text=f'roation: ({info["rotation"]:.2f})')
     
     def clear_bounding_box_info(self):
         self.center_label.config(text='center: ')
