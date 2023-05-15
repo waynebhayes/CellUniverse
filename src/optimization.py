@@ -58,7 +58,6 @@ def find_optimal_simulation_conf(simulation_config, realimage1, cellnodes):
         variables.append("light.diffraction.strength")
         initial_values.append(0.5)
     if simulation_config["cell.opacity"] == "auto":
-        auto_opacity = True
         variables.append("cell.opacity")
         initial_values.append(0.2)
     if len(variables) != 0:
@@ -67,12 +66,12 @@ def find_optimal_simulation_conf(simulation_config, realimage1, cellnodes):
 
         for i, param in enumerate(variables):
             simulation_config[param] = optimal_values[i]
-        simulation_config["cell.opacity"] = max(0, simulation_config["cell.opacity"])
-        simulation_config["light.diffraction.sigma"] = max(0, simulation_config["light.diffraction.sigma"])
+            
+    simulation_config["cell.opacity"] = max(0, simulation_config["cell.opacity"])
+    simulation_config["light.diffraction.sigma"] = max(0, simulation_config["light.diffraction.sigma"])
 
-        if auto_opacity:
-            for node in cellnodes:
-                node.cell.opacity = simulation_config["cell.opacity"]
+    for node in cellnodes:
+        node.cell.opacity = simulation_config["cell.opacity"]
 
     print(f"optimal simulation configuration values found: {simulation_config}")
     return simulation_config
@@ -212,6 +211,9 @@ def split_proba(length):
     # Determined empirically based on previous runs
     return min(1, math.sin((length - 14) / (2 * math.pi * math.pi))) if 14 < length else 0
 
+def split_proba_linear(length, min_length, max_length):
+    """Returns the split probability given the length of the cell."""
+    return math.sin((length - min_length) / (max_length - min_length))
 
 def bacilli_split(node, config, imageshape):
     """Split the cell and push both onto the stack for testing."""
