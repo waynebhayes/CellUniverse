@@ -122,6 +122,19 @@ def optimize_core(lineage, realimages, synthimages, cellmaps, distmaps, window_s
         node = np.random.choice(frame.nodes)
         if node.cell.dormant:
             continue
+
+        sum = np.sum([split_prob, perturbation_prob, combine_prob, background_offset_prob, opacity_diffraction_offset_prob, camera_shift_prob])
+        if sum != 1:
+            print("Waring: the probability sum is %f not 1! split_prob: %f, perturbation_prob: %f, combine_prob: %f, background_offset_prob: %f, opacity_diffraction_offset_prob: %f, camera_shift_prob: %f." % (sum, split_prob, perturbation_prob, combine_prob, background_offset_prob, opacity_diffraction_offset_prob, camera_shift_prob))
+            split_prob = split_prob / sum;
+            perturbation_prob = perturbation_prob / sum;
+            combine_prob = combine_prob / sum;
+            background_offset_prob = background_offset_prob / sum;
+            opacity_diffraction_offset_prob = opacity_diffraction_offset_prob / sum;
+            camera_shift_prob = camera_shift_prob / sum;
+            print("Now the normalized probability is split_prob: %f, perturbation_prob: %f, combine_prob: %f, background_offset_prob: %f, opacity_diffraction_offset_prob: %f, camera_shift_prob: %f." % (split_prob, perturbation_prob, combine_prob, background_offset_prob, opacity_diffraction_offset_prob, camera_shift_prob))
+            print();
+            
         change_option = np.random.choice(["split", "perturbation", "combine", "background_offset", "opacity_diffraction_offset", "camera_shift"],
                                          p=[split_prob, perturbation_prob, combine_prob, background_offset_prob, opacity_diffraction_offset_prob, camera_shift_prob])
         change = None
