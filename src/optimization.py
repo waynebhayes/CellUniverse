@@ -211,9 +211,10 @@ def split_proba(length):
     # Determined empirically based on previous runs
     return min(1, math.sin((length - 14) / (2 * math.pi * math.pi))) if 14 < length else 0
 
-def split_proba_linear(length, min_length, max_length):
+def split_proba_sin(length, min_length, max_length):
     """Returns the split probability given the length of the cell."""
     return math.sin((length - min_length) / (max_length - min_length))
+
 
 def bacilli_split(node, config, imageshape):
     """Split the cell and push both onto the stack for testing."""
