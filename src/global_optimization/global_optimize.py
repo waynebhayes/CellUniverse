@@ -138,7 +138,7 @@ def optimize_core(lineage, realimages, synthimages, cellmaps, distmaps, window_s
         change_option = np.random.choice(["split", "perturbation", "combine", "background_offset", "opacity_diffraction_offset", "camera_shift"],
                                          p=[split_prob, perturbation_prob, combine_prob, background_offset_prob, opacity_diffraction_offset_prob, camera_shift_prob])
         change = None
-        if change_option == "split" and np.random.random_sample() < optimization.split_proba(node.cell.length) and not (window_start <= 0 and frame_index <= 0):
+        if change_option == "split" and (np.random.random_sample() < optimization.split_proba_sin(node.cell.length, config["bacilli.minLength"], config["bacilli.maxLength"])) and not (window_start <= 0 and frame_index <= 0):
             change = Split(node.parent, config, realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], lineage.frames[frame_index], distmaps[frame_index])
 
         elif change_option == "perturbation":
@@ -239,7 +239,7 @@ def optimize_old(imagefiles, lineage, realimages, synthimages, cellmaps, distmap
         change_option = np.random.choice(["split", "perturbation", "combine", "background_offset", "opacity_diffraction_offset"], 
                                          p=[split_prob, perturbation_prob, combine_prob, background_offset_prob, opacity_diffraction_offset_prob])
         change = None
-        if change_option == "split" and np.random.random_sample() < optimization.split_proba(node.cell.length) and frame_index > 0:
+        if change_option == "split" and (np.random.random_sample() < optimization.split_proba_sin(node.cell.length, config["bacilli.minLength"], config["bacilli.maxLength"])) and frame_index > 0:
             change = Split(node.parent, config, realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], lineage.frames[frame_index], distmaps[frame_index])
 
         elif change_option == "perturbation":
