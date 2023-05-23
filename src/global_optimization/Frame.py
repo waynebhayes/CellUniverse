@@ -9,7 +9,7 @@ import random
 
 from .Cells import Cell
 from .Config import SimulationConfig
-
+from .Cells import Sphere
 
 class Frame:
     def __init__(self, real_image_stack: npt.NDArray, simulation_config: SimulationConfig, cells: List[Cell], output_path: Path, image_name: str):
@@ -52,6 +52,50 @@ class Frame:
             synth_image_stack.append(synth_image)
 
         return np.array(synth_image_stack)
+    
+    @staticmethod
+    def calculate_minimum_box(cell1: Sphere, cell2: Sphere):
+            # Calculate the coordinates of the minimum and maximum corners for each sphere
+            cell1_min_corner = [cell1._position.x - cell1._radius, cell1._position.y - cell1._radius, cell1._position.z - cell1._radius]
+            cell1_max_corner = [cell1._position.x + cell1._radius, cell1._position.y + cell1._radius, cell1._position.z + cell1._radius]
+            
+            cell2_min_corner = [cell2._position.x - cell2._radius, cell2._position.y - cell2._radius, cell2._position.z - cell2._radius]
+            cell2_max_corner = [cell2._position.x + cell2._radius, cell2._position.y + cell2._radius, cell2._position.z + cell2._radius]
+            
+            # Find the minimum and maximum coordinates among the spheres' corners
+            min_corner = [min(cell1_min_corner[0], cell2_min_corner[0]), min(cell1_min_corner[1], cell2_min_corner[1]), min(cell1_min_corner[2], cell2_min_corner[2])]
+            max_corner = [max(cell1_max_corner[0], cell2_max_corner[0]), max(cell1_max_corner[1], cell2_max_corner[1]), max(cell1_max_corner[2], cell2_max_corner[2])]
+            
+            # Return the minimum and maximum corners of the box
+            return min_corner, max_corner
+    def generate_synth_images_fast(self, old_cell: Sphere, new_cell: Sphere):
+        """ 
+            Generate the synthetic images after perturbing a cell.
+            It should be faster than the normal version as it will 
+            try to reuse the previously generated images if there
+            is no change involved. 
+        """
+        if self.cells is None:
+            raise ValueError("Cells are not set")
+
+        shape = self.get_image_shape()
+        synth_image_stack = []
+        
+        # Calculate the boundary of the smallest box that contains
+        # both old_cell and new_cell.
+        min_corner, max_corner = Frame.calculate_minimum_box(old_cell, new_cell)
+
+        for i, z in enumerate(self.z_slices):
+            if (z < min_corner[2] or z > max_corner[2]):
+                synth_image_stack.append(self.synth_image_stack[i])
+                continue
+            synth_image = np.full(shape, self.simulation_config.background_color)
+            for cell in self.cells:
+                cell.draw(synth_image, self.simulation_config, z = z)
+            synth_image_stack.append(synth_image)
+        return synth_image_stack
+        
+
 
     def calculate_cost(self, synth_image_stack: npt.NDArray):
         """Calculate the L2 cost of the synthetic images."""
@@ -108,8 +152,9 @@ class Frame:
         self.cells[index] = self.cells[index].get_perturbed_cell()
 
         # synthesize new synthetic image
-        new_synth_image_stack = self.generate_synth_images()
-
+        # new_synth_image_stack = self.generate_synth_images()
+        new_synth_image_stack = self.generate_synth_images_fast(old_cell, self.cells[index])
+        
         # get the cost of the new synthetic image
         new_cost = self.calculate_cost(new_synth_image_stack)
 
