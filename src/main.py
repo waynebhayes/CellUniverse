@@ -9,6 +9,7 @@ The entry point for CellAnneal program.
 """
 import argparse
 import multiprocessing
+from copy import deepcopy
 from pathlib import Path
 import optimization
 from global_optimization import global_optimize, auto_temp_schedule
@@ -194,8 +195,27 @@ def main(args):
 
     try:
         config = load_config(args.config)
+        sa_config = deepcopy(config)
 
-        simulation_config = config["simulation"]
+        # List of simulated annealing keys to modify
+        keys_to_modify = [
+            "modification.x.mu",
+            "modification.y.mu",
+            "modification.width.mu",
+            "modification.length.mu",
+            "modification.rotation.mu",
+            "modification.x.sigma",
+            "modification.y.sigma",
+            "modification.width.sigma",
+            "modification.length.sigma",
+            "modification.rotation.sigma"
+        ]
+
+        for key, value in sa_config["perturbation"].items():
+            if key in keys_to_modify:
+                sa_config["perturbation"][key] = value / sa_config["iteration_per_cell"]
+
+        simulation_config = sa_config["simulation"]
         if args.graySynthetic:
             simulation_config["image.type"] = "graySynthetic"
         elif args.phaseContrast:
@@ -218,7 +238,7 @@ def main(args):
         np.random.seed(seed)
         print("Seed: {}".format(seed))
 
-        celltype = config['global.cellType'].lower()
+        celltype = sa_config['global.cellType'].lower()
 
         imagefiles = get_inputfiles(args)
 
@@ -240,14 +260,14 @@ def main(args):
             realimages = [optimization.load_image(imagefile) for imagefile in imagefiles]
 
             # setup the colony from a file with the initial properties
-            lineage = create_lineage(imagefiles, realimages, config, args)
+            lineage = create_lineage(imagefiles, realimages, sa_config, args)
 
-            window = config["global_optimizer.window_size"]
+            window = sa_config["global_optimizer.window_size"]
             sim_start = args.continue_from - args.frame_first
             print(sim_start)
             shape = realimages[0].shape
-            if 'padding' in config["simulation"]:
-                pad = config["simulation"]["padding"]
+            if 'padding' in sa_config["simulation"]:
+                pad = sa_config["simulation"]["padding"]
                 shape = (shape[0] + 2 * pad, shape[1] + 2 * pad)
                 for i in range(len(lineage.frames)):
                     for cellnode in lineage.frames[i].node_map.values():
@@ -256,7 +276,7 @@ def main(args):
             synthimages = []
             cellmaps = []
             distmaps = []
-            iteration_per_cell = config["iteration_per_cell"]
+            iteration_per_cell = sa_config["iteration_per_cell"]
             if not useDistanceObjective:
                 distmaps = [None] * len(realimages)
             for window_start in range(1 - window, len(realimages)):
@@ -275,35 +295,35 @@ def main(args):
                     cellmaps.append(cellmap)
                     if useDistanceObjective:
                         distmap = distance_transform_edt(realimage < .5)
-                        distmap /= config[f'{config["global.cellType"].lower()}.distanceCostDivisor'] * config[
+                        distmap /= sa_config[f'{sa_config["global.cellType"].lower()}.distanceCostDivisor'] * sa_config[
                             'global.pixelsPerMicron']
                         distmap += 1
                         distmaps.append(distmap)
                     if args.auto_temp == 1 and window_end == 1:
                         print("auto temperature schedule started")
                         args.start_temp, args.end_temp = \
-                            auto_temp_schedule(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, 0, 1, lineagefile, args, config)
+                            auto_temp_schedule(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, 0, 1, lineagefile, args, sa_config)
                         print("auto temperature schedule finished")
                         print("starting temperature is ", args.start_temp, "ending temperature is ", args.end_temp)
                     if args.auto_meth == "frame" and optimization.auto_temp_schedule_frame(window_end, 3):
                         print("auto temperature schedule restarted")
                         args.start_temp, args.end_temp = \
-                            auto_temp_schedule(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config)
+                            auto_temp_schedule(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, sa_config)
                         print("auto temperature schedule finished")
                         print("starting temperature is ", args.start_temp, "ending temperature is ", args.end_temp)
                 if window_start >= sim_start:
                     if useDistanceObjective:
-                        global_optimize.totalCostDiff = optimization.dist_objective(realimage, synthimage, distmap, cellmap, config["overlap.cost"])
+                        global_optimize.totalCostDiff = optimization.dist_objective(realimage, synthimage, distmap, cellmap, sa_config["overlap.cost"])
                     else:
-                        global_optimize.totalCostDiff = optimization.objective(realimage, synthimage, cellmap, config["overlap.cost"], config["cell.importance"])
-                    lineage, synthimages, distmaps, cellmaps = global_optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, config, iteration_per_cell, client=client)
+                        global_optimize.totalCostDiff = optimization.objective(realimage, synthimage, cellmap, sa_config["overlap.cost"], sa_config["cell.importance"])
+                    lineage, synthimages, distmaps, cellmaps = global_optimize(imagefiles, lineage, realimages, synthimages, cellmaps, distmaps, window_start, window_end, lineagefile, args, sa_config, iteration_per_cell, client=client)
                 if window_start >= 0:
                     save_lineage(imagefiles[window_start].name, lineage.frames[window_start].nodes, lineagefile)
-                    save_output(imagefiles[window_start].name, synthimages[window_start], realimages[window_start], lineage.frames[window_start].nodes, args, config)
+                    save_output(imagefiles[window_start].name, synthimages[window_start], realimages[window_start], lineage.frames[window_start].nodes, args, sa_config)
             return 0
 
         # local optimization
-        optimization.local_optimize(imagefiles, config, args, lineagefile, client)
+        optimization.local_optimize(imagefiles, sa_config, args, lineagefile, client)
 
     except KeyboardInterrupt as error:
         raise error
