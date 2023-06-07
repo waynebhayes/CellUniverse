@@ -214,8 +214,6 @@ def main(args):
         for key, value in sa_config["perturbation"].items():
             if key in keys_to_modify:
                 sa_config["perturbation"][key] = value / sa_config["iteration_per_cell"]
-        print("Modified perturbation parameters: {}".format(sa_config["perturbation"]))
-
 
         simulation_config = sa_config["simulation"]
         if args.graySynthetic:
