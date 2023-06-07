@@ -195,27 +195,8 @@ def main(args):
 
     try:
         config = load_config(args.config)
-        sa_config = deepcopy(config)
 
-        # List of simulated annealing keys to modify
-        keys_to_modify = [
-            "modification.x.mu",
-            "modification.y.mu",
-            "modification.width.mu",
-            "modification.length.mu",
-            "modification.rotation.mu",
-            "modification.x.sigma",
-            "modification.y.sigma",
-            "modification.width.sigma",
-            "modification.length.sigma",
-            "modification.rotation.sigma"
-        ]
-
-        for key, value in sa_config["perturbation"].items():
-            if key in keys_to_modify:
-                sa_config["perturbation"][key] = value / sa_config["iteration_per_cell"]
-
-        simulation_config = sa_config["simulation"]
+        simulation_config = config["simulation"]
         if args.graySynthetic:
             simulation_config["image.type"] = "graySynthetic"
         elif args.phaseContrast:
@@ -238,7 +219,7 @@ def main(args):
         np.random.seed(seed)
         print("Seed: {}".format(seed))
 
-        celltype = sa_config['global.cellType'].lower()
+        celltype = config['global.cellType'].lower()
 
         imagefiles = get_inputfiles(args)
 
@@ -254,6 +235,26 @@ def main(args):
                 print(','.join(['window_start', 'window_end', 'pbad_total', 'bad_count', 'temperature', 'total_cost_diff', 'current_iteration', 'total_iterations']), file=debugfile)
 
         if args.global_optimization:
+            sa_config = deepcopy(config)
+
+            # List of simulated annealing keys to modify
+            keys_to_modify = [
+                "modification.x.mu",
+                "modification.y.mu",
+                "modification.width.mu",
+                "modification.length.mu",
+                "modification.rotation.mu",
+                "modification.x.sigma",
+                "modification.y.sigma",
+                "modification.width.sigma",
+                "modification.length.sigma",
+                "modification.rotation.sigma"
+            ]
+
+            for key, value in sa_config["perturbation"].items():
+                if key in keys_to_modify:
+                    sa_config["perturbation"][key] = value / sa_config["iteration_per_cell"]
+
             global useDistanceObjective
 
             useDistanceObjective = args.dist
@@ -323,7 +324,7 @@ def main(args):
             return 0
 
         # local optimization
-        optimization.local_optimize(imagefiles, sa_config, args, lineagefile, client)
+        optimization.local_optimize(imagefiles, config, args, lineagefile, client)
 
     except KeyboardInterrupt as error:
         raise error
