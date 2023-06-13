@@ -265,7 +265,6 @@ class CellLabeling(Frame):
         if self.new_flag is True:
             self.p0 = Point([self.canvas.canvasx(event.x),
                             self.canvas.canvasy(event.y)])
-            print(self.p0)
             self.canvas.bind('<B1-Motion>', self.left_motion)
 
         elif self.delete_flag is True:

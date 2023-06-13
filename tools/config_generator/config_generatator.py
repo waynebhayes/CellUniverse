@@ -2,8 +2,9 @@ from tkinter import ttk
 from tkinter import *
 from tkinter.ttk import *
 from image_canvas import ImageCanvasFrame
-from config_panel import ConfigPanel
-
+from input_panel import InputPanel
+from information_panel import InformationPanel
+from synthetic_image_preview_panel import SyntheticImagePreviewPanel
 
 class ConfigGenerator(Frame):
     KWARGS = {
@@ -14,14 +15,20 @@ class ConfigGenerator(Frame):
         merged_kwargs = {**self.KWARGS, **kwargs}
         super().__init__(root, **merged_kwargs)
 
-        self.imageCanvasFrame1 = ImageCanvasFrame(self)
+        self.imageCanvasFrame1 = ImageCanvasFrame(self, 1)
         self.imageCanvasFrame1.grid(row=0, column=0)
 
-        self.imageCanvasFrame2 = ImageCanvasFrame(self)
+        self.imageCanvasFrame2 = ImageCanvasFrame(self, 2)
         self.imageCanvasFrame2.grid(row=0, column=1)
         
-        self.configPanel = ConfigPanel(self)
-        self.configPanel.grid(row=0, column=2)
+        self.informationPanel = InformationPanel(self)
+        self.informationPanel.grid(row=0, column=2)
+        
+        self.syntheticImagePreviewPanel = SyntheticImagePreviewPanel(self)
+        self.syntheticImagePreviewPanel.grid(row=0, column=3)
+
+        self.input_panel = InputPanel(self)
+        self.input_panel.grid(row=0, column=4)
         
 
 def main():

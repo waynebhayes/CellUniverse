@@ -1,17 +1,11 @@
-from tkinter import ttk
 from tkinter import *
 from tkinter.ttk import *
-from tkinter import filedialog, messagebox
-
 from collections import defaultdict
 from math import sqrt
 
-import json
-import os
-
-class ConfigPanel(Frame):
+class InformationPanel(Frame):
     KWARGS = {
-        "padding": 0
+        "padding": 10,
     }
 
     def __init__(self, root, **kwargs):
@@ -25,12 +19,12 @@ class ConfigPanel(Frame):
         self.minMaxCellSizePanel = MinMaxCellSizePanel(self)
         self.minMaxCellSizePanel.pack()
 
-        self.inputPanel = InputPanel(self)
-        self.inputPanel.pack()
+        self.colorInfoPanel = ColorInfoPanel(self)
+        self.colorInfoPanel.pack()
 
 class SelectedCellInfoPanel(Frame):
     KWARGS = {
-        "padding": 0
+        "padding": 10
     }
 
     def __init__(self, root, **kwargs):
@@ -45,7 +39,7 @@ class SelectedCellInfoPanel(Frame):
         self.calculate_button = Button(self, text="calculate", command=self.calculate)
 
         # Pack the labels and button vertically
-        self.speed_label.pack(side=TOP)
+        self.speed_label.pack(side=TOP, anchor=W)
         self.spin_label.pack(side=TOP)
         self.growth_label.pack(side=TOP)
         self.calculate_button.pack(side=TOP)
@@ -54,9 +48,9 @@ class SelectedCellInfoPanel(Frame):
         # store a copy for other widgets to access
         self.data = {'speed': speed, 'spin': spin, 'growth': growth}
 
-        self.speed_label.configure(text=f"speed: {speed:.2f}")
-        self.spin_label.configure(text=f"spin speed: {spin:.2f}")
-        self.growth_label.configure(text=f"growth rate: {growth:.2f}")
+        self.speed_label.configure(text=f"speed: {speed:.3f}")
+        self.spin_label.configure(text=f"spin speed: {spin:.3f}")
+        self.growth_label.configure(text=f"growth rate: {growth:.3f}")
 
     def calculate(self):
         # obtain cell dicts from both ImageCanvas
@@ -74,7 +68,7 @@ class SelectedCellInfoPanel(Frame):
         cell_1 = cell_dict1[canvas1.selected_id]
         cell_2 = cell_dict2[canvas2.selected_id]
 
-        frame_diff = self.master.inputPanel.get_frame_difference()
+        frame_diff = self.master.master.input_panel.get_frame_difference()
         # calculate speed
         p1 = cell_1['center']
         p2 = cell_2['center']
@@ -94,86 +88,10 @@ class SelectedCellInfoPanel(Frame):
 
         self.set_labels(speed, spin, growth)
         
-class InputPanel(Frame):
-    KWARGS = {
-        "padding": 0
-    }
 
-    def __init__(self, root, **kwargs):
-        # Merge default kwargs with user-supplied kwargs
-        self.merged_kwargs = {**self.KWARGS, **kwargs}
-        super().__init__(root, **self.merged_kwargs)
-
-        # Create the first label for the left frame number input
-        self.label1 = Label(self, text="Frame# of left:")
-        self.label1.pack(side=TOP, padx=5, pady=5)
-
-        # Create the first Entry widget for the left frame number input
-        self.frame_number1 = Entry(self)
-        self.frame_number1.pack(side=TOP, padx=5, pady=5)
-
-        # Create the second label for the right frame number input
-        self.label2 = Label(self, text="Frame# of right:")
-        self.label2.pack(side=TOP, padx=5, pady=5)
-
-        # Create the second Entry widget for the right frame number input
-        self.frame_number2 = Entry(self)
-        self.frame_number2.pack(side=TOP, padx=5, pady=5)
-
-         # Create the label for max speed
-        self.max_speed_label = Label(self, text="Max speed:")
-        self.max_speed_label.pack(side=TOP, padx=5, pady=5)
-
-        # Create the Entry widget for max speed input
-        self.max_speed = Entry(self)
-        self.max_speed.pack(side=TOP, padx=5, pady=5)
-
-        # Create the label for max spin input
-        self.max_spin_label = Label(self, text="Max spin:")
-        self.max_spin_label.pack(side=TOP, padx=5, pady=5)
-
-        # Create the Entry widget for max spin input
-        self.max_spin = Entry(self)
-        self.max_spin.pack(side=TOP, padx=5, pady=5)
-
-        # Create the label for max growth
-        self.max_growth_label = Label(self, text="Max growth:")
-        self.max_growth_label.pack(side=TOP, padx=5, pady=5)
-
-        # Create the Entry widget for max growth input
-        self.max_growth = Entry(self)
-        self.max_growth.pack(side=TOP, padx=5, pady=5)
-
-        # Create the button for generate config
-        self.generate_button = Button(self, text="Generate", command=self.generate)
-        self.generate_button.pack(side=TOP, padx=5, pady=5)
-
-    def get_frame_difference(self):
-        return int(self.frame_number2.get()) - int(self.frame_number1.get())
-
-    def generate(self):
-        output_folder = filedialog.askdirectory(title="Select output folder")
-        template_filepath = f'{os.path.dirname(os.path.abspath(__file__))}/config_template.json'
-        with open(template_filepath, 'r') as f:
-            config_template = json.load(f)
-
-        min_max_cell_data = self.master.minMaxCellSizePanel.data
-        # Customize the template with the provided parameters
-        config_template['bacilli.maxSpeed'] = float(self.max_speed.get())
-        config_template['bacilli.maxSpin'] = float(self.max_spin.get())
-        config_template['bacilli.maxGrowth'] = float(self.max_growth.get())
-        config_template["bacilli.minWidth"] = min_max_cell_data['min_width']
-        config_template["bacilli.maxWidth"] = min_max_cell_data['max_width']
-        config_template["bacilli.minLength"] = min_max_cell_data['min_length']
-        config_template["bacilli.maxLength"] = min_max_cell_data['max_length']
-
-        # Write the customized configuration to file
-        with open(f'{output_folder}/config.json', 'w') as f:
-            json.dump(config_template, f)
-    
 class MinMaxCellSizePanel(Frame):
     KWARGS = {
-        "padding": 0
+        "padding": 10
     }
 
     def __init__(self, root, **kwargs):
@@ -227,3 +145,46 @@ class MinMaxCellSizePanel(Frame):
         min_length, max_length, min_width, max_width = min(lengths), max(lengths), min(widths), max(widths)
 
         self.set_labels(min_length, max_length, min_width, max_width)
+
+class ColorInfoPanel(Frame):
+    KWARGS = {
+        "padding": 10
+    }
+
+    def __init__(self, root, **kwargs):
+        # Merge default kwargs with user-supplied kwargs
+        self.merged_kwargs = {**self.KWARGS, **kwargs}
+        super().__init__(root, **self.merged_kwargs)
+
+        # Create the cell color line
+        cell_color_frame = Frame(self)
+        cell_color_label = Label(cell_color_frame, text="Cell Color:")
+        cell_color_label.pack(side=LEFT)
+
+        cell_color_cube = Canvas(cell_color_frame, width=20, height=20, bg='white')
+        cell_color_cube.pack(side=LEFT)
+
+        cell_color_frame.pack(side=TOP)
+
+        # Create the cell color line
+        background_color_frame = Frame(self)
+        background_color_label = Label(background_color_frame, text="Back Color:")
+        background_color_label.pack(side=LEFT)
+
+        background_color_cube = Canvas(background_color_frame, width=20, height=20, bg='white')
+        background_color_cube.pack(side=LEFT)
+
+        background_color_frame.pack(side=TOP)
+
+        # Save a reference to cell_color_cube and background color_cube for future use
+        self.cell_color_cube = cell_color_cube
+        self.background_color_cube = background_color_cube
+        
+    def set_cell_color(self, gray_value):
+        hex_value = f"#{int(gray_value*255):02x}{int(gray_value*255):02x}{int(gray_value*255):02x}"
+        self.cell_color_cube.configure(bg=hex_value)
+
+    def set_background_color(self, gray_value):
+        hex_value = f"#{int(gray_value*255):02x}{int(gray_value*255):02x}{int(gray_value*255):02x}"
+        self.background_color_cube.configure(bg=hex_value)
+
