@@ -326,6 +326,7 @@ class CellLabeling(Frame):
 
             # create csv for initial color data
             cell_colors = []
+            background_colors = []
             frame_zero_circles = []
             
             
@@ -347,30 +348,23 @@ class CellLabeling(Frame):
                         cv2.circle(mask, (int(x),int(y)), int(r), 255, -1)
                         cell_colors.append(cv2.mean(img, mask=mask)[0])
 
-                        # collect all the circles for frame 0
-                        if z == 0:
-                            frame_zero_circles.append({'x': int(x), 'y': int(y), 'r': int(r)})
-
+                        # calculate avg bg color
+                        img = np.asarray(self.cur_img.copy(), dtype='uint8')
+                        mask = cv2.circle(img, (int(x),int(y)), int(r), 0, -1)
+                        background_colors.append(cv2.mean(img)[0])
+                        
                         if self.filename is None:
                             self.filename = self.img_file
                         csv_writer.writerow([self.filename,name,x,y,z,r,z_scaling,"None", "None"])
                 
-                # mask all the drawn bounding boxes in image
-                for circle in frame_zero_circles:
-                    self.cur_img.seek(0)
-                    img = np.asarray(self.cur_img.copy(), dtype='uint8')
-                    cv2.circle(img, (int(circle.x),int(circle.y)), int(circle.r), 0, -1)
-                
-                # calculate average of background image
-                avg_bg_color = cv2.mean(img)[0]
+                # calculate average of cell and background color
+                avg_bg_color = np.average(background_colors)
                 avg_cell_color = np.average(cell_colors)
 
                 # write the initial colors to a different file
                 with open(f"{Path(self.csv_file).parent}/init_colors.txt", 'w') as f:
                     f.write(f"avg_bg_color: {avg_bg_color / 256.0}\n")
                     f.write(f"avg_cell_color: {avg_cell_color / 256.0}\n")
-
-
 
             else:
                 pass
