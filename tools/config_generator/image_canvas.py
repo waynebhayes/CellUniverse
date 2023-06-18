@@ -1,3 +1,4 @@
+import os
 from tkinter import ttk
 from tkinter import *
 from tkinter.ttk import *
@@ -126,11 +127,12 @@ def map_p2(p0, p1, p2):
 
 def rgb_to_grayscale(r, g, b):
     return 0.2989 * r + 0.5870 * g + 0.1140 * b 
+
 class ImageCanvasFrame(Frame):
     KWARGS = {
         "padding": 0
     }
-    def __init__(self, root, idx, **kwargs):
+    def __init__(self, root, idx, folder_selected, frame_files, **kwargs):
         # Merge default kwargs with user-supplied kwargs
         self.merged_kwargs = {**self.KWARGS, **kwargs}
         super().__init__(root, **self.merged_kwargs)
@@ -138,13 +140,44 @@ class ImageCanvasFrame(Frame):
         # idx indicates which ImageCanvasFrame it is.
         # 1 for the left frame, 2 for the right frame
         self.idx = idx
+        self.folder_selected = folder_selected
+        self.frame_files = frame_files
 
-        self.imageCanvas = ImageCanvas(self)
+        self.imageCanvas = ImageCanvas(self, idx, folder_selected, frame_files)
         self.imageCanvas.pack()
 
-        # Add a reset button to the frame
-        self.reset_button = Button(self, text="Reset", command=self.reset_canvas, state='disabled')
-        self.reset_button.pack()
+        # Add a frame to hold the image navigation elements
+        image_navigation_frame = Frame(self)
+        image_navigation_frame.pack()
+
+        # Add a button to switch to the previous image
+        self.previous_image_button = Button(image_navigation_frame, text="Prev", width=5, command=self.switch_to_previous_image)
+        self.previous_image_button.pack(side=LEFT)
+
+        # Add a text box for specifying the image
+        self.frame_number_text_box = Entry(image_navigation_frame, width=5)
+        self.frame_number_text_box.pack(side=LEFT)
+
+        # Add a label to show the maximum number of images
+        self.max_images_label = Label(image_navigation_frame, text=f"/{len(frame_files)}") 
+        self.max_images_label.pack(side=LEFT)
+
+        # Add a Jump button to the image navigation frame
+        self.jump_button = Button(image_navigation_frame, text="Jump", width=5, command=self.jump_to_image)
+        self.jump_button.pack(side=LEFT)
+
+        # Add a button to switch to the next image
+        self.next_image_button = Button(image_navigation_frame, text="Next", width=5, command=self.switch_to_next_image)
+        self.next_image_button.pack(side=LEFT)
+
+        cell_count_frame = Frame(self)
+        cell_count_frame.pack()
+
+        cell_count_label = Label(cell_count_frame, text="Cell Count in the canvas:")
+        cell_count_label.pack(side=LEFT)
+
+        self.cell_count_text_box = Entry(cell_count_frame, width=5)
+        self.cell_count_text_box.pack(side=LEFT)
 
         # Add a new bounding box button to the frame
         self.new_bounding_box_button = Button(self, text="New Bounding Box", command=self.new_bounding_box, width=20)
@@ -166,52 +199,16 @@ class ImageCanvasFrame(Frame):
         self.bouding_box_info_frame = BoundingBoxInfoFrame(self)
         self.bouding_box_info_frame.pack()
 
-    # Reset Button Callbacks
-    def reset_canvas(self):
-        # Reset the canvas to its original state
-        self.imageCanvas.delete("all")
-        self.imageCanvas.reset_var()
+        if(idx == 1):
+            self.imageCanvas.load_image(0)
+        elif(idx == 2):
+            self.imageCanvas.load_image(10)
 
-        # Recover the button states
-        self.new_bounding_box_button.configure(state='normal')
-        self.delete_bounding_box_button.configure(state='normal')
-        self.select_bounding_box_button.configure(state='normal')
-        self.reset_button.configure(state='disabled')
-
-        # Recover the flag variables
-        self.imageCanvas.image_loaded = False
-        self.imageCanvas.status = ImageCanvasStatus.WAIT_FOR_LOADING_IMAGE
-        
-        # Clear the frame number oin the input panel
-        if (self.idx == 1):
-            self.master.input_panel.frame_number1.delete(0, END)
-        elif(self.idx == 2):
-            self.master.input_panel.frame_number2.delete(0, END)
-
-        # Set the canvas to original size
-        self.imageCanvas.config(width=self.imageCanvas.canvas_width, height=self.imageCanvas.canvas_height)
-
-        # Reconstruct the buttons
-        self.imageCanvas.load_button_id = self.imageCanvas.create_window(self.imageCanvas.canvas_width / 2, self.imageCanvas.canvas_height / 2, anchor="center", window=self.imageCanvas.load_button)
-        self.imageCanvas.frame_input_label_id = self.imageCanvas.create_window(self.imageCanvas.canvas_width / 2, self.imageCanvas.canvas_height / 2 - 25, anchor="center", window=self.imageCanvas.frame_input_label)
-        self.imageCanvas.frame_input_box_id = self.imageCanvas.create_window(self.imageCanvas.canvas_width / 2, self.imageCanvas.canvas_height / 2, anchor="center", window=self.imageCanvas.frame_input_box)
-        self.imageCanvas.frame_confirm_button_id = self.imageCanvas.create_window(self.imageCanvas.canvas_width / 2, self.imageCanvas.canvas_height / 2 + 25, anchor="center", window=self.imageCanvas.frame_confirm_button)
-        
-        # Set the windows that related to frame number input to hidden
-        self.imageCanvas.itemconfigure(self.imageCanvas.frame_input_label_id, state='hidden')
-        self.imageCanvas.itemconfigure(self.imageCanvas.frame_input_box_id, state='hidden')
-        self.imageCanvas.itemconfigure(self.imageCanvas.frame_confirm_button_id, state='hidden')
-
-        # Clear the previously drawn cells
-        self.imageCanvas.cell_dict.clear()
-
+        self.imageCanvas.bind('<ButtonPress-1>', self.imageCanvas.left_press_down)
+        self.imageCanvas.bind('<Motion>', self.imageCanvas.mouse_move)
 
     # New Bounding Box Button Callback
     def new_bounding_box(self):
-        if(self.imageCanvas.status == ImageCanvasStatus.WAIT_FOR_LOADING_IMAGE or
-           self.imageCanvas.status == ImageCanvasStatus.WAIT_FOR_FRAME_NUMBER):
-            messagebox.showerror("Error", "Please first load the image and provide the frame number.")
-            return
         self.imageCanvas.status = ImageCanvasStatus.DRAWING
         self.new_bounding_box_button.configure(state='disable')
         self.delete_bounding_box_button.configure(state='normal')
@@ -220,10 +217,6 @@ class ImageCanvasFrame(Frame):
 
     # Delete Bounding Box Button Callback
     def delete_bounding_box(self):
-        if(self.imageCanvas.status == ImageCanvasStatus.WAIT_FOR_LOADING_IMAGE or
-           self.imageCanvas.status == ImageCanvasStatus.WAIT_FOR_FRAME_NUMBER):
-            messagebox.showerror("Error", "Please first load the image and provide the frame number.")
-            return
         self.imageCanvas.status = ImageCanvasStatus.DELETING
         self.new_bounding_box_button.configure(state='normal')
         self.delete_bounding_box_button.configure(state='disable')
@@ -232,10 +225,6 @@ class ImageCanvasFrame(Frame):
 
     # Select Bounding Box Button Callback
     def select_bounding_box(self):
-        if(self.imageCanvas.status == ImageCanvasStatus.WAIT_FOR_LOADING_IMAGE or
-           self.imageCanvas.status == ImageCanvasStatus.WAIT_FOR_FRAME_NUMBER):
-            messagebox.showerror("Error", "Please first load the image and provide the frame number.")
-            return
         self.imageCanvas.status = ImageCanvasStatus.SELECTING
         self.new_bounding_box_button.configure(state='normal')
         self.delete_bounding_box_button.configure(state='normal')
@@ -245,9 +234,6 @@ class ImageCanvasFrame(Frame):
     # Enter pick cell color mode
     # This function is called when the pick button in the input panel is pressed
     def pick_cell_color(self):
-        if(self.imageCanvas.status == ImageCanvasStatus.WAIT_FOR_LOADING_IMAGE or
-           self.imageCanvas.status == ImageCanvasStatus.WAIT_FOR_FRAME_NUMBER):
-            return False
         self.imageCanvas.status = ImageCanvasStatus.PICKING_CELL_COLOR
         self.new_bounding_box_button.configure(state='normal')
         self.delete_bounding_box_button.configure(state='normal')
@@ -257,9 +243,6 @@ class ImageCanvasFrame(Frame):
     # Enter pick background color mode
     # This function is called when the pick button in the input panel is pressed
     def pick_background_color(self):
-        if(self.imageCanvas.status == ImageCanvasStatus.WAIT_FOR_LOADING_IMAGE or
-           self.imageCanvas.status == ImageCanvasStatus.WAIT_FOR_FRAME_NUMBER):
-            return False
         self.imageCanvas.status = ImageCanvasStatus.PICKING_BACKGROUND_COLOR
         self.new_bounding_box_button.configure(state='normal')
         self.delete_bounding_box_button.configure(state='normal')
@@ -273,15 +256,43 @@ class ImageCanvasFrame(Frame):
         self.new_bounding_box_button.configure(state='normal')
         self.delete_bounding_box_button.configure(state='normal')
         self.select_bounding_box_button.configure(state='normal')
+    
+    def switch_to_previous_image(self):
+        curr_frame_number = int(self.frame_number_text_box.get())
+        self.imageCanvas.load_image(curr_frame_number - 1)
+
+    def switch_to_next_image(self):
+        curr_frame_number = int(self.frame_number_text_box.get())
+        self.imageCanvas.load_image(curr_frame_number + 1)
+    
+    def jump_to_image(self):
+        self.imageCanvas.load_image(int(self.frame_number_text_box.get()))
 class ImageCanvasStatus(Enum):
-    WAIT_FOR_LOADING_IMAGE = 1
-    WAIT_FOR_FRAME_NUMBER = 2
-    IDLE = 3
-    DRAWING = 4
-    DELETING = 5
-    SELECTING = 6
-    PICKING_CELL_COLOR = 7
-    PICKING_BACKGROUND_COLOR = 8
+    IDLE = 0
+    IMAGE_LOADED = 1
+    DRAWING = 2
+    DELETING = 3
+    SELECTING = 4
+    PICKING_CELL_COLOR = 5
+    PICKING_BACKGROUND_COLOR = 6
+
+class FrameData:
+    def __init__(self):
+        self.image = None
+        self.image_tk = None
+        self.image_id = None
+        self.selected_id = None
+        self.temp_item = None      
+        self.p0 = None             
+        self.p1 = None             
+        self.p2 = None             
+        self.p3 = None             
+        self.angle = None
+        self.width = None
+        self.length = None
+        self.center = None
+        self.current_id = None
+        self.cell_dict = defaultdict(dict)
 
 class ImageCanvas(Canvas):
     KWARGS = {
@@ -289,140 +300,97 @@ class ImageCanvas(Canvas):
         "width": 400,
         "height": 400,
     }
-    def __init__(self, root, **kwargs):
+    def __init__(self, root, idx, folder_selected, frame_files, **kwargs):
         # Merge default kwargs with user-supplied kwargs
         self.merged_kwargs = {**self.KWARGS, **kwargs}
         super().__init__(root, **self.merged_kwargs)
-
-        self.image_loaded = False
-        self.status = ImageCanvasStatus.WAIT_FOR_LOADING_IMAGE
+        
+        self.idx = idx
+        self.folder_selected = folder_selected
+        self.frame_files = frame_files
         self.zoom_factor = None    # Raw Image Width / Canvas Width
-
-        self.selected_id = None
-        # Variables describing a bouding box
-        self.temp_item = None      # Incomplete bounding box
-        self.p0 = None             # p0 is the cursor location when LB is pressed
-        self.p1 = None             # p1 is the cursor location when LB is stopped/released
-        self.p2 = None             # p2 is the cursor location when RB is pressed
-        self.p3 = None             # p3 is calculated according to previous three points
-        self.angle = None
-        self.width = None
-        self.length = None
-        self.center = None
-        self.current_id = None
-
-        self.cell_dict = defaultdict(dict)
         self.canvas_width = self.merged_kwargs["width"]
         self.canvas_height = self.merged_kwargs["height"]
         self.plt = platform.system()
-
-        # Defines the load image button and the related widgets for typing the frame number
-        self.load_button = Button(self, text="Load Image", command=self.load_image)
-        self.frame_input_label = Label(self, text="Enter the frame number.")
-        self.frame_input_box = Entry(self)
-        self.frame_confirm_button = Button(self, text="Confirm", command=self.confirm_frame_number)
-
-        self.load_button_id = self.create_window(self.canvas_width / 2, self.canvas_height / 2, anchor="center", window=self.load_button)
-        self.frame_input_label_id = self.create_window(self.canvas_width / 2, self.canvas_height / 2 - 25, anchor="center", window=self.frame_input_label)
-        self.frame_input_box_id = self.create_window(self.canvas_width / 2, self.canvas_height / 2, anchor="center", window=self.frame_input_box)
-        self.frame_confirm_button_id = self.create_window(self.canvas_width / 2, self.canvas_height / 2 + 25, anchor="center", window=self.frame_confirm_button)
-
-        # Set the windows that related to frame number input to hidden
-        self.itemconfigure(self.frame_input_label_id, state='hidden')
-        self.itemconfigure(self.frame_input_box_id, state='hidden')
-        self.itemconfigure(self.frame_confirm_button_id, state='hidden')
+        self.status = ImageCanvasStatus.IDLE
+    
+        # variables for each 
+        self.frame_data = [FrameData() for _ in frame_files]
+        self.curr_frame_data = None
 
     # Define a function to handle button clicks
-    def load_image(self):
-        # Prompt the user for an image file and its index
-        file_path = filedialog.askopenfilename()
-        if not file_path:
+    def load_image(self, frame_index):
+        if (frame_index < 0):
+            messagebox.showerror(
+                'Error', 'Frame index cannot be smaller than 0.')
             return
+        elif (frame_index > len(self.frame_files)):
+            messagebox.showerror(
+                'Error', f'Frame index cannot be greater than {len(self.frame_files)}.')
+            return
+        self.curr_frame_idx = frame_index
+        self.curr_frame_data = self.frame_data[frame_index]
 
-        self.image = Image.open(file_path)
+        if(self.curr_frame_data.image is None):
+            file_path = os.path.join(self.folder_selected, self.frame_files[frame_index])
+            self.curr_frame_data.image = Image.open(file_path)
 
-        # Calculate the aspect ratio of the image and the canvas
-        image_width, image_height = self.image.size
-        canvas_aspect_ratio = self.canvas_width / self.canvas_height
-        image_aspect_ratio = image_width / image_height
+            # Calculate the aspect ratio of the image and the canvas
+            image_width, image_height = self.curr_frame_data.image.size
+            canvas_aspect_ratio = self.canvas_width / self.canvas_height
+            image_aspect_ratio = image_width / image_height
 
-        # If the image is wider than the canvas, resize it to fit the width of the canvas
-        if image_aspect_ratio > canvas_aspect_ratio:
-            self.new_canvas_width = self.canvas_width
-            self.new_canvas_height = int(self.new_canvas_width / image_aspect_ratio)
+            # If the image is wider than the canvas, resize it to fit the width of the canvas
+            if image_aspect_ratio > canvas_aspect_ratio:
+                self.new_canvas_width = self.canvas_width
+                self.new_canvas_height = int(self.new_canvas_width / image_aspect_ratio)
 
-        # If the image is taller than the canvas, resize it to fit the height of the canvas
+            # If the image is taller than the canvas, resize it to fit the height of the canvas
+            else:
+                self.new_canvas_height = self.canvas_height
+                self.new_canvas_width = int(self.new_canvas_height * image_aspect_ratio)
+
+            # Resize the image and display it on the canvas
+            self.curr_frame_data.image_resized = self.curr_frame_data.image.resize((self.new_canvas_width, self.new_canvas_height))
+            self.config(width=self.new_canvas_width, height=self.new_canvas_height)
+
+            self.curr_frame_data.image_tk = ImageTk.PhotoImage(self.curr_frame_data.image_resized)
+            self.curr_frame_data.image_id = self.create_image(0, 0, anchor="nw", image=self.curr_frame_data.image_tk)
+
+            self.zoom_factor = image_width / self.canvas_width
         else:
-            self.new_canvas_height = self.canvas_height
-            self.new_canvas_width = int(self.new_canvas_height * image_aspect_ratio)
+            # hide all objects on current canvas
+            for item in self.find_all():
+                self.itemconfig(item, state='hidden')
+            
+            # show objects in the current frame data
+            self.itemconfig(self.curr_frame_data.image_id, state="normal")
+            for cell in self.curr_frame_data.cell_dict.keys():
+                self.itemconfig(cell, state="normal")
 
-        # Resize the image and display it on the canvas
-        self.image_resized = self.image.resize((self.new_canvas_width, self.new_canvas_height))
-        self.config(width=self.new_canvas_width, height=self.new_canvas_height)
-
-        self.image_tk = ImageTk.PhotoImage(self.image_resized)
-        self.image_id = self.create_image(0, 0, anchor="nw", image=self.image_tk)
-
-        self.image_loaded = True
-        self.zoom_factor = image_width / self.canvas_width
-        # Hide the load image button on the canvas
-        self.itemconfigure(self.load_button_id, state='hidden')
-
-        # Then prompt the user for the frame number
-        # Set the related windows/wigets to normal
-        self.itemconfigure(self.frame_input_label_id, state='normal')
-        self.itemconfigure(self.frame_input_box_id, state='normal')
-        self.itemconfigure(self.frame_confirm_button_id, state='normal')
-
-        self.status = ImageCanvasStatus.WAIT_FOR_FRAME_NUMBER
-
-    def confirm_frame_number(self):
-        frame_number = self.frame_input_box.get()
-        try:
-            int(frame_number)
-        except ValueError:
-            messagebox.showerror("Error", "Please provide a valid integer.")
+        self.master.frame_number_text_box.delete(0, 'end')
+        self.master.frame_number_text_box.insert(0, frame_index)
         
-        # Also change the value in the input panel
-        if(self.master.idx == 1):
-            frame_number_entry = self.master.master.input_panel.frame_number1
-        elif(self.master.idx == 2):
-            frame_number_entry = self.master.master.input_panel.frame_number2
-        else:
-            raise Exception("The index of image canvas should be only 1 or 2")
-        
-        frame_number_entry.delete(0, END)
-        frame_number_entry.insert(0, frame_number)
 
-        # Set the related windows/wigets to normal
-        self.itemconfigure(self.frame_input_label_id, state='hidden')
-        self.itemconfigure(self.frame_input_box_id, state='hidden')
-        self.itemconfigure(self.frame_confirm_button_id, state='hidden')
-
-        # Activate the reset button
-        self.status = ImageCanvasStatus.IDLE
-        self.master.reset_button.config(state='normal')
-        self.bind('<ButtonPress-1>', self.left_press_down)
-        self.bind('<Motion>', self.mouse_move)
         
     ####################################################
     #      Callback functions for canvas
     ####################################################
     def calculate_vertices2(self, p0, p1, p2):
-        self.angle = rotation_angle(p0, p1)
-        self.p2 = map_p2(p0, p1, p2)
-        p2 = self.p2
-        self.width = compute_edge_length(p1, p2)
-        self.length = compute_edge_length(p0, p1)
-        self.center = ((p0.x + p2.x) / 2, (p0.y + p2.y) / 2)
-        self.p3 = Point([(p0.x + p2.x - p1.x), (p0.y + p2.y - p1.y)])
+        self.curr_frame_data.angle = rotation_angle(p0, p1)
+        self.curr_frame_data.p2 = map_p2(p0, p1, p2)
+        p2 = self.curr_frame_data.p2
+        self.curr_frame_data.width = compute_edge_length(p1, p2)
+        self.curr_frame_data.length = compute_edge_length(p0, p1)
+        self.curr_frame_data.center = ((p0.x + p2.x) / 2, (p0.y + p2.y) / 2)
+        self.curr_frame_data.p3 = Point([(p0.x + p2.x - p1.x), (p0.y + p2.y - p1.y)])
 
     def left_press_down(self, event):
-        if self.temp_item is not None:
-            self.delete(self.temp_item)
+        if self.curr_frame_data.temp_item is not None:
+            self.delete(self.curr_frame_data.temp_item)
 
         if self.status == ImageCanvasStatus.DRAWING:
-            self.p0 = Point([self.canvasx(event.x),
+            self.curr_frame_data.p0 = Point([self.canvasx(event.x),
                             self.canvasy(event.y)])
             self.bind('<B1-Motion>', self.left_motion)
         
@@ -432,21 +400,21 @@ class ImageCanvas(Canvas):
             # get canvas object ID of where mouse pointer is
             canvasobject = self.find_closest(mx, my, halo=5)
 
-            if canvasobject == () or self.image_id == canvasobject[0]:
+            if canvasobject == () or self.curr_frame_data.image_id == canvasobject[0]:
                 return
-            if(self.selected_id == None):
-                self.selected_id = canvasobject[0]
-                self.update_cell_label(self.selected_id)
-                self.itemconfigure(self.selected_id, outline='red')
-            elif self.selected_id == canvasobject[0]:
-                self.itemconfigure(self.selected_id, outline='green')
-                self.selected_id = None
+            if(self.curr_frame_data.selected_id == None):
+                self.curr_frame_data.selected_id = canvasobject[0]
+                self.update_cell_label(self.curr_frame_data.selected_id)
+                self.itemconfigure(self.curr_frame_data.selected_id, outline='red')
+            elif self.curr_frame_data.selected_id == canvasobject[0]:
+                self.itemconfigure(self.curr_frame_data.selected_id, outline='green')
+                self.curr_frame_data.selected_id = None
                 self.clear_cell_label()
             else:
-                self.itemconfigure(self.selected_id, outline='green')
-                self.selected_id = canvasobject[0]
-                self.update_cell_label(self.selected_id)
-                self.itemconfigure(self.selected_id, outline='red')
+                self.itemconfigure(self.curr_frame_data.selected_id, outline='green')
+                self.curr_frame_data.selected_id = canvasobject[0]
+                self.update_cell_label(self.curr_frame_data.selected_id)
+                self.itemconfigure(self.curr_frame_data.selected_id, outline='red')
                 
             
         elif self.status == ImageCanvasStatus.DELETING:
@@ -458,89 +426,89 @@ class ImageCanvas(Canvas):
             # print(canvasobject)
             # self.delete(canvasobject)
 
-            if canvasobject == () or self.image_id == canvasobject[0]:
+            if canvasobject == () or self.curr_frame_data.image_id == canvasobject[0]:
                 return
             
             # first change the selected bounding box
-            if(self.selected_id == None):
-                self.selected_id = canvasobject[0]
-                self.update_cell_label(self.selected_id)
-                self.itemconfigure(self.selected_id, outline='red')
-            elif self.selected_id == canvasobject[0]:
+            if(self.curr_frame_data.selected_id == None):
+                self.curr_frame_data.selected_id = canvasobject[0]
+                self.update_cell_label(self.curr_frame_data.selected_id)
+                self.itemconfigure(self.curr_frame_data.selected_id, outline='red')
+            elif self.curr_frame_data.selected_id == canvasobject[0]:
                 # if the box to be deleted is the same, don't deselect it.
                 pass
             else:
-                self.itemconfigure(self.selected_id, outline='green')
-                self.selected_id = canvasobject[0]
-                self.update_cell_label(self.selected_id)
-                self.itemconfigure(self.selected_id, outline='red')
+                self.itemconfigure(self.curr_frame_data.selected_id, outline='green')
+                self.curr_frame_data.selected_id = canvasobject[0]
+                self.update_cell_label(self.curr_frame_data.selected_id)
+                self.itemconfigure(self.curr_frame_data.selected_id, outline='red')
 
             delete = messagebox.askokcancel('Warning', 'Delete this bounding box?')
             if delete is True:
                 self.delete(canvasobject[0])
-                del self.cell_dict[canvasobject[0]]
-                self.selected_id = None
+                del self.curr_frame_data.cell_dict[canvasobject[0]]
+                self.curr_frame_data.selected_id = None
                 self.clear_cell_label()
                 #print("delete: {}".format(canvasobject[0]))
                 # print(self.cell_dict)
         elif self.status == ImageCanvasStatus.PICKING_CELL_COLOR or self.status == ImageCanvasStatus.PICKING_BACKGROUND_COLOR:
-            self.p0 = Point([self.canvasx(event.x),
+            self.curr_frame_data.p0 = Point([self.canvasx(event.x),
                             self.canvasy(event.y)])
             self.bind('<B1-Motion>', self.left_motion)
 
     def left_motion(self, event):
         if self.status == ImageCanvasStatus.DRAWING:
-            if self.temp_item is not None:
-                self.delete(self.temp_item)
-            self.p1 = Point([self.canvasx(event.x),
+            if self.curr_frame_data.temp_item is not None:
+                self.delete(self.curr_frame_data.temp_item)
+            self.curr_frame_data.p1 = Point([self.canvasx(event.x),
                             self.canvasy(event.y)])
-            self.temp_item = self.create_line(
-                *self.p0, *self.p1, fill='red', width=3)
+            self.curr_frame_data.temp_item = self.create_line(
+                *self.curr_frame_data.p0, *self.curr_frame_data.p1, fill='red', width=3)
             self.bind('<ButtonRelease-1>', self.stop_left_move)
         elif self.status == ImageCanvasStatus.PICKING_CELL_COLOR or self.status == ImageCanvasStatus.PICKING_BACKGROUND_COLOR:
-            if self.temp_item is not None:
-                self.delete(self.temp_item)
-            self.p1 = Point([self.canvasx(event.x),
+            if self.curr_frame_data.temp_item is not None:
+                self.delete(self.curr_frame_data.temp_item)
+            self.curr_frame_data.p1 = Point([self.canvasx(event.x),
                             self.canvasy(event.y)])
-            self.temp_item = self.create_rectangle(
-                *self.p0, *self.p1, outline='red', width=3)
+            self.curr_frame_data.temp_item = self.create_rectangle(
+                *self.curr_frame_data.p0, *self.curr_frame_data.p1, outline='red', width=3)
             self.bind('<ButtonRelease-1>', self.stop_left_move)
     def stop_left_move(self, event):
         if self.status == ImageCanvasStatus.DRAWING:
-            if self.temp_item is not None:
-                self.delete(self.temp_item)
+            if self.curr_frame_data.temp_item is not None:
+                self.delete(self.curr_frame_data.temp_item)
 
-            self.p1 = Point([self.canvasx(event.x),
+            self.curr_frame_data.p1 = Point([self.canvasx(event.x),
                             self.canvasy(event.y)])
 
             # print(self.p0)
             # print(self.p1)
 
-            self.temp_item = self.create_line(
-                *self.p0, *self.p1, fill='red', width=3)
+            self.curr_frame_data.temp_item = self.create_line(
+                *self.curr_frame_data.p0, *self.curr_frame_data.p1, fill='red', width=3)
             if self.plt == "Darwin":
                 # 2 for MacOS Right-Click, 3 for Windows
                 self.bind('<ButtonPress-2>', self.start_right_move)
             else:
                 self.bind('<ButtonPress-3>', self.start_right_move)
         elif self.status == ImageCanvasStatus.PICKING_CELL_COLOR or self.status == ImageCanvasStatus.PICKING_BACKGROUND_COLOR:
-            if self.temp_item is not None:
-                self.delete(self.temp_item)
-            self.p1 = Point([self.canvasx(event.x),
+            if self.curr_frame_data.temp_item is not None:
+                self.delete(self.curr_frame_data.temp_item)
+            self.curr_frame_data.p1 = Point([self.canvasx(event.x),
                             self.canvasy(event.y)])
-            self.temp_item = self.create_rectangle(
-                *self.p0, *self.p1, outline='red', width=3)
-            self.delete(self.temp_item)
+            self.curr_frame_data.temp_item = self.create_rectangle(
+                *self.curr_frame_data.p0, *self.curr_frame_data.p1, outline='red', width=3)
+            self.delete(self.curr_frame_data.temp_item)
 
             # calculate the raw coordinates
-            raw_p0 = self.p0 * self.zoom_factor
-            raw_p1 = self.p1 * self.zoom_factor
+            raw_p0 = self.curr_frame_data.p0 * self.zoom_factor
+            raw_p1 = self.curr_frame_data.p1 * self.zoom_factor
 
             # get the pixel colors from the raw image
             pixel_colors = []
             for x in range(int(raw_p0.x), int(raw_p1.x)):
                 for y in range(int(raw_p0.y), int(raw_p1.y)):
-                    pixel_colors.append(self.image.getpixel((x, y)))
+                    pixel_colors.append(self.curr_frame_data.image.getpixel((x, y)))
             avg_color = tuple(np.mean(pixel_colors, axis=0, dtype=np.uint32))
             gray_scale_color = rgb_to_grayscale(*avg_color) / 255
 
@@ -563,7 +531,7 @@ class ImageCanvas(Canvas):
             self.reset_var()
     def start_right_move(self, event):
         if self.status == ImageCanvasStatus.DRAWING:
-            self.p2 = Point([self.canvasx(event.x),
+            self.curr_frame_data.p2 = Point([self.canvasx(event.x),
                             self.canvasy(event.y)])
             if self.plt == "Darwin":
                 self.bind('<B2-Motion>', self.right_motion)
@@ -572,18 +540,18 @@ class ImageCanvas(Canvas):
     
     def right_motion(self, event):
         if self.status == ImageCanvasStatus.DRAWING:
-            if self.temp_item is not None:
-                self.delete(self.temp_item)
+            if self.curr_frame_data.temp_item is not None:
+                self.delete(self.curr_frame_data.temp_item)
 
-            self.p2 = Point([self.canvasx(event.x),
+            self.curr_frame_data.p2 = Point([self.canvasx(event.x),
                             self.canvasy(event.y)])
 
-            self.calculate_vertices2(self.p0, self.p1, self.p2)
+            self.calculate_vertices2(self.curr_frame_data.p0, self.curr_frame_data.p1, self.curr_frame_data.p2)
 
-            self.temp_item = self.create_polygon(self.p0[0], self.p0[1],
-                                                        self.p1[0], self.p1[1],
-                                                        self.p2[0], self.p2[1],
-                                                        self.p3[0], self.p3[1],
+            self.curr_frame_data.temp_item = self.create_polygon(self.curr_frame_data.p0[0], self.curr_frame_data.p0[1],
+                                                        self.curr_frame_data.p1[0], self.curr_frame_data.p1[1],
+                                                        self.curr_frame_data.p2[0], self.curr_frame_data.p2[1],
+                                                        self.curr_frame_data.p3[0], self.curr_frame_data.p3[1],
                                                         fill='', outline='red', width=3)
             if self.plt == "Darwin":
                 self.bind('<ButtonRelease-2>', self.stop_right_move)
@@ -592,34 +560,34 @@ class ImageCanvas(Canvas):
 
     def stop_right_move(self, event):
         if self.status == ImageCanvasStatus.DRAWING:
-            if self.temp_item is not None:
-                self.delete(self.temp_item)
+            if self.curr_frame_data.temp_item is not None:
+                self.delete(self.curr_frame_data.temp_item)
 
-            self.p2 = Point([self.canvasx(event.x),
+            self.curr_frame_data.p2 = Point([self.canvasx(event.x),
                             self.canvasy(event.y)])
 
             # print(self.p0)
 
-            self.calculate_vertices2(self.p0, self.p1, self.p2)
-            self.current_id = self.create_polygon(self.p0[0], self.p0[1],
-                                                        self.p1[0], self.p1[1],
-                                                        self.p2[0], self.p2[1],
-                                                        self.p3[0], self.p3[1],
+            self.calculate_vertices2(self.curr_frame_data.p0, self.curr_frame_data.p1, self.curr_frame_data.p2)
+            self.curr_frame_data.current_id = self.create_polygon(self.curr_frame_data.p0[0], self.curr_frame_data.p0[1],
+                                                        self.curr_frame_data.p1[0], self.curr_frame_data.p1[1],
+                                                        self.curr_frame_data.p2[0], self.curr_frame_data.p2[1],
+                                                        self.curr_frame_data.p3[0], self.curr_frame_data.p3[1],
                                                         fill='', outline='red', width=3)
             # print(self.current_id)
 
             # check the center inside the image
-            if self.center[0] > self.new_canvas_width or self.center[0] < 0 or \
-                    self.center[1] > self.new_canvas_height or self.center[1] < 0:
+            if self.curr_frame_data.center[0] > self.new_canvas_width or self.curr_frame_data.center[0] < 0 or \
+                    self.curr_frame_data.center[1] > self.new_canvas_height or self.curr_frame_data.center[1] < 0:
                 messagebox.showerror(
                 'Error', 'The center of the bounding box is outside of the image! Please draw again.')
-                self.delete(self.current_id)
+                self.delete(self.curr_frame_data.current_id)
             else:
                 # print("add:{}".format(self.current_id))
                 # save to cell_dict
-                self.save_cell(self.current_id, self.center, self.width, self.length, self.angle)
-                self.update_cell_label(self.current_id)
-                self.itemconfigure(self.current_id, outline='green')
+                self.save_cell(self.curr_frame_data.current_id, self.curr_frame_data.center, self.curr_frame_data.width, self.curr_frame_data.length, self.curr_frame_data.angle)
+                self.update_cell_label(self.curr_frame_data.current_id)
+                self.itemconfigure(self.curr_frame_data.current_id, outline='green')
             self.reset_var()
     
     def mouse_move(self, event):
@@ -627,32 +595,32 @@ class ImageCanvas(Canvas):
         self.master.mouse_position_frame.set_position(mx * self.zoom_factor, my * self.zoom_factor)
     
     def save_cell(self, id, center, width, length, angle):
-        self.cell_dict[id]["center"] = np.array(center) * self.zoom_factor
-        self.cell_dict[id]["width"] = round(width * self.zoom_factor, 0)
-        self.cell_dict[id]["length"] = round(length * self.zoom_factor, 0)
-        self.cell_dict[id]["rotation"] = round(angle, 2)
+        self.curr_frame_data.cell_dict[id]["center"] = np.array(center) * self.zoom_factor
+        self.curr_frame_data.cell_dict[id]["width"] = round(width * self.zoom_factor, 0)
+        self.curr_frame_data.cell_dict[id]["length"] = round(length * self.zoom_factor, 0)
+        self.curr_frame_data.cell_dict[id]["rotation"] = round(angle, 2)
 
     def reset_var(self):
-        self.temp_item = None
-        self.angle = None
-        self.width = None
-        self.length = None
-        self.center = None
+        self.curr_frame_data.temp_item = None
+        self.curr_frame_data.angle = None
+        self.curr_frame_data.width = None
+        self.curr_frame_data.length = None
+        self.curr_frame_data.center = None
         # p0 is the cursor location when LB is pressed
         # p1 is the cursor location when LB is stopped/released
         # p2 is the cursor location when RB is pressed
         # p3 is calculated according to previous three points
-        self.p0 = None
-        self.p1 = None
-        self.p2 = None
-        self.p3 = None
-        self.current_id = None
+        self.curr_frame_data.p0 = None
+        self.curr_frame_data.p1 = None
+        self.curr_frame_data.p2 = None
+        self.curr_frame_data.p3 = None
+        self.curr_frame_data.current_id = None
     def clear_cell_label(self):
         self.master.bouding_box_info_frame.clear_bounding_box_info()
 
     def update_cell_label(self, current_id):
-        if current_id in self.cell_dict.keys():
-            self.master.bouding_box_info_frame.set_bounding_box_info(self.cell_dict[current_id])
+        if current_id in self.curr_frame_data.cell_dict.keys():
+            self.master.bouding_box_info_frame.set_bounding_box_info(self.curr_frame_data.cell_dict[current_id])
             
 class MousePositionFrame(Frame):
     def __init__(self, root, **kwargs):

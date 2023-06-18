@@ -88,13 +88,6 @@ class SyntheticImagePreviewPanel(Frame):
             messagebox.showerror("Error", f"Please fill in cell color and background color in the input panel.")
             return
         
-        # get the zoom factor of the canvas
-        # This variable is crucial. Without it, the size of the cells in the generated images
-        # would be disproportionate to the size of the cells in the Canvas.
-        if (not self.master.imageCanvasFrame1.imageCanvas.image_loaded and 
-            not self.master.imageCanvasFrame2.imageCanvas.image_loaded):
-            messagebox.showerror("Error", f"Please load an image before generating an synthetic image.")
-            return
         zoom_factor = self.master.imageCanvasFrame1.imageCanvas.zoom_factor
 
         simulation_config = {   

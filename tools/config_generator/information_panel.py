@@ -33,16 +33,20 @@ class SelectedCellInfoPanel(Frame):
         super().__init__(root, **self.merged_kwargs)
 
         # Create the labels
+        title = Label(self, text="Measurement")
         self.speed_label = Label(self, text="speed: ", takefocus=True)
         self.spin_label = Label(self, text="spin speed: ", takefocus=True)
         self.growth_label = Label(self, text="growth rate: ", takefocus=True)
         self.calculate_button = Button(self, text="calculate", command=self.calculate)
+        self.copy_button = Button(self, text="Copy to right.", command=self.copy_to_right)
 
         # Pack the labels and button vertically
-        self.speed_label.pack(side=TOP, anchor=W)
+        title.pack(side=TOP)
+        self.speed_label.pack(side=TOP)
         self.spin_label.pack(side=TOP)
         self.growth_label.pack(side=TOP)
         self.calculate_button.pack(side=TOP)
+        self.copy_button.pack(side=TOP)
 
     def set_labels(self, speed, spin, growth):
         # store a copy for other widgets to access
@@ -57,16 +61,16 @@ class SelectedCellInfoPanel(Frame):
         canvas1 = self.master.master.imageCanvasFrame1.imageCanvas
         canvas2 = self.master.master.imageCanvasFrame2.imageCanvas
         
-        cell_dict1: defaultdict(dict) = canvas1.cell_dict
-        cell_dict2: defaultdict(dict) = canvas2.cell_dict
+        cell_dict1: defaultdict(dict) = canvas1.curr_frame_data.cell_dict
+        cell_dict2: defaultdict(dict) = canvas2.curr_frame_data.cell_dict
 
         # if selected_id is not present, do nothing
-        if canvas1.selected_id == None or canvas2.selected_id == None:
+        if canvas1.curr_frame_data.selected_id == None or canvas2.curr_frame_data.selected_id == None:
             return
 
         # obtain two selected cell
-        cell_1 = cell_dict1[canvas1.selected_id]
-        cell_2 = cell_dict2[canvas2.selected_id]
+        cell_1 = cell_dict1[canvas1.curr_frame_data.selected_id]
+        cell_2 = cell_dict2[canvas2.curr_frame_data.selected_id]
 
         frame_diff = self.master.master.input_panel.get_frame_difference()
         # calculate speed
@@ -87,7 +91,18 @@ class SelectedCellInfoPanel(Frame):
         growth = (length2 - length1) / frame_diff
 
         self.set_labels(speed, spin, growth)
-        
+    def copy_to_right(self):
+        speed = self.data['speed']
+        spin  = self.data['spin']
+        growth = self.data['growth']
+
+        input_panel = self.master.master.input_panel
+        input_panel.max_speed.delete(0, 'end')
+        input_panel.max_speed.insert(0, f'{speed:.2f}')
+        input_panel.max_spin.delete(0, 'end')
+        input_panel.max_spin.insert(0, f'{spin:.2f}')
+        input_panel.max_growth.delete(0, 'end')
+        input_panel.max_growth.insert(0, f'{growth:.2f}')
 
 class MinMaxCellSizePanel(Frame):
     KWARGS = {
@@ -100,34 +115,38 @@ class MinMaxCellSizePanel(Frame):
         super().__init__(root, **self.merged_kwargs)
 
         # Create the labels and button
-        self.min_cell_length_label = Label(self, text="Min cell length:")
-        self.max_cell_length_label = Label(self, text="Max cell length:")
-        self.min_cell_width_label = Label(self, text="Min cell width:")
-        self.max_cell_width_label = Label(self, text="Max cell width:")
+        panel_title = Label(self, text="Cell Stats:")
+        self.min_cell_length_label = Label(self, text="Min length:")
+        self.max_cell_length_label = Label(self, text="Max length:")
+        self.min_cell_width_label = Label(self, text="Min width:")
+        self.max_cell_width_label = Label(self, text="Max width:")
         self.update_button = Button(self, text="Update", command=self.update)
+        self.copy_button = Button(self, text="Copy", command=self.copy_to_right)
 
         # Pack the labels and button vertically
+        panel_title.pack(side=TOP)
         self.min_cell_length_label.pack(side=TOP)
         self.max_cell_length_label.pack(side=TOP)
         self.min_cell_width_label.pack(side=TOP)
         self.max_cell_width_label.pack(side=TOP)
         self.update_button.pack(side=TOP)
+        self.copy_button.pack()
 
     def set_labels(self, min_length, max_length, min_width, max_width):
         # store a copy for other widgets to access
         self.data = {'min_length': min_length, 'max_length': max_length, 'min_width': min_width, 'max_width': max_width}
-        self.min_cell_length_label.configure(text=f"Min cell length: {min_length}")
-        self.max_cell_length_label.configure(text=f"Max cell length: {max_length}")
-        self.min_cell_width_label.configure(text=f"Min cell width: {min_width}")
-        self.max_cell_width_label.configure(text=f"Max cell width: {max_width}")
+        self.min_cell_length_label.configure(text=f"Min length: {min_length}")
+        self.max_cell_length_label.configure(text=f"Max length: {max_length}")
+        self.min_cell_width_label.configure(text=f"Min width: {min_width}")
+        self.max_cell_width_label.configure(text=f"Max width: {max_width}")
 
     def update(self):
         # obtain cell dicts from both ImageCanvas
         canvas1 = self.master.master.imageCanvasFrame1.imageCanvas
         canvas2 = self.master.master.imageCanvasFrame2.imageCanvas
         
-        cell_dict1: defaultdict(dict) = canvas1.cell_dict
-        cell_dict2: defaultdict(dict) = canvas2.cell_dict
+        cell_dict1: defaultdict(dict) = canvas1.curr_frame_data.cell_dict
+        cell_dict2: defaultdict(dict) = canvas2.curr_frame_data.cell_dict
 
         # if no cells available, do nothing
         if len(cell_dict1) == 0 and len(cell_dict2) == 0:
@@ -145,6 +164,22 @@ class MinMaxCellSizePanel(Frame):
         min_length, max_length, min_width, max_width = min(lengths), max(lengths), min(widths), max(widths)
 
         self.set_labels(min_length, max_length, min_width, max_width)
+
+    def copy_to_right(self):
+        max_length = self.data['max_length']
+        min_length = self.data['min_length']
+        max_width = self.data['max_width']
+        min_width = self.data['min_width']
+
+        input_panel = self.master.master.input_panel
+        input_panel.max_length.delete(0, 'end')
+        input_panel.max_length.insert(0, f'{max_length:.2f}')
+        input_panel.min_length.delete(0, 'end')
+        input_panel.min_length.insert(0, f'{min_length:.2f}')
+        input_panel.max_width.delete(0, 'end')
+        input_panel.max_width.insert(0, f'{max_width:.2f}')
+        input_panel.min_width.delete(0, 'end')
+        input_panel.min_width.insert(0, f'{min_width:.2f}')
 
 class ColorInfoPanel(Frame):
     KWARGS = {
