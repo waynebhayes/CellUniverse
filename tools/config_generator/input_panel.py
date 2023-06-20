@@ -1,4 +1,5 @@
 from tkinter import *
+import tkinter
 from tkinter.ttk import *
 from tkinter import filedialog, messagebox
 
@@ -22,29 +23,37 @@ class InputPanel(Frame):
     KWARGS = {
         "padding": 10
     }
-
     def __init__(self, root, **kwargs):
         # Merge default kwargs with user-supplied kwargs
         self.merged_kwargs = {**self.KWARGS, **kwargs}
         super().__init__(root, **self.merged_kwargs)
+        
+        # Create the label and Entry widget for max length input
+        self.max_length_label = Label(self, text="Max length:")
+        self.max_length_label.pack(side=TOP, padx=5, pady=5)
+        self.max_length = Entry(self)
+        self.max_length.pack(side=TOP, padx=5, pady=5)
+        
+        # Create the label and Entry widget for min length input
+        self.min_length_label = Label(self, text="Min length:")
+        self.min_length_label.pack(side=TOP, padx=5, pady=5)
+        self.min_length = Entry(self)
+        self.min_length.pack(side=TOP, padx=5, pady=5)
+        
+        # Create the label and Entry widget for max width input
+        self.max_width_label = Label(self, text="Max width:")
+        self.max_width_label.pack(side=TOP, padx=5, pady=5)
+        self.max_width = Entry(self)
+        self.max_width.pack(side=TOP, padx=5, pady=5)
+        
+        # Create the label and Entry widget for min width input
+        self.min_width_label = Label(self, text="Min width:")
+        self.min_width_label.pack(side=TOP, padx=5, pady=5)
+        self.min_width = Entry(self)
+        self.min_width.pack(side=TOP, padx=5, pady=5)
 
-        # Create the first label for the left frame number input
-        self.label1 = Label(self, text="Frame# of left:")
-        self.label1.pack(side=TOP, padx=5, pady=5)
-
-        # Create the first Entry widget for the left frame number input
-        self.frame_number1 = Entry(self)
-        self.frame_number1.pack(side=TOP, padx=5, pady=5)
-
-        # Create the second label for the right frame number input
-        self.label2 = Label(self, text="Frame# of right:")
-        self.label2.pack(side=TOP, padx=5, pady=5)
-
-        # Create the second Entry widget for the right frame number input
-        self.frame_number2 = Entry(self)
-        self.frame_number2.pack(side=TOP, padx=5, pady=5)
-
-         # Create the label for max speed
+        # Rest of your code here ...
+        # Create the label for max speed
         self.max_speed_label = Label(self, text="Max speed:")
         self.max_speed_label.pack(side=TOP, padx=5, pady=5)
 
@@ -93,20 +102,18 @@ class InputPanel(Frame):
         self.background_color_button.grid(row=0, column=1)
 
         self.background_color_frame.pack(side=TOP, padx=5, pady=5)
-        
-        # # Number of cells of the left canvas
-        # self.cell_count_label1 = Label(self, text="Cell count(Left):")
-        # self.cell_count_label1.pack(side=TOP, padx=5, pady=5)
 
-        # self.cell_count_entry1 = Entry(self, width=20)
-        # self.cell_count_entry1.pack(side=TOP, padx=5, pady=5)
+        self.split_rate_label = Label(self, text="Split rate:")
+        self.split_rate_label.pack(side=TOP, padx=5, pady=5)
 
-        # # Number of cells of the right canvas
-        # self.cell_count_label2 = Label(self, text="Cell count(Right):")
-        # self.cell_count_label2.pack(side=TOP, padx=5, pady=5)
+        # Create the label and Entry widget for split rate input
+        self.split_rate_frame = Frame(self)
+        self.split_rate = Entry(self.split_rate_frame, width=13)
+        self.split_rate.grid(row=0, column=0)
+        self.get_split_rate_button = Button(self.split_rate_frame, text="Get", width=5, command=self.get_split_rate)
+        self.get_split_rate_button.grid(row=0, column=1)
+        self.split_rate_frame.pack(side=TOP, padx=5, pady=5)
 
-        # self.cell_count_entry2 = Entry(self, width=20)
-        # self.cell_count_entry2.pack(side=TOP, padx=5, pady=5)
         # Create the button for generate config
         self.generate_button = Button(self, text="Generate", command=self.generate)
         self.generate_button.pack(side=TOP, padx=5, pady=5)
@@ -132,33 +139,48 @@ class InputPanel(Frame):
 
         if(not isSuccess):
             messagebox.showerror("Error", "Please first load at least one image before performing the operation.")
+    
+    def get_split_rate(self):
+        imageCanvasFrame1 = self.master.imageCanvasFrame1
+        imageCanvasFrame2 = self.master.imageCanvasFrame2
+        cell_count_1 = int(imageCanvasFrame1.cell_count_text_box.get())
+        cell_count_2 = int(imageCanvasFrame2.cell_count_text_box.get())
+        if cell_count_1 < cell_count_2:
+            split_rate =  (cell_count_2 / cell_count_1) ** (1 / self.get_frame_difference()) - 1
+        else:
+            split_rate =  (cell_count_1 / cell_count_2) ** (1 / self.get_frame_difference()) - 1
+        self.split_rate.delete(0, 'end')
+        self.split_rate.insert(0, f'{split_rate:.2f}')
+
     def get_frame_difference(self):
-        return int(self.frame_number2.get()) - int(self.frame_number1.get())
+        canvas1 = self.master.imageCanvasFrame1.imageCanvas
+        canvas2 = self.master.imageCanvasFrame2.imageCanvas
+        return abs(canvas1.curr_frame_idx - canvas2.curr_frame_idx)
 
     def generate(self):
-        output_folder = filedialog.askdirectory(title="Select output folder")
+        filename = filedialog.asksaveasfilename(defaultextension=".json",  title="Save configuration file", filetypes=(("JSON files", "*.json"),))
         template_filepath = f'{os.path.dirname(os.path.abspath(__file__))}/assets/config_template.json'
         with open(template_filepath, 'r') as f:
             config_template = json.load(f)
 
-        min_max_cell_data = self.master.informationPanel.minMaxCellSizePanel.data
         syntheticImagePreviewPanel = self.master.syntheticImagePreviewPanel
         # Customize the template with the provided parameters
         config_template['bacilli.maxSpeed'] = float(self.max_speed.get())
         config_template['bacilli.maxSpin'] = float(self.max_spin.get())
         config_template['bacilli.maxGrowth'] = float(self.max_growth.get())
-        config_template["bacilli.minWidth"] = min_max_cell_data['min_width']
-        config_template["bacilli.maxWidth"] = min_max_cell_data['max_width']
-        config_template["bacilli.minLength"] = min_max_cell_data['min_length']
-        config_template["bacilli.maxLength"] = min_max_cell_data['max_length']
+        config_template["bacilli.minWidth"] = float(self.min_width.get())
+        config_template["bacilli.maxWidth"] = float(self.max_width.get())
+        config_template["bacilli.minLength"] = float(self.min_length.get())
+        config_template["bacilli.maxLength"] = float(self.max_length.get())
         config_template["simulation"]["background.color"] = float(self.background_color.get())
         config_template["simulation"]["cell.color"] = float(self.cell_color.get())
         config_template["simulation"]["cell.opacity"] = float(syntheticImagePreviewPanel.cell_opacity_entry.get())
         config_template["simulation"]["light.diffraction.sigma"] = float(syntheticImagePreviewPanel.diffraction_sigma_entry.get())
         config_template["simulation"]["light.diffraction.strength"] = float(syntheticImagePreviewPanel.diffraction_strength_entry.get())
         config_template["simulation"]["light.diffraction.truncate"] = float(syntheticImagePreviewPanel.diffraction_truncate_entry.get())
+        config_template["prob.split"] = float(self.split_rate.get())
         
         # Write the customized configuration to file
-        with open(f'{output_folder}/config.json', 'w') as f:
+        with open(filename, 'w+') as f:
             json.dump(config_template, f, indent = 4)
     
