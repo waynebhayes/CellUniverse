@@ -1,3 +1,4 @@
+from __future__ import annotations
 from math import sqrt
 from skimage.draw import disk, circle_perimeter_aa
 from typing import DefaultDict
@@ -5,6 +6,7 @@ from typing import DefaultDict
 from .mathhelper import Vector
 
 from .Cell import Cell, CellParams, PerturbParams, CellConfig
+
 
 class SphereConfig(CellConfig):
     x: PerturbParams
@@ -189,3 +191,33 @@ class Sphere(Cell):
             # opacity=self._opacity,
             # split_alpha=self._split_alpha
         )
+    
+    def calculate_corners(self):
+        """
+        Calculate the minimum and maximum corners of the sphere.
+
+        :return: A tuple of two lists, each of size 3. The first list represents the minimum corner 
+                (x, y, z), and the second list represents the maximum corner (x, y, z).
+        """
+        min_corner = [self._position.x - self._radius, self._position.y - self._radius, self._position.z - self._radius]
+        max_corner = [self._position.x + self._radius, self._position.y + self._radius, self._position.z + self._radius]
+        return min_corner, max_corner
+
+    def calculate_minimum_box(self, perturbed_cell: Sphere):
+        """
+        Calculate the minimum box that could encompass the current sphere and a given sphere.
+
+        :param perturbed_cell: The second sphere that defines the dimensions of the box.
+        :return: A tuple of two lists, each of size 3. The first list represents the minimum corner 
+                (x, y, z) of the box, and the second list represents the maximum corner (x, y, z) of the box.
+        """
+        cell1_min_corner, cell1_max_corner = self.calculate_corners()
+        cell2_min_corner, cell2_max_corner = perturbed_cell.calculate_corners()
+
+        # Find the minimum and maximum coordinates among the spheres' corners
+        min_corner = [min(cell1_min_corner[i], cell2_min_corner[i]) for i in range(3)]
+        max_corner = [max(cell1_max_corner[i], cell2_max_corner[i]) for i in range(3)]
+            
+        # Return the minimum and maximum corners of the box
+        return min_corner, max_corner
+        

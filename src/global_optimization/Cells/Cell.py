@@ -62,3 +62,29 @@ class Cell(ABC):
     @abstractmethod
     def get_cell_params(self) -> CellParams:
         pass
+    
+    @abstractmethod
+    def calculate_corners(self) -> tuple(list[float], list[float]):
+        """
+        The method calculates the minimum and maximum corners of the cell.
+
+        :returns: A tuple containing two lists, each with three floats. 
+                  The first list represents the minimum corner (x, y, z) and 
+                  the second list represents the maximum corner (x, y, z).
+        """
+        pass
+        
+    @abstractmethod
+    def calculate_minimum_box(self, perturbed_cell) -> tuple(list[float], list[float]):
+        """
+        The method calculates the minimum and maximum corners of the box that could encompass the cell 
+        and a second cell (perturbed_cell).
+
+        :param perturbed_cell: The second cell which along with the first cell, 
+                               defines the dimensions of the box.
+
+        :returns: A tuple containing two lists, each with three floats.
+                  The first list represents the minimum corner (x, y, z) of the box and 
+                  the second list represents the maximum corner (x, y, z) of the box.
+        """
+        pass 
