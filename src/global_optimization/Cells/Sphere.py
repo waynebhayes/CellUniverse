@@ -1,5 +1,6 @@
 from math import sqrt
 from skimage.draw import disk, circle_perimeter_aa
+from typing import DefaultDict
 
 from .mathhelper import Vector
 
@@ -154,6 +155,16 @@ class Sphere(Cell):
             y=self._position.y + Sphere.cellConfig.y.get_perturb_offset(),
             z=self._position.z + Sphere.cellConfig.z.get_perturb_offset(),
             radius=self._radius + Sphere.cellConfig.radius.get_perturb_offset(),
+        ))
+    
+    def get_paramaterized_cell(self, params: DefaultDict[str, float]):
+        # if no params, default to using perterb from files (used during simulated annealing)
+        return Sphere(SphereParams(
+            name=self._name,
+            x=self._position.x + params['x'],
+            y=self._position.y + params['y'],
+            z=self._position.z + params['z'],
+            radius=min(max(Sphere.cellConfig.minRadius, self._radius + params['radius']), Sphere.cellConfig.maxRadius),
         ))
 
     def get_radius_at(self, z: float):

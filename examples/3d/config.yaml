@@ -22,11 +22,11 @@ cell:
     mu: 0
     sigma: 3
   minRadius: 4
-  maxRadius: 80
+  maxRadius: 24
 
 # Simulation settings
 simulation:
-  iterations_per_cell: 10
+  iterations_per_cell: 1
   background_color: 0.376
   cell_color: 0.496
   padding: 0

@@ -1,11 +1,13 @@
 from pathlib import Path
-from typing import Dict, Optional, List, Generic
+from typing import Dict, Optional, List, Generic, Tuple, Any
 import numpy.typing as npt
 import numpy as np
 import pandas as pd
 from PIL import Image
 import random
 
+from copy import deepcopy
+from collections import defaultdict
 
 from .Cells import Cell
 from .Config import SimulationConfig
@@ -83,7 +85,7 @@ class Frame:
         
         # Calculate the boundary of the smallest box that contains
         # both old_cell and new_cell.
-        min_corner, max_corner = Frame.calculate_minimum_box(old_cell, new_cell)
+        # min_corner, max_corner = Frame.calculate_minimum_box(old_cell, new_cell)
 
         for i, z in enumerate(self.z_slices):
             if (z < min_corner[2] or z > max_corner[2]):
@@ -140,7 +142,6 @@ class Frame:
     def __len__(self):
         return len(self.cells)
 
-
     def perturb(self):
         # randomly pick an index for a cell
         index = random.randint(0, len(self.cells) - 1)
@@ -169,5 +170,146 @@ class Frame:
 
         return old_cost - new_cost, callback
 
+    def _cost_of_perterb(self, perterb_param: str, perterb_val: str, index: int, old_cell: Cell):
+        # setup parameters to test perterb of size delta
+        perterb_params = defaultdict(float)
+        perterb_params[perterb_param] = perterb_val
+        # perterb cell
+        self.cells[index] = self.cells[index].get_paramaterized_cell(perterb_params)
+
+        # generate new image stack
+        new_synth_image_stack = self.generate_synth_images()
+        # get new cost
+        new_cost = self.calculate_cost(new_synth_image_stack)
+
+        # reset cell
+        self.cells[index] = old_cell
+
+        return new_cost
+
+    def _get_synth_perterbed_cells(
+        self, 
+        index: int, 
+        params: Dict[str, Any], 
+        perterb_length: float, 
+        old_cell: Cell
+    ) -> Dict[str, Any]:
+        """
+            Generates a dict in the format of {param: synth_image} where synth image is the synth image stack after
+            some cell param was perterbed by some perterb_length
+        """
+        perterbed_cells = {}
+        
+        for param, val in params.items():
+            if param == 'name':
+                continue
+            perterb_params = defaultdict(float)
+            perterb_params[param] = perterb_length
+            self.cells[index] = self.cells[index].get_paramaterized_cell(perterb_params)
+            perterbed_cells[param] = self.generate_synth_images()
+            self.cells[index] = old_cell
+        
+        return perterbed_cells
+
+
+    # add a line search to figure out how much to move in the gradient direction
+    # add a threshold so that stops calculating gradient when it converges
     def gradient_descent(self):
-        pass
+
+        directions = defaultdict(dict)
+
+        # hyper parameters to tune for gradient descent
+        moving_delta = 1
+        delta = 1e-3
+        alpha = 0.2
+
+        cell_list = self.cells
+        orig_cost = self.calculate_cost(self.synth_image_stack)
+
+        cells_grad = []
+        param_names = None
+
+        print(f"original cost: {orig_cost}")
+
+        # get gradient for each cell
+        for index, cell in enumerate(cell_list):
+            old_cell = deepcopy(cell)
+        
+            params = cell.get_cell_params().__dict__
+            
+            # get params that are changing
+            if param_names is None:
+                param_names = list(params.keys())
+                param_names.remove("name")
+
+            perterbed_cells = self._get_synth_perterbed_cells(index, params, moving_delta, old_cell)
+
+            perterbed_cells_val = np.array(list(perterbed_cells.values()))
+            costs = list(map(self.calculate_cost, perterbed_cells_val))
+
+            # memory vs speed (if user needs more memory calculate grad here, otherwise vectorize and calculate 
+            # grad after)
+            cells_grad.append(costs)
+
+            # cells_grad.append((costs - orig_cost) / delta)
+
+        cells_grad = (np.array(cells_grad) - orig_cost) / delta
+
+        # use this direction value if no line search
+        #directions = {index:dict(zip(param_names, -1 * alpha * cells_grad[index])) for index, grad in enumerate(cells_grad)}
+        
+        # find optimal distance to move for each perterb using line search
+        # TODO: if using line search try to find best tolerance and upper bound
+        
+        for index, cell in enumerate(cell_list):
+            
+            param_gradients = dict(zip(param_names, cells_grad[index]))
+            old_cell = deepcopy(cell)
+
+            for param, gradient in param_gradients.items():
+                tolerance = 1e-2
+                direction = -1 * alpha
+                # line search to find the optimal amount to move
+                lower = gradient * direction
+                upper = 3 * lower
+                lower_cost = self._cost_of_perterb(param, lower, index, old_cell)
+                upper_cost = self._cost_of_perterb(param, upper, index, old_cell)
+                # assume that the lower bound gradient is the best cost until new minima found
+                best_cost = lower_cost
+                old_upper_cost = 0
+
+                # keep on finding the upper limit of line search until cost is negative
+                while upper_cost < best_cost and (upper_cost - old_upper_cost) > tolerance:
+                    upper = 3 * upper
+                    old_upper_cost = upper_cost
+                    upper_cost = self._cost_of_perterb(param, upper, index, old_cell)
+                
+                mid = None
+                # try to find minimal cost by looking at the lower and upper cost
+                while True:
+                    mid = (lower + upper) / 2
+                    mid_cost = self._cost_of_perterb(param, mid, index, old_cell)
+
+                    if abs(mid_cost - best_cost) < tolerance:
+                        break
+                    
+                    if mid_cost < lower_cost:
+                        lower = mid
+                        lower_cost = mid_cost
+                        best_cost = mid_cost
+
+                    elif mid_cost > lower_cost:
+                        upper = mid
+                    
+                directions[index][param] = mid
+        
+
+        for index, cell in enumerate(cell_list):
+            self.cells[index] = self.cells[index].get_paramaterized_cell(directions[index])
+        
+        self.synth_image_stack = self.generate_synth_images()
+        new_cost = self.calculate_cost(self.synth_image_stack)
+        
+        print(f"current cost: {new_cost}")
+        return new_cost
+        
