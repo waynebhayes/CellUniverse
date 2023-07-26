@@ -1,0 +1,65 @@
+# Global settings
+cellType: sphere
+#pixelsPerMicron: 1
+#framesPerSecond: 1
+
+# Cell settings
+cell:
+  x:
+    prob: 0.45
+    mu: 0
+    sigma: 20
+  y:
+    prob: 0.45
+    mu: 0
+    sigma: 20
+  z:
+    prob: 0.35
+    mu: 0
+    sigma: 12
+  radius:
+    prob: 0.2
+    mu: 0
+    sigma: 4
+  minRadius: 15
+  maxRadius: 60
+
+# Simulation settings
+simulation:
+  iterations_per_cell: 500
+  background_color: 0.39
+  cell_color: 0.53
+  padding: 0
+  z_scaling: 6.925
+  blur_sigma: 0
+
+# Probability of changes
+prob:
+  perturbation: 0.80
+  split: 0.2
+#  combine: 0.1
+#  camera_shift: 0.0
+
+# Camera shift settings
+#camera:
+#  modification_x_sigma: 0
+#  modification_y_sigma: 0
+
+#output_format: png
+#output_quality: 80
+#residual_vmin: -0.3
+#residual_vmax: 0.3
+#split_cost: 0
+#combine_cost: 0
+#overlap_cost: 1
+#cell_importance: 1
+#background_offset_mu: 0
+#background_offset_sigma: 0.01
+#cell_brightness_mu: 0
+#cell_brightness_sigma: 0.01
+#opacity_offset_mu: 0
+#opacity_offset_sigma: 0.01
+#diffraction_strength_offset_mu: 0
+#diffraction_strength_offset_sigma: 0.01
+#diffraction_sigma_offset_mu: 0
+#diffraction_sigma_offset_sigma: 0.01

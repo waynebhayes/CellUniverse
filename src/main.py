@@ -12,17 +12,14 @@ import multiprocessing
 from pathlib import Path
 import jsonc
 # import optimization
-from global_optimization import global_optimize, auto_temp_schedule
-from scipy.ndimage import distance_transform_edt
+from global_optimization import global_optimize
 import numpy as np
 from matplotlib import cm
 from matplotlib.colors import Normalize
 from PIL import Image
 from copy import deepcopy
 
-from global_optimization.CellUniverse import CellUniverse
 from global_optimization.Modules import LineageM
-from lineage_funcs import create_lineage, save_lineage
 from global_optimization.Cells import Sphere, Bacilli
 
 import sys
@@ -306,11 +303,8 @@ def main(args):
 if __name__ == '__main__':
     args = parse_args()
 
-    import csv
     import time
-    from itertools import count
 
-    from sys import exit
     # pr = cProfile.Profile()
     # pr.enable()
     print('CHECKPOINT, {}, {}, {}'.format(time.time(), -1, -1), flush=True)

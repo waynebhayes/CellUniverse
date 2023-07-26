@@ -3,7 +3,7 @@ from .utils import is_cell, is_background, objective, dist_objective, check_cons
 import numpy as np
 from copy import deepcopy
 from typing import Any, Dict, List, Tuple
-from global_optimization.Modules import CellNodeM, FrameM, LineageM
+from global_optimization.Modules import CellNodeM, FrameM
 
 
 class Perturbation(Change):
