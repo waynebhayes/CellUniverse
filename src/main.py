@@ -9,6 +9,7 @@ The entry point for CellAnneal program.
 """
 import argparse
 import multiprocessing
+from copy import deepcopy
 from pathlib import Path
 import jsonc
 # import optimization
@@ -233,6 +234,26 @@ def main(args):
                 print(','.join(['window_start', 'window_end', 'pbad_total', 'bad_count', 'temperature', 'total_cost_diff', 'current_iteration', 'total_iterations']), file=debugfile)
 
         if args.global_optimization:
+            sa_config = deepcopy(config)
+
+            # List of simulated annealing keys to modify
+            keys_to_modify = [
+                "modification.x.mu",
+                "modification.y.mu",
+                "modification.width.mu",
+                "modification.length.mu",
+                "modification.rotation.mu",
+                "modification.x.sigma",
+                "modification.y.sigma",
+                "modification.width.sigma",
+                "modification.length.sigma",
+                "modification.rotation.sigma"
+            ]
+
+            for key, value in sa_config["perturbation"].items():
+                if key in keys_to_modify:
+                    sa_config["perturbation"][key] = value / sa_config["iteration_per_cell"]
+
             global useDistanceObjective
 
             useDistanceObjective = args.dist
@@ -242,7 +263,7 @@ def main(args):
             lineage = LineageM(config, args)
             # lineage = create_lineage(imagefiles, realimages, config, args)
 
-            window = config["global_optimizer.window_size"]
+            window = sa_config["global_optimizer.window_size"]
             sim_start = args.continue_from - args.frame_first
             print(sim_start)
             iteration_per_cell = config["iteration_per_cell"]

@@ -127,14 +127,24 @@ def optimize_core(lineage: LineageM, window_start, window_end, start_temp, end_t
         node = np.random.choice(frame.nodes)
         if node.cell.dormant:
             continue
-        # change_option = np.random.choice(["split", "perturbation", "combine", "background_offset", "opacity_diffraction_offset", "camera_shift"],
-        #                                  p=[split_prob, perturbation_prob, combine_prob, background_offset_prob, opacity_diffraction_offset_prob, camera_shift_prob])
-        change_option = "perturbation"
 
+        sum = np.sum([split_prob, perturbation_prob, combine_prob, background_offset_prob, opacity_diffraction_offset_prob, camera_shift_prob])
+        if sum != 1:
+            print("Waring: the probability sum is %f not 1! split_prob: %f, perturbation_prob: %f, combine_prob: %f, background_offset_prob: %f, opacity_diffraction_offset_prob: %f, camera_shift_prob: %f." % (sum, split_prob, perturbation_prob, combine_prob, background_offset_prob, opacity_diffraction_offset_prob, camera_shift_prob))
+            split_prob = split_prob / sum;
+            perturbation_prob = perturbation_prob / sum;
+            combine_prob = combine_prob / sum;
+            background_offset_prob = background_offset_prob / sum;
+            opacity_diffraction_offset_prob = opacity_diffraction_offset_prob / sum;
+            camera_shift_prob = camera_shift_prob / sum;
+            print("Now the normalized probability is split_prob: %f, perturbation_prob: %f, combine_prob: %f, background_offset_prob: %f, opacity_diffraction_offset_prob: %f, camera_shift_prob: %f." % (split_prob, perturbation_prob, combine_prob, background_offset_prob, opacity_diffraction_offset_prob, camera_shift_prob))
+            print();
+            
+        change_option = np.random.choice(["split", "perturbation", "combine", "background_offset", "opacity_diffraction_offset", "camera_shift"],
+                                         p=[split_prob, perturbation_prob, combine_prob, background_offset_prob, opacity_diffraction_offset_prob, camera_shift_prob])
         change = None
-        if change_option == "split" and np.random.random_sample() < optimization.split_proba(node.cell.length) and not (window_start <= 0 and frame_index <= 0):
-            # change = Split(node.parent, config, realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], lineage.frames[frame_index], distmaps[frame_index])
-            pass
+        if change_option == "split" and (np.random.random_sample() < optimization.split_proba_sin(node.cell.length, config["bacilli.minLength"], config["bacilli.maxLength"])) and not (window_start <= 0 and frame_index <= 0):
+            change = Split(node.parent, config, realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], lineage.frames[frame_index], distmaps[frame_index])
 
         elif change_option == "perturbation":
             change = Perturbation(node, config, lineage.frames[frame_index])
@@ -233,7 +243,7 @@ def optimize_old(imagefiles, lineage, realimages, synthimages, cellmaps, distmap
         change_option = np.random.choice(["split", "perturbation", "combine", "background_offset", "opacity_diffraction_offset"], 
                                          p=[split_prob, perturbation_prob, combine_prob, background_offset_prob, opacity_diffraction_offset_prob])
         change = None
-        if change_option == "split" and np.random.random_sample() < optimization.split_proba(node.cell.length) and frame_index > 0:
+        if change_option == "split" and (np.random.random_sample() < optimization.split_proba_sin(node.cell.length, config["bacilli.minLength"], config["bacilli.maxLength"])) and frame_index > 0:
             change = Split(node.parent, config, realimages[frame_index], synthimages[frame_index], cellmaps[frame_index], lineage.frames[frame_index], distmaps[frame_index])
 
         elif change_option == "perturbation":

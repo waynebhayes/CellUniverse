@@ -95,9 +95,8 @@ class Bacilli(Cell):
         width = right - left
         height = bottom - top
         mask = np.zeros((height, width), dtype=bool)
-
-        body_mask = polygon(
-            r=(self._head_left.y - top,
+        
+    r=(self._head_left.y - top,
                self._head_right.y - top,
                self._tail_right.y - top,
                self._tail_left.y - top),
