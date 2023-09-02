@@ -1,11 +1,11 @@
-from cell import Bacilli
 import optimization
 from typing import List
+
+from global_optimization.Cells import Sphere
 from global_optimization.Modules import CellNodeM, LineageM
 import pandas as pd
 from colony import LineageFrames, CellNode
 import csv
-import numpy as np
 
 
 def build_initial_lineage(imagefiles, realimages, lineagefile, continue_from, simulation_config):
@@ -22,7 +22,7 @@ def build_initial_lineage(imagefiles, realimages, lineagefile, continue_from, si
         if i > 0:
             lineage.forward()
         for _, row in cells_data[cells_data["file"] == filename].iterrows():
-            new_cell = Bacilli(row["name"], row["x"], row["y"], row["width"], row["length"], row["rotation"], row["split_alpha"], row["opacity"])
+            new_cell = Sphere(row["name"], row["x"], row["y"], row["width"], row["length"], row["rotation"], row["split_alpha"], row["opacity"])
             lineage.frames[-1].add_cell(new_cell)
         lineage.frames[i].simulation_config = optimization.find_optimal_simulation_conf(lineage.frames[i].simulation_config, realimages[i], lineage.frames[i].nodes)
     return lineage
@@ -44,9 +44,9 @@ def load_colony(colony, initial_file, config, initial_frame=None):
                 rotation = float(row['rotation'])
                 if config["simulation"]["image.type"] == "graySynthetic":
                     opacity = config["simulation"]["cell.opacity"]
-                    cell = Bacilli(name, x, y, width, length, rotation, opacity=opacity)
+                    cell = Sphere(name, x, y, width, length, rotation, opacity=opacity)
                 else:
-                    cell = Bacilli(name, x, y, width, length, rotation)
+                    cell = Sphere(name, x, y, width, length, rotation)
             colony.add(CellNode(cell))
 
 

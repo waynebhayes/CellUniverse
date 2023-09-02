@@ -20,13 +20,14 @@
     "simulation":
     {
         "image.type": "To be Set", 
-        "background.color": "auto", // 0.39 for gary scale image
-        "cell.color" : "auto", // 0.15 for gray scale image
+        "background.color": 0.59, // 0.39 for gary scale image
+        "cell.color" : 0.1, // 0.15 for gray scale image
         "light.diffraction.sigma": "auto",  //11
         "light.diffraction.strength": "auto", //0.6
         "light.diffraction.truncate": 1,
         "cell.opacity": "auto",
-        "padding": 0
+        "padding": 0,
+        "image.slices": 33
     },
     
     "prob.perturbation": 0.70,
@@ -65,7 +66,7 @@
 
     "global_optimizer.window_size": 1,
     "pbad_max_size": 1000, // must be greater than 0
-    "iteration_per_cell": 2000,
+    "iteration_per_cell": 0,
     "auto_temp_scheduler.iteration_per_cell": 500,
     "output.format": "png", //must be png or jpeg. If jpeg is chosen, then the output image quality can be set.
     "output.quality": 80, // range [0, 100]
