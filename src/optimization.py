@@ -1,14 +1,13 @@
 import time
 import math
-from math import sqrt, atan
+from math import sqrt
 from itertools import chain
 
 import numpy as np
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageFont
 from scipy.ndimage import distance_transform_edt
 from scipy.optimize import leastsq
 
-from cell import Bacilli
 from colony import LineageFrames
 from lineage_funcs import load_colony
 
@@ -58,7 +57,6 @@ def find_optimal_simulation_conf(simulation_config, realimage1, cellnodes):
         variables.append("light.diffraction.strength")
         initial_values.append(0.5)
     if simulation_config["cell.opacity"] == "auto":
-        auto_opacity = True
         variables.append("cell.opacity")
         initial_values.append(0.2)
     if len(variables) != 0:
@@ -67,12 +65,12 @@ def find_optimal_simulation_conf(simulation_config, realimage1, cellnodes):
 
         for i, param in enumerate(variables):
             simulation_config[param] = optimal_values[i]
-        simulation_config["cell.opacity"] = max(0, simulation_config["cell.opacity"])
-        simulation_config["light.diffraction.sigma"] = max(0, simulation_config["light.diffraction.sigma"])
+            
+    simulation_config["cell.opacity"] = max(0, simulation_config["cell.opacity"])
+    simulation_config["light.diffraction.sigma"] = max(0, simulation_config["light.diffraction.sigma"])
 
-        if auto_opacity:
-            for node in cellnodes:
-                node.cell.opacity = simulation_config["cell.opacity"]
+    for node in cellnodes:
+        node.cell.opacity = simulation_config["cell.opacity"]
 
     print(f"optimal simulation configuration values found: {simulation_config}")
     return simulation_config
@@ -80,14 +78,26 @@ def find_optimal_simulation_conf(simulation_config, realimage1, cellnodes):
 
 def generate_synthetic_image(cellnodes, shape, simulation_config):
     image_type = simulation_config["image.type"]
-    cellmap = np.zeros(shape, dtype=int)
     if image_type == "graySynthetic" or image_type == "phaseContrast":
         background_color = simulation_config["background.color"]
-        synthimage = np.full(shape, background_color)
-        for node in cellnodes:
-            node.cell.draw(synthimage, cellmap, is_cell, simulation_config)
-        return synthimage, cellmap
+        if 'image.slices' in simulation_config:
+            zs = range(-1 * (simulation_config['image.slices'] // 2), simulation_config['image.slices'] // 2 + 1)
+            synthimages = []
+            for z in zs:
+                synthimage = np.full(shape, background_color)
+                cellmap = np.zeros(shape, dtype=int)
+                for node in cellnodes:
+                    node.cell.draw(synthimage, cellmap, is_cell, simulation_config, z = z)
+                synthimages.append(synthimage)
+            return synthimages, cellmap
+        else:
+            cellmap = np.zeros(shape, dtype=int)
+            synthimage = np.full(shape, background_color)
+            for node in cellnodes:
+                node.cell.draw(synthimage, cellmap, is_cell, simulation_config)
+            return synthimage, cellmap
     else:
+        cellmap = np.zeros(shape, dtype=int)
         synthimage = np.zeros(shape)
         for node in cellnodes:
             node.cell.draw(synthimage, cellmap, is_cell, simulation_config)
@@ -204,13 +214,17 @@ def perturb_bacilli(node, config, imageshape, invalid_limit=50):
             break
 
     # push the new cell over the previous in the node
-    node.push(Bacilli(cell.name, x, y, width, length, rotation, cell.split_alpha, cell_opacity))
+    node.push(Sphere(cell.name, x, y, width, length, rotation, cell.split_alpha, cell_opacity))
 
 
 def split_proba(length):
     """Returns the split probability given the length of the cell."""
     # Determined empirically based on previous runs
     return min(1, math.sin((length - 14) / (2 * math.pi * math.pi))) if 14 < length else 0
+
+def split_proba_sin(length, min_length, max_length):
+    """Returns the split probability given the length of the cell."""
+    return math.sin((length - min_length) / (max_length - min_length))
 
 
 def bacilli_split(node, config, imageshape):
@@ -601,7 +615,7 @@ def optimize_core(imagefile, colony, args, config, iterations_per_cell=3000, aut
     frame[..., 2] = frame[..., 0]
 
     for node in cellnodes:
-        node.cell.drawoutline(frame, (1, 0, 0))
+        node.cell.draw_outline(frame, (1, 0, 0))
 
     frame = np.clip(frame, 0, 1)
 

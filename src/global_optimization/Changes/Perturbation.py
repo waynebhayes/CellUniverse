@@ -7,11 +7,8 @@ from global_optimization.Modules import CellNodeM, FrameM
 
 
 class Perturbation(Change):
-    def __init__(self, node: CellNodeM, config: Dict[str, Any], realimage, synthimage, cellmap, frame: FrameM, distmap=None):
+    def __init__(self, node: CellNodeM, config: Dict[str, Any], frame: FrameM):
         self.node = node
-        self.realimage = realimage
-        self.synthimage = synthimage
-        self.cellmap = cellmap
         self.config = config
         self._checks = []
         self.frame = frame
@@ -20,11 +17,11 @@ class Perturbation(Change):
         self.replacement_cell = new_cell
         valid = False
         badcount = 0
-        self.distmap = distmap
 
         perturb_conf = config["perturbation"]
         p_x = perturb_conf["prob.x"]
         p_y = perturb_conf["prob.y"]
+        p_z = perturb_conf["prob.z"]
         p_width = perturb_conf["prob.width"]
         p_length = perturb_conf["prob.length"]
         p_rotation = perturb_conf["prob.rotation"]
@@ -53,7 +50,7 @@ class Perturbation(Change):
         #     p_decision = np.array([p_x, p_y, p_width, p_length, p_rotation, p_opacity])
         # else:
         #     p_decision = np.array([p_x, p_y, p_width, p_length, p_rotation])
-        p_decision = np.array([p_x, p_y, p_width, p_length, p_rotation])
+        p_decision = np.array([p_x, p_y, p_width, p_length, p_rotation, p_z])
 
         p = np.random.uniform(0.0, 1.0, size=p_decision.size)
         # generate a sequence such that at least an attribute must be modified
@@ -76,6 +73,9 @@ class Perturbation(Change):
             if p[4] < p_decision[4]:  # perturb rotation
                 new_cell.rotation = cell.rotation + np.random.normal(rotation_mu, rotation_sigma)
 
+            # if p[5] < p_decision[5]:  # perturb z
+            #     new_cell.z = cell.z + int(np.random.normal(0, 0.1))
+
             # if simulation_config["image.type"] == "graySynthetic" and p[5] < p_decision[5]:
                 # new_cell.opacity = cell.opacity + (np.random.normal(opacity_mu, opacity_sigma))
 
@@ -85,46 +85,48 @@ class Perturbation(Change):
             if not valid:
                 badcount += 1
 
-    @property
-    def is_valid(self):
-        return check_constraints(self.config, self.realimage.shape, [self.replacement_cell], self.get_checks())
+    def is_valid(self, real_image_shape: Tuple[int, int]) -> bool:
+        return check_constraints(self.config, real_image_shape, [self.replacement_cell], self.get_checks())
 
-    @property
-    def costdiff(self):
+    def costdiff(self, frame_stacks, z_slices) -> float:
         overlap_cost = self.config["overlap.cost"]
-        new_synth = self.synthimage.copy()
-        new_cellmap = self.cellmap.copy()
-        region = self.node.cell.simulated_region(self.frame.simulation_config).\
-            union(self.replacement_cell.simulated_region(self.frame.simulation_config))
-        self.node.cell.draw(new_synth, new_cellmap, is_background, self.frame.simulation_config)
-        self.replacement_cell.draw(new_synth, new_cellmap, is_cell, self.frame.simulation_config)
+        total_diff = 0
+        for synth_image, cell_map, dist_map, real_image, z in zip(*frame_stacks, z_slices):
+            new_synth = synth_image.copy()
+            new_cellmap = cell_map.copy()
+            region = self.node.cell.simulated_region(self.frame.simulation_config).\
+                union(self.replacement_cell.simulated_region(self.frame.simulation_config))
+            self.node.cell.draw(new_synth, new_cellmap, is_background, self.frame.simulation_config)
+            self.replacement_cell.draw(new_synth, new_cellmap, is_cell, self.frame.simulation_config, z = z)
 
-        if useDistanceObjective:
-            start_cost = dist_objective(self.realimage[region.top:region.bottom, region.left:region.right],
-                                        self.synthimage[region.top:region.bottom, region.left:region.right],
-                                        self.distmap[region.top:region.bottom, region.left:region.right],
-                                        self.cellmap[region.top:region.bottom, region.left:region.right],
-                                        overlap_cost)
-            end_cost = dist_objective(self.realimage[region.top:region.bottom, region.left:region.right],
-                                      new_synth[region.top:region.bottom, region.left:region.right],
-                                      self.distmap[region.top:region.bottom, region.left:region.right],
-                                      new_cellmap[region.top:region.bottom, region.left:region.right],
-                                      overlap_cost)
-        else:
-            start_cost = objective(self.realimage[region.top:region.bottom, region.left:region.right],
-                                   self.synthimage[region.top:region.bottom, region.left:region.right],
-                                   self.cellmap[region.top:region.bottom, region.left:region.right],
-                                   overlap_cost, self.config["cell.importance"])
-            end_cost = objective(self.realimage[region.top:region.bottom, region.left:region.right],
-                                 new_synth[region.top:region.bottom, region.left:region.right],
-                                 new_cellmap[region.top:region.bottom, region.left:region.right],
-                                 overlap_cost, self.config["cell.importance"])
+            if useDistanceObjective:
+                start_cost = dist_objective(real_image[region.top:region.bottom, region.left:region.right],
+                                            synth_image[region.top:region.bottom, region.left:region.right],
+                                            dist_map[region.top:region.bottom, region.left:region.right],
+                                            cell_map[region.top:region.bottom, region.left:region.right],
+                                            overlap_cost)
+                end_cost = dist_objective(real_image[region.top:region.bottom, region.left:region.right],
+                                          new_synth[region.top:region.bottom, region.left:region.right],
+                                          dist_map[region.top:region.bottom, region.left:region.right],
+                                          new_cellmap[region.top:region.bottom, region.left:region.right],
+                                          overlap_cost)
+            else:
+                start_cost = objective(real_image[region.top:region.bottom, region.left:region.right],
+                                       synth_image[region.top:region.bottom, region.left:region.right],
+                                       cell_map[region.top:region.bottom, region.left:region.right],
+                                       overlap_cost, self.config["cell.importance"])
+                end_cost = objective(real_image[region.top:region.bottom, region.left:region.right],
+                                     new_synth[region.top:region.bottom, region.left:region.right],
+                                     new_cellmap[region.top:region.bottom, region.left:region.right],
+                                     overlap_cost, self.config["cell.importance"])
+            total_diff += end_cost - start_cost
 
-        return end_cost - start_cost
+        return total_diff
 
-    def apply(self):
-        self.node.cell.draw(self.synthimage, self.cellmap, is_background, self.frame.simulation_config)
-        self.replacement_cell.draw(self.synthimage, self.cellmap, is_cell, self.frame.simulation_config)
+    def apply(self, frame_stacks, z_slices):
+        for synth_image, cell_map, dist_map, real_image, z in zip(*frame_stacks, z_slices):
+            self.node.cell.draw(synth_image, cell_map, is_background, self.frame.simulation_config)
+            self.replacement_cell.draw(synth_image, cell_map, is_cell, self.frame.simulation_config, z = z)
         self.frame.add_cell(self.replacement_cell)
 
     def get_checks(self) -> List[Tuple['cell.Bacilli', 'cell.Bacilli']]:

@@ -7,8 +7,11 @@ Once you clone the repo onto your machine, you should test if Cell Universe is w
 
 Prerequisites:
 -----------
-Requires Python 3.7+.
-https://www.python.org/getit/
+Requires Python 3.11+.
+
+Recommendations
+- [Conda](https://docs.conda.io/en/latest/miniconda.html)
+- [pyenv](https://github.com/pyenv/pyenv#homebrew-in-macos)
 
 Requires Pip.
 https://pip.pypa.io/en/stable/quickstart/
@@ -29,29 +32,6 @@ This will create a virtual environment with all the required Python packages
 3. Activate Pipenv environment
 ```bash
 $ pipenv shell
-```
-
-3. Run Cell Universe on an example video (look inside the `run.sh` script to see the command used).
-```bash
-$ cd examples/canonical && ./run.sh
-```
-
------------
-Alternative:
-
-1. (Optional) Create a Python 3 virtual environment.
-```bash
-$ pip3 install virtualenv
-$ virtualenv -p python3 venv
-$ source venv/bin/activate
-```
-2. Install the requirements.
-```bash
-(venv)$ pip install -r requirements.txt
-```
-3. Run Cell Universe on an example video (look inside the `run.sh` script to see the command used).
-```bash
-(venv)$ cd examples/canonical && ./run.sh
 ```
 
 Steps to get a new video running:
@@ -145,3 +125,32 @@ python3 src/main.py --frame_first 0 --frame_last 13 --input "./examples/canonica
   "./examples/canonical/global_optimizer_config.json" --initial "./examples/canonical/initial.csv" --no_parallel \
   --graySynthetic --global_optimization
 ```
+--------
+Guide of running the examples
+-----
+There are currently four running examples located in the example folders. Each example is packed into a folder, which consists the input images, the initial cell configuration file, the configuration files, and the scripts to run the example. The scripts doesn't do anything magic. It's simply a wrapper of the command to run the program.
+
+To run the examples:
+
+Step 1: Activate the python environment. To do this, first locate to the root directory of this project, and run
+```
+pipenv shell
+```
+
+Step 2: Move to the folder consists the example that you want to run. Here, use the canonical one as an example.
+```
+cd examples/canonical
+```
+Step 3: Use the script to run the example
+
+For Windows Users (Powershell):
+```
+.\run.ps1
+```
+For Linux Users (Bash):
+```
+.\run.sh
+```
+
+Step 4: Wait until the program finish. The output is located in the output folder in the example folder.
+
