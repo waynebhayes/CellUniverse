@@ -83,6 +83,7 @@ class Lineage:
                 print(f"Frame {frame_index}, iteration {i}")
 
             if algorithm == 'simulated annealing':
+                # this is just some initial code it isn't full simulated annealing
                 cost_diff, accept = frame.perturb()
                 acceptance = np.exp(-cost_diff / ((i + 1) / total_iterations))
                 accept(acceptance > np.random.random_sample())
