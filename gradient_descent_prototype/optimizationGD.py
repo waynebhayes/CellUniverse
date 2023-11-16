@@ -181,17 +181,16 @@ def show_synth_real(cellNodes, realimage, i, config):
     plt.close(fig)
 
 
-def show_bestfit(cellNodes, realimage, i, config):
+def show_bestfit(cellNodes, realimage, i, config, path):
     """Generate the best fit synthetic image of each frame"""
     synthimage, _ = optimization.generate_synthetic_image(
         cellNodes, shape, config["simulation"])
     bestfit_frame = Image.fromarray(np.uint8(255 * synthimage), "L")
-    file_path = os.path.join("gradient_descent_prototype",
-                             "video0", "output", "bestfit", "frame{:03d}.png".format(i))
+    file_path = path / "frame{:03d}.png".format(i)
     bestfit_frame.save(file_path)
 
 
-def drawOutlines(cellNodes, realimage, i):
+def drawOutlines(cellNodes, realimage, i, path):
     """Draw the outlines of cells in synthetic image on the real images"""
     shape = realimage.shape
     output_frame = np.empty((shape[0], shape[1], 3))
@@ -201,8 +200,7 @@ def drawOutlines(cellNodes, realimage, i):
     for node in cellNodes:
         node.cell.drawoutline(output_frame, (1, 0, 0))
     output_frame = Image.fromarray(np.uint8(255 * output_frame))
-    file_path = os.path.join("gradient_descent_prototype", "video0",
-                             "output", "frame{:03d}.png".format(i))
+    file_path = path / "frame{:03d}.png".format(i)
     output_frame.save(file_path)
 
 
@@ -371,8 +369,11 @@ def find_optimal_simulation_conf(simulation_config, realimage1, cellnodes):
     return simulation_config
 
 
-def gradient_descent(cellNodes, realimages, config):
+def gradient_descent(cellNodes, realimages, config, args):
     """The main function body of gradient descent optimizer"""
+    lineage_path = args.output / "lineage.csv"
+    lineage_file = open(lineage_path, "w")
+    print("file,name,x,y,width,length,rotation,split_alpha,opacity", file=lineage_file)
     for i in range(len(realimages)):
         global FRAME
         FRAME = i
@@ -389,9 +390,11 @@ def gradient_descent(cellNodes, realimages, config):
                 break
             loss0 = loss1
             epoch -= 1
-        drawOutlines(cellNodes, realimages[i], i)
-        show_bestfit(cellNodes, realimages[i], i, config)
+        drawOutlines(cellNodes, realimages[i], i, args.output)
+        show_bestfit(cellNodes, realimages[i], i, config, args.bestfit)
+        save_lineage("frame{:03d}".format(i), cellNodes, lineage_file)
         print("Loss after GD is: {:.5f}".format(loss1))
+    lineage_file.close()
 
 
 if __name__ == "__main__":
@@ -404,7 +407,6 @@ if __name__ == "__main__":
         simulation_config["image.type"] = "phaseContrastImage"
     elif args.binary:
         simulation_config["image.type"] = "binary"
-
     imagefiles = get_inputfiles(args)
     realimages = [optimization.load_image(
         imagefile) for imagefile in imagefiles]
@@ -412,5 +414,11 @@ if __name__ == "__main__":
     lineage = create_lineage(imagefiles, realimages, config, args)
     config["simulation"] = lineage.frames[0].simulation_config
     cellNodes = lineage.frames[0].nodes
-
-    gradient_descent(cellNodes, realimages, config)
+    # create output path if not exit
+    if not args.bestfit.exists():
+        args.bestfit.mkdir(parents=True, exist_ok=True)
+    # create lineage.csv
+    lineage_path = args.output / "lineage.csv"
+    if not lineage_path.exists():
+        lineage_path.touch()
+    gradient_descent(cellNodes, realimages, config, args)
