@@ -154,3 +154,8 @@ For Linux Users (Bash):
 
 Step 4: Wait until the program finish. The output is located in the output folder in the example folder.
 
+ps. if your ConfigTypes.py has errors, please replace the lines 18-21 with this:
+padding: int = 0
+z_scaling: float = 1.0
+blur_sigma: float = 0.0
+z_slices: int = -1
