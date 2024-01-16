@@ -61,105 +61,105 @@ std::vector<cv::Mat> loadImage(const std::string & imageFile, const BaseConfig &
     return imgs;
 }
 
-// Lineage::Lineage(std::map<std::string, std::vector<Cell>> initialCells, std::vector<std::string> imagePaths, BaseConfig config, std::string outputPath, int continueFrom = -1)
-//     : config(config), outputPath(outputPath)
-// {
-//     for (size_t i = 0; i < imagePaths.size(); ++i) {
-//         std::vector<cv::Mat> real_images;
-//         real_images = loadImage(imagePaths[i], config);
+Lineage::Lineage(std::map<std::string, std::vector<Cell>> initialCells, std::vector<std::string> imagePaths, BaseConfig config, std::string outputPath, int continueFrom = -1)
+    : config(config), outputPath(outputPath)
+{
+    for (size_t i = 0; i < imagePaths.size(); ++i) {
+        std::vector<cv::Mat> real_images;
+        real_images = loadImage(imagePaths[i], config);
 
-//         std::string file_name = imagePaths[i];
+        std::string file_name = imagePaths[i];
 
-//         if ((continueFrom == -1 || i < continueFrom) && initialCells.find(file_name) != initialCells.end()) {
-//             const std::vector<Cell>& cells = initialCells.at(file_name);
-//             frames.emplace_back(real_images, config.simulation, cells, outputPath, file_name);
-//         }
-//         else {
-//             frames.emplace_back(real_images, config.simulation, std::vector<Cell>(), outputPath, file_name);
-//         }
-//     }
-// }
-// void Lineage::optimize(int frameIndex)
-// {
-//     if (frameIndex < 0 || static_cast<size_t>(frameIndex) >= frames.size()) {
-//         throw std::invalid_argument("Invalid frame index");
-//     }
+        if ((continueFrom == -1 || i < continueFrom) && initialCells.find(file_name) != initialCells.end()) {
+            const std::vector<Cell>& cells = initialCells.at(file_name);
+            frames.emplace_back(real_images, config.simulation, cells, outputPath, file_name);
+        }
+        else {
+            frames.emplace_back(real_images, config.simulation, std::vector<Cell>(), outputPath, file_name);
+        }
+    }
+}
+void Lineage::optimize(int frameIndex)
+{
+    if (frameIndex < 0 || static_cast<size_t>(frameIndex) >= frames.size()) {
+        throw std::invalid_argument("Invalid frame index");
+    }
 
-//     Frame& frame = frames[frameIndex];
-//     std::string algorithm = "hill"; // Set default algorithm
-//     size_t totalIterations = frame.size() * config.simulation.iterationsPerCell;
-//     std::cout << "Total iterations: " << totalIterations << std::endl;
+    Frame& frame = frames[frameIndex];
+    std::string algorithm = "hill"; // Set default algorithm
+    size_t totalIterations = frame.size() * config.simulation.iterationsPerCell;
+    std::cout << "Total iterations: " << totalIterations << std::endl;
 
-//     double tolerance = 0.5;
-//     bool minimaReached = false;
+    double tolerance = 0.5;
+    bool minimaReached = false;
 
-//     for (size_t i = 0; i < totalIterations; ++i) {
-//         if (i % 100 == 0) {
-//             std::cout << "Frame " << frameIndex << ", iteration " << i << std::endl;
-//         }
+    for (size_t i = 0; i < totalIterations; ++i) {
+        if (i % 100 == 0) {
+            std::cout << "Frame " << frameIndex << ", iteration " << i << std::endl;
+        }
 
-//         if (algorithm == "simulated annealing") {
-//             // Simulated annealing logic
-//         } else if (algorithm == "gradient descent") {
-//             std::cout << "Current iteration: " << i + 1 << std::endl;
-//             if (minimaReached) {
-//                 continue;
-//             }
+        if (algorithm == "simulated annealing") {
+            // Simulated annealing logic
+        } else if (algorithm == "gradient descent") {
+            std::cout << "Current iteration: " << i + 1 << std::endl;
+            if (minimaReached) {
+                continue;
+            }
 
-//             // Gradient descent logic
-//         } else {
-//             // Hill climbing logic
-//         }
-//     }
-// }
+            // Gradient descent logic
+        } else {
+            // Hill climbing logic
+        }
+    }
+}
 
-// void Lineage::saveImages(int frameIndex)
-// {
-//     if (frameIndex < 0 || static_cast<size_t>(frameIndex) >= frames.size()) {
-//         throw std::invalid_argument("Invalid frame index");
-//     }
+void Lineage::saveImages(int frameIndex)
+{
+    if (frameIndex < 0 || static_cast<size_t>(frameIndex) >= frames.size()) {
+        throw std::invalid_argument("Invalid frame index");
+    }
 
-//     std::vector<cv::Mat> realImages = frames[frameIndex].generateOutputImages();
-//     std::vector<cv::Mat> synthImages = frames[frameIndex].generateOutputSynthImages();
-//     std::cout << "Saving images for frame " << frameIndex << "..." << std::endl;
+    std::vector<cv::Mat> realImages = frames[frameIndex].generateOutputImages();
+    std::vector<cv::Mat> synthImages = frames[frameIndex].generateOutputSynthImages();
+    std::cout << "Saving images for frame " << frameIndex << "..." << std::endl;
 
-//     std::string realOutputPath = outputPath + "/real/" + std::to_string(frameIndex);
-//     if (!std::filesystem::exists(realOutputPath)) {
-//         std::filesystem::create_directories(realOutputPath);
-//     }
-//     for (size_t i = 0; i < realImages.size(); ++i) {
-//         // Save real images
-//         cv::imwrite(realOutputPath + "/" + std::to_string(i) + ".png", realImages[i]);
-//     }
+    std::string realOutputPath = outputPath + "/real/" + std::to_string(frameIndex);
+    if (!std::filesystem::exists(realOutputPath)) {
+        std::filesystem::create_directories(realOutputPath);
+    }
+    for (size_t i = 0; i < realImages.size(); ++i) {
+        // Save real images
+        cv::imwrite(realOutputPath + "/" + std::to_string(i) + ".png", realImages[i]);
+    }
 
-//     std::string synthOutputPath = outputPath + "/synth/" + std::to_string(frameIndex);
-//     if (!std::filesystem::exists(synthOutputPath)) {
-//         std::filesystem::create_directories(synthOutputPath);
-//     }
-//     for (size_t i = 0; i < synthImages.size(); ++i) {
-//         // Save synthetic images
-//         cv::imwrite(synthOutputPath + "/" + std::to_string(i) + ".png", synthImages[i]);
-//     }
+    std::string synthOutputPath = outputPath + "/synth/" + std::to_string(frameIndex);
+    if (!std::filesystem::exists(synthOutputPath)) {
+        std::filesystem::create_directories(synthOutputPath);
+    }
+    for (size_t i = 0; i < synthImages.size(); ++i) {
+        // Save synthetic images
+        cv::imwrite(synthOutputPath + "/" + std::to_string(i) + ".png", synthImages[i]);
+    }
 
-//     std::cout << "Done" << std::endl;
-// }
+    std::cout << "Done" << std::endl;
+}
 
-// void Lineage::saveCells(int frameIndex)
-// {
+void Lineage::saveCells(int frameIndex)
+{
 
-// }
+}
 
-// void Lineage::copyCellsForward(int to)
-// {
-//     if (to >= frames.size()) {
-//         return;
-//     }
-//     // assumes cells have deepcopy copy constructors
-//     frames[to].cells = frames[to - 1].cells
-// }
+void Lineage::copyCellsForward(int to)
+{
+    if (to >= frames.size()) {
+        return;
+    }
+    // assumes cells have deepcopy copy constructors
+    frames[to].cells = frames[to - 1].cells
+}
 
-// unsigned int Lineage::getLength()
-// {
-//     return frames.size();
-// }
+unsigned int Lineage::getLength()
+{
+    return frames.size();
+}
 

@@ -1,7 +1,7 @@
 #include <iostream>
 #include <fstream>
 #include "Lineage.hpp"
-#include <direct.h>
+#include <unistd.h>
 
 void testProcesedImage(const std::string& imagePath)
 {
@@ -27,9 +27,9 @@ void testLoadImage(const std::string& imagePath)
 
 int main(int argc, char** argv )
 {
-    std::string rootPath = "E:\\CS\\ResearchRepo\\CellUniverse\\3d\\C++";
-    std::string imagePath = rootPath + "\\lenna.png";
-    std::string tifPath = rootPath + "\\frame000.tif";
+    std::string rootPath = "..";
+    std::string imagePath = rootPath + "/lenna.png";
+    std::string tifPath = rootPath + "/frame000.tif";
     testProcesedImage(imagePath);
     testLoadImage(tifPath);
     return 0;
