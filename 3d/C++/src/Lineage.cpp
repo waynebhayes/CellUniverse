@@ -61,7 +61,7 @@ std::vector<cv::Mat> loadImage(const std::string & imageFile, const BaseConfig &
     return imgs;
 }
 
-Lineage::Lineage(std::map<std::string, std::vector<Cell>> initialCells, std::vector<std::string> imagePaths, BaseConfig config, std::string outputPath, int continueFrom = -1)
+Lineage::Lineage(std::map<std::string, std::vector<Cell>> initialCells, std::vector<std::string> imagePaths, BaseConfig config, std::string outputPath, int continueFrom)
     : config(config), outputPath(outputPath)
 {
     for (size_t i = 0; i < imagePaths.size(); ++i) {
@@ -72,10 +72,10 @@ Lineage::Lineage(std::map<std::string, std::vector<Cell>> initialCells, std::vec
 
         if ((continueFrom == -1 || i < continueFrom) && initialCells.find(file_name) != initialCells.end()) {
             const std::vector<Cell>& cells = initialCells.at(file_name);
-            frames.emplace_back(real_images, config.simulation, cells, outputPath, file_name);
+//            frames.emplace_back(real_images, config.simulation, cells, outputPath, file_name);
         }
         else {
-            frames.emplace_back(real_images, config.simulation, std::vector<Cell>(), outputPath, file_name);
+//            frames.emplace_back(real_images, config.simulation, std::vector<Cell>(), outputPath, file_name);
         }
     }
 }
@@ -155,7 +155,7 @@ void Lineage::copyCellsForward(int to)
         return;
     }
     // assumes cells have deepcopy copy constructors
-    frames[to].cells = frames[to - 1].cells
+//    frames[to].cells = frames[to - 1].cells;
 }
 
 unsigned int Lineage::getLength()

@@ -4,9 +4,26 @@
 
 #include "Cell.hpp"
 
-class SimulationConfig: public BaseModel
-{
+class BaseModel {
 
+};
+
+class GenericModel {
+
+};
+
+class SimulationConfig: public BaseModel {
+public:
+    int iterationsPerCell;
+};
+
+class ProbabilityConfig: public BaseModel {
+
+};
+
+class BaseConfig: public GenericModel {
+public:
+    SimulationConfig simulation;
 };
 
 #endif

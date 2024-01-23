@@ -4,12 +4,13 @@
 
 #include <opencv2/opencv.hpp>
 #include "Cells/Cell.hpp"
-#include "Config/BaseConfig.hpp"
+#include "Config/ConfigTypes.hpp"
 #include "Frame.hpp"
 #include <iostream>
 #include <map>
 #include <string>
 #include <vector>
+#include <filesystem>
 
 
 cv::Mat processImage(const cv::Mat& image, const BaseConfig& config);

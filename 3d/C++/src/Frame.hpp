@@ -4,10 +4,15 @@
 
 #include "Cell.hpp"
 #include "Config.hpp"
+#include <vector>
 
 class Frame
 {
-    Frame(const cv::Mat& realImageStack, )
+public:
+    size_t size();
+    std::vector<Cell> cells;
+    std::vector<cv::Mat> generateOutputImages();
+    std::vector<cv::Mat> generateOutputSynthImages();
 };
 
 #endif
