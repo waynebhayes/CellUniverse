@@ -1,9 +1,5 @@
 // Cell.cpp
 //Yuxuan's version
-//TODO: line 44
-
-#include "Cell.hpp"
-
 #include <iostream>
 #include <vector>
 #include <tuple>
@@ -14,6 +10,7 @@ class CellParams {
     //The CellParams class stores the parameters of a particular cell.
 public:
     std::string name;
+    //CellParams(const std::string& name) : name(name) {} //Krishna
 };
 
 class CellConfig {
@@ -40,10 +37,10 @@ public:
 class Cell {
     //The Cell class stores information about a particular cell.
 protected:
-    CellParams _initProps;
-    std::type_info _paramClass; //?unsure
+    CellParams paramClass;
+    CellConfig cellConfig;
 public:
-    Cell(const CellParams& initProps) : _initProps(initProps) {}
+    Cell(const CellParams& initProps) : paramClass(initProps) {}
     virtual ~Cell() = default;
 
     virtual void draw() const = 0;
