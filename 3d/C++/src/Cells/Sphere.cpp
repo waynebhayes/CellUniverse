@@ -6,7 +6,6 @@
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include "cell.cpp"
-#include "configTypes.cpp"
 #define M_PI 3.14159265358979323846
 
 class SphereConfig : public CellConfig {
@@ -48,7 +47,8 @@ public:
     Sphere(const SphereParams& init_props)
         : Cell(init_props), _name(init_props.name), _position({ static_cast<float>(init_props.x), static_cast<float>(init_props.y), static_cast<float>(init_props.z) }),
         _radius(static_cast<float>(init_props.radius)), _rotation(0), dormant(false) {}
-
+    //default constructor ?
+    Sphere() : _radius(0), _rotation(0), dormant(false) {}
 
     double get_radius_at(double z) const {
         if (std::abs(_position.z - z) > _radius) {
@@ -58,7 +58,7 @@ public:
     }
 
 
-    void draw(cv::Mat& image, SimulationConfig simulationConfig, cv::Mat* cellMap = nullptr, float z = 0) const override {
+    void Cell::draw(cv::Mat & image, SimulationConfig simulationConfig, cv::Mat * cellMap = nullptr, float z = 0) const override {
         if (dormant) {
             return;
         }
@@ -76,7 +76,7 @@ public:
         cv::ellipse(image, center, axes, 0, 0, 360, cellColor, -1);
     }
 
-    void drawOutline(cv::Mat& image, cv::Scalar color, float z = 0) const override {
+    void Cell::draw_outline(cv::Mat& image, cv::Scalar color, float z = 0) const override {
         if (dormant) {
             return;
         }
@@ -91,17 +91,18 @@ public:
         cv::ellipse(image, center, axes, 0, 0, 360, color, 1);
     }
 
-    Sphere get_perturbed_cell() const override {
-        return Sphere(SphereParams{
-            .name = _name,
-            .x = _position.x + cellConfig.x.get_perturb_offset(),
-            .y = _position.y + cellConfig.y.get_perturb_offset(),
-            .z = _position.z + cellConfig.z.get_perturb_offset(),
-            .radius = _radius + cellConfig.radius.get_perturb_offset()
-            });
+    Cell* Cell::get_perturbed_cell() const override {
+        SphereParams sphereParams(
+            _name,
+            _position.x + cellConfig.x.get_perturb_offset(),
+            _position.y + cellConfig.y.get_perturb_offset(),
+            _position.z + cellConfig.z.get_perturb_offset(),
+            _radius + cellConfig.radius.get_perturb_offset()
+        );
+        return new Sphere(sphereParams);
     }
 
-    Sphere get_parameterized_cell(std::unordered_map<std::string, float> params) const override {
+    Cell* Cell::get_parameterized_cell(std::unordered_map<std::string, float> params = {}) const override {
         float xOffset = params["x"];
         float yOffset = params["y"];
         float zOffset = params["z"];
@@ -115,17 +116,17 @@ public:
         }
 
         float newRadius = fmin(fmax(Sphere::cellConfig.minRadius, _radius + radiusOffset), Sphere::cellConfig.maxRadius);
-
-        return Sphere(SphereParams{
-            .name = _name,
-            .x = _position.x + xOffset,
-            .y = _position.y + yOffset,
-            .z = _position.z + zOffset,
-            .radius = newRadius
-            });
+        SphereParams sphereParams(
+            _name,
+            _position.x + xOffset,
+            _position.y + yOffset,
+            _position.z + zOffset,
+            newRadius
+        );
+        return new Sphere(sphereParams);
     }
 
-    std::tuple<Cell, Cell, bool> get_split_cells() const override {
+    std::tuple<Cell*, Cell*, bool> Cell::get_split_cells() const override {
         double theta = ((double)rand() / RAND_MAX) * 2 * M_PI;
         double phi = ((double)rand() / RAND_MAX) * M_PI;
 
@@ -145,10 +146,10 @@ public:
 
         bool constraints = cell1.check_constraints() && cell2.check_constraints();
 
-        Cell cell1Base = static_cast<Cell>(cell1);
-        Cell cell2Base = static_cast<Cell>(cell2);//convert Sphere to Cell
+        //Cell cell1Base = static_cast<Cell>(cell1);
+        //Cell cell2Base = static_cast<Cell>(cell2);//convert Sphere to Cell
 
-        return std::make_tuple(cell1Base, cell2Base, constraints);
+        return std::make_tuple(new Sphere(cell1), new Sphere(cell2), constraints);
     }
 
     bool check_constraints() const {
@@ -167,7 +168,7 @@ public:
         return SphereParams(_name, _position.x, _position.y, _position.z, _radius);
     }
 
-    std::pair<std::vector<float>, std::vector<float>> calculate_corners() const override {
+    std::pair<std::vector<float>, std::vector<float>> Cell::calculate_corners() const override {
         std::vector<float> min_corner = { static_cast<float>(_position.x) - static_cast<float>(_radius),
                                           static_cast<float>(_position.y) - static_cast<float>(_radius),
                                           static_cast<float>(_position.z) - static_cast<float>(_radius) };
@@ -180,7 +181,7 @@ public:
     }
 
 
-    std::pair<std::vector<float>, std::vector<float>> calculate_minimum_box(Sphere& perturbed_cell) const override {
+    std::pair<std::vector<float>, std::vector<float>> Cell::calculate_minimum_box(Cell& perturbed_cell) const override {
         auto [cell1_min_corner, cell1_max_corner] = calculate_corners();
         auto [cell2_min_corner, cell2_max_corner] = perturbed_cell.calculate_corners();
 
