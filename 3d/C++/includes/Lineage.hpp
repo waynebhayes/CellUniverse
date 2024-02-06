@@ -3,15 +3,17 @@
 #define LINEAGE_HPP
 
 #include <opencv2/opencv.hpp>
-#include "Cells/Cell.hpp"
-#include "Config/ConfigTypes.hpp"
+#include "Cell.hpp"
+#include "ConfigTypes.hpp"
 #include "Frame.hpp"
+#include "types.hpp"
 #include <iostream>
 #include <map>
 #include <string>
 #include <vector>
 #include <filesystem>
-
+#include <algorithm>
+#include <fstream>
 
 cv::Mat processImage(const cv::Mat& image, const BaseConfig& config);
 
@@ -30,7 +32,7 @@ public:
 
    void copyCellsForward(int to);
 
-   unsigned int getLength();
+   unsigned int length();
 
 private:
    BaseConfig config;
