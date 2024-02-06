@@ -405,7 +405,7 @@ Cost Frame::gradientDescent() {
 }
 
 ImageStack Frame::getSynthImageStack() {
-    return _synthImageStack;aIOOOOOOOOOO
+    return _synthImageStack;
 }
 
 
