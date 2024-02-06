@@ -22,16 +22,17 @@ public:
     ImageStack generateSynthImages();
     ImageStack generateSynthImagesFast(Cell &oldCell, Cell &newCell);
     Cost calculateCost(const ImageStack& synthImageStack);
-    ImageStack generateOutputImage();
-    ImageStack generateOutputSynthImage();
+    ImageStack generateOutputImages();
+    ImageStack generateOutputSynthImages();
     // DataFrame getCellsAsParams();
     size_t length() const;
     CostCallbackPair perturb();
     CostCallbackPair split();
-
+    Cost gradientDescent();
+    ImageStack getSynthImageStack();
+    std::vector<Cell> cells;
 private:
     std::vector<double> zSlices;
-    std::vector<Cell> cells;
     SimulationConfig simulationConfig;
     std::string outputPath;
     std::string imageName;
