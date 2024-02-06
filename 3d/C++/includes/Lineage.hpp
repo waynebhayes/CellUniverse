@@ -6,6 +6,7 @@
 #include "Cells/Cell.hpp"
 #include "Config/ConfigTypes.hpp"
 #include "Frame.hpp"
+#include "types.hpp"
 #include <iostream>
 #include <map>
 #include <string>

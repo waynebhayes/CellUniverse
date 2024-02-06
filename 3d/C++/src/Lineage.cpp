@@ -1,10 +1,11 @@
 // Lineage.cpp
-#include "Lineage.hpp"
-#include "Frame.hpp"
+#include "../includes/Frame.hpp"
+#include "../includes/Lineage.hpp"
 
-cv::Mat processImage(const cv::Mat& image, const BaseConfig & config)
+
+Image processImage(const Image& image, const BaseConfig & config)
 {
-    cv::Mat processedImage;
+    Image processedImage;
 
     if (image.channels() == 3) {
         cv::cvtColor(image, processedImage, cv::COLOR_RGB2GRAY);
@@ -22,13 +23,13 @@ cv::Mat processImage(const cv::Mat& image, const BaseConfig & config)
     return processedImage;
 }
 
-std::vector<cv::Mat> loadImage(const std::string & imageFile, const BaseConfig & config)
+std::vector<Image> loadImage(const std::string & imageFile, const BaseConfig & config)
 {
-    std::vector<cv::Mat> imgs;
+    std::vector<Image> imgs;
     // Get the file extension
     std::string extension = imageFile.substr(imageFile.find_last_of('.') + 1);
     if (extension == "tiff" || extension == "tif") {
-        cv::Mat img = cv::imread(imageFile, cv::IMREAD_ANYDEPTH | cv::IMREAD_COLOR);
+        Image img = cv::imread(imageFile, cv::IMREAD_ANYDEPTH | cv::IMREAD_COLOR);
         cv::imshow("Tif file", img);
         cv::waitKey(0);
         if (img.empty()) {
@@ -40,12 +41,12 @@ std::vector<cv::Mat> loadImage(const std::string & imageFile, const BaseConfig &
         std::cout << img.size[0] << " " << img.size[1] << " " << std::endl;
 
         for (int i = 0; i < slices; ++i) {
-            cv::Mat slice = img.row(i).clone();
+            Image slice = img.row(i).clone();
             cv::cvtColor(slice, slice, cv::COLOR_BGR2GRAY);
             imgs.push_back(processImage(slice, config));
         }
     } else {
-        cv::Mat img = cv::imread(imageFile);
+        Image img = cv::imread(imageFile);
         if (img.empty()) {
             std::cout << "Error: Could not read the image" << std::endl;
             return imgs;
@@ -65,7 +66,7 @@ Lineage::Lineage(std::map<std::string, std::vector<Cell>> initialCells, std::vec
     : config(config), outputPath(outputPath)
 {
     for (size_t i = 0; i < imagePaths.size(); ++i) {
-        std::vector<cv::Mat> real_images;
+        std::vector<Image> real_images;
         real_images = loadImage(imagePaths[i], config);
 
         std::string file_name = imagePaths[i];
@@ -119,8 +120,8 @@ void Lineage::saveImages(int frameIndex)
         throw std::invalid_argument("Invalid frame index");
     }
 
-    std::vector<cv::Mat> realImages = frames[frameIndex].generateOutputImages();
-    std::vector<cv::Mat> synthImages = frames[frameIndex].generateOutputSynthImages();
+    std::vector<Image> realImages = frames[frameIndex].generateOutputImages();
+    std::vector<Image> synthImages = frames[frameIndex].generateOutputSynthImages();
     std::cout << "Saving images for frame " << frameIndex << "..." << std::endl;
 
     std::string realOutputPath = outputPath + "/real/" + std::to_string(frameIndex);
