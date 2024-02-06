@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.10)
 
 project("celluniverse")
-
+set(OpenCV_DIR	C:\Users/faisa/Downloads/opencv/build)
 find_package(OpenCV REQUIRED)
 include_directories( ${OpenCV_INCLUDE_DIRS} src src/Cells src/Config)
 
