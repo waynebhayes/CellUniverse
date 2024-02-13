@@ -15,8 +15,9 @@ public:
     std::string name;
 };
 
-class CellConfig {
+class CellConfig : public BaseConfig{
     // Abstract base class for cell configurations.
+    CellConfig(const YAML::node& node){}
 };
 
 class PerturbParams {
