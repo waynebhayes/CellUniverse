@@ -4,6 +4,7 @@
 #include <string>
 #include <opencv2/opencv.hpp>
 #include "ConfigTypes.hpp"
+#include "CellFactory.hpp"
 #include "yaml-cpp/yaml.h"
 
 struct Args {
@@ -60,6 +61,36 @@ void loadConfig(const std::string& path, BaseConfig& config) {
 }
 
 
+CellMap create_cells(const Path &init_params_path, int z_offset, float z_scaling) {
+    std::ifstream file(init_params_path.c_str());
+    std::string line;
+    std::string firstLine;
+    std::getline(file, firstLine); // remove the header
+    while (std::getline(file, line)) {
+        std::istringstream ss(line);
+        float x, y, z, radius;
+        std::string floatStr;
+        std::string filePath;
+        std::string cellName;
+        std::getline(ss, filePath, ',');
+        std::getline(ss, cellName, ',');
+        std::getline(ss, floatStr, ',');
+        x = std::stof(floatStr);
+        std::getline(ss, floatStr, ',');
+        y = std::stof(floatStr);
+        std::getline(ss, floatStr, ',');
+        z = std::stof(floatStr);
+        std::getline(ss, floatStr, ',');
+        radius = std::stof(floatStr);
+        continue;
+
+        // Further processing to create cells
+        // This is a placeholder. You need to parse each field and construct cells accordingly.
+    }
+    return {};
+}
+
+
 int main(int argc, char* argv[])
 {
     // parse args here
@@ -88,6 +119,7 @@ int main(int argc, char* argv[])
     PathVec imageFilePaths = get_image_file_paths(args.input, args.first_frame, args.last_frame, config);
 
     // load cells here
-
+    CellFactory cellFactory(config);
+    CellMap cells = create_cells(args.initial, config.simulation.z_slices / 2, config.simulation.z_scaling);
     return 0;
 }

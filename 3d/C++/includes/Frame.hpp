@@ -3,7 +3,6 @@
 #define FRAME_HPP
 
 #include "Cell.hpp"
-#include "Config.hpp"
 #include <vector>
 #include <string>
 #include <opencv2/opencv.hpp>

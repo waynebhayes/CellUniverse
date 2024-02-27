@@ -9,11 +9,9 @@ set(cwd ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_executable(${PROJECT_NAME}
         ${cwd}/src/main.cpp
-        src/CellFactory.cpp
+#        src/CellFactory.cpp
         #        ${cwd}/src/Lineage.cpp
 #        ${cwd}/src/Frame.cpp
-#        ${cwd}/src/CellUniverse.cpp
-#        ${cwd}/src/Args.cpp
 #        ${cwd}/src/Cells/Sphere.cpp
 )
 
