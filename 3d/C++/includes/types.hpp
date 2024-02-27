@@ -10,6 +10,16 @@
 #include <opencv2/opencv.hpp>
 #include <vector>
 #include <unordered_map>
+#include <filesystem>
+
+enum argKeywords {
+    ff = 1,
+    lf,
+    input,
+    output,
+    config,
+    initial
+};
 
 typedef std::string Path;
 typedef cv::Mat Image;
@@ -19,5 +29,7 @@ typedef std::function<void(bool)> CallBackFunc;
 typedef std::unordered_map<std::string, ImageStack> ParamImageMap;
 typedef std::unordered_map<std::string, float> ParamValMap;
 typedef double Cost;
+namespace fs = std::filesystem;
+typedef std::vector<fs::path> PathVec;
 
 #endif //CELLUNIVERSE_TYPES_HPP

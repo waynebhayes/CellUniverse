@@ -1,74 +1,71 @@
 // ConfigTypes.hpp
 #ifndef CONFIGTYPES_HPP
 #define CONFIGTYPES_HPP
+#include <vector>
+#include <string>
+#include "Sphere.hpp"
 #include "yaml-cpp/yaml.h"
-
 
 class SimulationConfig {
 public:
-    int iterationsPerCell;
-    float backgroundColor;
-    float cellColor;
-    int padding = 0;
-    float zScaling = 1;
-    float blurSigma = 0;
-private:
-    int zSlices = -1;
-    std::vector<int> zValues;
+    int iterations_per_cell;
+    float background_color;
+    float cell_color;
+    int padding;
+    float z_scaling;
+    float blur_sigma;
+    int z_slices;
+    std::vector<int> z_values;
 
-    SimulationConfig(const YAML::Node& node) {
-        iterationsPerCell = node["iterations_per_cell"].as<int>();
-        backgroundColor = node["background_color"].as<float>();
-        cellColor = node["cell_color"].as<float>();
-        padding = node["padding"].as<int>();
-        zScaling = node["z_scaling"].as<float>();
-        blurSigma = node["blur_sigma"].as<float>();
-
+    // Constructor with default values
+    SimulationConfig() : iterations_per_cell(0), background_color(0.0f), cell_color(0.0f),
+                         padding(0), z_scaling(1.0), blur_sigma(0.0f), z_slices(-1) {
     }
-    // No need for C++
-    //void checkZValues() const {
-    //    if (!zValues.empty()) {
-    //        throw std::invalid_argument("zValues should not be set manually");
-    //    }
-    //}
-
-    //void checkZSlices() const {
-    //    if (zSlices != -1) {
-    //        throw std::invalid_argument("zSlices should not be set manually");
-    //    }
-    //}
+    void explodeConfig(const YAML::Node node) {
+        iterations_per_cell = node["iterations_per_cell"].as<int>();
+        background_color = node["background_color"].as<float>();
+        cell_color = node["cell_color"].as<float>();
+        padding = node["padding"].as<int>();
+        z_scaling = node["z_scaling"].as<float>();
+        blur_sigma = node["blur_sigma"].as<float>();
+    }
 };
 
 class ProbabilityConfig {
 public:
     float perturbation;
     float split;
+    ProbabilityConfig() : perturbation(0.0f), split(0.0f) {
+    }
 
-    static void checkProbability(std::vector<float> values) {//TODO
-    	}
-    ProbabilityConfig(const YAML::Node& node)
-    {
-        perturbation = node["perturbation"].as<float>();
-        split = node["split"].as<float>();
+    void explodeConfig(const YAML::Node& node) {
+        if (node["perturbation"]) {
+            perturbation = node["perturbation"].as<float>();
+        }
+        if (node["split"]) {
+            split = node["split"].as<float>();
+        }
     }
 };
 
-class CellConfig {
-    // Abstract base class for cell configurations.
-    CellConfig() = default;
-};
 
 class BaseConfig {
 public:
-    CellConfig cell;
-    char CellType; //Added new attribute for type check: 'b'/'s' stands for bacilli/sphere
+    std::string cellType;
+    // TODO: Change to a template to support more different types of config
+    CellConfig* cell;
     SimulationConfig simulation;
     ProbabilityConfig prob;
-    BaseConfig(const YAML::Node& node) :
-        simulation(node), prob(node), cell(node) {
-        // Parse YAML node and initialize config object
+    BaseConfig() :cell(nullptr) {};
+    // load the BaseConfig with a YAML node
+    void explodeConfig(const YAML::Node& node) {
+        cellType = node["cellType"].as<std::string>();
+        // TODO: Now cell is always pointing to a sphere config, make it more dynamic later
+        cell = new SphereConfig;
+        cell->explodeConfig(node["cell"]);
+        simulation.explodeConfig(node["simulation"]);
+        prob.explodeConfig(node["prob"]);
     }
 };
-
 
 #endif
