@@ -17,7 +17,7 @@ public:
     Cell() {}
     virtual ~Cell() = default;
     virtual void draw(cv::Mat& image, SimulationConfig simulationConfig, cv::Mat* cellMap = nullptr, float z = 0) const = 0;
-    virtual void draw_outline(cv::Mat& image, cv::Scalar color, float z = 0) const = 0;
+    virtual void draw_outline(cv::Mat& image, float color, float z = 0) const = 0;
     virtual Cell* get_perturbed_cell() const = 0;
     virtual Cell* get_parameterized_cell(std::unordered_map<std::string, float> params = {}) const = 0;
     virtual std::tuple<Cell*, Cell*, bool> get_split_cells() const = 0;

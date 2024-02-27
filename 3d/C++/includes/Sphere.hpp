@@ -13,16 +13,16 @@
 #define M_PI 3.14159265358979323846
 
 
-class SphereParams {
+class SphereParams: public CellParams{
 public:
     float x;
     float y;
     float z;
     float radius;
 
-    SphereParams() : x(0), y(0), z(0), radius(0) {}
-    SphereParams(float x, float y, float z, float radius)
-        : x(x), y(y), z(z), radius(radius) {}
+    SphereParams() : CellParams(""), x(0), y(0), z(0), radius(0) {}
+    SphereParams(const std::string& name, float x, float y, float z, float radius)
+        : CellParams(name), x(x), y(y), z(z), radius(radius) {}
 
     void parseParams(float x_, float y_, float z_, float radius_) {
         x = x_;
@@ -43,7 +43,7 @@ public:
     static SphereParams paramClass;
     static SphereConfig cellConfig;
     Sphere(const SphereParams& init_props)
-            : _name("0"), _position{init_props.x, init_props.y, init_props.z},
+            : _name(init_props.name), _position{init_props.x, init_props.y, init_props.z},
               _radius(init_props.radius), _rotation(0), dormant(false) {}
 
     Sphere() : _radius(0), _rotation(0), dormant(false) {}

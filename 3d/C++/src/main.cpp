@@ -31,8 +31,10 @@ PathVec get_image_file_paths(const std::string& input_pattern, int first_frame, 
 
             // Setup some configurations automatically if they are tif files
             if (file.extension() == ".tif" || file.extension() == ".tiff") {
-                cv::Mat img = cv::imread(file.string(), cv::IMREAD_UNCHANGED); // Use UNCHANGED to read the image as is, including alpha channel
-                int slices = img.size[0]; // Assuming the first dimension is the number of slices
+                std::vector<cv::Mat> images;
+                cv::imreadmulti(file.string(), images, cv::IMREAD_UNCHANGED);
+//                std::cout << "Loaded " << images.size() << " images from the TIFF file." << std::endl;
+                int slices = images.size(); // Assuming the first dimension is the number of slices
                 // set the uninitialized z_slices and z_values
                 config.simulation.z_slices = slices;
                 config.simulation.z_values.clear();
@@ -59,37 +61,6 @@ void loadConfig(const std::string& path, BaseConfig& config) {
     YAML::Node node = YAML::LoadFile(path);
     config.explodeConfig(node);
 }
-
-
-CellMap create_cells(const Path &init_params_path, int z_offset, float z_scaling) {
-    std::ifstream file(init_params_path.c_str());
-    std::string line;
-    std::string firstLine;
-    std::getline(file, firstLine); // remove the header
-    while (std::getline(file, line)) {
-        std::istringstream ss(line);
-        float x, y, z, radius;
-        std::string floatStr;
-        std::string filePath;
-        std::string cellName;
-        std::getline(ss, filePath, ',');
-        std::getline(ss, cellName, ',');
-        std::getline(ss, floatStr, ',');
-        x = std::stof(floatStr);
-        std::getline(ss, floatStr, ',');
-        y = std::stof(floatStr);
-        std::getline(ss, floatStr, ',');
-        z = std::stof(floatStr);
-        std::getline(ss, floatStr, ',');
-        radius = std::stof(floatStr);
-        continue;
-
-        // Further processing to create cells
-        // This is a placeholder. You need to parse each field and construct cells accordingly.
-    }
-    return {};
-}
-
 
 int main(int argc, char* argv[])
 {
@@ -120,6 +91,9 @@ int main(int argc, char* argv[])
 
     // load cells here
     CellFactory cellFactory(config);
-    CellMap cells = create_cells(args.initial, config.simulation.z_slices / 2, config.simulation.z_scaling);
+    CellMap cells = cellFactory.create_cells(args.initial, config.simulation.z_slices / 2, config.simulation.z_scaling);
+
+    // create lineage here
+
     return 0;
 }

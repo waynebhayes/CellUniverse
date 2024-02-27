@@ -17,6 +17,7 @@ CellMap CellFactory::create_cells(const Path &init_params_path, int z_offset, fl
     std::string line;
     std::string firstLine;
     std::getline(file, firstLine); // remove the header
+    CellMap initialCells;
     while (std::getline(file, line)) {
         std::istringstream ss(line);
         float x, y, z, radius;
@@ -33,10 +34,11 @@ CellMap CellFactory::create_cells(const Path &init_params_path, int z_offset, fl
         z = std::stof(floatStr);
         std::getline(ss, floatStr, ',');
         radius = std::stof(floatStr);
+        z -= z_offset;
+        z *= z_scaling;
+        Sphere::paramClass = SphereParams(cellName, x, y, z, radius);
+        initialCells[filePath].push_back(Sphere(SphereParams(cellName, x, y, z, radius)));
         continue;
-
-        // Further processing to create cells
-        // This is a placeholder. You need to parse each field and construct cells accordingly.
     }
-    return {};
+    return initialCells;
 }

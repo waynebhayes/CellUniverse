@@ -52,6 +52,9 @@ class CellParams {
     //The CellParams class stores the parameters of a particular cell.
 public:
     std::string name;
+    CellParams(const std::string& name_)
+        : name(name_){
+    }
 };
 
 class PerturbParams {
@@ -84,7 +87,7 @@ class CellConfig {
 public:
     // pure virtual function for exploding the configuration
     virtual void explodeConfig(const YAML::Node& node) = 0;
-    virtual ~CellConfig() = 0;
+    virtual ~CellConfig() = default;
 //    virtual CellConfig& operator=(const CellConfig& other) = 0;
 };
 
@@ -96,6 +99,7 @@ public:
     PerturbParams radius{};
     double minRadius{};
     double maxRadius{};
+    ~SphereConfig() = default;
 
     void explodeConfig(const YAML::Node& node) override
     {
