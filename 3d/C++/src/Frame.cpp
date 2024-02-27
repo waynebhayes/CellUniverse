@@ -1,6 +1,6 @@
 #include "../includes/Frame.hpp"
 
-Frame::Frame(const ImageStack &realImageStack, const SimulationConfig &simulationConfig, const std::vector<Cell> &cells,
+Frame::Frame(const ImageStack &realImageStack, const SimulationConfig &simulationConfig, const std::vector<Cell*> &cells,
              const Path &outputPath, const std::string &imageName)
     : cells(cells),
       simulationConfig(simulationConfig),
@@ -10,9 +10,9 @@ Frame::Frame(const ImageStack &realImageStack, const SimulationConfig &simulatio
       _realImageStack(realImageStack) {
 
     // Calculate z_slices
-    for (int i = 0; i < simulationConfig.zSlices; ++i) {
-        double zValue = simulationConfig.zScaling * (i - simulationConfig.zSlices / 2);
-        zSlices.push_back(zValue);
+    for (int i = 0; i < simulationConfig.z_slices; ++i) {
+        double zValue = simulationConfig.z_scaling * (i - simulationConfig.z_slices / 2);
+        z_slices.push_back(zValue);
     }
     padRealImage();
     _synthImageStack = generateSynthImages();
@@ -22,7 +22,7 @@ Frame::Frame(const ImageStack &realImageStack, const SimulationConfig &simulatio
 
 void Frame::padRealImage() {
     int padding = simulationConfig.padding;
-    cv::Scalar paddingColor(simulationConfig.backgroundColor);
+    cv::Scalar paddingColor(simulationConfig.background_color);
 
     cv::Mat paddedImage;
     std::vector<cv::Mat> paddedImageStack;
@@ -44,11 +44,11 @@ ImageStack Frame::generateSynthImages() {
     cv::Size shape = getImageShape(); // Assuming getImageShape returns a cv::Size
     ImageStack imageStack;
 
-    for (double z : zSlices) {
-        Image synthImage = cv::Mat(shape, CV_8UC3, cv::Scalar(simulationConfig.backgroundColor)); // Assuming background color is in cv::Scalar format
+    for (double z : z_slices) {
+        Image synthImage = cv::Mat(shape, CV_8UC3, cv::Scalar(simulationConfig.background_color)); // Assuming background color is in cv::Scalar format
 
-        for (const Cell& cell : cells) {
-            cell.draw(synthImage, simulationConfig, nullptr, z);
+        for (const auto& cell : cells) {
+            cell->draw(synthImage, simulationConfig, nullptr, z);
         }
 
         imageStack.push_back(synthImage);
@@ -75,7 +75,7 @@ Cost Frame::calculateCost(const ImageStack &synthImageStack) {
     return totalCost;
 }
 
-ImageStack Frame::generateSynthImagesFast(Cell &oldCell, Cell &newCell) {
+ImageStack Frame::generateSynthImagesFast(Cell *oldCell, Cell *newCell) {
     if (cells.empty()) {
         throw std::runtime_error("Cells are not set");
     }
@@ -84,10 +84,10 @@ ImageStack Frame::generateSynthImagesFast(Cell &oldCell, Cell &newCell) {
     ImageStack synthImageStack;
 
     // Calculate the smallest box that contains both the old and new cell
-    cv::Rect minBox = oldCell.calculateMinimumBox(newCell);
+    cv::Rect minBox = oldCell->calculate_minimum_box(*newCell);
 
-    for (size_t i = 0; i < zSlices.size(); ++i) {
-        double z = zSlices[i];
+    for (size_t i = 0; i < z_slices.size(); ++i) {
+        double z = z_slices[i];
 
         // If the z-slice is outside the min/max box, append the existing synthetic image to the stack
         if (z < minBox.z || z > maxBox.z) {
@@ -95,10 +95,10 @@ ImageStack Frame::generateSynthImagesFast(Cell &oldCell, Cell &newCell) {
             continue;
         }
 
-        Image synthImage = cv::Mat(shape, CV_8UC3, cv::Scalar(simulationConfig.backgroundColor));
+        Image synthImage = cv::Mat(shape, CV_8UC3, cv::Scalar(simulationConfig.background_color));
 
-        for (const Cell& cell : cells) {
-            cell.draw(synthImage, simulationConfig, z);
+        for (const auto& cell : cells) {
+            cell->draw(synthImage, simulationConfig, z);
         }
 
         synthImageStack.push_back(synthImage);
@@ -113,15 +113,15 @@ ImageStack Frame::generateOutputImages() {
 
     for (size_t i = 0; i < _realImageStack.size(); ++i) {
         const cv::Mat& realImage = _realImageStack[i];
-        double z = zSlices[i];
+        double z = z_slices[i];
 
         // Convert grayscale to RGB
         cv::Mat outputFrame;
         cv::cvtColor(realImage, outputFrame, cv::COLOR_GRAY2BGR);
 
         // Draw outlines for each cell
-        for (const Cell& cell : cells) {
-            cell.drawOutline(outputFrame, cv::Scalar(255, 0, 0), z); // Assuming drawOutline takes a cv::Scalar for color
+        for (const auto* cell : cells) {
+            cell->draw_outline(outputFrame, cv::Scalar(255, 0, 0), z); // Assuming drawOutline takes a cv::Scalar for color
         }
 
         // Convert to 8-bit image if necessary
@@ -138,7 +138,7 @@ ImageStack Frame::generateOutputImages() {
 ImageStack Frame::generateOutputSynthImages() {
     ImageStack outputSynthImages;
 
-    for (const auto& synthImage : synthImageStack) {
+    for (const auto& synthImage : _synthImageStack) {
         cv::Mat outputImage;
         if (synthImage.depth() != CV_8U) {
             // Convert to 8-bit image if necessary, scaling pixel values by 255
@@ -166,12 +166,12 @@ CostCallbackPair Frame::perturb() {
     size_t index = distrib(gen);
 
     // Store old cell
-    Cell oldCell = cells[index];
+    Cell* oldCell = cells[index];
 
     // Replace the cell at that index with a new cell
-    cells[index] = *cells[index].getPerturbedCell();
+    cells[index] = cells[index]->get_perturbed_cell();
 
-    bool areCellsValid = oldCell.checkIfCellsValid(cells);
+    bool areCellsValid = oldCell->check_if_cells_valid(cells);
     if (!areCellsValid) {
         cells[index] = oldCell;
         return {0.0, [](bool accept) {}};
@@ -206,12 +206,13 @@ CostCallbackPair Frame::split() {
     size_t index = distrib(gen);
 
     // Store old cell
-    Cell oldCell = cells[index];
+    Cell* oldCell = cells[index];
 
     // Replace the cell at that index with new cells
-    Cell child1, child2;
+    Cell* child1;
+    Cell* child2;
     bool valid;
-    std::tie(child1, child2, valid) = oldCell.getSplitCells();
+    std::tie(child1, child2, valid) = oldCell->get_split_cells();
     if (!valid) {
         return {0.0, [](bool accept) {}};
     }
@@ -220,7 +221,7 @@ CostCallbackPair Frame::split() {
     cells.push_back(child1);
     cells.push_back(child2);
 
-    bool areCellsValid = oldCell.checkIfCellsValid(cells);
+    bool areCellsValid = oldCell->check_if_cells_valid(cells);
     if (!areCellsValid) {
         cells.pop_back();
         cells.pop_back();
@@ -250,8 +251,8 @@ Cost Frame::costOfPerturb(const std::string &perturbParam, float perturbVal, siz
     perturbParams[perturbParam] = perturbVal;
 
     // Perturb cell
-    Cell perturbedCell = cells[index].getParameterizedCell(perturbParams);
-    Cell originalCell = cells[index]; // Store the original cell
+    Cell* perturbedCell = cells[index]->get_parameterized_cell(perturbParams);
+    Cell* originalCell = cells[index]; // Store the original cell
     cells[index] = perturbedCell; // Replace with the perturbed cell
 
     // Generate new image stack and get new cost
@@ -280,8 +281,8 @@ Frame::getSynthPerturbedCells(
         std::unordered_map<std::string, float> perturbParams;
         perturbParams[param] = perturbLength;
 
-        Cell perturbedCell = cells[index].getParameterizedCell(perturbParams);
-        Cell originalCell = cells[index]; // Store the original cell
+        Cell* perturbedCell = cells[index]->get_parameterized_cell(perturbParams);
+        Cell* originalCell = cells[index]; // Store the original cell
         cells[index] = perturbedCell; // Replace with the perturbed cell
 
         perturbedCells[param] = generateSynthImages();
@@ -298,8 +299,8 @@ Cost Frame::gradientDescent() {
     float delta = 1e-3f;
     float alpha = 0.2f;
 
-    std::vector<Cell> cellList = cells; // Assuming cells is a std::vector<Cell>
-    double origCost = calculateCost(synthImageStack);
+    std::vector<Cell*> cellList = cells; // Assuming cells is a std::vector<Cell>
+    double origCost = calculateCost(_synthImageStack);
 
     std::cout << "Original cost: " << origCost << std::endl;
 
@@ -308,10 +309,10 @@ Cost Frame::gradientDescent() {
 
     // Get gradient for each cell
     for (size_t index = 0; index < cellList.size(); ++index) {
-        Cell& cell = cellList[index];
-        Cell oldCell = cell; // Deep copy of the cell
+        Cell* cell = cellList[index];
+        Cell* oldCell = cell; // Deep copy of the cell
 
-        auto params = cell.getCellParams(); // Assuming getCellParams returns a map or similar structure
+        auto params = cell->get_cell_params(); // Assuming getCellParams returns a map or similar structure
 
         // Get params that are changing
         if (paramNames.empty()) {
@@ -345,8 +346,8 @@ Cost Frame::gradientDescent() {
     // Line search and parameter update
     for (size_t index = 0; index < cellList.size(); ++index) {
         const auto& grad = cellsGrad[index];
-        Cell& cell = cellList[index];
-        Cell oldCell = cell; // Deep copy of the cell
+        Cell* cell = cellList[index];
+        Cell* oldCell = cell; // Deep copy of the cell
 
         std::unordered_map<std::string, float> paramGradients;
         for (size_t i = 0; i < paramNames.size(); ++i) {
@@ -357,22 +358,22 @@ Cost Frame::gradientDescent() {
             float direction = -1.0f * alpha;
             float lower = gradient * direction;
             float upper = 3 * lower;
-            double lowerCost = costOfPerturb(param, lower, index, oldCell);
-            double upperCost = costOfPerturb(param, upper, index, oldCell);
+            double lowerCost = costOfPerturb(param, lower, index, *oldCell);
+            double upperCost = costOfPerturb(param, upper, index, *oldCell);
             double bestCost = lowerCost;
 
             // Line search loop
             while (upperCost < bestCost && std::abs(upperCost - bestCost) > tolerance) {
                 upper *= 3;
                 bestCost = upperCost;
-                upperCost = costOfPerturb(param, upper, index, oldCell);
+                upperCost = costOfPerturb(param, upper, index, *oldCell);
             }
 
             float mid;
             // Finding the minimal cost
             while (true) {
                 mid = (lower + upper) / 2.0f;
-                double midCost = costOfPerturb(param, mid, index, oldCell);
+                double midCost = costOfPerturb(param, mid, index, *oldCell);
 
                 if (std::abs(midCost - bestCost) < tolerance) {
                     break;
@@ -393,11 +394,11 @@ Cost Frame::gradientDescent() {
 
 // Updating cells based on calculated directions
     for (size_t index = 0; index < cellList.size(); ++index) {
-        cells[index] = cells[index].getParameterizedCell(directions[index]);
+        cells[index] = cells[index]->get_parameterized_cell(directions[index]);
     }
 
-    synthImageStack = generateSynthImages();
-    double newCost = calculateCost(synthImageStack);
+    _synthImageStack = generateSynthImages();
+    double newCost = calculateCost(_synthImageStack);
 
     std::cout << "Current cost: " << newCost << std::endl;
     return newCost;

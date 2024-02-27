@@ -14,12 +14,12 @@
 
 class Frame {
 public:
-    Frame(const ImageStack& realImageStack, const SimulationConfig& simulationConfig, const std::vector<Cell>& cells, const Path& outputPath, const std::string& imageName);
+    Frame(const ImageStack& realImageStack, const SimulationConfig& simulationConfig, const std::vector<Cell*>& cells, const Path& outputPath, const std::string& imageName);
 
     // Method declarations
     void padRealImage();
     ImageStack generateSynthImages();
-    ImageStack generateSynthImagesFast(Cell &oldCell, Cell &newCell);
+    ImageStack generateSynthImagesFast(Cell *oldCell, Cell *newCell);
     Cost calculateCost(const ImageStack& synthImageStack);
     ImageStack generateOutputImages();
     ImageStack generateOutputSynthImages();
@@ -29,9 +29,9 @@ public:
     CostCallbackPair split();
     Cost gradientDescent();
     ImageStack getSynthImageStack();
-    std::vector<Cell> cells;
+    std::vector<Cell*> cells;
 private:
-    std::vector<double> zSlices;
+    std::vector<double> z_slices;
     SimulationConfig simulationConfig;
     std::string outputPath;
     std::string imageName;

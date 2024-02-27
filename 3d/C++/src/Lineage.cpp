@@ -88,7 +88,7 @@ void Lineage::optimize(int frameIndex)
 
     Frame& frame = frames[frameIndex];
     std::string algorithm = "hill"; // Set default algorithm
-    size_t totalIterations = frame.length() * config.simulation.iterationsPerCell;
+    size_t totalIterations = frame.length() * config.simulation.iterations_per_cell;
     std::cout << "Total iterations: " << totalIterations << std::endl;
 
     double tolerance = 0.5;
@@ -179,7 +179,7 @@ void Lineage::saveCells(int frameIndex)
     std::vector<CellParams> all_cells;
 
     // Concatenating cell data from each frame
-    for (int i = 0; i <= frame_index && i < frames.size(); ++i) {
+    for (int i = 0; i <= frameIndex && i < frames.size(); ++i) {
         auto frame_cells = frames[i].get_cells_as_params();
         all_cells.insert(all_cells.end(), frame_cells.begin(), frame_cells.end());
     }
@@ -190,7 +190,7 @@ void Lineage::saveCells(int frameIndex)
     });
 
     // Writing to CSV
-    std::ofstream file(output_path / "cells.csv");
+    std::ofstream file(outputPath + "cells.csv");
     if (file.is_open()) {
         // Assuming you want to write the file and name fields
         file << "file,name\n";
