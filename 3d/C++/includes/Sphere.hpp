@@ -44,11 +44,18 @@ public:
     static SphereConfig cellConfig;
     Sphere(const SphereParams& init_props)
             : _name(init_props.name), _position{init_props.x, init_props.y, init_props.z},
-              _radius(init_props.radius), _rotation(0), dormant(false) {}
+              _radius(init_props.radius), _rotation(0), dormant(false) {
+        printCellInfo();
+    }
 
     Sphere() : _radius(0), _rotation(0), dormant(false) {}
 
+    void printCellInfo() {
+        std::cout << "Sphere name: " << _name << " x: " << _position.x << " y: " << _position.y << " z: " << _position.z << " radius: " << _radius << " isDormant: " << dormant << std::endl;
+    }
+
     double get_radius_at(double z) const;
+
     void draw(cv::Mat & image, SimulationConfig simulationConfig, cv::Mat * cellMap = nullptr, float z = 0) const override;
 
     void draw_outline(cv::Mat& image, float color, float z = 0) const override;
