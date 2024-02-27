@@ -7,14 +7,15 @@
 #include "CellFactory.hpp"
 #include "yaml-cpp/yaml.h"
 
-struct Args {
-    std::string config;
-    std::string input;
-    int first_frame;
-    int last_frame;
-    std::string initial;
-    std::string output;
-    int continue_from;
+class Args {
+public:
+    std::string config{};
+    std::string input{};
+    int first_frame = 0;
+    int last_frame = 0;
+    std::string initial{};
+    std::string output{};
+    int continue_from = -1;
     // Add other arguments as necessary
 };
 
