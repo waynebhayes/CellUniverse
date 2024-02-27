@@ -5,7 +5,7 @@
 #include <string>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
-#include "cell.cpp"
+#include "Cell.hpp"
 #define M_PI 3.14159265358979323846
 
 class SphereConfig : public CellConfig {

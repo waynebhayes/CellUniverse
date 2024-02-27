@@ -1,7 +1,8 @@
 // ConfigTypes.hpp
 #ifndef CONFIGTYPES_HPP
 #define CONFIGTYPES_HPP
-#include "Cell.hpp"
+#include "yaml-cpp/yaml.h"
+
 
 class SimulationConfig {
 public:
@@ -52,6 +53,11 @@ public:
     }
 };
 
+class CellConfig {
+    // Abstract base class for cell configurations.
+    CellConfig() = default;
+};
+
 class BaseConfig {
 public:
     CellConfig cell;
@@ -63,4 +69,6 @@ public:
         // Parse YAML node and initialize config object
     }
 };
+
+
 #endif

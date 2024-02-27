@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <filesystem>
+#include "ConfigTypes.hpp"
 
 // Helper function to get image file paths
 std::vector<std::filesystem::path> getImageFilePaths(const std::string& inputPattern, int firstFrame, int lastFrame, BaseConfig& config) {

@@ -7,7 +7,7 @@
 #include <tuple>
 #include <unordered_map>
 #include <random>
-#include "configTypes.cpp"
+#include "ConfigTypes.hpp"
 
 class CellParams {
     //The CellParams class stores the parameters of a particular cell.
@@ -15,10 +15,7 @@ public:
     std::string name;
 };
 
-class CellConfig : public BaseConfig{
-    // Abstract base class for cell configurations.
-    CellConfig(const YAML::node& node){}
-};
+
 
 class PerturbParams {
     //Used with a CellConfig to add perturb parameters.
