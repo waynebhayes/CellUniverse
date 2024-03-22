@@ -84,13 +84,17 @@ ImageStack Frame::generateSynthImagesFast(Cell *oldCell, Cell *newCell) {
     ImageStack synthImageStack;
 
     // Calculate the smallest box that contains both the old and new cell
-    cv::Rect minBox = oldCell->calculate_minimum_box(*newCell);
+    MinBox minBox = oldCell->calculateMinimumBox(*newCell);
+    Corner& minCorner = minBox.first;
+    Corner& maxCorner = minBox.second;
 
+    // preallocate space to avoid reallocation
+    synthImageStack.reserve(z_slices.size());
     for (size_t i = 0; i < z_slices.size(); ++i) {
         double z = z_slices[i];
-
         // If the z-slice is outside the min/max box, append the existing synthetic image to the stack
-        if (z < minBox.z || z > maxBox.z) {
+        // index 2 is representing the z parameter
+        if (z < minCorner[2] || z > maxCorner[2]) {
             synthImageStack.push_back(synthImageStack[i]);
             continue;
         }
@@ -98,7 +102,7 @@ ImageStack Frame::generateSynthImagesFast(Cell *oldCell, Cell *newCell) {
         Image synthImage = cv::Mat(shape, CV_8UC3, cv::Scalar(simulationConfig.background_color));
 
         for (const auto& cell : cells) {
-            cell->draw(synthImage, simulationConfig, z);
+            cell->draw(synthImage, simulationConfig, nullptr, z);
         }
 
         synthImageStack.push_back(synthImage);
@@ -121,7 +125,7 @@ ImageStack Frame::generateOutputImages() {
 
         // Draw outlines for each cell
         for (const auto* cell : cells) {
-            cell->draw_outline(outputFrame, cv::Scalar(255, 0, 0), z); // Assuming drawOutline takes a cv::Scalar for color
+            cell->drawOutline(outputFrame, 0, z); // Assuming drawOutline takes a cv::Scalar for color
         }
 
         // Convert to 8-bit image if necessary
@@ -169,9 +173,9 @@ CostCallbackPair Frame::perturb() {
     Cell* oldCell = cells[index];
 
     // Replace the cell at that index with a new cell
-    cells[index] = cells[index]->get_perturbed_cell();
+    cells[index] = cells[index]->getPerturbedCell();
 
-    bool areCellsValid = oldCell->check_if_cells_valid(cells);
+    bool areCellsValid = oldCell->checkIfCellsValid(cells);
     if (!areCellsValid) {
         cells[index] = oldCell;
         return {0.0, [](bool accept) {}};
@@ -212,7 +216,7 @@ CostCallbackPair Frame::split() {
     Cell* child1;
     Cell* child2;
     bool valid;
-    std::tie(child1, child2, valid) = oldCell->get_split_cells();
+    std::tie(child1, child2, valid) = oldCell->getSplitCells();
     if (!valid) {
         return {0.0, [](bool accept) {}};
     }
@@ -221,7 +225,7 @@ CostCallbackPair Frame::split() {
     cells.push_back(child1);
     cells.push_back(child2);
 
-    bool areCellsValid = oldCell->check_if_cells_valid(cells);
+    bool areCellsValid = oldCell->checkIfCellsValid(cells);
     if (!areCellsValid) {
         cells.pop_back();
         cells.pop_back();
@@ -251,7 +255,7 @@ Cost Frame::costOfPerturb(const std::string &perturbParam, float perturbVal, siz
     perturbParams[perturbParam] = perturbVal;
 
     // Perturb cell
-    Cell* perturbedCell = cells[index]->get_parameterized_cell(perturbParams);
+    Cell* perturbedCell = cells[index]->getParameterizedCell(perturbParams);
     Cell* originalCell = cells[index]; // Store the original cell
     cells[index] = perturbedCell; // Replace with the perturbed cell
 
@@ -281,7 +285,7 @@ Frame::getSynthPerturbedCells(
         std::unordered_map<std::string, float> perturbParams;
         perturbParams[param] = perturbLength;
 
-        Cell* perturbedCell = cells[index]->get_parameterized_cell(perturbParams);
+        Cell* perturbedCell = cells[index]->getParameterizedCell(perturbParams);
         Cell* originalCell = cells[index]; // Store the original cell
         cells[index] = perturbedCell; // Replace with the perturbed cell
 
@@ -293,117 +297,117 @@ Frame::getSynthPerturbedCells(
     return perturbedCells;
 }
 
-Cost Frame::gradientDescent() {
-    // Hyperparameters
-    float movingDelta = 1.0f;
-    float delta = 1e-3f;
-    float alpha = 0.2f;
-
-    std::vector<Cell*> cellList = cells; // Assuming cells is a std::vector<Cell>
-    double origCost = calculateCost(_synthImageStack);
-
-    std::cout << "Original cost: " << origCost << std::endl;
-
-    std::vector<std::vector<double>> cellsGrad;
-    std::vector<std::string> paramNames;
-
-    // Get gradient for each cell
-    for (size_t index = 0; index < cellList.size(); ++index) {
-        Cell* cell = cellList[index];
-        Cell* oldCell = cell; // Deep copy of the cell
-
-        auto params = cell->get_cell_params(); // Assuming getCellParams returns a map or similar structure
-
-        // Get params that are changing
-        if (paramNames.empty()) {
-            for (const auto& [param, _] : params) {
-                if (param != "name") {
-                    paramNames.push_back(param);
-                }
-            }
-        }
-
-        std::unordered_map<std::string, std::vector<cv::Mat>> perturbedCells =
-                getSynthPerturbedCells(index, params, movingDelta, oldCell); // Assuming implementation
-
-        std::vector<double> costs;
-        for (const auto& [_, synthImageStack] : perturbedCells) {
-            costs.push_back(calculateCost(synthImageStack)); // Assuming calculateCost implementation
-        }
-
-        cellsGrad.push_back(costs);
-    }
-
-    // Calculating gradient
-    for (auto& grad : cellsGrad) {
-        std::transform(grad.begin(), grad.end(), grad.begin(),
-                       [origCost, delta](double cost) { return (cost - origCost) / delta; });
-    }
-
-
-    std::unordered_map<size_t, std::unordered_map<std::string, float>> directions;
-
-    // Line search and parameter update
-    for (size_t index = 0; index < cellList.size(); ++index) {
-        const auto& grad = cellsGrad[index];
-        Cell* cell = cellList[index];
-        Cell* oldCell = cell; // Deep copy of the cell
-
-        std::unordered_map<std::string, float> paramGradients;
-        for (size_t i = 0; i < paramNames.size(); ++i) {
-            std::string param = paramNames[i];
-            float gradient = grad[i];
-
-            float tolerance = 1e-2f;
-            float direction = -1.0f * alpha;
-            float lower = gradient * direction;
-            float upper = 3 * lower;
-            double lowerCost = costOfPerturb(param, lower, index, *oldCell);
-            double upperCost = costOfPerturb(param, upper, index, *oldCell);
-            double bestCost = lowerCost;
-
-            // Line search loop
-            while (upperCost < bestCost && std::abs(upperCost - bestCost) > tolerance) {
-                upper *= 3;
-                bestCost = upperCost;
-                upperCost = costOfPerturb(param, upper, index, *oldCell);
-            }
-
-            float mid;
-            // Finding the minimal cost
-            while (true) {
-                mid = (lower + upper) / 2.0f;
-                double midCost = costOfPerturb(param, mid, index, *oldCell);
-
-                if (std::abs(midCost - bestCost) < tolerance) {
-                    break;
-                }
-
-                if (midCost < lowerCost) {
-                    lower = mid;
-                    lowerCost = midCost;
-                    bestCost = midCost;
-                } else if (midCost > lowerCost) {
-                    upper = mid;
-                }
-            }
-
-            directions[index][param] = mid;
-        }
-    }
-
-// Updating cells based on calculated directions
-    for (size_t index = 0; index < cellList.size(); ++index) {
-        cells[index] = cells[index]->get_parameterized_cell(directions[index]);
-    }
-
-    _synthImageStack = generateSynthImages();
-    double newCost = calculateCost(_synthImageStack);
-
-    std::cout << "Current cost: " << newCost << std::endl;
-    return newCost;
-
-}
+//Cost Frame::gradientDescent() {
+//    // Hyperparameters
+//    float movingDelta = 1.0f;
+//    float delta = 1e-3f;
+//    float alpha = 0.2f;
+//
+//    std::vector<Cell*> cellList = cells; // Assuming cells is a std::vector<Cell>
+//    double origCost = calculateCost(_synthImageStack);
+//
+//    std::cout << "Original cost: " << origCost << std::endl;
+//
+//    std::vector<std::vector<double>> cellsGrad;
+//    std::vector<std::string> paramNames;
+//
+//    // Get gradient for each cell
+//    for (size_t index = 0; index < cellList.size(); ++index) {
+//        Cell* cell = cellList[index];
+//        Cell* oldCell = cell; // Deep copy of the cell
+//
+//        auto params = cell->getCellParams(); // Assuming getCellParams returns a map or similar structure
+//
+//        // Get params that are changing
+//        if (paramNames.empty()) {
+//            for (const auto& [param, _] : params) {
+//                if (param != "name") {
+//                    paramNames.push_back(param);
+//                }
+//            }
+//        }
+//
+//        std::unordered_map<std::string, std::vector<cv::Mat>> perturbedCells =
+//                getSynthPerturbedCells(index, params, movingDelta, oldCell); // Assuming implementation
+//
+//        std::vector<double> costs;
+//        for (const auto& [_, synthImageStack] : perturbedCells) {
+//            costs.push_back(calculateCost(synthImageStack)); // Assuming calculateCost implementation
+//        }
+//
+//        cellsGrad.push_back(costs);
+//    }
+//
+//    // Calculating gradient
+//    for (auto& grad : cellsGrad) {
+//        std::transform(grad.begin(), grad.end(), grad.begin(),
+//                       [origCost, delta](double cost) { return (cost - origCost) / delta; });
+//    }
+//
+//
+//    std::unordered_map<size_t, std::unordered_map<std::string, float>> directions;
+//
+//    // Line search and parameter update
+//    for (size_t index = 0; index < cellList.size(); ++index) {
+//        const auto& grad = cellsGrad[index];
+//        Cell* cell = cellList[index];
+//        Cell* oldCell = cell; // Deep copy of the cell
+//
+//        std::unordered_map<std::string, float> paramGradients;
+//        for (size_t i = 0; i < paramNames.size(); ++i) {
+//            std::string param = paramNames[i];
+//            float gradient = grad[i];
+//
+//            float tolerance = 1e-2f;
+//            float direction = -1.0f * alpha;
+//            float lower = gradient * direction;
+//            float upper = 3 * lower;
+//            double lowerCost = costOfPerturb(param, lower, index, *oldCell);
+//            double upperCost = costOfPerturb(param, upper, index, *oldCell);
+//            double bestCost = lowerCost;
+//
+//            // Line search loop
+//            while (upperCost < bestCost && std::abs(upperCost - bestCost) > tolerance) {
+//                upper *= 3;
+//                bestCost = upperCost;
+//                upperCost = costOfPerturb(param, upper, index, *oldCell);
+//            }
+//
+//            float mid;
+//            // Finding the minimal cost
+//            while (true) {
+//                mid = (lower + upper) / 2.0f;
+//                double midCost = costOfPerturb(param, mid, index, *oldCell);
+//
+//                if (std::abs(midCost - bestCost) < tolerance) {
+//                    break;
+//                }
+//
+//                if (midCost < lowerCost) {
+//                    lower = mid;
+//                    lowerCost = midCost;
+//                    bestCost = midCost;
+//                } else if (midCost > lowerCost) {
+//                    upper = mid;
+//                }
+//            }
+//
+//            directions[index][param] = mid;
+//        }
+//    }
+//
+//// Updating cells based on calculated directions
+//    for (size_t index = 0; index < cellList.size(); ++index) {
+//        cells[index] = cells[index]->getParameterizedCell(directions[index]);
+//    }
+//
+//    _synthImageStack = generateSynthImages();
+//    double newCost = calculateCost(_synthImageStack);
+//
+//    std::cout << "Current cost: " << newCost << std::endl;
+//    return newCost;
+//
+//}
 
 ImageStack Frame::getSynthImageStack() {
     return _synthImageStack;

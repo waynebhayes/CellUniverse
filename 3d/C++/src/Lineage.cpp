@@ -104,16 +104,16 @@ void Lineage::optimize(int frameIndex)
         if (algorithm == "simulated annealing") {
             // Simulated annealing logic
         } else if (algorithm == "gradient descent") {
-            std::cout << "Current iteration: " << i + 1 << std::endl;
-            if (minimaReached) {
-                continue;
-            }
-            curCost = frame.calculateCost(frame.getSynthImageStack());
-            newCost = frame.gradientDescent();
-
-            if ((curCost - newCost) < tolerance) {
-                minimaReached = true;
-            }
+//            std::cout << "Current iteration: " << i + 1 << std::endl;
+//            if (minimaReached) {
+//                continue;
+//            }
+//            curCost = frame.calculateCost(frame.getSynthImageStack());
+//            newCost = frame.gradientDescent();
+//
+//            if ((curCost - newCost) < tolerance) {
+//                minimaReached = true;
+//            }
             // Gradient descent logic
         } else {
             std::vector<std::string> options = {"split", "perturbation"};
@@ -174,31 +174,31 @@ void Lineage::saveImages(int frameIndex)
     std::cout << "Done" << std::endl;
 }
 
-void Lineage::saveCells(int frameIndex)
-{
-    std::vector<CellParams> all_cells;
-
-    // Concatenating cell data from each frame
-    for (int i = 0; i <= frameIndex && i < frames.size(); ++i) {
-        auto frame_cells = frames[i].get_cells_as_params();
-        all_cells.insert(all_cells.end(), frame_cells.begin(), frame_cells.end());
-    }
-
-    // Sorting cells by frame and then by cell ID
-    std::sort(all_cells.begin(), all_cells.end(), [](const CellParams& a, const CellParams& b) {
-        return a.file < b.file || (a.file == b.file && a.name < b.name);
-    });
-
-    // Writing to CSV
-    std::ofstream file(outputPath + "cells.csv");
-    if (file.is_open()) {
-        // Assuming you want to write the file and name fields
-        file << "file,name\n";
-        for (const auto& cell : all_cells) {
-            file << cell.file << "," << cell.name << "\n";
-        }
-    }
-}
+//void Lineage::saveCells(int frameIndex)
+//{
+//    std::vector<CellParams> all_cells;
+//
+//    // Concatenating cell data from each frame
+//    for (int i = 0; i <= frameIndex && i < frames.size(); ++i) {
+//        auto frame_cells = frames[i].get_cells_as_params();
+//        all_cells.insert(all_cells.end(), frame_cells.begin(), frame_cells.end());
+//    }
+//
+//    // Sorting cells by frame and then by cell ID
+//    std::sort(all_cells.begin(), all_cells.end(), [](const CellParams& a, const CellParams& b) {
+//        return a.file < b.file || (a.file == b.file && a.name < b.name);
+//    });
+//
+//    // Writing to CSV
+//    std::ofstream file(outputPath + "cells.csv");
+//    if (file.is_open()) {
+//        // Assuming you want to write the file and name fields
+//        file << "file,name\n";
+//        for (const auto& cell : all_cells) {
+//            file << cell.file << "," << cell.name << "\n";
+//        }
+//    }
+//}
 
 void Lineage::copyCellsForward(int to)
 {

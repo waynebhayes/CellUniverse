@@ -16,7 +16,7 @@ public:
     Bacilli(std::string name, double x, double y, double width, double length, double rotation, double split_alpha = 0, double opacity = 0);
     void _refresh();
     void draw() override;
-    void draw_outline() override;
+    void drawOutline() override;
     void split(double alpha) override;
     void combine(Bacilli* cell) override;
     void simulated_region() override;

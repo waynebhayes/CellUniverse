@@ -12,7 +12,7 @@
 #include <unordered_map>
 #include <filesystem>
 #include <map>
-#include "Sphere.hpp"
+//#include "Sphere.hpp"
 
 enum argKeywords {
     ff = 1,
@@ -30,8 +30,10 @@ typedef std::pair<double, std::function<void(bool)>> CostCallbackPair;
 typedef std::function<void(bool)> CallBackFunc;
 typedef std::unordered_map<std::string, ImageStack> ParamImageMap;
 typedef std::unordered_map<std::string, float> ParamValMap;
-typedef std::map<Path, std::vector<Sphere>> CellMap;
+//typedef std::map<Path, std::vector<Sphere>> CellMap;
 typedef double Cost;
+typedef std::vector<float> Corner;
+typedef std::pair<Corner, Corner> MinBox;
 namespace fs = std::filesystem;
 typedef std::vector<fs::path> PathVec;
 

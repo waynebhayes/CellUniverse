@@ -12,12 +12,12 @@ CellFactory::CellFactory(const BaseConfig &config) {
 }
 
 // TODO: use abstract base class in the future to handle different cell types
-CellMap CellFactory::create_cells(const Path &init_params_path, int z_offset, float z_scaling) {
+std::map<Path, std::vector<Sphere>> CellFactory::createCells(const Path &init_params_path, int z_offset, float z_scaling) {
     std::ifstream file(init_params_path);
     std::string line;
     std::string firstLine;
     std::getline(file, firstLine); // remove the header
-    CellMap initialCells;
+    std::map<Path, std::vector<Sphere>> initialCells;
     while (std::getline(file, line)) {
         std::istringstream ss(line);
         float x, y, z, radius;

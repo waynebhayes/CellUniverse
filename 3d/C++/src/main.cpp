@@ -6,6 +6,8 @@
 #include "ConfigTypes.hpp"
 #include "CellFactory.hpp"
 #include "yaml-cpp/yaml.h"
+#include "Sphere.hpp"
+#include "Lineage.hpp"
 
 class Args {
 public:
@@ -92,9 +94,9 @@ int main(int argc, char* argv[])
 
     // load cells here
     CellFactory cellFactory(config);
-    CellMap cells = cellFactory.create_cells(args.initial, config.simulation.z_slices / 2, config.simulation.z_scaling);
+    std::map<Path, std::vector<Sphere>> cells = cellFactory.createCells(args.initial, config.simulation.z_slices / 2,
+                                                                        config.simulation.z_scaling);
 
     // create lineage here
-
     return 0;
 }

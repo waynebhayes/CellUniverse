@@ -68,7 +68,7 @@ public:
         mu = node["mu"].as<float>();
         sigma = node["sigma"].as<float>();
     }
-    [[nodiscard]] float get_perturb_offset() const {
+    [[nodiscard]] float getPerturbOffset() const {
         std::random_device rd; // Obtain a random number from hardware
         std::mt19937 gen(rd()); // Seed the generator
         std::uniform_real_distribution<> dis(0.0, 1.0); // Distribution for probability
