@@ -45,7 +45,7 @@ public:
     Sphere(const SphereParams& init_props)
             : _name(init_props.name), _position{init_props.x, init_props.y, init_props.z},
               _radius(init_props.radius), _rotation(0), dormant(false) {
-        printCellInfo();
+//        printCellInfo();
     }
 
     Sphere() : _radius(0), _rotation(0), dormant(false) {}

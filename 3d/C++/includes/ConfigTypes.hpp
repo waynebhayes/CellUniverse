@@ -5,6 +5,7 @@
 #include <random>
 #include <string>
 #include "yaml-cpp/yaml.h"
+#include <iostream>
 
 class SimulationConfig {
 public:
@@ -29,6 +30,16 @@ public:
         z_scaling = node["z_scaling"].as<float>();
         blur_sigma = node["blur_sigma"].as<float>();
     }
+    void printConfig() {
+        std::cout << "Simulation Config\n";
+        std::cout << "iterations_per_cell: " << iterations_per_cell << std::endl;
+        std::cout << "background_color: " << background_color << std::endl;
+        std::cout << "cell_color: " << cell_color << std::endl;
+        std::cout << "padding: " << padding << std::endl;
+        std::cout << "z_scaling: " << z_scaling << std::endl;
+        std::cout << "blur_sigma: " << blur_sigma << std::endl;
+        std::cout << "z_slices: " << z_slices << std::endl;
+    }
 };
 
 class ProbabilityConfig {
@@ -45,6 +56,11 @@ public:
         if (node["split"]) {
             split = node["split"].as<float>();
         }
+    }
+    void printConfig() {
+        std::cout << "Probability Config\n";
+        std::cout << "perturbation: " << perturbation << std::endl;
+        std::cout << "split: " << split << std::endl;
     }
 };
 
@@ -120,6 +136,29 @@ public:
     SimulationConfig simulation;
     ProbabilityConfig prob;
     BaseConfig() :cell(nullptr) {};
+    BaseConfig& operator=(const BaseConfig& other) {
+        if (this != &other) {
+            if (other.cell != nullptr) {
+                cell = new SphereConfig(*other.cell);
+            }
+            else {
+                cell = nullptr;
+            }
+            simulation = other.simulation;
+            prob = other.prob;
+        }
+        return *this;
+    }
+    BaseConfig(const BaseConfig& other) {
+        if (other.cell != nullptr) {
+            cell = new SphereConfig(*other.cell);
+        }
+        else {
+            cell = nullptr;
+        }
+        simulation = other.simulation;
+        prob = other.prob;
+    }
     ~BaseConfig() {
         delete cell;
     }
@@ -131,6 +170,11 @@ public:
         cell->explodeConfig(node["cell"]);
         simulation.explodeConfig(node["simulation"]);
         prob.explodeConfig(node["prob"]);
+    }
+    // for debug
+    void printConfig() {
+        simulation.printConfig();
+        prob.printConfig();
     }
 };
 

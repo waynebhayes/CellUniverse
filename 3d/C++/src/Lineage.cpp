@@ -2,6 +2,26 @@
 #include "../includes/Frame.hpp"
 #include "../includes/Lineage.hpp"
 
+namespace utils {
+    template<typename T>
+    void printMat(const cv::Mat& mat) {
+        // Check if the matrix is empty
+        if (mat.empty()) {
+            std::cout << "The matrix is empty." << std::endl;
+            return;
+        }
+
+        // Iterate over matrix rows
+        for (int i = 0; i < mat.rows; ++i) {
+            for (int j = 0; j < mat.cols; ++j) {
+                // Print each element. Use mat.at<T>(i,j) to access the element at [i,j] and cast it to the type T.
+                // The type T should match the type of the elements in the matrix.
+                std::cout << mat.at<T>(i, j) << " ";
+            }
+            std::cout << std::endl; // Newline for each row
+        }
+    }
+}
 
 Image processImage(const Image& image, const BaseConfig & config)
 {
@@ -18,6 +38,9 @@ Image processImage(const Image& image, const BaseConfig & config)
 
     // Gaussian blur the image
     // use 1.5 temporarily
+    // TODO: use GaussianBlur with custom sigma
+    SimulationConfig simConfig = config.simulation;
+//    std::cout << "The blur sigma is: " <<  simConfig.blur_sigma << std::endl;
     cv::GaussianBlur(processedImage, processedImage, cv::Size(0, 0), 1.5);
 
     return processedImage;
@@ -29,23 +52,24 @@ std::vector<Image> loadImage(const std::string & imageFile, const BaseConfig & c
     // Get the file extension
     std::string extension = imageFile.substr(imageFile.find_last_of('.') + 1);
     if (extension == "tiff" || extension == "tif") {
-        Image img = cv::imread(imageFile, cv::IMREAD_ANYDEPTH | cv::IMREAD_COLOR);
-        cv::imshow("Tif file", img);
-        cv::waitKey(0);
+        std::vector<Image> rawImages;
+        cv::imreadmulti(imageFile, rawImages, cv::IMREAD_ANYDEPTH | cv::IMREAD_COLOR);
+        Image img = rawImages[0];
         if (img.empty()) {
             std::cout << "Error: Could not read the TIFF image" << std::endl;
             return imgs;
         }
 
-        int slices = img.size[0]; // Assuming the TIFF contains a stack of images
-        std::cout << img.size[0] << " " << img.size[1] << " " << std::endl;
+        unsigned slices = rawImages.size();
 
-        for (int i = 0; i < slices; ++i) {
-            Image slice = img.row(i).clone();
+        for (unsigned i = 0; i < slices; ++i) {
+            Image slice = rawImages[i].clone();
             cv::cvtColor(slice, slice, cv::COLOR_BGR2GRAY);
-            imgs.push_back(processImage(slice, config));
+            cv::Mat processedImg = processImage(slice, config);
+            imgs.push_back(processedImg);
         }
     } else {
+        // TODO: fix this
         Image img = cv::imread(imageFile);
         if (img.empty()) {
             std::cout << "Error: Could not read the image" << std::endl;
@@ -58,11 +82,11 @@ std::vector<Image> loadImage(const std::string & imageFile, const BaseConfig & c
 
         imgs.push_back(processImage(img, config));
     }
-
+//    std::cout << "The size of the imgs is " << imgs.size() << std::endl;
     return imgs;
 }
 
-Lineage::Lineage(std::map<std::string, std::vector<Cell>> initialCells, std::vector<std::string> imagePaths, BaseConfig config, std::string outputPath, int continueFrom)
+Lineage::Lineage(std::map<std::string, std::vector<Sphere>> initialCells, PathVec imagePaths, BaseConfig &config, std::string outputPath, int continueFrom)
     : config(config), outputPath(outputPath)
 {
     for (size_t i = 0; i < imagePaths.size(); ++i) {
@@ -72,7 +96,7 @@ Lineage::Lineage(std::map<std::string, std::vector<Cell>> initialCells, std::vec
         std::string file_name = imagePaths[i];
 
         if ((continueFrom == -1 || i < continueFrom) && initialCells.find(file_name) != initialCells.end()) {
-            const std::vector<Cell>& cells = initialCells.at(file_name);
+            const std::vector<Sphere>& cells = initialCells.at(file_name);
 //            frames.emplace_back(real_images, config.simulation, cells, outputPath, file_name);
         }
         else {

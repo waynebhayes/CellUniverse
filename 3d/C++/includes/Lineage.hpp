@@ -14,6 +14,7 @@
 #include <filesystem>
 #include <algorithm>
 #include <fstream>
+#include "Sphere.hpp"
 
 cv::Mat processImage(const cv::Mat& image, const BaseConfig& config);
 
@@ -22,7 +23,8 @@ std::vector<cv::Mat> loadImage(const std::string& imageFile, const BaseConfig& c
 class Lineage
 {
 public:
-   Lineage(std::map<std::string, std::vector<Cell>> initialCells, std::vector<std::string> imagePaths, BaseConfig config, std::string outputPath, int continueFrom = -1);
+    //
+   Lineage(std::map<std::string, std::vector<Sphere>> initialCells, PathVec imagePaths, BaseConfig &config, std::string outputPath, int continueFrom = -1);
 
    void optimize(int frameIndex);
 

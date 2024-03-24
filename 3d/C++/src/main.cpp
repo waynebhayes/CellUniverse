@@ -8,6 +8,7 @@
 #include "yaml-cpp/yaml.h"
 #include "Sphere.hpp"
 #include "Lineage.hpp"
+#include <chrono>
 
 class Args {
 public:
@@ -88,7 +89,7 @@ int main(int argc, char* argv[])
     // load config here
     BaseConfig config;
     loadConfig(args.config, config);
-
+    config.printConfig();
     // load file paths here
     PathVec imageFilePaths = get_image_file_paths(args.input, args.first_frame, args.last_frame, config);
 
@@ -96,7 +97,21 @@ int main(int argc, char* argv[])
     CellFactory cellFactory(config);
     std::map<Path, std::vector<Sphere>> cells = cellFactory.createCells(args.initial, config.simulation.z_slices / 2,
                                                                         config.simulation.z_scaling);
-
     // create lineage here
+    Lineage lineage = Lineage(cells, imageFilePaths, config, args.output, args.continue_from);
+
+    // Run
+//    auto start = std::chrono::steady_clock::now();
+//    for (int frame = 0; frame < lineage.length(); ++frame) {
+//        lineage.optimize(frame);
+//        lineage.copyCellsForward(frame + 1);
+//        lineage.saveImages(frame);
+//        // lineage.saveCells(frame); // TODO: Fix this
+//    }
+//    auto end = std::chrono::steady_clock::now();
+//    std::chrono::duration<double> elapsed_seconds = end - start;
+//
+//    std::cout << "Time elapsed: " << elapsed_seconds.count() << " seconds" << std::endl;
+
     return 0;
 }
