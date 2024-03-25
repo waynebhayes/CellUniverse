@@ -14,7 +14,8 @@ Frame::Frame(const ImageStack &realImageStack, const SimulationConfig &simulatio
         double zValue = simulationConfig.z_scaling * (i - simulationConfig.z_slices / 2);
         z_slices.push_back(zValue);
     }
-    padRealImage();
+    // TODO: Fix padding
+//    padRealImage();
     _synthImageStack = generateSynthImages();
 }
 
