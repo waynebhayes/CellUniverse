@@ -101,17 +101,17 @@ int main(int argc, char* argv[])
     Lineage lineage = Lineage(cells, imageFilePaths, config, args.output, args.continue_from);
 
     // Run
-//    auto start = std::chrono::steady_clock::now();
-//    for (int frame = 0; frame < lineage.length(); ++frame) {
-//        lineage.optimize(frame);
-//        lineage.copyCellsForward(frame + 1);
-//        lineage.saveImages(frame);
-//        // lineage.saveCells(frame); // TODO: Fix this
-//    }
-//    auto end = std::chrono::steady_clock::now();
-//    std::chrono::duration<double> elapsed_seconds = end - start;
-//
-//    std::cout << "Time elapsed: " << elapsed_seconds.count() << " seconds" << std::endl;
+    auto start = std::chrono::steady_clock::now();
+    for (int frame = 0; frame < lineage.length(); ++frame) {
+        lineage.optimize(frame);
+        lineage.copyCellsForward(frame + 1);
+        lineage.saveImages(frame);
+        // lineage.saveCells(frame); // TODO: Fix this
+    }
+    auto end = std::chrono::steady_clock::now();
+    std::chrono::duration<double> elapsed_seconds = end - start;
+
+    std::cout << "Time elapsed: " << elapsed_seconds.count() << " seconds" << std::endl;
 
     return 0;
 }

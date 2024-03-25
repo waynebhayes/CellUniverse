@@ -45,12 +45,11 @@ ImageStack Frame::generateSynthImages() {
     ImageStack imageStack;
 
     for (double z : z_slices) {
-        Image synthImage = cv::Mat(shape, CV_8UC3, cv::Scalar(simulationConfig.background_color)); // Assuming background color is in cv::Scalar format
+        Image synthImage = cv::Mat(shape, CV_32F, cv::Scalar(simulationConfig.background_color)); // Assuming background color is in cv::Scalar format
 
         for (const auto& cell : cells) {
             cell.draw(synthImage, simulationConfig, nullptr, z);
         }
-
         imageStack.push_back(synthImage);
     }
     return imageStack;
@@ -77,7 +76,7 @@ Cost Frame::calculateCost(const ImageStack &synthImageStack) {
 
 ImageStack Frame::generateSynthImagesFast(Sphere &oldCell, Sphere &newCell) {
     if (cells.empty()) {
-        throw std::runtime_error("Cells are not set");
+        std::cerr << "Cells are not set\n";
     }
 
     cv::Size shape = getImageShape(); // Assuming getImageShape() returns a cv::Size
@@ -95,11 +94,11 @@ ImageStack Frame::generateSynthImagesFast(Sphere &oldCell, Sphere &newCell) {
         // If the z-slice is outside the min/max box, append the existing synthetic image to the stack
         // index 2 is representing the z parameter
         if (z < minCorner[2] || z > maxCorner[2]) {
-            synthImageStack.push_back(synthImageStack[i]);
+            synthImageStack.push_back(_synthImageStack[i]);
             continue;
         }
 
-        Image synthImage = cv::Mat(shape, CV_8UC3, cv::Scalar(simulationConfig.background_color));
+        Image synthImage = cv::Mat(shape, CV_32F, cv::Scalar(simulationConfig.background_color));
 
         for (const auto& cell : cells) {
             cell.draw(synthImage, simulationConfig, nullptr, z);
@@ -109,7 +108,6 @@ ImageStack Frame::generateSynthImagesFast(Sphere &oldCell, Sphere &newCell) {
     }
 
     return synthImageStack;
-    return {};
 }
 
 ImageStack Frame::generateOutputImages() {
@@ -169,8 +167,8 @@ CostCallbackPair Frame::perturb() {
     // Randomly pick an index for a cell
     size_t index = distrib(gen);
 
-    // Store old cell
-    Sphere& oldCell = cells[index];
+    // Store old cell // no reference
+    Sphere oldCell = cells[index];
 
     // Replace the cell at that index with a new cell
     cells[index] = cells[index].getPerturbedCell();
@@ -210,7 +208,7 @@ CostCallbackPair Frame::split() {
     size_t index = distrib(gen);
 
     // Store old cell
-    Sphere& oldCell = cells[index];
+    Sphere oldCell = cells[index];
 
     // Replace the cell at that index with new cells
     Sphere child1;
@@ -256,7 +254,7 @@ Cost Frame::costOfPerturb(const std::string &perturbParam, float perturbVal, siz
 
     // Perturb cell
     Sphere perturbedCell = cells[index].getParameterizedCell(perturbParams);
-    Sphere& originalCell = cells[index]; // Store the original cell
+    Sphere originalCell = cells[index]; // Store the original cell
     cells[index] = perturbedCell; // Replace with the perturbed cell
 
     // Generate new image stack and get new cost
@@ -286,7 +284,7 @@ Frame::getSynthPerturbedCells(
         perturbParams[param] = perturbLength;
 
         Sphere perturbedCell = cells[index].getParameterizedCell(perturbParams);
-        Sphere& originalCell = cells[index]; // Store the original cell
+        Sphere originalCell = cells[index]; // Store the original cell
         cells[index] = perturbedCell; // Replace with the perturbed cell
 
         perturbedCells[param] = generateSynthImages();
