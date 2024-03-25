@@ -1,6 +1,6 @@
 #include "../includes/Frame.hpp"
 
-Frame::Frame(const ImageStack &realImageStack, const SimulationConfig &simulationConfig, const std::vector<Cell*> &cells,
+Frame::Frame(const ImageStack &realImageStack, const SimulationConfig &simulationConfig, const std::vector<Sphere> &cells,
              const Path &outputPath, const std::string &imageName)
     : cells(cells),
       simulationConfig(simulationConfig),
@@ -37,9 +37,9 @@ void Frame::padRealImage() {
 }
 
 ImageStack Frame::generateSynthImages() {
-    if (cells.empty()) {
-        throw std::runtime_error("Cells are not set");
-    }
+//    if (cells.empty()) {
+//        throw std::runtime_error("Cells are not set");
+//    }
 
     cv::Size shape = getImageShape(); // Assuming getImageShape returns a cv::Size
     ImageStack imageStack;
@@ -48,7 +48,7 @@ ImageStack Frame::generateSynthImages() {
         Image synthImage = cv::Mat(shape, CV_8UC3, cv::Scalar(simulationConfig.background_color)); // Assuming background color is in cv::Scalar format
 
         for (const auto& cell : cells) {
-            cell->draw(synthImage, simulationConfig, nullptr, z);
+            cell.draw(synthImage, simulationConfig, nullptr, z);
         }
 
         imageStack.push_back(synthImage);
@@ -75,7 +75,7 @@ Cost Frame::calculateCost(const ImageStack &synthImageStack) {
     return totalCost;
 }
 
-ImageStack Frame::generateSynthImagesFast(Cell *oldCell, Cell *newCell) {
+ImageStack Frame::generateSynthImagesFast(Sphere &oldCell, Sphere &newCell) {
     if (cells.empty()) {
         throw std::runtime_error("Cells are not set");
     }
@@ -84,7 +84,7 @@ ImageStack Frame::generateSynthImagesFast(Cell *oldCell, Cell *newCell) {
     ImageStack synthImageStack;
 
     // Calculate the smallest box that contains both the old and new cell
-    MinBox minBox = oldCell->calculateMinimumBox(*newCell);
+    MinBox minBox = oldCell.calculateMinimumBox(newCell);
     Corner& minCorner = minBox.first;
     Corner& maxCorner = minBox.second;
 
@@ -102,7 +102,7 @@ ImageStack Frame::generateSynthImagesFast(Cell *oldCell, Cell *newCell) {
         Image synthImage = cv::Mat(shape, CV_8UC3, cv::Scalar(simulationConfig.background_color));
 
         for (const auto& cell : cells) {
-            cell->draw(synthImage, simulationConfig, nullptr, z);
+            cell.draw(synthImage, simulationConfig, nullptr, z);
         }
 
         synthImageStack.push_back(synthImage);
@@ -124,8 +124,8 @@ ImageStack Frame::generateOutputImages() {
         cv::cvtColor(realImage, outputFrame, cv::COLOR_GRAY2BGR);
 
         // Draw outlines for each cell
-        for (const auto* cell : cells) {
-            cell->drawOutline(outputFrame, 0, z); // Assuming drawOutline takes a cv::Scalar for color
+        for (const auto& cell : cells) {
+            cell.drawOutline(outputFrame, 0, z); // Assuming drawOutline takes a cv::Scalar for color
         }
 
         // Convert to 8-bit image if necessary
@@ -170,12 +170,12 @@ CostCallbackPair Frame::perturb() {
     size_t index = distrib(gen);
 
     // Store old cell
-    Cell* oldCell = cells[index];
+    Sphere& oldCell = cells[index];
 
     // Replace the cell at that index with a new cell
-    cells[index] = cells[index]->getPerturbedCell();
+    cells[index] = cells[index].getPerturbedCell();
 
-    bool areCellsValid = oldCell->checkIfCellsValid(cells);
+    bool areCellsValid = oldCell.checkIfCellsValid(cells);
     if (!areCellsValid) {
         cells[index] = oldCell;
         return {0.0, [](bool accept) {}};
@@ -210,13 +210,13 @@ CostCallbackPair Frame::split() {
     size_t index = distrib(gen);
 
     // Store old cell
-    Cell* oldCell = cells[index];
+    Sphere& oldCell = cells[index];
 
     // Replace the cell at that index with new cells
-    Cell* child1;
-    Cell* child2;
+    Sphere child1;
+    Sphere child2;
     bool valid;
-    std::tie(child1, child2, valid) = oldCell->getSplitCells();
+    std::tie(child1, child2, valid) = oldCell.getSplitCells();
     if (!valid) {
         return {0.0, [](bool accept) {}};
     }
@@ -225,7 +225,7 @@ CostCallbackPair Frame::split() {
     cells.push_back(child1);
     cells.push_back(child2);
 
-    bool areCellsValid = oldCell->checkIfCellsValid(cells);
+    bool areCellsValid = oldCell.checkIfCellsValid(cells);
     if (!areCellsValid) {
         cells.pop_back();
         cells.pop_back();
@@ -255,8 +255,8 @@ Cost Frame::costOfPerturb(const std::string &perturbParam, float perturbVal, siz
     perturbParams[perturbParam] = perturbVal;
 
     // Perturb cell
-    Cell* perturbedCell = cells[index]->getParameterizedCell(perturbParams);
-    Cell* originalCell = cells[index]; // Store the original cell
+    Sphere perturbedCell = cells[index].getParameterizedCell(perturbParams);
+    Sphere& originalCell = cells[index]; // Store the original cell
     cells[index] = perturbedCell; // Replace with the perturbed cell
 
     // Generate new image stack and get new cost
@@ -285,8 +285,8 @@ Frame::getSynthPerturbedCells(
         std::unordered_map<std::string, float> perturbParams;
         perturbParams[param] = perturbLength;
 
-        Cell* perturbedCell = cells[index]->getParameterizedCell(perturbParams);
-        Cell* originalCell = cells[index]; // Store the original cell
+        Sphere perturbedCell = cells[index].getParameterizedCell(perturbParams);
+        Sphere& originalCell = cells[index]; // Store the original cell
         cells[index] = perturbedCell; // Replace with the perturbed cell
 
         perturbedCells[param] = generateSynthImages();

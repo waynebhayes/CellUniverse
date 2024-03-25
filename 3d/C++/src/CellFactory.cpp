@@ -25,6 +25,7 @@ std::map<Path, std::vector<Sphere>> CellFactory::createCells(const Path &init_pa
         std::string filePath;
         std::string cellName;
         std::getline(ss, filePath, ',');
+//        std::cout << "File Path: " << filePath << std::endl;
         std::getline(ss, cellName, ',');
         std::getline(ss, floatStr, ',');
         x = std::stof(floatStr);

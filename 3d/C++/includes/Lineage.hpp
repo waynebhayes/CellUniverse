@@ -16,6 +16,8 @@
 #include <fstream>
 #include "Sphere.hpp"
 
+namespace fs = std::filesystem;
+
 cv::Mat processImage(const cv::Mat& image, const BaseConfig& config);
 
 std::vector<cv::Mat> loadImage(const std::string& imageFile, const BaseConfig& config);

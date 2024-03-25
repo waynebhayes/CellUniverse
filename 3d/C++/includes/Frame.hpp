@@ -10,16 +10,16 @@
 #include "ConfigTypes.hpp"
 #include <random>
 #include <functional>
-
+#include "Sphere.hpp"
 
 class Frame {
 public:
-    Frame(const ImageStack& realImageStack, const SimulationConfig& simulationConfig, const std::vector<Cell*>& cells, const Path& outputPath, const std::string& imageName);
+    Frame(const ImageStack& realImageStack, const SimulationConfig& simulationConfig, const std::vector<Sphere> &cells, const Path& outputPath, const std::string& imageName);
 
     // Method declarations
     void padRealImage();
     ImageStack generateSynthImages();
-    ImageStack generateSynthImagesFast(Cell *oldCell, Cell *newCell);
+    ImageStack generateSynthImagesFast(Sphere &oldCell, Sphere &newCell);
     Cost calculateCost(const ImageStack& synthImageStack);
     ImageStack generateOutputImages();
     ImageStack generateOutputSynthImages();
@@ -29,7 +29,7 @@ public:
     CostCallbackPair split();
     Cost gradientDescent();
     ImageStack getSynthImageStack();
-    std::vector<Cell*> cells;
+    std::vector<Sphere> cells;
 private:
     std::vector<double> z_slices;
     SimulationConfig simulationConfig;

@@ -32,7 +32,7 @@ public:
     }
 };
 
-class Sphere : public Cell {
+class Sphere {
 private:
     std::string _name;
     cv::Point3f _position;
@@ -56,26 +56,29 @@ public:
 
     double getRadiusAt(double z) const;
 
-    void draw(cv::Mat & image, SimulationConfig simulationConfig, cv::Mat * cellMap = nullptr, float z = 0) const override;
+    void draw(cv::Mat & image, SimulationConfig simulationConfig, cv::Mat * cellMap = nullptr, float z = 0) const ;
 
-    void drawOutline(cv::Mat& image, float color, float z = 0) const override;
+    void drawOutline(cv::Mat& image, float color, float z = 0) const ;
 
-    Cell* getPerturbedCell() const override;
+    [[nodiscard]] Sphere getPerturbedCell() const ;
 
-    Cell* getParameterizedCell(std::unordered_map<std::string, float> params = {}) const override;
+    Sphere getParameterizedCell(std::unordered_map<std::string, float> params = {}) const ;
 
-    std::tuple<Cell*, Cell*, bool> getSplitCells() const override;
+    std::tuple<Sphere, Sphere, bool> getSplitCells() const;
 
-    bool check_constraints() const;
+    bool checkConstraints() const;
 
-    float get_radius_at(float z);
+    float getRadiusAt(float z);
 
-    CellParams getCellParams() const override;
+    CellParams getCellParams() const;
 
-    std::pair<std::vector<float>, std::vector<float>> calculateCorners() const override;
+    [[nodiscard]] std::pair<std::vector<float>, std::vector<float>> calculateCorners() const;
 
+    bool checkIfCellsValid(const std::vector<Sphere>& spheres) {
+        return !checkIfCellsOverlap(spheres);
+    }
 
-    std::pair<std::vector<float>, std::vector<float>> calculateMinimumBox(Cell& perturbed_cell) const override;
+    std::pair<std::vector<float>, std::vector<float>> calculateMinimumBox(Sphere &perturbed_cell) const;
 
     static bool checkIfCellsOverlap(const std::vector<Sphere>& spheres);
 };

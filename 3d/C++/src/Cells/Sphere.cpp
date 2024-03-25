@@ -44,7 +44,7 @@ void Sphere::drawOutline(cv::Mat& image, float color, float z) const {
     cv::circle(image, center, static_cast<int>(round(currentRadius)), cv::Scalar(outlineColor), thickness, cv::LINE_AA);
 }
 
-Cell* Sphere::getPerturbedCell() const {
+Sphere Sphere::getPerturbedCell() const {
     SphereParams sphereParams(
             _name,
             _position.x + cellConfig.x.getPerturbOffset(),
@@ -52,10 +52,10 @@ Cell* Sphere::getPerturbedCell() const {
             _position.z + cellConfig.z.getPerturbOffset(),
             _radius + cellConfig.radius.getPerturbOffset()
     );
-    return new Sphere(sphereParams);
+    return Sphere(sphereParams);
 }
 
-Cell* Sphere::getParameterizedCell(std::unordered_map<std::string, float> params) const  {
+Sphere Sphere::getParameterizedCell(std::unordered_map<std::string, float> params) const  {
     float xOffset = params["x"];
     float yOffset = params["y"];
     float zOffset = params["z"];
@@ -76,10 +76,10 @@ Cell* Sphere::getParameterizedCell(std::unordered_map<std::string, float> params
             _position.z + zOffset,
             newRadius
     );
-    return new Sphere(sphereParams);
+    return Sphere(sphereParams);
 }
 
-std::tuple<Cell*, Cell*, bool> Sphere::getSplitCells() const  {
+std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells() const  {
     double theta = ((double)rand() / RAND_MAX) * 2 * M_PI;
     double phi = ((double)rand() / RAND_MAX) * M_PI;
 
@@ -97,20 +97,20 @@ std::tuple<Cell*, Cell*, bool> Sphere::getSplitCells() const  {
     Sphere cell1(SphereParams(_name + "0", new_position1.x, new_position1.y, new_position1.z, halfRadius));
     Sphere cell2(SphereParams(_name + "1", new_position2.x, new_position2.y, new_position2.z, halfRadius));
 
-    bool constraints = cell1.check_constraints() && cell2.check_constraints();
+    bool constraints = cell1.checkConstraints() && cell2.checkConstraints();
 
     //Cell cell1Base = static_cast<Cell>(cell1);
     //Cell cell2Base = static_cast<Cell>(cell2);//convert Sphere to Cell
 
-    return std::make_tuple(new Sphere(cell1), new Sphere(cell2), constraints);
+    return std::make_tuple(Sphere(cell1), Sphere(cell2), constraints);
 }
 
-bool Sphere::check_constraints() const {
+bool Sphere::checkConstraints() const {
     SphereConfig config;
     return (config.minRadius <= _radius) && (_radius <= config.maxRadius);
 }
 
-float Sphere::get_radius_at(float z) {
+float Sphere::getRadiusAt(float z) {
     if (std::abs(_position.z - z) > _radius) {
         return 0;
     }
@@ -134,7 +134,7 @@ std::pair<std::vector<float>, std::vector<float>> Sphere::calculateCorners() con
 }
 
 
-std::pair<std::vector<float>, std::vector<float>> Sphere::calculateMinimumBox(Cell& perturbed_cell) const  {
+std::pair<std::vector<float>, std::vector<float>> Sphere::calculateMinimumBox(Sphere &perturbed_cell) const  {
     auto [cell1_min_corner, cell1_max_corner] = calculateCorners();
     auto [cell2_min_corner, cell2_max_corner] = perturbed_cell.calculateCorners();
 
@@ -145,6 +145,7 @@ std::pair<std::vector<float>, std::vector<float>> Sphere::calculateMinimumBox(Ce
     }
     return std::make_pair(min_corner, max_corner);
 }
+
 
 bool Sphere::checkIfCellsOverlap(const std::vector<Sphere>& spheres) {
     std::vector<std::vector<float>> positions;

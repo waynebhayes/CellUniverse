@@ -1,5 +1,4 @@
 // Lineage.cpp
-#include "../includes/Frame.hpp"
 #include "../includes/Lineage.hpp"
 
 namespace utils {
@@ -93,14 +92,16 @@ Lineage::Lineage(std::map<std::string, std::vector<Sphere>> initialCells, PathVe
         std::vector<Image> real_images;
         real_images = loadImage(imagePaths[i], config);
 
-        std::string file_name = imagePaths[i];
+        fs::path path(imagePaths[i]);
+//        std::cout << "Filename: " << path.filename() << std::endl;
+        std::string file_name = path.filename();
 
         if ((continueFrom == -1 || i < continueFrom) && initialCells.find(file_name) != initialCells.end()) {
             const std::vector<Sphere>& cells = initialCells.at(file_name);
-//            frames.emplace_back(real_images, config.simulation, cells, outputPath, file_name);
+            frames.emplace_back(real_images, config.simulation, cells, outputPath, file_name);
         }
         else {
-//            frames.emplace_back(real_images, config.simulation, std::vector<Cell>(), outputPath, file_name);
+            frames.emplace_back(real_images, config.simulation, std::vector<Sphere>(), outputPath, file_name);
         }
     }
 }
