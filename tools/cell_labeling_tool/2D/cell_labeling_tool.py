@@ -72,6 +72,10 @@ class CellLabeling(Frame):
             self.root, text="rotation: ", relief='flat')
         self.rotation_label.grid(row=8, column=0, sticky=W, padx=10, pady=5)
 
+
+        self.comment_label = Label(root, text="How To Use:  \n\nPress and hold the left click to draw the height of the box\nPress and hold the right click to draw the width of the box\n\n\n\n\n", fg="black")
+        self.comment_label.place(relx=0, rely=1, anchor=SW)
+
     ####################################################
     #              MENU - Open File
     ####################################################
