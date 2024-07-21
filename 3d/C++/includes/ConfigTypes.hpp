@@ -131,7 +131,6 @@ public:
 class BaseConfig {
 public:
     std::string cellType;
-    // TODO: Change to a template to support more different types of config or use abstract class
     SphereConfig* cell;
     SimulationConfig simulation;
     ProbabilityConfig prob;
