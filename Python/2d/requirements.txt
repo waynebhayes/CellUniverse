@@ -7,7 +7,7 @@ cloudpickle==1.5.0
 cycler==0.10.0
 dask==2021.10.0
 decorator==4.4.2
-distributed==2021.6.1
+distributed==2021.10.0
 docutils==0.16
 HeapDict==1.0.1
 idna==3.7
