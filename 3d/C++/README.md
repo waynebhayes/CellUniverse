@@ -26,7 +26,7 @@
   ```
     - Change the mode of the bash script if you don't have the permission by running the following command
     ```
-      chmod 777 runcpp.sh
+      chmod 755 runcpp.sh
     ```
   - Wait for celluniverse to finish executing and you can check the result in the `output/` folder inside the current
   example
@@ -56,7 +56,7 @@ For Mac OS:
   
     - Change the mode of the bash script if you don't have the permission by running the following command
     
-      chmod 777 runcpp.sh
+      chmod 755 runcpp.sh
     
   - Wait for celluniverse to finish executing and you can check the result in the `output/` folder inside the current
   example
