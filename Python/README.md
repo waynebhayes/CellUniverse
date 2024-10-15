@@ -1,9 +1,7 @@
-Cell Universe
+This is the OLD Python code
 =============
 
-Tracks the movement of cells from a video source. Currently the code has only been verified to work in 2D, with bacteria-shaped cells. More to come. Our first paper can be found at https://www.mdpi.com/1999-4893/15/2/51, and the PDF is available is available in the top directory of the repo.
-
-Once you clone the repo onto your machine, you should test if Cell Universe is working on your system by installing the requirements and running the script `cd 2d && ./regression-test-all.sh`.
+The 2d Python code is comprehensive, and the 3d code is only prototype, but both have stopped working (Thanks, Python, for being so unstable!)
 
 Prerequisites:
 -----------

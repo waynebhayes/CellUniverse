@@ -320,7 +320,7 @@ Temporary Items
 *.tiff
 *.gif
 *.bmp
-*.svg
+#*.svg
 
 # Videos
 *.wmv
