@@ -47,6 +47,7 @@ void Sphere::drawOutline(cv::Mat& image, float color, float z) const {
 Sphere Sphere::getPerturbedCell() const {
     SphereParams sphereParams(
             _name,
+	    // FIXME: we should choose only ONE of these, uniformly at random, to perturb in each iteration.
             _position.x + cellConfig.x.getPerturbOffset(),
             _position.y + cellConfig.y.getPerturbOffset(),
             _position.z + cellConfig.z.getPerturbOffset(),
