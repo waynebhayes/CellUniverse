@@ -35,8 +35,8 @@ simulation:
 
 # Probability of changes
 prob:
-  perturbation: 0.80
-  split: 0.2
+  perturbation: 0.99
+  split: 0.01
 #  combine: 0.1
 #  camera_shift: 0.0
 

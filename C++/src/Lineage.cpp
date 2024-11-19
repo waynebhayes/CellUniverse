@@ -120,10 +120,11 @@ void Lineage::optimize(int frameIndex)
     bool minimaReached = false;
     Cost curCost = 0;
     Cost newCost = 0;
+    Cost costDiff = 0;
 
     for (size_t i = 0; i < totalIterations; ++i) {
         if (i % 100 == 0) {
-            std::cout << "Frame " << frameIndex << ", iteration " << i << std::endl;
+            std::cout << "Frame " << frameIndex << ", iteration " << i << " Residual " << costDiff << std::endl;
         }
 
         if (algorithm == "simulated annealing") {
@@ -159,13 +160,14 @@ void Lineage::optimize(int frameIndex)
             } else {
                 throw std::invalid_argument("Invalid option");
             }
-            double costDiff = result.first;
+            costDiff = result.first;
             std::function<void(bool)> accept = result.second;
 
-            accept(costDiff < 0);
+	    accept(costDiff < 0);
             // Hill climbing logic
         }
     }
+    std::cout << "Final Residual " << costDiff << std::endl;
 }
 
 void Lineage::saveImages(int frameIndex)
