@@ -45,7 +45,7 @@ Image processImage(const Image& image, const BaseConfig & config)
     return processedImage;
 }
 
-std::vector<Image> loadImage(const std::string & imageFile, const BaseConfig & config)
+std::vector<Image> loadFrame(const std::string & imageFile, const BaseConfig & config)
 {
     std::vector<Image> imgs;
     // Get the file extension
@@ -89,8 +89,8 @@ Lineage::Lineage(std::map<std::string, std::vector<Sphere>> initialCells, PathVe
     : config(config), outputPath(outputPath)
 {
     for (size_t i = 0; i < imagePaths.size(); ++i) {
-        std::vector<Image> real_images;
-        real_images = loadImage(imagePaths[i], config);
+        std::vector<Image> real_frame;
+        real_frame = loadFrame(imagePaths[i], config);
 
         fs::path path(imagePaths[i]);
 //        std::cout << "Filename: " << path.filename() << std::endl;
@@ -98,10 +98,10 @@ Lineage::Lineage(std::map<std::string, std::vector<Sphere>> initialCells, PathVe
 
         if ((continueFrom == -1 || i < continueFrom) && initialCells.find(file_name) != initialCells.end()) {
             const std::vector<Sphere>& cells = initialCells.at(file_name);
-            frames.emplace_back(real_images, config.simulation, cells, outputPath, file_name);
+            frames.emplace_back(real_frame, config.simulation, cells, outputPath, file_name);
         }
         else {
-            frames.emplace_back(real_images, config.simulation, std::vector<Sphere>(), outputPath, file_name);
+            frames.emplace_back(real_frame, config.simulation, std::vector<Sphere>(), outputPath, file_name);
         }
     }
 }

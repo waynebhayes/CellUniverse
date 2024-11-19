@@ -14,6 +14,10 @@
 
 class Frame {
 public:
+    // FIXME: Get rid of ImageStack entirely, use mat3D instead.
+    // Also, the word "image" should never be used to represent the stack of 2D images in a TIF file; instead these should
+    // be called "frames". Please try to find and change all such variable names to use "frame" rather than "image". An
+    // "image" should only refer to 2D image. (Even if OpenCV is lazy... let's try to keep our names less confusing.)
     Frame(const ImageStack& realImageStack, const SimulationConfig& simulationConfig, const std::vector<Sphere> &cells, const Path& outputPath, const std::string& imageName);
 
     // Method declarations
