@@ -211,6 +211,11 @@ CostCallbackPair Frame::split() {
     // Store old cell
     Sphere oldCell = cells[index];
 
+    // Emilio + Atif: here is where you want to call a function that creates the bounding 3D rectangle, calls OpenCV PCA,
+    // and returns the 3 Eigenvalues + 3rd Eigenvector. Call it "CellPCA". Once that's working, we'll decide what to do
+    // with the returned values in terms of deciding (randomly) whether it's worth even attempting a split. If we don't
+    // attempt a split, we'll return (I think) the same value as below under if(!valid).
+
     // Replace the cell at that index with new cells
     Sphere child1;
     Sphere child2;
