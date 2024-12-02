@@ -18,14 +18,13 @@
 
 namespace fs = std::filesystem;
 
-cv::Mat processImage(const cv::Mat& image, const BaseConfig& config);
+cv::Mat processImage(const cv::Mat &image, const BaseConfig &config);
 
-std::vector<cv::Mat> loadFrame(const std::string& imageFile, const BaseConfig& config);
+std::vector<cv::Mat> loadFrame(const std::string &imageFile, const BaseConfig &config);
 
 class Lineage
 {
 public:
-
    Lineage(std::map<std::string, std::vector<Sphere>> initialCells, PathVec imagePaths, BaseConfig &config, std::string outputPath, int continueFrom = -1);
 
    void optimize(int frameIndex);
