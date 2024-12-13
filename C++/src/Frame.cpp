@@ -155,15 +155,20 @@ std::vector<cv::Mat> Frame::generateOutputFrame()
     return realFrameWithOutlines;
 }
 
-std::vector<cv::Mat> Frame::generateOutputSynthFrame() {
+std::vector<cv::Mat> Frame::generateOutputSynthFrame()
+{
     std::vector<cv::Mat> outputSynthFrame;
 
-    for (const auto& synthImage : _synthFrame) {
+    for (const auto &synthImage : _synthFrame)
+    {
         cv::Mat outputImage;
-        if (synthImage.depth() != CV_8U) {
+        if (synthImage.depth() != CV_8U)
+        {
             // Convert to 8-bit image if necessary, scaling pixel values by 255
             synthImage.convertTo(outputImage, CV_8U, 255.0);
-        } else {
+        }
+        else
+        {
             outputImage = synthImage.clone();
         }
 
@@ -177,11 +182,13 @@ std::vector<cv::Mat> Frame::generateOutputSynthFrame() {
 // {
 //     return cells.size();
 // }
-size_t Frame::length() const {
+size_t Frame::length() const
+{
     return cells.size();
 }
 
-CostCallbackPair Frame::perturb() {
+CostCallbackPair Frame::perturb()
+{
     std::random_device rd;
     std::mt19937 gen(rd());
     std::uniform_int_distribution<> distrib(0, cells.size() - 1);
@@ -196,7 +203,8 @@ CostCallbackPair Frame::perturb() {
     cells[index] = cells[index].getPerturbedCell();
 
     bool areCellsValid = oldCell.checkIfCellsValid(cells);
-    if (!areCellsValid) {
+    if (!areCellsValid)
+    {
         cells[index] = oldCell;
         return {0.0, [](bool accept) {}};
     }
@@ -210,10 +218,14 @@ CostCallbackPair Frame::perturb() {
     // If the difference is greater than the threshold, revert to the old cell
     double oldCost = calculateCost(_synthFrame);
 
-    CallBackFunc callback = [this, newSynthFrame, oldCell, index](bool accept) {
-        if (accept) {
+    CallBackFunc callback = [this, newSynthFrame, oldCell, index](bool accept)
+    {
+        if (accept)
+        {
             this->_synthFrame = newSynthFrame;
-        } else {
+        }
+        else
+        {
             this->cells[index] = oldCell;
         }
     };
@@ -221,7 +233,8 @@ CostCallbackPair Frame::perturb() {
     return {newCost - oldCost, callback};
 }
 
-CostCallbackPair Frame::split() {
+CostCallbackPair Frame::split()
+{
     std::random_device rd;
     std::mt19937 gen(rd());
     std::uniform_int_distribution<> distrib(0, cells.size() - 1);
@@ -241,8 +254,10 @@ CostCallbackPair Frame::split() {
     Sphere child1;
     Sphere child2;
     bool valid;
-    std::tie(child1, child2, valid) = oldCell.getSplitCells();
-    if (!valid) {
+    //     std::tie(child1, child2, valid) = oldCell.getSplitCells();
+    std::tie(child1, child2, valid) = oldCell.getSplitCells(_realFrame);
+    if (!valid)
+    {
         return {0.0, [](bool accept) {}};
     }
 
@@ -251,7 +266,8 @@ CostCallbackPair Frame::split() {
     cells.push_back(child2);
 
     bool areCellsValid = oldCell.checkIfCellsValid(cells);
-    if (!areCellsValid) {
+    if (!areCellsValid)
+    {
         cells.pop_back();
         cells.pop_back();
         cells.insert(cells.begin() + index, oldCell);
@@ -262,10 +278,14 @@ CostCallbackPair Frame::split() {
     double newCost = calculateCost(newSynthFrame);
     double oldCost = calculateCost(_synthFrame);
 
-    CallBackFunc callback = [this, newSynthFrame, oldCell, index](bool accept) {
-        if (accept) {
+    CallBackFunc callback = [this, newSynthFrame, oldCell, index](bool accept)
+    {
+        if (accept)
+        {
             this->_synthFrame = newSynthFrame;
-        } else {
+        }
+        else
+        {
             this->cells.pop_back();
             this->cells.pop_back();
             this->cells.insert(this->cells.begin() + index, oldCell);
@@ -275,14 +295,15 @@ CostCallbackPair Frame::split() {
     return {newCost - oldCost, callback};
 }
 
-Cost Frame::costOfPerturb(const std::string &perturbParam, float perturbVal, size_t index, const Cell &oldCell) {
+Cost Frame::costOfPerturb(const std::string &perturbParam, float perturbVal, size_t index, const Cell &oldCell)
+{
     std::unordered_map<std::string, float> perturbParams;
     perturbParams[perturbParam] = perturbVal;
 
     // Perturb cell
     Sphere perturbedCell = cells[index].getParameterizedCell(perturbParams);
     Sphere originalCell = cells[index]; // Store the original cell
-    cells[index] = perturbedCell; // Replace with the perturbed cell
+    cells[index] = perturbedCell;       // Replace with the perturbed cell
 
     // Generate new image stack and get new cost
     auto newSynthFrame = generateSynthFrame();
@@ -296,14 +317,17 @@ Cost Frame::costOfPerturb(const std::string &perturbParam, float perturbVal, siz
 
 ParamImageMap
 Frame::getSynthPerturbedCells(
-        size_t index,
-        const ParamValMap &params,
-        float perturbLength,
-        const Cell &oldCell) {
+    size_t index,
+    const ParamValMap &params,
+    float perturbLength,
+    const Cell &oldCell)
+{
     std::unordered_map<std::string, std::vector<cv::Mat>> perturbedCells;
 
-    for (const auto& [param, val] : params) {
-        if (param == "name") {
+    for (const auto &[param, val] : params)
+    {
+        if (param == "name")
+        {
             continue;
         }
 
@@ -312,7 +336,7 @@ Frame::getSynthPerturbedCells(
 
         Sphere perturbedCell = cells[index].getParameterizedCell(perturbParams);
         Sphere originalCell = cells[index]; // Store the original cell
-        cells[index] = perturbedCell; // Replace with the perturbed cell
+        cells[index] = perturbedCell;       // Replace with the perturbed cell
 
         perturbedCells[param] = generateSynthFrame();
 
@@ -434,6 +458,7 @@ Frame::getSynthPerturbedCells(
 //
 //}
 
-std::vector<cv::Mat> Frame::getSynthFrame() {
+std::vector<cv::Mat> Frame::getSynthFrame()
+{
     return _synthFrame;
 }
