@@ -73,7 +73,8 @@ public:
     std::tuple<Sphere, Sphere, bool> getSplitCells(const std::vector<cv::Mat> &image) const;
     // std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells() const;
 
-    cv::Mat performPCA(const std::vector<cv::Point3f> &points) const;
+    //cv::Mat performPCA(const std::vector<cv::Point3f> &points) const;
+    std::vector<float> performPCA(const std::vector<cv::Point3f> &points) const;
 
     bool checkConstraints() const;
 

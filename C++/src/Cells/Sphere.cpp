@@ -115,22 +115,35 @@ std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells(const std::vector<cv::Mat
         }
     }
 
-    if (!points.empty()) {
-        // Perform PCA to get eigenvectors
-        cv::Mat eigenvectors = performPCA(points);
+    // if (!points.empty()) {
+    //     // Perform PCA to get eigenvectors
+    //     cv::Mat eigenvectors = performPCA(points);
 
-        // Print the eigenvectors
-        // std::cout << "Eigenvectors:" << std::endl;
-        // for (int i = 0; i < eigenvectors.rows; ++i) {
-        //     std::cout << eigenvectors.at<float>(i, 0) << ", "
-        //               << eigenvectors.at<float>(i, 1) << ", "
-        //               << eigenvectors.at<float>(i, 2) << std::endl;
-        std::cout << eigenvectors << std::endl;
-        //}
+    //     // Print the eigenvectors
+    //     std::cout << "Eigenvectors:" << std::endl;
+    //     for (int i = 0; i < eigenvectors.rows; ++i) {
+    //         std::cout << eigenvectors.at<float>(i, 0) << ", "
+    //                   << eigenvectors.at<float>(i, 1) << ", "
+    //                   << eigenvectors.at<float>(i, 2) << std::endl;
+    //     //std::cout << eigenvectors << std::endl;
+    //     }
+    // } else {
+    //     std::cout << "No points found for PCA." << std::endl;
+    // }
+
+    if (!points.empty()) {
+        // Perform PCA to get eigenvalues
+        std::vector<float> eigenvalues = performPCA(points);
+
+        // Print the top 3 eigenvalues
+        std::cout << "Eigenvalues with most variance:" << std::endl;
+        for (size_t i = 0; i < eigenvalues.size(); ++i) {
+            std::cout << "Eigenvalue " << i + 1 << ": " << eigenvalues[i] << std::endl;
+        }
     } else {
         std::cout << "No points found for PCA." << std::endl;
     }
-
+    
     double theta = ((double)rand() / RAND_MAX) * 2 * M_PI;
     double phi = ((double)rand() / RAND_MAX) * M_PI;
 
@@ -156,7 +169,30 @@ std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells(const std::vector<cv::Mat
     return std::make_tuple(Sphere(cell1), Sphere(cell2), constraints);
 }
 
-cv::Mat Sphere::performPCA(const std::vector<cv::Point3f> &points) const
+// cv::Mat Sphere::performPCA(const std::vector<cv::Point3f> &points) const
+// {
+//     if (points.empty())
+//     {
+//         throw std::invalid_argument("No points provided for PCA.");
+//     }
+
+//     // Create a matrix from the points
+//     cv::Mat data(points.size(), 3, CV_32F);
+//     for (size_t i = 0; i < points.size(); ++i)
+//     {
+//         data.at<float>(i, 0) = points[i].x;
+//         data.at<float>(i, 1) = points[i].y;
+//         data.at<float>(i, 2) = points[i].z;
+//     }
+
+//     // Perform PCA
+//     cv::PCA pca(data, cv::Mat(), cv::PCA::DATA_AS_ROW);
+
+//     // std::cout << "Eigenvectors " << pca.eigenvectors << std::endl;
+//     return pca.eigenvectors;
+// }
+
+std::vector<float> Sphere::performPCA(const std::vector<cv::Point3f> &points) const
 {
     if (points.empty())
     {
@@ -175,67 +211,19 @@ cv::Mat Sphere::performPCA(const std::vector<cv::Point3f> &points) const
     // Perform PCA
     cv::PCA pca(data, cv::Mat(), cv::PCA::DATA_AS_ROW);
 
-    // std::cout << "Eigenvectors " << pca.eigenvectors << std::endl;
-    return pca.eigenvectors;
+    // Extract the eigenvalues
+    cv::Mat eigenvalues = pca.eigenvalues;
+
+    // Convert eigenvalues to a vector
+    std::vector<float> eigenvaluesVec;
+    eigenvalues.copyTo(eigenvaluesVec);
+
+    // Sort the eigenvalues in descending order
+    std::sort(eigenvaluesVec.begin(), eigenvaluesVec.end(), std::greater<float>());
+
+    // Return the top 3 eigenvalues
+    return std::vector<float>(eigenvaluesVec.begin(), eigenvaluesVec.begin() + 3);
 }
-
-// std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells(const std::vector<cv::Mat> &image) const
-// {
-//     // Step 1: Get the bounding box using calculateCorners
-//     auto [min_corner, max_corner] = calculateCorners();
-
-//     int minX = std::max(0, static_cast<int>(min_corner[0]));
-//     int maxX = std::min(static_cast<int>(image[0].cols), static_cast<int>(max_corner[0]));
-//     int minY = std::max(0, static_cast<int>(min_corner[1]));
-//     int maxY = std::min(static_cast<int>(image[0].rows), static_cast<int>(max_corner[1]));
-//     int minZ = std::max(0, static_cast<int>(min_corner[2]));
-//     int maxZ = std::min(static_cast<int>(image.size()), static_cast<int>(max_corner[2]));
-
-//     // Step 2: Construct 3D points for PCA
-//     std::vector<cv::Point3f> points;
-//     for (int z = minZ; z <= maxZ; ++z)
-//     {
-//         for (int y = minY; y <= maxY; ++y)
-//         {
-//             for (int x = minX; x <= maxX; ++x)
-//             {
-//                 if (image[z].at<uchar>(y, x) > 0)
-//                 { // Assuming non-zero values are part of the object
-//                     points.emplace_back(x, y, z);
-//                 }
-//             }
-//         }
-//     }
-
-//     if (points.empty())
-//     {
-//         // Handle case where no points are found
-//         return std::make_tuple(Sphere(), Sphere(), false);
-//     }
-
-//     // Perform PCA to get eigenvectors
-//     cv::Mat eigenvectors = performPCA(points);
-
-//     // Choose the eigenvector corresponding to the smallest eigenvalue (last row)
-//     cv::Point3f split_axis(eigenvectors.at<float>(2, 0), eigenvectors.at<float>(2, 1), eigenvectors.at<float>(2, 2));
-
-//     // Calculate Offset and new positions
-//     cv::Point3f offset = split_axis * (_radius / 2.0);
-//     cv::Point3f new_position1 = _position + offset;
-//     cv::Point3f new_position2 = _position - offset;
-
-//     double halfRadius = _radius / 2.0;
-
-//     Sphere cell1(SphereParams(_name + "0", new_position1.x, new_position1.y, new_position1.z, halfRadius));
-//     Sphere cell2(SphereParams(_name + "1", new_position2.x, new_position2.y, new_position2.z, halfRadius));
-
-//     bool constraints = cell1.checkConstraints() && cell2.checkConstraints();
-
-//     // Cell cell1Base = static_cast<Cell>(cell1);
-//     // Cell cell2Base = static_cast<Cell>(cell2);//convert Sphere to Cell
-
-//     return std::make_tuple(Sphere(cell1), Sphere(cell2), constraints);
-// }
 
 bool Sphere::checkConstraints() const
 {
