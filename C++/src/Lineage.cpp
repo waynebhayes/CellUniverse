@@ -1,18 +1,23 @@
 // Lineage.cpp
 #include "../includes/Lineage.hpp"
 
-namespace utils {
-    template<typename T>
-    void printMat(const cv::Mat& mat) {
+namespace utils
+{
+    template <typename T>
+    void printMat(const cv::Mat &mat)
+    {
         // Check if the matrix is empty
-        if (mat.empty()) {
+        if (mat.empty())
+        {
             std::cout << "The matrix is empty." << std::endl;
             return;
         }
 
         // Iterate over matrix rows
-        for (int i = 0; i < mat.rows; ++i) {
-            for (int j = 0; j < mat.cols; ++j) {
+        for (int i = 0; i < mat.rows; ++i)
+        {
+            for (int j = 0; j < mat.cols; ++j)
+            {
                 // Print each element. Use mat.at<T>(i,j) to access the element at [i,j] and cast it to the type T.
                 // The type T should match the type of the elements in the matrix.
                 std::cout << mat.at<T>(i, j) << " ";
@@ -22,14 +27,16 @@ namespace utils {
     }
 }
 
-Image processImage(const Image& image, const BaseConfig & config)
+Image processImage(const Image &image, const BaseConfig &config)
 {
     Image processedImage;
 
-    if (image.channels() == 3) {
+    if (image.channels() == 3)
+    {
         cv::cvtColor(image, processedImage, cv::COLOR_RGB2GRAY);
     }
-    else {
+    else
+    {
         processedImage = image.clone();
     }
 
@@ -39,79 +46,90 @@ Image processImage(const Image& image, const BaseConfig & config)
     // use 1.5 temporarily
     // TODO: use GaussianBlur with custom sigma
     SimulationConfig simConfig = config.simulation;
-//    std::cout << "The blur sigma is: " <<  simConfig.blur_sigma << std::endl;
+    //    std::cout << "The blur sigma is: " <<  simConfig.blur_sigma << std::endl;
     cv::GaussianBlur(processedImage, processedImage, cv::Size(0, 0), 1.5);
 
     return processedImage;
 }
 
-std::vector<Image> loadFrame(const std::string & imageFile, const BaseConfig & config)
+std::vector<cv::Mat> loadFrame(const std::string &imageFile, const BaseConfig &config)
 {
-    std::vector<Image> imgs;
+    std::vector<cv::Mat> imgs;
     // Get the file extension
     std::string extension = imageFile.substr(imageFile.find_last_of('.') + 1);
-    if (extension == "tiff" || extension == "tif") {
-        std::vector<Image> rawImages;
+    if (extension == "tiff" || extension == "tif")
+    {
+        std::vector<cv::Mat> rawImages;
         cv::imreadmulti(imageFile, rawImages, cv::IMREAD_ANYDEPTH | cv::IMREAD_COLOR);
-        Image img = rawImages[0];
-        if (img.empty()) {
+        cv::Mat img = rawImages[0];
+        if (img.empty())
+        {
             std::cout << "Error: Could not read the TIFF image" << std::endl;
             return imgs;
         }
 
         unsigned slices = rawImages.size();
 
-        for (unsigned i = 0; i < slices; ++i) {
-            Image slice = rawImages[i].clone();
+        for (unsigned i = 0; i < slices; ++i)
+        {
+            cv::Mat slice = rawImages[i].clone();
             cv::cvtColor(slice, slice, cv::COLOR_BGR2GRAY);
             cv::Mat processedImg = processImage(slice, config);
             imgs.push_back(processedImg);
         }
-    } else {
+    }
+    else
+    {
         // TODO: fix this
-        Image img = cv::imread(imageFile);
-        if (img.empty()) {
+        cv::Mat img = cv::imread(imageFile);
+        if (img.empty())
+        {
             std::cout << "Error: Could not read the image" << std::endl;
             return imgs;
         }
 
-        if (img.channels() == 3) {
+        if (img.channels() == 3)
+        {
             cv::cvtColor(img, img, cv::COLOR_BGR2GRAY);
         }
 
         imgs.push_back(processImage(img, config));
     }
-//    std::cout << "The size of the imgs is " << imgs.size() << std::endl;
+    //    std::cout << "The size of the imgs is " << imgs.size() << std::endl;
     return imgs;
 }
 
 Lineage::Lineage(std::map<std::string, std::vector<Sphere>> initialCells, PathVec imagePaths, BaseConfig &config, std::string outputPath, int continueFrom)
     : config(config), outputPath(outputPath)
 {
-    for (size_t i = 0; i < imagePaths.size(); ++i) {
+    for (size_t i = 0; i < imagePaths.size(); ++i)
+    {
         std::vector<Image> real_frame;
         real_frame = loadFrame(imagePaths[i], config);
 
         fs::path path(imagePaths[i]);
-//        std::cout << "Filename: " << path.filename() << std::endl;
+        //        std::cout << "Filename: " << path.filename() << std::endl;
         std::string file_name = path.filename();
 
-        if ((continueFrom == -1 || i < continueFrom) && initialCells.find(file_name) != initialCells.end()) {
-            const std::vector<Sphere>& cells = initialCells.at(file_name);
+        if ((continueFrom == -1 || i < continueFrom) && initialCells.find(file_name) != initialCells.end())
+        {
+            const std::vector<Sphere> &cells = initialCells.at(file_name);
             frames.emplace_back(real_frame, config.simulation, cells, outputPath, file_name);
         }
-        else {
+        else
+        {
             frames.emplace_back(real_frame, config.simulation, std::vector<Sphere>(), outputPath, file_name);
         }
     }
 }
 void Lineage::optimize(int frameIndex)
 {
-    if (frameIndex < 0 || static_cast<size_t>(frameIndex) >= frames.size()) {
+    if (frameIndex < 0 || static_cast<size_t>(frameIndex) >= frames.size())
+    {
         throw std::invalid_argument("Invalid frame index");
     }
 
-    Frame& frame = frames[frameIndex];
+    Frame &frame = frames[frameIndex];
     std::string algorithm = "hill"; // Set default algorithm
     size_t totalIterations = frame.length() * config.simulation.iterations_per_cell;
     std::cout << "Total iterations: " << totalIterations << std::endl;
@@ -122,26 +140,33 @@ void Lineage::optimize(int frameIndex)
     Cost newCost = 0;
     Cost costDiff = 0;
 
-    for (size_t i = 0; i < totalIterations; ++i) {
-        if (i % 100 == 0) {
+    for (size_t i = 0; i < totalIterations; ++i)
+    {
+        if (i % 100 == 0)
+        {
             std::cout << "Frame " << frameIndex << ", iteration " << i << " Residual " << costDiff << std::endl;
         }
 
-        if (algorithm == "simulated annealing") {
+        if (algorithm == "simulated annealing")
+        {
             // Simulated annealing logic
-        } else if (algorithm == "gradient descent") {
-//            std::cout << "Current iteration: " << i + 1 << std::endl;
-//            if (minimaReached) {
-//                continue;
-//            }
-//            curCost = frame.calculateCost(frame.getSynthImageStack());
-//            newCost = frame.gradientDescent();
-//
-//            if ((curCost - newCost) < tolerance) {
-//                minimaReached = true;
-//            }
+        }
+        else if (algorithm == "gradient descent")
+        {
+            //            std::cout << "Current iteration: " << i + 1 << std::endl;
+            //            if (minimaReached) {
+            //                continue;
+            //            }
+            //            curCost = frame.calculateCost(frame.getSynthImageStack());
+            //            newCost = frame.gradientDescent();
+            //
+            //            if ((curCost - newCost) < tolerance) {
+            //                minimaReached = true;
+            //            }
             // Gradient descent logic
-        } else {
+        }
+        else
+        {
             std::vector<std::string> options = {"split", "perturbation"};
             std::vector<double> probabilities = {config.prob.split, config.prob.perturbation};
 
@@ -153,17 +178,22 @@ void Lineage::optimize(int frameIndex)
             std::string chosenOption = options[chosenIndex];
 
             CostCallbackPair result;
-            if (chosenOption == "perturbation") {
+            if (chosenOption == "perturbation")
+            {
                 result = frame.perturb();
-            } else if (chosenOption == "split") {
+            }
+            else if (chosenOption == "split")
+            {
                 result = frame.split();
-            } else {
+            }
+            else
+            {
                 throw std::invalid_argument("Invalid option");
             }
             costDiff = result.first;
             std::function<void(bool)> accept = result.second;
 
-	    accept(costDiff < 0);
+            accept(costDiff < 0);
             // Hill climbing logic
         }
     }
@@ -172,28 +202,33 @@ void Lineage::optimize(int frameIndex)
 
 void Lineage::saveImages(int frameIndex)
 {
-    if (frameIndex < 0 || static_cast<size_t>(frameIndex) >= frames.size()) {
+    if (frameIndex < 0 || static_cast<size_t>(frameIndex) >= frames.size())
+    {
         throw std::invalid_argument("Invalid frame index");
     }
 
-    std::vector<Image> realImages = frames[frameIndex].generateOutputImages();
-    std::vector<Image> synthImages = frames[frameIndex].generateOutputSynthImages();
+    std::vector<Image> realImages = frames[frameIndex].generateOutputFrame();
+    std::vector<Image> synthImages = frames[frameIndex].generateOutputSynthFrame();
     std::cout << "Saving images for frame " << frameIndex << "..." << std::endl;
 
     std::string realOutputPath = outputPath + "/real/" + std::to_string(frameIndex);
-    if (!std::filesystem::exists(realOutputPath)) {
+    if (!std::filesystem::exists(realOutputPath))
+    {
         std::filesystem::create_directories(realOutputPath);
     }
-    for (size_t i = 0; i < realImages.size(); ++i) {
+    for (size_t i = 0; i < realImages.size(); ++i)
+    {
         // Save real images
         cv::imwrite(realOutputPath + "/" + std::to_string(i) + ".png", realImages[i]);
     }
 
     std::string synthOutputPath = outputPath + "/synth/" + std::to_string(frameIndex);
-    if (!std::filesystem::exists(synthOutputPath)) {
+    if (!std::filesystem::exists(synthOutputPath))
+    {
         std::filesystem::create_directories(synthOutputPath);
     }
-    for (size_t i = 0; i < synthImages.size(); ++i) {
+    for (size_t i = 0; i < synthImages.size(); ++i)
+    {
         // Save synthetic images
         cv::imwrite(synthOutputPath + "/" + std::to_string(i) + ".png", synthImages[i]);
     }
@@ -201,35 +236,36 @@ void Lineage::saveImages(int frameIndex)
     std::cout << "Done" << std::endl;
 }
 
-//void Lineage::saveCells(int frameIndex)
+// void Lineage::saveCells(int frameIndex)
 //{
-//    std::vector<CellParams> all_cells;
+//     std::vector<CellParams> all_cells;
 //
-//    // Concatenating cell data from each frame
-//    for (int i = 0; i <= frameIndex && i < frames.size(); ++i) {
-//        auto frame_cells = frames[i].get_cells_as_params();
-//        all_cells.insert(all_cells.end(), frame_cells.begin(), frame_cells.end());
-//    }
+//     // Concatenating cell data from each frame
+//     for (int i = 0; i <= frameIndex && i < frames.size(); ++i) {
+//         auto frame_cells = frames[i].get_cells_as_params();
+//         all_cells.insert(all_cells.end(), frame_cells.begin(), frame_cells.end());
+//     }
 //
-//    // Sorting cells by frame and then by cell ID
-//    std::sort(all_cells.begin(), all_cells.end(), [](const CellParams& a, const CellParams& b) {
-//        return a.file < b.file || (a.file == b.file && a.name < b.name);
-//    });
+//     // Sorting cells by frame and then by cell ID
+//     std::sort(all_cells.begin(), all_cells.end(), [](const CellParams& a, const CellParams& b) {
+//         return a.file < b.file || (a.file == b.file && a.name < b.name);
+//     });
 //
-//    // Writing to CSV
-//    std::ofstream file(outputPath + "cells.csv");
-//    if (file.is_open()) {
-//        // Assuming you want to write the file and name fields
-//        file << "file,name\n";
-//        for (const auto& cell : all_cells) {
-//            file << cell.file << "," << cell.name << "\n";
-//        }
-//    }
-//}
+//     // Writing to CSV
+//     std::ofstream file(outputPath + "cells.csv");
+//     if (file.is_open()) {
+//         // Assuming you want to write the file and name fields
+//         file << "file,name\n";
+//         for (const auto& cell : all_cells) {
+//             file << cell.file << "," << cell.name << "\n";
+//         }
+//     }
+// }
 
 void Lineage::copyCellsForward(int to)
 {
-    if (to >= frames.size()) {
+    if (to >= frames.size())
+    {
         return;
     }
     // assumes cells have deepcopy copy constructors
@@ -240,4 +276,3 @@ unsigned int Lineage::length()
 {
     return frames.size();
 }
-
