@@ -1,4 +1,5 @@
 #include "Sphere.hpp"
+#include <random>
 
 SphereParams Sphere::paramClass = SphereParams();
 SphereConfig Sphere::cellConfig = SphereConfig();
@@ -45,16 +46,25 @@ void Sphere::drawOutline(cv::Mat& image, float color, float z) const {
 }
 
 Sphere Sphere::getPerturbedCell() const {
+    // Choose a random direction to perturb
+    int direction = rand() % 3; // Generates 0, 1, or 2
+
+    float xOffset = (direction == 0) ? cellConfig.x.getPerturbOffset() : 0;
+    float yOffset = (direction == 1) ? cellConfig.y.getPerturbOffset() : 0;
+    float zOffset = (direction == 2) ? cellConfig.z.getPerturbOffset() : 0;
+
     SphereParams sphereParams(
-            _name,
-	    // FIXME: we should choose only ONE of these, uniformly at random, to perturb in each iteration.
-            _position.x + cellConfig.x.getPerturbOffset(),
-            _position.y + cellConfig.y.getPerturbOffset(),
-            _position.z + cellConfig.z.getPerturbOffset(),
-            _radius + cellConfig.radius.getPerturbOffset()
+        _name,
+        _position.x + xOffset,
+        _position.y + yOffset,
+        _position.z + zOffset,
+        _radius + cellConfig.radius.getPerturbOffset() // Radius perturbation remains as is
     );
+
     return Sphere(sphereParams);
 }
+
+
 
 Sphere Sphere::getParameterizedCell(std::unordered_map<std::string, float> params) const  {
     float xOffset = params["x"];
