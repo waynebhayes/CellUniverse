@@ -136,10 +136,14 @@ void Lineage::optimize(int frameIndex)
 
     double tolerance = 0.5;
     bool minimaReached = false;
-    Cost curCost = 0;
-    Cost newCost = 0;
+   // Cost curCost = 0;
+ //   Cost newCost = 0;
     Cost costDiff = 0;
+    double residSum = 0;
+    double residCount = 0;
+    double ovrResidual = 0;
 
+<<<<<<< HEAD
     for (size_t i = 0; i < totalIterations; ++i)
     {
         if (i % 100 == 0)
@@ -149,6 +153,24 @@ void Lineage::optimize(int frameIndex)
 
         if (algorithm == "simulated annealing")
         {
+=======
+    for (size_t i = 0; i < totalIterations; ++i) {
+        if(costDiff<0){
+            residSum += costDiff;
+            residCount++;
+        }
+        if (i % 100 == 0) {
+            ovrResidual = residSum/residCount;
+            if (residCount>0){
+            std::cout << "Frame " << frameIndex << ", iteration " << i << " Difference of Residuals " << ovrResidual << std::endl;
+            }else{
+               std::cout << "Frame " << frameIndex << ", iteration " << i << " -- No synthezised images selected" << std::endl; 
+            }
+            residSum = 0;
+            residCount = 0;
+        }
+        if (algorithm == "simulated annealing") {
+>>>>>>> 8eecd1821a6ae5a137ace698a927753ca60d42b4
             // Simulated annealing logic
         }
         else if (algorithm == "gradient descent")
@@ -197,7 +219,6 @@ void Lineage::optimize(int frameIndex)
             // Hill climbing logic
         }
     }
-    std::cout << "Final Residual " << costDiff << std::endl;
 }
 
 void Lineage::saveImages(int frameIndex)
