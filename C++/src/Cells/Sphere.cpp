@@ -95,6 +95,8 @@ std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells(const std::vector<cv::Mat
     // using brightness values interpolate
     // Step 1: Get the bounding box using calculateCorners
     // Step 1: Get the bounding box using calculateCorners
+    // print out eigenvectors for just x,y,z directions
+    // for the z vector, we can scale it instead of relying on interpolation
     auto [min_corner, max_corner] = calculateCorners();
 
     int minX = std::max(0, static_cast<int>(min_corner[0]));
@@ -114,36 +116,19 @@ std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells(const std::vector<cv::Mat
             }
         }
     }
-
-    // if (!points.empty()) {
-    //     // Perform PCA to get eigenvectors
-    //     cv::Mat eigenvectors = performPCA(points);
-
-    //     // Print the eigenvectors
-    //     std::cout << "Eigenvectors:" << std::endl;
-    //     for (int i = 0; i < eigenvectors.rows; ++i) {
-    //         std::cout << eigenvectors.at<float>(i, 0) << ", "
-    //                   << eigenvectors.at<float>(i, 1) << ", "
-    //                   << eigenvectors.at<float>(i, 2) << std::endl;
-    //     //std::cout << eigenvectors << std::endl;
-    //     }
-    // } else {
-    //     std::cout << "No points found for PCA." << std::endl;
-    // }
-
     if (!points.empty()) {
         // Perform PCA to get eigenvalues
-        std::vector<float> eigenvalues = performPCA(points);
+        std::vector<std::pair<float, cv::Vec3f>> eigenvalues = performPCA(points);
 
         // Print the top 3 eigenvalues
         std::cout << "Eigenvalues with most variance:" << std::endl;
         for (size_t i = 0; i < eigenvalues.size(); ++i) {
-            std::cout << "Eigenvalue " << i + 1 << ": " << eigenvalues[i] << std::endl;
+            std::cout << "Eigenvalue " << i + 1 << ": " << eigenvalues[i].first << " " << eigenvalues[i].second << std::endl;
         }
     } else {
         std::cout << "No points found for PCA." << std::endl;
     }
-    
+
     double theta = ((double)rand() / RAND_MAX) * 2 * M_PI;
     double phi = ((double)rand() / RAND_MAX) * M_PI;
 
@@ -169,30 +154,7 @@ std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells(const std::vector<cv::Mat
     return std::make_tuple(Sphere(cell1), Sphere(cell2), constraints);
 }
 
-// cv::Mat Sphere::performPCA(const std::vector<cv::Point3f> &points) const
-// {
-//     if (points.empty())
-//     {
-//         throw std::invalid_argument("No points provided for PCA.");
-//     }
-
-//     // Create a matrix from the points
-//     cv::Mat data(points.size(), 3, CV_32F);
-//     for (size_t i = 0; i < points.size(); ++i)
-//     {
-//         data.at<float>(i, 0) = points[i].x;
-//         data.at<float>(i, 1) = points[i].y;
-//         data.at<float>(i, 2) = points[i].z;
-//     }
-
-//     // Perform PCA
-//     cv::PCA pca(data, cv::Mat(), cv::PCA::DATA_AS_ROW);
-
-//     // std::cout << "Eigenvectors " << pca.eigenvectors << std::endl;
-//     return pca.eigenvectors;
-// }
-
-std::vector<float> Sphere::performPCA(const std::vector<cv::Point3f> &points) const
+std::vector<std::pair<float, cv::Vec3f>> Sphere::performPCA(const std::vector<cv::Point3f> &points) const
 {
     if (points.empty())
     {
@@ -211,19 +173,58 @@ std::vector<float> Sphere::performPCA(const std::vector<cv::Point3f> &points) co
     // Perform PCA
     cv::PCA pca(data, cv::Mat(), cv::PCA::DATA_AS_ROW);
 
-    // Extract the eigenvalues
+    // Extract the eigenvalues and eigenvectors
     cv::Mat eigenvalues = pca.eigenvalues;
+    cv::Mat eigenvectors = pca.eigenvectors;
 
-    // Convert eigenvalues to a vector
-    std::vector<float> eigenvaluesVec;
-    eigenvalues.copyTo(eigenvaluesVec);
+    // Prepare the result
+    std::vector<std::pair<float, cv::Vec3f>> eigenPairs;
+    for (int i = 0; i < std::min(3, eigenvalues.rows); ++i)
+    {
+        float eigenvalue = eigenvalues.at<float>(i);
+        cv::Vec3f eigenvector(
+            eigenvectors.at<float>(i, 0),
+            eigenvectors.at<float>(i, 1),
+            eigenvectors.at<float>(i, 2)
+        );
+        eigenPairs.emplace_back(eigenvalue, eigenvector);
+    }
 
-    // Sort the eigenvalues in descending order
-    std::sort(eigenvaluesVec.begin(), eigenvaluesVec.end(), std::greater<float>());
-
-    // Return the top 3 eigenvalues
-    return std::vector<float>(eigenvaluesVec.begin(), eigenvaluesVec.begin() + 3);
+    return eigenPairs;
 }
+
+// std::vector<float> Sphere::performPCA(const std::vector<cv::Point3f> &points) const
+// {
+//     if (points.empty())
+//     {
+//         throw std::invalid_argument("No points provided for PCA.");
+//     }
+
+//     // Create a matrix from the points
+//     cv::Mat data(points.size(), 3, CV_32F);
+//     for (size_t i = 0; i < points.size(); ++i)
+//     {
+//         data.at<float>(i, 0) = points[i].x;
+//         data.at<float>(i, 1) = points[i].y;
+//         data.at<float>(i, 2) = points[i].z;
+//     }
+
+//     // Perform PCA
+//     cv::PCA pca(data, cv::Mat(), cv::PCA::DATA_AS_ROW);
+
+//     // Extract the eigenvalues
+//     cv::Mat eigenvalues = pca.eigenvalues;
+
+//     // Convert eigenvalues to a vector
+//     std::vector<float> eigenvaluesVec;
+//     eigenvalues.copyTo(eigenvaluesVec);
+
+//     // Sort the eigenvalues in descending order
+//     std::sort(eigenvaluesVec.begin(), eigenvaluesVec.end(), std::greater<float>());
+
+//     // Return the top 3 eigenvalues
+//     return std::vector<float>(eigenvaluesVec.begin(), eigenvaluesVec.begin() + 3);
+// }
 
 bool Sphere::checkConstraints() const
 {
