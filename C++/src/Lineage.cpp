@@ -143,17 +143,6 @@ void Lineage::optimize(int frameIndex)
     double residCount = 0;
     double ovrResidual = 0;
 
-<<<<<<< HEAD
-    for (size_t i = 0; i < totalIterations; ++i)
-    {
-        if (i % 100 == 0)
-        {
-            std::cout << "Frame " << frameIndex << ", iteration " << i << " Residual " << costDiff << std::endl;
-        }
-
-        if (algorithm == "simulated annealing")
-        {
-=======
     for (size_t i = 0; i < totalIterations; ++i) {
         if(costDiff<0){
             residSum += costDiff;
@@ -170,7 +159,6 @@ void Lineage::optimize(int frameIndex)
             residCount = 0;
         }
         if (algorithm == "simulated annealing") {
->>>>>>> 8eecd1821a6ae5a137ace698a927753ca60d42b4
             // Simulated annealing logic
         }
         else if (algorithm == "gradient descent")
@@ -297,3 +285,4 @@ unsigned int Lineage::length()
 {
     return frames.size();
 }
+    

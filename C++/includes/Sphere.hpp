@@ -68,7 +68,7 @@ public:
 
     [[nodiscard]] Sphere getPerturbedCell() const;
 
-    Sphere getParameterizedCell(std::unordered_map<std::string, float> params = {}) const;
+    Sphere getParameterizedCell(std::unordered_map<std::string, float> params) const;
 
     std::tuple<Sphere, Sphere, bool> getSplitCells(const std::vector<cv::Mat> &image) const;
     // std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells() const;
