@@ -30,7 +30,7 @@ simulation:
   background_color: 0.39
   cell_color: 0.53
   padding: 0
-  z_scaling: 6.925
+  z_scaling: 7 # physical expand factor (nearest integer) between Z-slice voxel high and the (x,y) dimensions. Pavak said 6.925.
   blur_sigma: 0
 
 # Probability of changes
