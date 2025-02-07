@@ -41,6 +41,7 @@ void Sphere::drawOutline(cv::Mat &image, float color, float z) const
     }
     float outlineColor = color;
     float currentRadius = getRadiusAt(z);
+
     if (currentRadius <= 0)
     {
         return;
@@ -54,6 +55,7 @@ Sphere Sphere::getPerturbedCell() const
 {
     SphereParams sphereParams(
         _name,
+
         // FIXME: we should choose only ONE of these, uniformly at random, to perturb in each iteration.
         _position.x + cellConfig.x.getPerturbOffset(),
         _position.y + cellConfig.y.getPerturbOffset(),
@@ -106,7 +108,7 @@ std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells(const std::vector<cv::Mat
     int minZ = std::max(0, static_cast<int>(min_corner[2]));
     int maxZ = std::min(static_cast<int>(image.size()), static_cast<int>(max_corner[2]));
 
-    // Step 2: Construct 3D points for PCA
+    // Step 2: Construct 3D points for PCAs
     std::vector<cv::Point3f> points;
     for (int z = minZ; z <= maxZ; ++z) {
         for (int y = minY; y <= maxY; ++y) {
@@ -121,6 +123,7 @@ std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells(const std::vector<cv::Mat
         std::vector<std::pair<float, cv::Vec3f>> eigenvalues = performPCA(points);
 
         // Print the top 3 eigenvalues
+        std::cout << "Performing PCA on coordinates: (" << _position.x << ", " << _position.y << ", " << _position.z << ")" << std::endl;
         std::cout << "Eigenvalues with most variance:" << std::endl;
         for (size_t i = 0; i < eigenvalues.size(); ++i) {
             std::cout << "Eigenvalue " << i + 1 << ": " << eigenvalues[i].first << " " << eigenvalues[i].second << std::endl;

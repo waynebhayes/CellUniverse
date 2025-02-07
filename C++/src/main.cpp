@@ -122,7 +122,7 @@ int main(int argc, char *argv[])
     {
         lineage.optimize(frame);
         lineage.copyCellsForward(frame + 1);
-        lineage.saveImages(frame);
+        lineage.saveFrame(frame);
         // lineage.saveCells(frame); // TODO: Fix this
     }
     auto end = std::chrono::steady_clock::now();
