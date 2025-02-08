@@ -29,7 +29,7 @@ public:
 
    void optimize(int frameIndex);
 
-   void saveImages(int frameIndex);
+   void saveFrame(int frameIndex);
 
    void saveCells(int frameIndex);
 

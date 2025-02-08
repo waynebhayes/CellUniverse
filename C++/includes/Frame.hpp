@@ -13,6 +13,7 @@
 #include "Sphere.hpp"
 #include <opencv2/core/mat.hpp>
 
+void interpolateSlices(const cv::Mat& slice1, const cv::Mat& slice2, std::vector<cv::Mat>& processedSlices, int numInterpolations);
 class Frame
 {
 public:
