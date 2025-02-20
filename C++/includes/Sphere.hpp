@@ -55,7 +55,7 @@ public:
 
     Sphere() : _radius(0), _rotation(0), dormant(false) {}
 
-    void printCellInfo()
+    void printCellInfo() const
     {
         std::cout << "Sphere name: " << _name << " x: " << _position.x << " y: " << _position.y << " z: " << _position.z << " radius: " << _radius << " isDormant: " << dormant << std::endl;
     }
@@ -69,6 +69,8 @@ public:
     [[nodiscard]] Sphere getPerturbedCell() const;
 
     Sphere getParameterizedCell(std::unordered_map<std::string, float> params) const;
+
+    double getOrientation3D(const std::vector<cv::Point3d> &pts, std::vector<cv::Mat> &frame) const;
 
     std::tuple<Sphere, Sphere, bool> getSplitCells(const std::vector<cv::Mat> &image) const;
     // std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells() const;

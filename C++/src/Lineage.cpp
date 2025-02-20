@@ -90,7 +90,6 @@ std::vector<cv::Mat> loadFrame(const std::string &imageFile, const BaseConfig &c
         // for checking
         // std::cout << "Number of synthetic slices: " << numSynthSlices << std::endl;
         
-        // Pseudo-code for creating the new vector of matrices with interpolated zSlices
         // iterate through synthslices and interpolate between each "real" slice
         for (int synthSlice = 0; synthSlice < numSynthSlices; ++synthSlice) {
             int tiffSlice = int(synthSlice / expandFactor); // "real" slice index 

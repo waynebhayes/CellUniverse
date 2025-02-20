@@ -88,6 +88,42 @@ Sphere Sphere::getParameterizedCell(std::unordered_map<std::string, float> param
     return Sphere(sphereParams);
 }
 
+double Sphere::getOrientation3D(const std::vector<cv::Point3d> &pts, std::vector<cv::Mat> &frame) const
+{
+    //Construct a buffer used by the pca analysis
+    int sz = static_cast<int>(pts.size());
+    cv::Mat data_pts = cv::Mat(sz, 3, CV_64F);
+    for (int i = 0; i < data_pts.rows; i++)
+    {
+        data_pts.at<double>(i, 0) = pts[i].x;
+        data_pts.at<double>(i, 1) = pts[i].y;
+        data_pts.at<double>(i, 2) = pts[i].z;
+    }
+    //Perform PCA analysis
+    cv::PCA pca_analysis(data_pts, cv::Mat(), cv::PCA::DATA_AS_ROW);
+
+    //Store the center of the object
+    cv::Point3d cntr = cv::Point3d(static_cast<int>(pca_analysis.mean.at<double>(0, 0)),
+    static_cast<int>(pca_analysis.mean.at<double>(0, 1)),
+    static_cast<int>(pca_analysis.mean.at<double>(0, 2)));
+
+    //Store the eigenvalues and eigenvectors
+    std::vector<cv::Point3d> eigen_vecs(3);
+    std::vector<double> eigen_val(3);
+    for (int i = 0; i < 3; i++)
+    {
+    eigen_vecs[i] = cv::Point3d(pca_analysis.eigenvectors.at<double>(i, 0),
+                    pca_analysis.eigenvectors.at<double>(i, 1),
+                    pca_analysis.eigenvectors.at<double>(i, 2));
+
+    eigen_val[i] = pca_analysis.eigenvalues.at<double>(i);
+    std::cout << "eigenval " << i << ": " << eigen_val[i] << std::endl;
+    std::cout << "eigenvec " << i << ": " << eigen_vecs[i] << std::endl;
+
+    }
+    return 0.0; // TODO: change to angle
+}
+
 std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells(const std::vector<cv::Mat> &image) const
 {
     // remove calback function
@@ -95,10 +131,6 @@ std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells(const std::vector<cv::Mat
     // 16 z slices per x-y
     // interpolate (make up) z slices convert 400x400x30 to 400x400x400
     // using brightness values interpolate
-    // Step 1: Get the bounding box using calculateCorners
-    // Step 1: Get the bounding box using calculateCorners
-    // print out eigenvectors for just x,y,z directions
-    // for the z vector, we can scale it instead of relying on interpolation
     auto [min_corner, max_corner] = calculateCorners();
 
     int minX = std::max(0, static_cast<int>(min_corner[0]));
@@ -108,29 +140,63 @@ std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells(const std::vector<cv::Mat
     int minZ = std::max(0, static_cast<int>(min_corner[2]));
     int maxZ = std::min(static_cast<int>(image.size()), static_cast<int>(max_corner[2]));
 
-    // Step 2: Construct 3D points for PCAs
-    std::vector<cv::Point3f> points;
-    for (int z = minZ; z <= maxZ; ++z) {
-        for (int y = minY; y <= maxY; ++y) {
-            for (int x = minX; x <= maxX; ++x) {
-                points.emplace_back(x, y, z);
-                
-            }
-        }
-    }
-    if (!points.empty()) {
-        // Perform PCA to get eigenvalues
-        std::vector<std::pair<float, cv::Vec3f>> eigenvalues = performPCA(points);
+    std::cout << "minX: " << minX << " maxX: " << maxX << std::endl;
+    std::cout << "minY: " << minY << " maxY: " << maxY << std::endl;
+    std::cout << "minZ: " << minZ << " maxZ: " << maxZ << std::endl;
 
-        // Print the top 3 eigenvalues
-        std::cout << "Performing PCA on coordinates: (" << _position.x << ", " << _position.y << ", " << _position.z << ")" << std::endl;
-        std::cout << "Eigenvalues with most variance:" << std::endl;
-        for (size_t i = 0; i < eigenvalues.size(); ++i) {
-            std::cout << "Eigenvalue " << i + 1 << ": " << eigenvalues[i].first << " " << eigenvalues[i].second << std::endl;
+    cv::Range yRange(minY, maxY); // y
+    cv::Range xRange(minX, maxX); // x
+    cv::Range zRange(minZ, maxZ); // z
+
+    std::vector<cv::Mat> subTiffSlices;
+    // iterate through z levels
+    for(unsigned n = zRange.start; n < zRange.end; ++n) {
+        cv::Mat nSlice = image[n];
+        // generate subslice
+        cv::Mat subNSlice = nSlice(
+            cv::Range(yRange.start, yRange.end),
+            cv::Range(xRange.start, xRange.end)
+        );
+        subTiffSlices.push_back(subNSlice);
         }
-    } else {
-        std::cout << "No points found for PCA." << std::endl;
+
+    std::vector<std::vector<cv::Point3d>> contours3D;
+    for(int n = 0; n < subTiffSlices.size(); ++n)
+    {
+        cv::Mat &sliceN = subTiffSlices[n];
+        sliceN.convertTo(sliceN, CV_8UC1);
+        std::vector<std::vector<cv::Point>> contours;
+        findContours(sliceN, contours, cv::RETR_LIST, cv::CHAIN_APPROX_NONE);
+
+        cv::cvtColor(sliceN, sliceN, cv::COLOR_GRAY2BGR);
+
+        for (size_t i = 0; i < contours.size(); i++)
+        {
+            // Calculate the area of each contour
+            double area = cv::contourArea(contours[i]);
+            // // Ignore contours that are too small or too large
+            if (area < 1e2 || 1e5 < area) continue; 
+
+            // Create 3D contour and then add it to contours3D
+            std::vector<cv::Point3d> contour3D;
+            for(const auto& point : contours[i])
+            {
+                contour3D.push_back(cv::Point3d(point.x, point.y, n)); // n being nth slice
+            }
+            contours3D.push_back(contour3D);
+        }
     }
+    std::vector<cv::Point3d> allPoints;
+    // flatten contours to one 3D object
+    for(const auto& contour : contours3D) {
+        allPoints.insert(allPoints.end(), contour.begin(), contour.end());
+    }
+    // std::cout << allPoints << std::endl;
+    if(allPoints.size() > 0)
+    {
+        getOrientation3D(allPoints, subTiffSlices);
+    }
+    else {std::cout << "No points for PCA!" << std::endl;}
 
     double theta = ((double)rand() / RAND_MAX) * 2 * M_PI;
     double phi = ((double)rand() / RAND_MAX) * M_PI;
