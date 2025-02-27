@@ -115,6 +115,8 @@ public:
     PerturbParams radius{};
     double minRadius{};
     double maxRadius{};
+    double boundingBoxScale{1.5};
+
     ~SphereConfig() = default;
 
     void explodeConfig(const YAML::Node& node) override
@@ -125,6 +127,10 @@ public:
         radius.explodeParams(node["radius"]);
         minRadius = node["minRadius"].as<double>();
         maxRadius = node["maxRadius"].as<double>();
+
+        if (node["boundingBoxScale"]) {
+            boundingBoxScale = node["boundingBoxScale"].as<double>();
+        }
     }
 };
 

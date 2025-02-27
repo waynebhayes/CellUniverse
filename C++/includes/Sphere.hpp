@@ -11,6 +11,7 @@
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
 #include "Cell.hpp"
+#include "ConfigTypes.hpp"
 #define M_PI 3.14159265358979323846
 
 class SphereParams : public CellParams
@@ -70,13 +71,10 @@ public:
 
     Sphere getParameterizedCell(std::unordered_map<std::string, float> params) const;
 
-    double getOrientation3D(const std::vector<cv::Point3d> &pts, std::vector<cv::Mat> &frame) const;
+    std::vector<std::pair<double, cv::Point3d>> performPCA(const std::vector<cv::Point3d> &pts, std::vector<cv::Mat> &frame) const;
 
-    std::tuple<Sphere, Sphere, bool> getSplitCells(const std::vector<cv::Mat> &image) const;
+    std::tuple<Sphere, Sphere, bool> getSplitCells(const std::vector<cv::Mat> &realTiffSlices) const;
     // std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells() const;
-
-    std::vector<std::pair<float, cv::Vec3f>> performPCA(const std::vector<cv::Point3f> &points) const;
-    //std::vector<float> performPCA(const std::vector<cv::Point3f> &points) const;
 
     bool checkConstraints() const;
 
