@@ -164,6 +164,7 @@ std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells(const std::vector<cv::Mat
     cv::Range xRange(minX, maxX); // x
     cv::Range zRange(minZ, maxZ); // z
 
+//  DECLARE splitAxis here
     std::vector<cv::Mat> subTiffSlices;
     if (maxZ > minZ && maxX > minX && maxY > minY) {
     // iterate through z levels
@@ -215,6 +216,7 @@ std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells(const std::vector<cv::Mat
         {
             // return pair of (eigenval, eigenvector)
             std::vector<std::pair<double, cv::Point3d>> eigen_pair {performPCA(allPoints, subTiffSlices)};
+	    splitDir = cross product of first 2 eigenVectors above.
         }
         else {
             // Occurs when the simulated slice does not match up with the real slice
@@ -222,16 +224,11 @@ std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells(const std::vector<cv::Mat
         }
     }
 
+    // delete these angle vars
     double theta = ((double)rand() / RAND_MAX) * 2 * M_PI;
     double phi = ((double)rand() / RAND_MAX) * M_PI;
 
-    /*
-    Split axis along shortest eigenvalue of x and y
-    cv::Point3d split_axis{shortest axis}
-    
-    now with split_axis, eigen_pairs we can redraw the frames
-    move on with rest of code
-    */
+    //move this declaration up.
     cv::Point3f split_axis(
         sin(phi) * cos(theta),
         sin(phi) * sin(theta),
