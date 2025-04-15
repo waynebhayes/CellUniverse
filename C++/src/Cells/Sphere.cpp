@@ -53,6 +53,8 @@ void Sphere::drawOutline(cv::Mat &image, float color, float z) const
 
 Sphere Sphere::getPerturbedCell() const
 {
+    // Perturbing a Cell has 4 options
+    // It can move along the x,y,z axis OR change in radius
     SphereParams sphereParams(
         _name,
 
@@ -223,6 +225,13 @@ std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells(const std::vector<cv::Mat
     double theta = ((double)rand() / RAND_MAX) * 2 * M_PI;
     double phi = ((double)rand() / RAND_MAX) * M_PI;
 
+    /*
+    Split axis along shortest eigenvalue of x and y
+    cv::Point3d split_axis{shortest axis}
+    
+    now with split_axis, eigen_pairs we can redraw the frames
+    move on with rest of code
+    */
     cv::Point3f split_axis(
         sin(phi) * cos(theta),
         sin(phi) * sin(theta),

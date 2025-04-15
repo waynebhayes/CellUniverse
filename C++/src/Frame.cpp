@@ -312,16 +312,17 @@ CostCallbackPair Frame::split()
     // Store old cell
     Sphere oldCell = cells[index];
 
-    // Emilio + Atif: here is where you want to call a function that creates the bounding 3D rectangle, calls OpenCV PCA,
-    // and returns the 3 Eigenvalues + 3rd Eigenvector. Call it "CellPCA". Once that's working, we'll decide what to do
-    // with the returned values in terms of deciding (randomly) whether it's worth even attempting a split. If we don't
-    // attempt a split, we'll return (I think) the same value as below under if(!valid).
-
     // Replace the cell at that index with new cells
     Sphere child1;
     Sphere child2;
     bool valid;
     //     std::tie(child1, child2, valid) = oldCell.getSplitCells();
+    /*
+    Get split cells will return 2 cells with eigen_pairs
+    Check if cells are valid
+    Generate synth frame that uses new oblate sphere class
+    Then we calculate the cost
+    */
     std::tie(child1, child2, valid) = oldCell.getSplitCells(_realFrame);
     if (!valid)
     {
@@ -339,7 +340,7 @@ CostCallbackPair Frame::split()
         return {0.0, [](bool accept) {}};
     }
 
-    auto newSynthFrame = generateSynthFrame();
+    auto newSynthFrame = generateSynthFrame(); 
     double newCost = calculateCost(newSynthFrame);
     double oldCost = calculateCost(_synthFrame);
 

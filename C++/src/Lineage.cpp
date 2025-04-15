@@ -47,7 +47,7 @@ Image processImage(const Image &image, const BaseConfig &config)
     // TODO: use GaussianBlur with custom sigma
     SimulationConfig simConfig = config.simulation;
     //    std::cout << "The blur sigma is: " <<  simConfig.blur_sigma << std::endl;
-    cv::GaussianBlur(processedImage, processedImage, cv::Size(0, 0), 1.5);
+    // cv::GaussianBlur(processedImage, processedImage, cv::Size(0, 0), 1.5);
 
     return processedImage;
 }
