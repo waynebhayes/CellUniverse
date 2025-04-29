@@ -11,10 +11,7 @@
 
 class Cell {
     //The Cell class stores information about a particular cell.
-//    CellParams paramClass;
-//    CellConfig cellConfig; //?unsure
 public:
-//    Cell(const CellParams& initProps) : paramClass(initProps) {}
     Cell() {}
     virtual ~Cell() = default;
     virtual void draw(cv::Mat& image, SimulationConfig simulationConfig, cv::Mat* cellMap = nullptr, float z = 0) const = 0;
