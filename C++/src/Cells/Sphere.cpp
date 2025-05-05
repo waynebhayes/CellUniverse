@@ -1,7 +1,6 @@
 #include "Sphere.hpp"
 #include <random>
 
-SphereParams Sphere::paramClass = SphereParams();
 SphereConfig Sphere::cellConfig = SphereConfig();
 
 double Sphere::getRadiusAt(double z) const
