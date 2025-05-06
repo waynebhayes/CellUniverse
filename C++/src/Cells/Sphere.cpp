@@ -1,7 +1,6 @@
 #include "Sphere.hpp"
 #include <random>
 
-SphereParams Sphere::paramClass = SphereParams();
 SphereConfig Sphere::cellConfig = SphereConfig();
 
 double Sphere::getRadiusAt(double z) const
@@ -164,7 +163,8 @@ std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells(const std::vector<cv::Mat
     cv::Range xRange(minX, maxX); // x
     cv::Range zRange(minZ, maxZ); // z
 
-//  DECLARE splitAxis here
+    cv::Point3f splitAxis;
+
     std::vector<cv::Mat> subTiffSlices;
     if (maxZ > minZ && maxX > minX && maxY > minY) {
     // iterate through z levels
@@ -205,36 +205,41 @@ std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells(const std::vector<cv::Mat
         }
     }
         
-
-        std::vector<cv::Point3d> allPoints;
         // flatten contours to one 3D object
+        std::vector<cv::Point3d> allPoints;
         for(const auto& contour : contours3D) {
             allPoints.insert(allPoints.end(), contour.begin(), contour.end());
         }
-        // std::cout << allPoints << std::endl;
-        if(allPoints.size() > 0)
-        {
-            // return pair of (eigenval, eigenvector)
-            std::vector<std::pair<double, cv::Point3d>> eigen_pair {performPCA(allPoints, subTiffSlices)};
-	    splitDir = cross product of first 2 eigenVectors above.
-        }
-        else {
-            // Occurs when the simulated slice does not match up with the real slice
+
+        // If PCA cannot be performed, print message and retun a fallback
+        if (allPoints.empty()) {
             std::cout << "No points for PCA!" << std::endl;
+            return std::make_tuple(*this, *this, false);
         }
+
+        // return pair of (eigenval, eigenvector)
+        auto eigenPair(performPCA(allPoints, subTiffSlices));
+        if (eigenPair.size() >= 2) {
+            cv::Point3d v1 = eigenPair[0].second;
+            cv::Point3d v2 = eigenPair[1].second;
+
+            // computes cross product of largest two vectors and normalizes
+            cv::Point3d crossProd(
+                v1.y * v2.z - v1.z * v2.y,
+                v1.z * v2.x - v1.x * v2.z,
+                v1.x * v2.y - v1.y * v2.x);
+                
+            double norm = std::sqrt(crossProd.x * crossProd.x + crossProd.y * crossProd.y + crossProd.z * crossProd.z);
+            if (norm != 0) {crossProd.x /= norm; crossProd.y /= norm; crossProd.z /= norm;}
+
+            splitAxis = cv::Point3f(static_cast<float>(crossProd.x), static_cast<float>(crossProd.y),static_cast<float>(crossProd.z));
+    } else {
+        std::cout << "Invalid bounding box. No split will be performed." << std::endl;
+        return std::make_tuple(*this, *this, false);
     }
 
-    // delete these angle vars
-    double theta = ((double)rand() / RAND_MAX) * 2 * M_PI;
-    double phi = ((double)rand() / RAND_MAX) * M_PI;
-
-    //move this declaration up.
-    cv::Point3f split_axis(
-        sin(phi) * cos(theta),
-        sin(phi) * sin(theta),
-        cos(phi));
-
-    cv::Point3f offset = split_axis * (_radius / 2.0);
+    // Split axis is used to determine new cell positions
+    cv::Point3f offset = splitAxis * (_radius / 2.0);
     cv::Point3f new_position1 = _position + offset;
     cv::Point3f new_position2 = _position - offset;
 
@@ -249,6 +254,9 @@ std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells(const std::vector<cv::Mat
     // Cell cell2Base = static_cast<Cell>(cell2);//convert Sphere to Cell
 
     return std::make_tuple(Sphere(cell1), Sphere(cell2), constraints);
+    }
+
+    return std::make_tuple(*this, *this, false);
 }
 
 
