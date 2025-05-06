@@ -129,6 +129,37 @@ std::vector<std::pair<double, cv::Point3d>> Sphere::performPCA(const std::vector
     return eigen_pairs; // return std::vector<eigenvalue, eigenvector>
 }
 
+void Sphere::calculateContours(std::vector<cv::Mat> &subTiffSlices, std::vector<std::vector<cv::Point3d>> &contours3D)
+{
+    // Helper function for getsplitcells, calculates contours of the cells
+    // Later used to find point cloud
+    for(int n = 0; n < subTiffSlices.size(); ++n)
+    {
+        cv::Mat &sliceN = subTiffSlices[n];
+        sliceN.convertTo(sliceN, CV_8UC1);
+        std::vector<std::vector<cv::Point>> contours;
+        findContours(sliceN, contours, cv::RETR_LIST, cv::CHAIN_APPROX_NONE);
+
+        cv::cvtColor(sliceN, sliceN, cv::COLOR_GRAY2BGR);
+
+        for (size_t i = 0; i < contours.size(); i++)
+        {
+            // Calculate the area of each contour
+            double area = cv::contourArea(contours[i]);
+            // // Ignore contours that are too small or too large
+            if (area < 1e2 || 1e5 < area) continue; 
+
+            // Create 3D contour and then add it to contours3D
+            std::vector<cv::Point3d> contour3D;
+            for(const auto& point : contours[i])
+            {
+                contour3D.push_back(cv::Point3d(point.x, point.y, n)); // n being nth slice
+            }
+            contours3D.push_back(contour3D);
+        }
+    }
+}
+
 std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells(const std::vector<cv::Mat> &realTiffSlices) const
 {
     // remove calback function
@@ -164,9 +195,9 @@ std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells(const std::vector<cv::Mat
     cv::Range xRange(minX, maxX); // x
     cv::Range zRange(minZ, maxZ); // z
 
-//  DECLARE splitAxis here
     std::vector<cv::Mat> subTiffSlices;
-    if (maxZ > minZ && maxX > minX && maxY > minY) {
+    if (maxZ > minZ && maxX > minX && maxY > minY) 
+    {
     // iterate through z levels
     for(unsigned n = zRange.start; n < zRange.end; ++n) {
         cv::Mat nSlice = realTiffSlices[n];
@@ -177,65 +208,54 @@ std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells(const std::vector<cv::Mat
         );
         subTiffSlices.push_back(subNSlice);
         }
-
+    
+    // Get 3D contours of the cell
     std::vector<std::vector<cv::Point3d>> contours3D;
-    for(int n = 0; n < subTiffSlices.size(); ++n)
+    Sphere::calculateContours(subTiffSlices, contours3D);
+
+    // flatten contours to one 3D object
+    std::vector<cv::Point3d> allPoints;
+    for(const auto& contour : contours3D) {
+        allPoints.insert(allPoints.end(), contour.begin(), contour.end());
+    }
+    //  DECLARE splitAxis here
+    cv::Point3f splitAxis;
+
+    if(!allPoints.empty())
     {
-        cv::Mat &sliceN = subTiffSlices[n];
-        sliceN.convertTo(sliceN, CV_8UC1);
-        std::vector<std::vector<cv::Point>> contours;
-        findContours(sliceN, contours, cv::RETR_LIST, cv::CHAIN_APPROX_NONE);
-
-        cv::cvtColor(sliceN, sliceN, cv::COLOR_GRAY2BGR);
-
-        for (size_t i = 0; i < contours.size(); i++)
+        // return pair of (eigenval, eigenvector)
+        auto eigenPair(performPCA(allPoints, subTiffSlices));
+        if (eigenPair.size() >= 2) 
         {
-            // Calculate the area of each contour
-            double area = cv::contourArea(contours[i]);
-            // // Ignore contours that are too small or too large
-            if (area < 1e2 || 1e5 < area) continue; 
+            cv::Point3d v1 = eigenPair[0].second;
+            cv::Point3d v2 = eigenPair[1].second;
 
-            // Create 3D contour and then add it to contours3D
-            std::vector<cv::Point3d> contour3D;
-            for(const auto& point : contours[i])
-            {
-                contour3D.push_back(cv::Point3d(point.x, point.y, n)); // n being nth slice
-            }
-            contours3D.push_back(contour3D);
-        }
-    }
-        
+            // Compute cross product of largest two vectors and normalize
+            cv::Point3d crossProd(
+                v1.y * v2.z - v1.z * v2.y,
+                v1.z * v2.x - v1.x * v2.z,
+                v1.x * v2.y - v1.y * v2.x);
+                
+            double norm = std::sqrt(crossProd.x * crossProd.x +
+                                    crossProd.y * crossProd.y +
+                                    crossProd.z * crossProd.z);
+            if (norm != 0) {crossProd.x /= norm; crossProd.y /= norm; crossProd.z /= norm;}
 
-        std::vector<cv::Point3d> allPoints;
-        // flatten contours to one 3D object
-        for(const auto& contour : contours3D) {
-            allPoints.insert(allPoints.end(), contour.begin(), contour.end());
+            splitAxis = cv::Point3f(static_cast<float>(crossProd.x),
+                                        static_cast<float>(crossProd.y),
+                                        static_cast<float>(crossProd.z));
         }
-        // std::cout << allPoints << std::endl;
-        if(allPoints.size() > 0)
-        {
-            // return pair of (eigenval, eigenvector)
-            std::vector<std::pair<double, cv::Point3d>> eigen_pair {performPCA(allPoints, subTiffSlices)};
-	    splitDir = cross product of first 2 eigenVectors above.
-        }
-        else {
-            // Occurs when the simulated slice does not match up with the real slice
-            std::cout << "No points for PCA!" << std::endl;
-        }
+    } 
+    else 
+    {
+        // Occurs when the simulated slice does not match up with the real slice
+        std::cout << "Invalid bounding box. No split will be performed." << std::endl;
+        return std::make_tuple(*this, *this, false);
     }
 
-    // delete these angle vars
-    double theta = ((double)rand() / RAND_MAX) * 2 * M_PI;
-    double phi = ((double)rand() / RAND_MAX) * M_PI;
-
-    //move this declaration up.
-    cv::Point3f split_axis(
-        sin(phi) * cos(theta),
-        sin(phi) * sin(theta),
-        cos(phi));
-
-    cv::Point3f offset = split_axis * (_radius / 2.0);
-    cv::Point3f new_position1 = _position + offset;
+    // Split axis is used to determine new cell positions
+    cv::Point3f offset = splitAxis * (_radius / 2.0); // TODO: this will have to change in the future
+    cv::Point3f new_position1 = _position + offset; // to be nonconstant
     cv::Point3f new_position2 = _position - offset;
 
     double halfRadius = _radius / 2.0;
@@ -245,10 +265,9 @@ std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells(const std::vector<cv::Mat
 
     bool constraints = cell1.checkConstraints() && cell2.checkConstraints();
 
-    // Cell cell1Base = static_cast<Cell>(cell1);
-    // Cell cell2Base = static_cast<Cell>(cell2);//convert Sphere to Cell
-
     return std::make_tuple(Sphere(cell1), Sphere(cell2), constraints);
+    }
+    return std::make_tuple(*this, *this, false);
 }
 
 

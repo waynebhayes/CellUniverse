@@ -294,7 +294,7 @@ CostCallbackPair Frame::perturb()
         }
     };
     if (newCost - oldCost < 0){
-        std::cout << " New Residual Accepted: " << newCost << std::endl;
+        std::cout << " New Residual Accepted: " << newCost - oldCost << std::endl;
     }
     return {newCost - oldCost, callback};
 }
