@@ -117,7 +117,8 @@ std::vector<cv::Mat> Frame::generateSynthFrameFast(Sphere &oldCell, Sphere &newC
     {
         std::cerr << "Cells are not set\n";
     }
-
+#define SLICE_WISE 1 // this shall be zero eventually
+#if SLICE_WISE
     cv::Size shape = getImageShape(); // Assuming getImageShape() returns a cv::Size
     std::vector<cv::Mat> synthFrame;
 
@@ -149,7 +150,21 @@ std::vector<cv::Mat> Frame::generateSynthFrameFast(Sphere &oldCell, Sphere &newC
 
         synthFrame.push_back(synthImage);
     }
+#else
+    #define X_SPAN 450
+    #define Y_SPAN 550
+    #define Z_SPAN 225
+    unsigned char UNIVERSE[X_SPAN][Y_SPAN][Z_SPAN];
+    for(...) // zero out the whole thing
+    for (const auto &cell : cells)
+    {
+	cell.draw(UNIVERSE, simulationConfig);
+    }
 
+    for (size_t i = 0; i < z_slices.size(); ++i)
+     // extract UNIVERSE[i][*][*] to the synthFrame at i
+
+#endif
     return synthFrame;
 }
 

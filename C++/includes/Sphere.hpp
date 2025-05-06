@@ -25,14 +25,6 @@ public:
     SphereParams() : CellParams(""), x(0), y(0), z(0), radius(0) {}
     SphereParams(const std::string &name, float x, float y, float z, float radius)
         : CellParams(name), x(x), y(y), z(z), radius(radius) {}
-
-    void parseParams(float x_, float y_, float z_, float radius_)
-    {
-        x = x_;
-        y = y_;
-        z = z_;
-        radius = radius_;
-    }
 };
 
 class Sphere
@@ -45,7 +37,6 @@ private:
     bool dormant;
 
 public:
-    static SphereParams paramClass;
     static SphereConfig cellConfig;
     Sphere(const SphereParams &init_props)
         : _name(init_props.name), _position{init_props.x, init_props.y, init_props.z},
