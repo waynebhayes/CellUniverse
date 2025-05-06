@@ -56,6 +56,8 @@ public:
 
     void draw(cv::Mat &image, SimulationConfig simulationConfig, cv::Mat *cellMap = nullptr, float z = 0) const;
 
+    void draw(unsigned char UNIVERSE[][550][450], const SimulationConfig simulationConfig) const;
+
     void drawOutline(cv::Mat &image, float color, float z = 0) const;
 
     [[nodiscard]] Sphere getPerturbedCell() const;
@@ -86,3 +88,4 @@ public:
 };
 
 #endif
+
