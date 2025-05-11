@@ -37,7 +37,6 @@ std::map<Path, std::vector<Sphere>> CellFactory::createCells(const Path &init_pa
         radius = std::stof(floatStr);
         z -= z_offset;
         z *= z_scaling;
-        Sphere::paramClass = SphereParams(cellName, x, y, z, radius);
         initialCells[filePath].push_back(Sphere(SphereParams(cellName, x, y, z, radius)));
         continue;
     }
