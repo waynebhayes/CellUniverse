@@ -117,11 +117,7 @@ std::vector<cv::Mat> Frame::generateSynthFrameFast(Sphere &oldCell, Sphere &newC
     {
         std::cerr << "Cells are not set\n";
     }
-<<<<<<< HEAD
 #define SLICE_WISE 0 // this shall be zero eventually
-=======
-#define SLICE_WISE 1 // this shall be zero eventually
->>>>>>> d2f671b7db93442481cd29e1c1a469e18298a4f9
 #if SLICE_WISE
     cv::Size shape = getImageShape(); // Assuming getImageShape() returns a cv::Size
     std::vector<cv::Mat> synthFrame;
@@ -157,7 +153,6 @@ std::vector<cv::Mat> Frame::generateSynthFrameFast(Sphere &oldCell, Sphere &newC
     return synthFrame;
 #else
 // Using a 3D universe volume to store the synthetic image data
-<<<<<<< HEAD
     cv::Size shape = getImageShape();
     int X_SPAN = shape.width;
     int Y_SPAN = shape.height;
@@ -170,26 +165,10 @@ std::vector<cv::Mat> Frame::generateSynthFrameFast(Sphere &oldCell, Sphere &newC
     for (const auto &cell : cells)
     {
 	    cell.draw(universe.data(), X_SPAN, Y_SPAN, Z_SPAN, simulationConfig);
-=======
-    #define X_SPAN 450
-    #define Y_SPAN 550
-    #define Z_SPAN 225
-    // declare 3D array
-    unsigned char UNIVERSE[Z_SPAN][Y_SPAN][Z_SPAN];
-    
-    // Initialize the 3D array universe with background color
-    memset(UNIVERSE, static_cast<unsigned char>(simulationConfig.background_color), sizeof(UNIVERSE));
-
-    // draw each cell into the universe
-    for (const auto &cell : cells)
-    {
-	    cell.draw(UNIVERSE, simulationConfig);
->>>>>>> d2f671b7db93442481cd29e1c1a469e18298a4f9
     }
 
     // extract each z-slice and store as cv::Mat
     std::vector<cv::Mat> synthFrame;
-<<<<<<< HEAD
     synthFrame.reserve(Z_SPAN);
 
     for (int zIndex = 0; zIndex < Z_SPAN; ++zIndex)
@@ -200,13 +179,6 @@ std::vector<cv::Mat> Frame::generateSynthFrameFast(Sphere &oldCell, Sphere &newC
 
         // add the processed image to the output vector
         synthFrame.push_back(wrapper.clone());
-=======
-    for (int z = 0; z < Z_SPAN; ++z)
-    {
-        // using the z-th slice of the universe, create a cv::Mat
-        cv::Mat slice(Y_SPAN, X_SPAN, CV_8UC1, UNIVERSE[z]);
-        synthFrame.push_back(slice.clone());
->>>>>>> d2f671b7db93442481cd29e1c1a469e18298a4f9
     }
     return synthFrame;
 #endif
