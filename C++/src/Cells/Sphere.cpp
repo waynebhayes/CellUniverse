@@ -33,6 +33,7 @@ void Sphere::draw(cv::Mat &image, SimulationConfig simulationConfig, cv::Mat *ce
 }
 
 // Overload of the draw function to draw cells into 3D Universe, instead of 2D image
+<<<<<<< HEAD
 void Sphere::draw(float* universe, int X_SPAN, int Y_SPAN, int Z_SPAN, const SimulationConfig& simulationConfig) const
 {
     if (dormant) return;
@@ -51,6 +52,26 @@ void Sphere::draw(float* universe, int X_SPAN, int Y_SPAN, int Z_SPAN, const Sim
         cv::Point centre(static_cast<int>(_position.x), static_cast<int>(_position.y));
 
         cv::circle(slice, centre, static_cast<int>(currentRadius), cv::Scalar(simulationConfig.cell_color), -1);
+=======
+void Sphere::draw(unsigned char UNIVERSE[][550][450], const SimulationConfig simulationConfig) const
+{
+    // Use interpolated z-slices to represent a accurate 3D representation of the universe
+    const int Z_SPAN = simulationConfig.z_slices;
+    
+    for (int zIndex = 0; zIndex < Z_SPAN; ++zIndex)
+    {
+        // Map the z-index to a z-coordinate
+        double zCoord = simulationConfig.z_scaling * (zIndex - Z_SPAN / 2);
+        double currentRadius = getRadiusAt(zCoord);
+        if (currentRadius <= 0)
+            continue;
+            
+        int intRadius = static_cast<int>(currentRadius);
+        
+        cv::Mat slice(550, 450, CV_8UC1, UNIVERSE[zIndex]);
+        cv::Point center(static_cast<int>(_position.x), static_cast<int>(_position.y));
+        cv::circle(slice, center, intRadius, cv::Scalar(simulationConfig.cell_color), -1);
+>>>>>>> d2f671b7db93442481cd29e1c1a469e18298a4f9
     }
 }
 
