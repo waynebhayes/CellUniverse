@@ -173,11 +173,13 @@ std::vector<cv::Mat> Frame::generateSynthFrameFast(Sphere &oldCell, Sphere &newC
 
     for (int zIndex = 0; zIndex < Z_SPAN; ++zIndex)
     {
-        // calculate the offset for the slice
+        // Get the pointer to the start of the z-slice
         float* slicePtr = universe.data() + zIndex * Y_SPAN * X_SPAN;
+
+        // Create a cv::Mat from the pointer
         cv::Mat wrapper(Y_SPAN, X_SPAN, CV_32FC1, slicePtr);
 
-        // add the processed image to the output vector
+        // extract a 2d slice from the 3D universe
         synthFrame.push_back(wrapper.clone());
     }
     return synthFrame;
