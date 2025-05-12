@@ -56,7 +56,8 @@ public:
 
     void draw(cv::Mat &image, SimulationConfig simulationConfig, cv::Mat *cellMap = nullptr, float z = 0) const;
 
-    void draw(unsigned char UNIVERSE[][550][450], const SimulationConfig simulationConfig) const;
+    //drawing into 3D universe
+    void draw(float* universe, int X_SPAN, int Y_SPAN, int Z_SPAN, const SimulationConfig& simulationConfig) const;
 
     void drawOutline(cv::Mat &image, float color, float z = 0) const;
 

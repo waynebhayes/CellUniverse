@@ -153,29 +153,32 @@ std::vector<cv::Mat> Frame::generateSynthFrameFast(Sphere &oldCell, Sphere &newC
     return synthFrame;
 #else
 // Using a 3D universe volume to store the synthetic image data
-    #define X_SPAN 450
-    #define Y_SPAN 550
-    #define Z_SPAN 225
-    // declare 3D array
-    unsigned char UNIVERSE[Z_SPAN][Y_SPAN][Z_SPAN];
-    
-    // Initialize the 3D array universe with background color
-    memset(UNIVERSE, static_cast<unsigned char>(simulationConfig.background_color), sizeof(UNIVERSE));
+    cv::Size shape = getImageShape();
+    int X_SPAN = shape.width;
+    int Y_SPAN = shape.height;
+    int Z_SPAN = simulationConfig.z_slices;
 
+    // declare 3D array + initialize with background color
+    std::vector<float> universe(Z_SPAN * Y_SPAN * X_SPAN, simulationConfig.background_color);
+    
     // draw each cell into the universe
     for (const auto &cell : cells)
     {
-	    cell.draw(UNIVERSE, simulationConfig);
+	    cell.draw(universe.data(), X_SPAN, Y_SPAN, Z_SPAN, simulationConfig);
     }
-
 
     // extract each z-slice and store as cv::Mat
     std::vector<cv::Mat> synthFrame;
-    for (int z = 0; z < Z_SPAN; ++z)
+    synthFrame.reserve(Z_SPAN);
+
+    for (int zIndex = 0; zIndex < Z_SPAN; ++zIndex)
     {
-        // using the z-th slice of the universe, create a cv::Mat
-        cv::Mat slice(Y_SPAN, X_SPAN, CV_8UC1, UNIVERSE[z]);
-        synthFrame.push_back(slice.clone());
+        // calculate the offset for the slice
+        float* slicePtr = universe.data() + zIndex * Y_SPAN * X_SPAN;
+        cv::Mat wrapper(Y_SPAN, X_SPAN, CV_32FC1, slicePtr);
+
+        // add the processed image to the output vector
+        synthFrame.push_back(wrapper.clone());
     }
     return synthFrame;
 #endif
