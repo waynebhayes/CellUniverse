@@ -12,13 +12,13 @@
 #include <sstream>
 #include "ConfigTypes.hpp"
 #include "Cell.hpp"
-#include "Sphere.hpp"
+#include "Spheroid.hpp"
 #include "types.hpp"
 
 class CellFactory {
 public:
     explicit CellFactory(const BaseConfig& config);
-    std::map<Path, std::vector<Sphere>> createCells(const Path &init_params_path, int z_offset = 0, float z_scaling = 1.0);
+    std::map<Path, std::vector<Spheroid>> createCells(const Path &init_params_path, int z_offset = 0, float z_scaling = 1.0);
 };
 
 

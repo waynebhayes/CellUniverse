@@ -16,7 +16,7 @@ void interpolateSlices(const cv::Mat& slice1, const cv::Mat& slice2,
     }
 }
 
-Frame::Frame(const std::vector<cv::Mat> &realFrame, const SimulationConfig &simulationConfig, const std::vector<Sphere> &cells,
+Frame::Frame(const std::vector<cv::Mat> &realFrame, const SimulationConfig &simulationConfig, const std::vector<Spheroid> &cells,
              const Path &outputPath, const std::string &imageName)
     : cells(cells),
       simulationConfig(simulationConfig),
@@ -111,7 +111,7 @@ Cost Frame::calculateCost(const std::vector<cv::Mat> &synthFrame)
     return totalCost;
 }
 
-std::vector<cv::Mat> Frame::generateSynthFrameFast(Sphere &oldCell, Sphere &newCell)
+std::vector<cv::Mat> Frame::generateSynthFrameFast(Spheroid &oldCell, Spheroid &newCell)
 {
     if (cells.empty())
     {
@@ -261,7 +261,7 @@ CostCallbackPair Frame::perturb()
     size_t index = distrib(gen);
 
     // Store old cell // no reference
-    Sphere oldCell = cells[index];
+    Spheroid oldCell = cells[index];
 
     // Replace the cell at that index with a new cell
     cells[index] = cells[index].getPerturbedCell();
@@ -309,7 +309,7 @@ CostCallbackPair Frame::split()
     size_t index = distrib(gen);
 
     // Store old cell
-    Sphere oldCell = cells[index];
+    Spheroid oldCell = cells[index];
 
     // Emilio + Atif: here is where you want to call a function that creates the bounding 3D rectangle, calls OpenCV PCA,
     // and returns the 3 Eigenvalues + 3rd Eigenvector. Call it "CellPCA". Once that's working, we'll decide what to do
@@ -317,8 +317,8 @@ CostCallbackPair Frame::split()
     // attempt a split, we'll return (I think) the same value as below under if(!valid).
 
     // Replace the cell at that index with new cells
-    Sphere child1;
-    Sphere child2;
+    Spheroid child1;
+    Spheroid child2;
     bool valid;
     //     std::tie(child1, child2, valid) = oldCell.getSplitCells();
     std::tie(child1, child2, valid) = oldCell.getSplitCells(_realFrame);
@@ -365,8 +365,8 @@ Cost Frame::costOfPerturb(const std::string &perturbParam, float perturbVal, siz
     perturbParams[perturbParam] = perturbVal;
 
     // Perturb cell
-    Sphere perturbedCell = cells[index].getParameterizedCell(perturbParams);
-    Sphere originalCell = cells[index]; // Store the original cell
+    Spheroid perturbedCell = cells[index].getParameterizedCell(perturbParams);
+    Spheroid originalCell = cells[index]; // Store the original cell
     cells[index] = perturbedCell;       // Replace with the perturbed cell
 
     // Generate new image stack and get new cost
@@ -398,8 +398,8 @@ Frame::getSynthPerturbedCells(
         std::unordered_map<std::string, float> perturbParams;
         perturbParams[param] = perturbLength;
 
-        Sphere perturbedCell = cells[index].getParameterizedCell(perturbParams);
-        Sphere originalCell = cells[index]; // Store the original cell
+        Spheroid perturbedCell = cells[index].getParameterizedCell(perturbParams);
+        Spheroid originalCell = cells[index]; // Store the original cell
         cells[index] = perturbedCell;       // Replace with the perturbed cell
 
         perturbedCells[param] = generateSynthFrame();
