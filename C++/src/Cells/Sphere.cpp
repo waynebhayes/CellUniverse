@@ -32,28 +32,6 @@ void Sphere::draw(cv::Mat &image, SimulationConfig simulationConfig, cv::Mat *ce
     cv::circle(image, center, static_cast<int>(currentRadius), cv::Scalar(cell_color), -1);
 }
 
-// Overload of the draw function to draw cells into 3D Universe, instead of 2D image
-void Sphere::draw(float* universe, int X_SPAN, int Y_SPAN, int Z_SPAN, const SimulationConfig& simulationConfig) const
-{
-    if (dormant) return;
-    
-    for (int zIndex = 0; zIndex < Z_SPAN; ++zIndex)
-    {
-        // set real-word z coordinate
-        double zCoord = simulationConfig.z_scaling * (zIndex - Z_SPAN / 2);
-        double currentRadius = getRadiusAt(zCoord);
-        if (currentRadius <= 0.0) continue;
-
-        // calculate the offset for the slice
-        float*  slicePtr = universe + zIndex * Y_SPAN * X_SPAN;
-        cv::Mat slice(Y_SPAN, X_SPAN, CV_32FC1, slicePtr);
-
-        cv::Point centre(static_cast<int>(_position.x), static_cast<int>(_position.y));
-
-        cv::circle(slice, centre, static_cast<int>(currentRadius), cv::Scalar(simulationConfig.cell_color), -1);
-    }
-}
-
 void Sphere::drawOutline(cv::Mat &image, float color, float z) const
 {
     if (dormant)
@@ -189,7 +167,7 @@ std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells(const std::vector<cv::Mat
     if (maxZ > minZ && maxX > minX && maxY > minY) {
     // iterate through z levels
     for(unsigned n = zRange.start; n < zRange.end; ++n) {
-        cv::Mat nSlice = realTiffSlices[n];
+        cv::Mat nSlice = realTiffSlices[n]; 
         // generate subslice
         cv::Mat subNSlice = nSlice(
             cv::Range(yRange.start, yRange.end),

@@ -125,8 +125,9 @@ std::vector<cv::Mat> loadFrame(const std::string &imageFile, const BaseConfig &c
 
         processedZSlices.push_back(processImage(img, config));
     }
+    // the 225 slices should not be hardcoded, use zSlices from the config
     if (interpolatedZSlices.size() != 225) {
-        std::string errorMessage = "interpolatedZSlices must have exactly 255 slices, but has " +
+        std::string errorMessage = "interpolatedZSlices must have exactly 225 slices, but has " +
                                 std::to_string(interpolatedZSlices.size()) + " slices";
         throw std::runtime_error(errorMessage);
     }

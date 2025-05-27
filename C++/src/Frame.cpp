@@ -117,8 +117,7 @@ std::vector<cv::Mat> Frame::generateSynthFrameFast(Sphere &oldCell, Sphere &newC
     {
         std::cerr << "Cells are not set\n";
     }
-#define SLICE_WISE 0 // this shall be zero eventually
-#if SLICE_WISE
+
     cv::Size shape = getImageShape(); // Assuming getImageShape() returns a cv::Size
     std::vector<cv::Mat> synthFrame;
 
@@ -151,39 +150,6 @@ std::vector<cv::Mat> Frame::generateSynthFrameFast(Sphere &oldCell, Sphere &newC
         synthFrame.push_back(synthImage);
     }
     return synthFrame;
-#else
-// Using a 3D universe volume to store the synthetic image data
-    cv::Size shape = getImageShape();
-    int X_SPAN = shape.width;
-    int Y_SPAN = shape.height;
-    int Z_SPAN = simulationConfig.z_slices;
-
-    // declare 3D array + initialize with background color
-    std::vector<float> universe(Z_SPAN * Y_SPAN * X_SPAN, simulationConfig.background_color);
-    
-    // draw each cell into the universe
-    for (const auto &cell : cells)
-    {
-	    cell.draw(universe.data(), X_SPAN, Y_SPAN, Z_SPAN, simulationConfig);
-    }
-
-    // extract each z-slice and store as cv::Mat
-    std::vector<cv::Mat> synthFrame;
-    synthFrame.reserve(Z_SPAN);
-
-    for (int zIndex = 0; zIndex < Z_SPAN; ++zIndex)
-    {
-        // Get the pointer to the start of the z-slice
-        float* slicePtr = universe.data() + zIndex * Y_SPAN * X_SPAN;
-
-        // Create a cv::Mat from the pointer
-        cv::Mat wrapper(Y_SPAN, X_SPAN, CV_32FC1, slicePtr);
-
-        // extract a 2d slice from the 3D universe
-        synthFrame.push_back(wrapper.clone());
-    }
-    return synthFrame;
-#endif
 }
 
 /**
