@@ -24,12 +24,15 @@ public:
     float a_axis;  // semi-major axis length in x direction
     float b_axis;  // semi-major axis length in y direction  
     float c_axis;  // semi-major axis length in z direction
+    float rotation; // rotation angle in degrees
 
-    SpheroidParams() : CellParams(""), x(0), y(0), z(0), radius(0), a_axis(0), b_axis(0), c_axis(0) {}
+    SpheroidParams() : CellParams(""), x(0), y(0), z(0), radius(0), a_axis(0), b_axis(0), c_axis(0), rotation(0) {}
     SpheroidParams(const std::string &name, float x, float y, float z, float radius)
-        : CellParams(name), x(x), y(y), z(z), radius(radius), a_axis(radius), b_axis(radius), c_axis(radius) {}
+        : CellParams(name), x(x), y(y), z(z), radius(radius), a_axis(radius), b_axis(radius), c_axis(radius), rotation(0) {}
     SpheroidParams(const std::string &name, float x, float y, float z, float radius, float a, float b, float c)
-        : CellParams(name), x(x), y(y), z(z), radius(radius), a_axis(a), b_axis(b), c_axis(c) {}
+        : CellParams(name), x(x), y(y), z(z), radius(radius), a_axis(a), b_axis(b), c_axis(c), rotation(0) {}
+    SpheroidParams(const std::string &name, float x, float y, float z, float radius, float a, float b, float c, float rot)
+        : CellParams(name), x(x), y(y), z(z), radius(radius), a_axis(a), b_axis(b), c_axis(c), rotation(rot) {}
 };
 
 class Spheroid
@@ -48,7 +51,7 @@ public:
     static SphereConfig cellConfig;
     Spheroid(const SpheroidParams &init_props)
         : _name(init_props.name), _position{init_props.x, init_props.y, init_props.z},
-          _radius(init_props.radius), _rotation(0), dormant(false),
+          _radius(init_props.radius), _rotation(init_props.rotation), dormant(false),
           _a_axis(init_props.a_axis), _b_axis(init_props.b_axis), _c_axis(init_props.c_axis)
     {
         // printCellInfo(); for future output
@@ -60,7 +63,7 @@ public:
     {
         std::cout << "Spheroid name: " << _name << " x: " << _position.x << " y: " << _position.y << " z: " << _position.z 
                   << " radius: " << _radius << " a_axis: " << _a_axis << " b_axis: " << _b_axis << " c_axis: " << _c_axis 
-                  << " isDormant: " << dormant << std::endl;
+                  << " rotation: " << _rotation << " isDormant: " << dormant << std::endl;
     }
 
     double getRadiusAt(double z) const;
@@ -96,6 +99,13 @@ public:
 
     // Additional method specific to spheroids
     double getAxisRadiusAt(double z, double axis_length) const;
+    
+    // Getter and setter for rotation
+    double getRotation() const { return _rotation; }
+    void setRotation(double rotation) { _rotation = rotation; }
+    
+    // Calculate rotation from PCA eigenvectors
+    void rotateCell(const std::vector<cv::Point3d> &points);
 };
 
 #endif

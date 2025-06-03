@@ -34,6 +34,10 @@ Frame::Frame(const std::vector<cv::Mat> &realFrame, const SimulationConfig &simu
     }
     // TODO: Fix padding
     //    padRealImage();
+    
+    // Analyze real frames to extract cell orientations
+    analyzeRealFramesForRotation();
+    
     _synthFrame = generateSynthFrame();
     //std::cout << " SYNTH FRAME SIZE: " << _synthFrame.size();
 
@@ -525,4 +529,105 @@ Frame::getSynthPerturbedCells(
 std::vector<cv::Mat> Frame::getSynthFrame()
 {
     return _synthFrame;
+}
+
+// Method to analyze real frames and set rotation angles for spheroids
+void Frame::analyzeRealFramesForRotation()
+{
+    if (_realFrame.empty() || cells.empty())
+    {
+        return;
+    }
+
+    // Process each cell to calculate its rotation from real frame data
+    for (size_t cellIndex = 0; cellIndex < cells.size(); ++cellIndex)
+    {
+        // Get the current cell
+        Spheroid& cell = cells[cellIndex];
+        
+        // Calculate the cell's bounding box
+        auto [minCorner, maxCorner] = cell.calculateCorners();
+        
+        int minX = std::max(0, static_cast<int>(std::floor(minCorner[0])));
+        int maxX = std::min(static_cast<int>(_realFrame[0].cols), static_cast<int>(std::ceil(maxCorner[0])));
+        int minY = std::max(0, static_cast<int>(std::floor(minCorner[1])));
+        int maxY = std::min(static_cast<int>(_realFrame[0].rows), static_cast<int>(std::ceil(maxCorner[1])));
+        int minZ = std::max(0, static_cast<int>(std::floor(minCorner[2])));
+        int maxZ = std::min(static_cast<int>(_realFrame.size()-1), static_cast<int>(std::ceil(maxCorner[2])));
+        
+        // Scale the bounding box to ensure we capture the entire cell
+        double scaleFactor = 1.5; // Increase this if needed to capture more context
+        
+        // Recalculate the box with the scale factor
+        cv::Point3f cellCenter(
+            (minCorner[0] + maxCorner[0]) / 2.0f,
+            (minCorner[1] + maxCorner[1]) / 2.0f,
+            (minCorner[2] + maxCorner[2]) / 2.0f
+        );
+        
+        float halfWidth = (maxCorner[0] - minCorner[0]) / 2.0f * scaleFactor;
+        float halfHeight = (maxCorner[1] - minCorner[1]) / 2.0f * scaleFactor;
+        float halfDepth = (maxCorner[2] - minCorner[2]) / 2.0f * scaleFactor;
+        
+        minX = std::max(0, static_cast<int>(std::floor(cellCenter.x - halfWidth)));
+        maxX = std::min(static_cast<int>(_realFrame[0].cols), static_cast<int>(std::ceil(cellCenter.x + halfWidth)));
+        minY = std::max(0, static_cast<int>(std::floor(cellCenter.y - halfHeight)));
+        maxY = std::min(static_cast<int>(_realFrame[0].rows), static_cast<int>(std::ceil(cellCenter.y + halfHeight)));
+        minZ = std::max(0, static_cast<int>(std::floor(cellCenter.z - halfDepth)));
+        maxZ = std::min(static_cast<int>(_realFrame.size()-1), static_cast<int>(std::ceil(cellCenter.z + halfDepth)));
+        
+        // Collect contour points from the region around the cell
+        std::vector<cv::Point3d> allPoints;
+        
+        for (int z = minZ; z <= maxZ; ++z)
+        {
+            // Extract the region of interest for this slice
+            cv::Mat slice = _realFrame[z];
+            cv::Rect roi(minX, minY, maxX - minX, maxY - minY);
+            
+            // Check if ROI is within bounds
+            if (roi.x >= 0 && roi.y >= 0 && roi.x + roi.width <= slice.cols && roi.y + roi.height <= slice.rows)
+            {
+                cv::Mat roiSlice = slice(roi);
+                
+                // Convert to 8-bit for contour finding
+                cv::Mat processedSlice;
+                roiSlice.convertTo(processedSlice, CV_8UC1);
+                
+                // Threshold the image to separate the cell from the background
+                cv::Mat binarySlice;
+                double threshold = cv::mean(processedSlice)[0];
+                cv::threshold(processedSlice, binarySlice, threshold, 255, cv::THRESH_BINARY);
+                
+                // Find contours in the binary image
+                std::vector<std::vector<cv::Point>> contours;
+                cv::findContours(binarySlice, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_NONE);
+                
+                // Process contours to get 3D points
+                for (const auto& contour : contours)
+                {
+                    // Filter out small contours that might be noise
+                    double area = cv::contourArea(contour);
+                    if (area < 10) continue;
+                    
+                    // Add points to our collection, adjusting for ROI offset
+                    for (const auto& point : contour)
+                    {
+                        allPoints.push_back(cv::Point3d(
+                            point.x + roi.x, 
+                            point.y + roi.y, 
+                            z
+                        ));
+                    }
+                }
+            }
+        }
+        
+        // If we have enough points, calculate the rotation
+        if (allPoints.size() > 10)
+        {
+            // Use the cell's implementation of rotateCell
+            cell.rotateCell(allPoints);
+        }
+    }
 }

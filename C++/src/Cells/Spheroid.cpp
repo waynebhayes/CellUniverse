@@ -51,9 +51,9 @@ void Spheroid::draw(cv::Mat &image, SimulationConfig simulationConfig, cv::Mat *
 
     cv::Point center(_position.x, _position.y);
     
-    // Draw ellipses here
+    // Draw ellipses with rotation angle
     cv::Size axes(static_cast<int>(a_at_z), static_cast<int>(b_at_z));
-    cv::ellipse(image, center, axes, 0, 0, 360, cv::Scalar(cell_color), -1);
+    cv::ellipse(image, center, axes, _rotation, 0, 360, cv::Scalar(cell_color), -1);
 }
 
 void Spheroid::drawOutline(cv::Mat &image, float color, float z) const
@@ -73,7 +73,43 @@ void Spheroid::drawOutline(cv::Mat &image, float color, float z) const
     cv::Point center(_position.x, _position.y);
     cv::Size axes(static_cast<int>(a_at_z), static_cast<int>(b_at_z));
     int thickness = 1;
-    cv::ellipse(image, center, axes, 0, 0, 360, cv::Scalar(outlineColor), thickness, cv::LINE_AA);
+    cv::ellipse(image, center, axes, _rotation, 0, 360, cv::Scalar(outlineColor), thickness, cv::LINE_AA);
+}
+
+void Spheroid::rotateCell(const std::vector<cv::Point3d> &points)
+{
+    if (points.empty())
+    {
+        return; // Keep current rotation if no points
+    }
+
+    // Prepare data for PCA
+    int sz = static_cast<int>(points.size());
+    cv::Mat data_pts = cv::Mat(sz, 3, CV_64F);
+    for (int i = 0; i < data_pts.rows; i++)
+    {
+        data_pts.at<double>(i, 0) = points[i].x;
+        data_pts.at<double>(i, 1) = points[i].y;
+        data_pts.at<double>(i, 2) = points[i].z;
+    }
+
+    // Perform PCA analysis
+    cv::PCA pca_analysis(data_pts, cv::Mat(), cv::PCA::DATA_AS_ROW);
+
+    // Get the principal components
+    cv::Point2d principal_direction;
+    if (pca_analysis.eigenvectors.rows >= 2)
+    {
+        // For 2D rotation, we're interested in the first eigenvector's direction in the XY plane
+        principal_direction.x = pca_analysis.eigenvectors.at<double>(0, 0);
+        principal_direction.y = pca_analysis.eigenvectors.at<double>(0, 1);
+        
+        // Calculate the angle in degrees
+        double angle = atan2(principal_direction.y, principal_direction.x) * 180.0 / M_PI;
+        
+        // OpenCV's ellipse angle is measured clockwise from horizontal
+        _rotation = angle;
+    }
 }
 
 Spheroid Spheroid::getPerturbedCell() const
@@ -90,7 +126,8 @@ Spheroid Spheroid::getPerturbedCell() const
         //We use smaller perturbation for axes
         _a_axis + cellConfig.radius.getPerturbOffset() * 0.5,
         _b_axis + cellConfig.radius.getPerturbOffset() * 0.5,
-        _c_axis + cellConfig.radius.getPerturbOffset() * 0.5);
+        _c_axis + cellConfig.radius.getPerturbOffset() * 0.5,
+        _rotation);
     return Spheroid(spheroidParams);
 }
 
@@ -121,7 +158,8 @@ Spheroid Spheroid::getParameterizedCell(std::unordered_map<std::string, float> p
         newRadius,
         newAAxis,
         newBAxis,
-        newCAxis);
+        newCAxis,
+        _rotation);
     return Spheroid(spheroidParams);
 }
 
@@ -284,8 +322,8 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
     double halfBAxis = _b_axis / 2.0;
     double halfCAxis = _c_axis / 2.0;
 
-    Spheroid cell1(SpheroidParams(_name + "0", new_position1.x, new_position1.y, new_position1.z, halfRadius, halfAAxis, halfBAxis, halfCAxis));
-    Spheroid cell2(SpheroidParams(_name + "1", new_position2.x, new_position2.y, new_position2.z, halfRadius, halfAAxis, halfBAxis, halfCAxis));
+    Spheroid cell1(SpheroidParams(_name + "0", new_position1.x, new_position1.y, new_position1.z, halfRadius, halfAAxis, halfBAxis, halfCAxis, _rotation));
+    Spheroid cell2(SpheroidParams(_name + "1", new_position2.x, new_position2.y, new_position2.z, halfRadius, halfAAxis, halfBAxis, halfCAxis, _rotation));
 
     bool constraints = cell1.checkConstraints() && cell2.checkConstraints();
 
@@ -321,7 +359,7 @@ float Spheroid::getRadiusAt(float z)
 
 CellParams Spheroid::getCellParams() const
 {
-    return SpheroidParams(_name, _position.x, _position.y, _position.z, _radius, _a_axis, _b_axis, _c_axis);
+    return SpheroidParams(_name, _position.x, _position.y, _position.z, _radius, _a_axis, _b_axis, _c_axis, _rotation);
 }
 
 std::pair<std::vector<float>, std::vector<float>> Spheroid::calculateCorners() const
