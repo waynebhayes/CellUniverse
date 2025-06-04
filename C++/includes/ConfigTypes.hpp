@@ -115,7 +115,7 @@ public:
     PerturbParams radius{};
     double minRadius{};
     double maxRadius{};
-    double boundingBoxScale{1.5};
+    double boundingBoxScale{1.25};
 
     ~SphereConfig() = default;
 

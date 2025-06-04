@@ -52,6 +52,8 @@ void Sphere::drawOutline(cv::Mat &image, float color, float z) const
 
 Sphere Sphere::getPerturbedCell() const
 {
+    // Perturbing a Cell has 4 options
+    // It can move along the x,y,z axis OR change in radius
     SphereParams sphereParams(
         _name,
 
@@ -124,6 +126,37 @@ std::vector<std::pair<double, cv::Point3d>> Sphere::performPCA(const std::vector
 
     }
     return eigen_pairs; // return std::vector<eigenvalue, eigenvector>
+}
+
+void Sphere::calculateContours(std::vector<cv::Mat> &subTiffSlices, std::vector<std::vector<cv::Point3d>> &contours3D)
+{
+    // Helper function for getsplitcells, calculates contours of the cells
+    // Later used to find point cloud
+    for(int n = 0; n < subTiffSlices.size(); ++n)
+    {
+        cv::Mat &sliceN = subTiffSlices[n];
+        sliceN.convertTo(sliceN, CV_8UC1);
+        std::vector<std::vector<cv::Point>> contours;
+        findContours(sliceN, contours, cv::RETR_LIST, cv::CHAIN_APPROX_NONE);
+
+        cv::cvtColor(sliceN, sliceN, cv::COLOR_GRAY2BGR);
+
+        for (size_t i = 0; i < contours.size(); i++)
+        {
+            // Calculate the area of each contour
+            double area = cv::contourArea(contours[i]);
+            // // Ignore contours that are too small or too large
+            if (area < 1e2 || 1e5 < area) continue; 
+
+            // Create 3D contour and then add it to contours3D
+            std::vector<cv::Point3d> contour3D;
+            for(const auto& point : contours[i])
+            {
+                contour3D.push_back(cv::Point3d(point.x, point.y, n)); // n being nth slice
+            }
+            contours3D.push_back(contour3D);
+        }
+    }
 }
 
 std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells(const std::vector<cv::Mat> &realTiffSlices) const

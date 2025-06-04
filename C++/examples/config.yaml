@@ -23,7 +23,7 @@ cell:
     sigma: 4
   minRadius: 15
   maxRadius: 60
-  boundingBoxScale: 1.5
+  boundingBoxScale: 1.25
 
 # Simulation settings
 simulation:

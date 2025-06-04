@@ -64,6 +64,8 @@ public:
 
     std::vector<std::pair<double, cv::Point3d>> performPCA(const std::vector<cv::Point3d> &pts, std::vector<cv::Mat> &frame) const;
 
+    static void calculateContours(std::vector<cv::Mat> &subTiffSlices, std::vector<std::vector<cv::Point3d>> &contours3D);
+
     std::tuple<Sphere, Sphere, bool> getSplitCells(const std::vector<cv::Mat> &realTiffSlices) const;
     // std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells() const;
 
