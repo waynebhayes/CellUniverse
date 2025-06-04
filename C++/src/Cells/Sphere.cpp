@@ -197,8 +197,7 @@ std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells(const std::vector<cv::Mat
     cv::Point3f splitAxis;
 
     std::vector<cv::Mat> subTiffSlices;
-    if (maxZ > minZ && maxX > minX && maxY > minY) 
-    {
+    if (maxZ > minZ && maxX > minX && maxY > minY) {
     // iterate through z levels
     for(unsigned n = zRange.start; n < zRange.end; ++n) {
         cv::Mat nSlice = realTiffSlices[n];
@@ -209,27 +208,23 @@ std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells(const std::vector<cv::Mat
         );
         subTiffSlices.push_back(subNSlice);
         }
-    
-    // Get 3D contours of the cell
+
     std::vector<std::vector<cv::Point3d>> contours3D;
-    Sphere::calculateContours(subTiffSlices, contours3D);
-
-    // flatten contours to one 3D object
-    std::vector<cv::Point3d> allPoints;
-    for(const auto& contour : contours3D) {
-        allPoints.insert(allPoints.end(), contour.begin(), contour.end());
-    }
-    //  DECLARE splitAxis here
-    cv::Point3f splitAxis;
-
-    if(!allPoints.empty())
+    for(int n = 0; n < subTiffSlices.size(); ++n)
     {
-        // return pair of (eigenval, eigenvector)
-        auto eigenPair(performPCA(allPoints, subTiffSlices));
-        if (eigenPair.size() >= 2) 
+        cv::Mat &sliceN = subTiffSlices[n];
+        sliceN.convertTo(sliceN, CV_8UC1);
+        std::vector<std::vector<cv::Point>> contours;
+        findContours(sliceN, contours, cv::RETR_LIST, cv::CHAIN_APPROX_NONE);
+
+        cv::cvtColor(sliceN, sliceN, cv::COLOR_GRAY2BGR);
+
+        for (size_t i = 0; i < contours.size(); i++)
         {
-            cv::Point3d v1 = eigenPair[0].second;
-            cv::Point3d v2 = eigenPair[1].second;
+            // Calculate the area of each contour
+            double area = cv::contourArea(contours[i]);
+            // // Ignore contours that are too small or too large
+            if (area < 1e2 || 1e5 < area) continue; 
 
             // Create 3D contour and then add it to contours3D
             std::vector<cv::Point3d> contour3D;
@@ -286,8 +281,12 @@ std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells(const std::vector<cv::Mat
 
     bool constraints = cell1.checkConstraints() && cell2.checkConstraints();
 
+    // Cell cell1Base = static_cast<Cell>(cell1);
+    // Cell cell2Base = static_cast<Cell>(cell2);//convert Sphere to Cell
+
     return std::make_tuple(Sphere(cell1), Sphere(cell2), constraints);
     }
+
     return std::make_tuple(*this, *this, false);
 }
 

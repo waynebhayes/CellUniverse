@@ -29,7 +29,7 @@ Frame::Frame(const std::vector<cv::Mat> &realFrame, const SimulationConfig &simu
     // Calculate z_slices
     for (int i = 0; i < simulationConfig.z_slices; ++i)
     {
-        double zValue = simulationConfig.z_scaling * (i - simulationConfig.z_slices / 2);
+        double zValue = i; //simulationConfig.z_scaling * (i - simulationConfig.z_slices / 2);
         z_slices.push_back(zValue);
     }
     // TODO: Fix padding
