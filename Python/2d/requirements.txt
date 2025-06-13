@@ -33,7 +33,7 @@ python-dateutil==2.8.1
 pytz==2019.3
 PyWavelets==1.1.1
 PyYAML==5.4
-requests==2.32.0
+requests==2.32.4
 scikit-image==0.15.0
 scikit-learn==1.5.0
 scipy==1.10.0
