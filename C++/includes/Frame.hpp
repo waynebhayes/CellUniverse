@@ -37,9 +37,6 @@ public:
     Cost gradientDescent();
     std::vector<cv::Mat> getSynthFrame();
     std::vector<Spheroid> cells;
-    
-    // Analyze real frames to extract rotation for cells
-    void analyzeRealFramesForRotation();
 
 private:
     std::vector<double> z_slices;
