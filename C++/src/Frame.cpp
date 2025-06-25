@@ -16,7 +16,7 @@ void interpolateSlices(const cv::Mat& slice1, const cv::Mat& slice2,
     }
 }
 
-Frame::Frame(const std::vector<cv::Mat> &realFrame, const SimulationConfig &simulationConfig, const std::vector<Sphere> &cells,
+Frame::Frame(const std::vector<cv::Mat> &realFrame, const SimulationConfig &simulationConfig, const std::vector<Spheroid> &cells,
              const Path &outputPath, const std::string &imageName)
     : cells(cells),
       simulationConfig(simulationConfig),
@@ -34,6 +34,7 @@ Frame::Frame(const std::vector<cv::Mat> &realFrame, const SimulationConfig &simu
     }
     // TODO: Fix padding
     //    padRealImage();
+    
     _synthFrame = generateSynthFrame();
     //std::cout << " SYNTH FRAME SIZE: " << _synthFrame.size();
 
@@ -111,14 +112,13 @@ Cost Frame::calculateCost(const std::vector<cv::Mat> &synthFrame)
     return totalCost;
 }
 
-std::vector<cv::Mat> Frame::generateSynthFrameFast(Sphere &oldCell, Sphere &newCell)
+std::vector<cv::Mat> Frame::generateSynthFrameFast(Spheroid &oldCell, Spheroid &newCell)
 {
     if (cells.empty())
     {
         std::cerr << "Cells are not set\n";
     }
-#define SLICE_WISE 1 // this shall be zero eventually
-#if SLICE_WISE
+
     cv::Size shape = getImageShape(); // Assuming getImageShape() returns a cv::Size
     std::vector<cv::Mat> synthFrame;
 
@@ -150,21 +150,6 @@ std::vector<cv::Mat> Frame::generateSynthFrameFast(Sphere &oldCell, Sphere &newC
 
         synthFrame.push_back(synthImage);
     }
-#else
-    #define X_SPAN 450
-    #define Y_SPAN 550
-    #define Z_SPAN 225
-    unsigned char UNIVERSE[X_SPAN][Y_SPAN][Z_SPAN];
-    for(...) // zero out the whole thing
-    for (const auto &cell : cells)
-    {
-	cell.draw(UNIVERSE, simulationConfig);
-    }
-
-    for (size_t i = 0; i < z_slices.size(); ++i)
-     // extract UNIVERSE[i][*][*] to the synthFrame at i
-
-#endif
     return synthFrame;
 }
 
@@ -277,7 +262,7 @@ CostCallbackPair Frame::perturb()
     size_t index = distrib(gen);
 
     // Store old cell // no reference
-    Sphere oldCell = cells[index];
+    Spheroid oldCell = cells[index];
 
     // Replace the cell at that index with a new cell
     cells[index] = cells[index].getPerturbedCell();
@@ -325,11 +310,11 @@ CostCallbackPair Frame::split()
     size_t index = distrib(gen);
 
     // Store old cell
-    Sphere oldCell = cells[index];
+    Spheroid oldCell = cells[index];
 
     // Replace the cell at that index with new cells
-    Sphere child1;
-    Sphere child2;
+    Spheroid child1;
+    Spheroid child2;
     bool valid;
     //     std::tie(child1, child2, valid) = oldCell.getSplitCells();
     /*
@@ -382,8 +367,8 @@ Cost Frame::costOfPerturb(const std::string &perturbParam, float perturbVal, siz
     perturbParams[perturbParam] = perturbVal;
 
     // Perturb cell
-    Sphere perturbedCell = cells[index].getParameterizedCell(perturbParams);
-    Sphere originalCell = cells[index]; // Store the original cell
+    Spheroid perturbedCell = cells[index].getParameterizedCell(perturbParams);
+    Spheroid originalCell = cells[index]; // Store the original cell
     cells[index] = perturbedCell;       // Replace with the perturbed cell
 
     // Generate new image stack and get new cost
@@ -415,8 +400,8 @@ Frame::getSynthPerturbedCells(
         std::unordered_map<std::string, float> perturbParams;
         perturbParams[param] = perturbLength;
 
-        Sphere perturbedCell = cells[index].getParameterizedCell(perturbParams);
-        Sphere originalCell = cells[index]; // Store the original cell
+        Spheroid perturbedCell = cells[index].getParameterizedCell(perturbParams);
+        Spheroid originalCell = cells[index]; // Store the original cell
         cells[index] = perturbedCell;       // Replace with the perturbed cell
 
         perturbedCells[param] = generateSynthFrame();

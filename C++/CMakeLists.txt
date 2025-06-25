@@ -13,6 +13,7 @@ add_executable(${PROJECT_NAME}
         ${cwd}/src/Lineage.cpp
         ${cwd}/src/Frame.cpp
         ${cwd}/src/Cells/Sphere.cpp
+        ${cwd}/src/Cells/Spheroid.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PUBLIC

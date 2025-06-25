@@ -10,7 +10,7 @@
 #include "ConfigTypes.hpp"
 #include <random>
 #include <functional>
-#include "Sphere.hpp"
+#include "Spheroid.hpp"
 #include <opencv2/core/mat.hpp>
 
 void interpolateSlices(const cv::Mat& slice1, const cv::Mat& slice2, std::vector<cv::Mat>& processedSlices, int numInterpolations);
@@ -21,12 +21,12 @@ public:
     // Also, the word "image" should never be used to represent the stack of 2D images in a TIF file; instead these should
     // be called "frames". Please try to find and change all such variable names to use "frame" rather than "image". An
     // "image" should only refer to 2D image. (Even if OpenCV is lazy... let's try to keep our names less confusing.)
-    Frame(const std::vector<cv::Mat> &realFrame, const SimulationConfig &simulationConfig, const std::vector<Sphere> &cells, const Path &outputPath, const std::string &imageName);
+    Frame(const std::vector<cv::Mat> &realFrame, const SimulationConfig &simulationConfig, const std::vector<Spheroid> &cells, const Path &outputPath, const std::string &imageName);
 
     // Method declarations
     void padRealFrame();
     std::vector<cv::Mat> generateSynthFrame();
-    std::vector<cv::Mat> generateSynthFrameFast(Sphere &oldCell, Sphere &newCell);
+    std::vector<cv::Mat> generateSynthFrameFast(Spheroid &oldCell, Spheroid &newCell);
     Cost calculateCost(const std::vector<cv::Mat> &synthFrame);
     std::vector<cv::Mat> generateOutputFrame();
     std::vector<cv::Mat> generateOutputSynthFrame();
@@ -36,7 +36,7 @@ public:
     CostCallbackPair split();
     Cost gradientDescent();
     std::vector<cv::Mat> getSynthFrame();
-    std::vector<Sphere> cells;
+    std::vector<Spheroid> cells;
 
 private:
     std::vector<double> z_slices;
