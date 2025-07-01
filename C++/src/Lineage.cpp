@@ -125,8 +125,9 @@ std::vector<cv::Mat> loadFrame(const std::string &imageFile, const BaseConfig &c
 
         processedZSlices.push_back(processImage(img, config));
     }
+    // the 225 slices should not be hardcoded, use zSlices from the config
     if (interpolatedZSlices.size() != 225) {
-        std::string errorMessage = "interpolatedZSlices must have exactly 255 slices, but has " +
+        std::string errorMessage = "interpolatedZSlices must have exactly 225 slices, but has " +
                                 std::to_string(interpolatedZSlices.size()) + " slices";
         throw std::runtime_error(errorMessage);
     }
@@ -191,7 +192,7 @@ std::vector<cv::Mat> loadFrame(const std::string &imageFile, const BaseConfig &c
 //     return imgs;
 // }
 
-Lineage::Lineage(std::map<std::string, std::vector<Sphere>> initialCells, PathVec imagePaths, BaseConfig &config, std::string outputPath, int continueFrom)
+Lineage::Lineage(std::map<std::string, std::vector<Spheroid>> initialCells, PathVec imagePaths, BaseConfig &config, std::string outputPath, int continueFrom)
     : config(config), outputPath(outputPath)
 {
     for (size_t i = 0; i < imagePaths.size(); ++i)
@@ -207,12 +208,12 @@ Lineage::Lineage(std::map<std::string, std::vector<Sphere>> initialCells, PathVe
 
         if ((continueFrom == -1 || i < continueFrom) && initialCells.find(file_name) != initialCells.end())
         {
-            const std::vector<Sphere> &cells = initialCells.at(file_name);
+            const std::vector<Spheroid> &cells = initialCells.at(file_name);
             frames.emplace_back(real_frame, config.simulation, cells, outputPath, file_name);
         }
         else
         {
-            frames.emplace_back(real_frame, config.simulation, std::vector<Sphere>(), outputPath, file_name);
+            frames.emplace_back(real_frame, config.simulation, std::vector<Spheroid>(), outputPath, file_name);
         }
     }
 }

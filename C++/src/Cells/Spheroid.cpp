@@ -1,26 +1,52 @@
-#include "Sphere.hpp"
+#include "Spheroid.hpp"
 #include <random>
 
-SphereConfig Sphere::cellConfig = SphereConfig();
+SphereConfig Spheroid::cellConfig = SphereConfig();
 
-double Sphere::getRadiusAt(double z) const
+double Spheroid::getRadiusAt(double z) const
 {
-    if (std::abs(_position.z - z) > _radius)
+    // Use the c_axis for z calculations
+    if (std::abs(_position.z - z) > _c_axis)
     {
         return 0;
     }
-    return std::sqrt((_radius * _radius) - ((_position.z - z) * (_position.z - z)));
+    
+    // Calculate the elliptical cross-section at z level
+    double z_factor = (_position.z - z) / _c_axis;
+    double scale_factor = std::sqrt(1 - z_factor * z_factor);
+
+    // Return the average of a and b axes scaled by z factor
+    return (_a_axis + _b_axis) * 0.5 * scale_factor;
 }
 
-void Sphere::draw(cv::Mat &image, SimulationConfig simulationConfig, cv::Mat *cellMap, float z) const
+double Spheroid::getAxisRadiusAt(double z, double axis_length) const
+{
+    // Use the c_axis for z calculations
+    if (std::abs(_position.z - z) > _c_axis)
+    {
+        return 0;
+    }
+
+    // Calculate the elliptical cross-section at z level
+    double z_factor = (_position.z - z) / _c_axis;
+    double scale_factor = std::sqrt(1 - z_factor * z_factor);
+
+    // Return the axis length scaled by z factor
+    return axis_length * scale_factor;
+}
+
+void Spheroid::draw(cv::Mat &image, SimulationConfig simulationConfig, cv::Mat *cellMap, float z) const
 {
     if (dormant)
     {
         return;
     }
 
-    float currentRadius = getRadiusAt(z);
-    if (currentRadius <= 0)
+    // Calculate the semi-axes lengths at this z-slice
+    double a_at_z = getAxisRadiusAt(z, _a_axis);
+    double b_at_z = getAxisRadiusAt(z, _b_axis);
+    
+    if (a_at_z <= 0 || b_at_z <= 0)
     {
         return;
     }
@@ -29,43 +55,51 @@ void Sphere::draw(cv::Mat &image, SimulationConfig simulationConfig, cv::Mat *ce
     float cell_color = simulationConfig.cell_color;
 
     cv::Point center(_position.x, _position.y);
-    cv::circle(image, center, static_cast<int>(currentRadius), cv::Scalar(cell_color), -1);
+    
+    // Draw axis-aligned ellipses (not rotated yet)
+    cv::Size axes(static_cast<int>(a_at_z), static_cast<int>(b_at_z));
+    cv::ellipse(image, center, axes, 0, 0, 360, cv::Scalar(cell_color), -1);
 }
 
-void Sphere::drawOutline(cv::Mat &image, float color, float z) const
+void Spheroid::drawOutline(cv::Mat &image, float color, float z) const
 {
     if (dormant)
     {
         return;
     }
     float outlineColor = color;
-    float currentRadius = getRadiusAt(z);
+    double a_at_z = getAxisRadiusAt(z, _a_axis);
+    double b_at_z = getAxisRadiusAt(z, _b_axis);
 
-    if (currentRadius <= 0)
+    if (a_at_z <= 0 || b_at_z <= 0)
     {
         return;
     }
     cv::Point center(_position.x, _position.y);
+    cv::Size axes(static_cast<int>(a_at_z), static_cast<int>(b_at_z));
     int thickness = 1;
-    cv::circle(image, center, static_cast<int>(round(currentRadius)), cv::Scalar(outlineColor), thickness, cv::LINE_AA);
+    cv::ellipse(image, center, axes, 0, 0, 360, cv::Scalar(outlineColor), thickness, cv::LINE_AA);
 }
 
-Sphere Sphere::getPerturbedCell() const
+Spheroid Spheroid::getPerturbedCell() const
 {
-    // Perturbing a Cell has 4 options
-    // It can move along the x,y,z axis OR change in radius
-    SphereParams sphereParams(
+    SpheroidParams spheroidParams(
         _name,
 
         // FIXME: we should choose only ONE of these, uniformly at random, to perturb in each iteration.
         _position.x + cellConfig.x.getPerturbOffset(),
         _position.y + cellConfig.y.getPerturbOffset(),
         _position.z + cellConfig.z.getPerturbOffset(),
-        _radius + cellConfig.radius.getPerturbOffset());
-    return Sphere(sphereParams);
+        _radius + cellConfig.radius.getPerturbOffset(),
+
+        // use smaller perturbation for axes
+        _a_axis + cellConfig.radius.getPerturbOffset() * 0.5,
+        _b_axis + cellConfig.radius.getPerturbOffset() * 0.5,
+        _c_axis + cellConfig.radius.getPerturbOffset() * 0.5);
+    return Spheroid(spheroidParams);
 }
 
-Sphere Sphere::getParameterizedCell(std::unordered_map<std::string, float> params) const  {
+Spheroid Spheroid::getParameterizedCell(std::unordered_map<std::string, float> params) const  {
     float xOffset = params["x"];
     float yOffset = params["y"];
     float zOffset = params["z"];
@@ -73,23 +107,30 @@ Sphere Sphere::getParameterizedCell(std::unordered_map<std::string, float> param
 
     if (params.empty())
     {
-        xOffset = Sphere::cellConfig.x.getPerturbOffset();
-        yOffset = Sphere::cellConfig.y.getPerturbOffset();
-        zOffset = Sphere::cellConfig.z.getPerturbOffset();
-        radiusOffset = Sphere::cellConfig.radius.getPerturbOffset();
+        xOffset = Spheroid::cellConfig.x.getPerturbOffset();
+        yOffset = Spheroid::cellConfig.y.getPerturbOffset();
+        zOffset = Spheroid::cellConfig.z.getPerturbOffset();
+        radiusOffset = Spheroid::cellConfig.radius.getPerturbOffset();
     }
 
-    float newRadius = fmin(fmax(Sphere::cellConfig.minRadius, _radius + radiusOffset), Sphere::cellConfig.maxRadius);
-    SphereParams sphereParams(
+    float newRadius = fmin(fmax(Spheroid::cellConfig.minRadius, _radius + radiusOffset), Spheroid::cellConfig.maxRadius);
+    float newAAxis = fmin(fmax(Spheroid::cellConfig.minRadius, _a_axis + radiusOffset * 0.5), Spheroid::cellConfig.maxRadius);
+    float newBAxis = fmin(fmax(Spheroid::cellConfig.minRadius, _b_axis + radiusOffset * 0.5), Spheroid::cellConfig.maxRadius);
+    float newCAxis = fmin(fmax(Spheroid::cellConfig.minRadius, _c_axis + radiusOffset * 0.5), Spheroid::cellConfig.maxRadius);
+    
+    SpheroidParams spheroidParams(
         _name,
         _position.x + xOffset,
         _position.y + yOffset,
         _position.z + zOffset,
-        newRadius);
-    return Sphere(sphereParams);
+        newRadius,
+        newAAxis,
+        newBAxis,
+        newCAxis);
+    return Spheroid(spheroidParams);
 }
 
-std::vector<std::pair<double, cv::Point3d>> Sphere::performPCA(const std::vector<cv::Point3d> &pts, std::vector<cv::Mat> &frame) const
+std::vector<std::pair<double, cv::Point3d>> Spheroid::performPCA(const std::vector<cv::Point3d> &pts, std::vector<cv::Mat> &frame) const
 {
     //Construct a buffer used by the pca analysis
     int sz = static_cast<int>(pts.size());
@@ -128,38 +169,7 @@ std::vector<std::pair<double, cv::Point3d>> Sphere::performPCA(const std::vector
     return eigen_pairs; // return std::vector<eigenvalue, eigenvector>
 }
 
-void Sphere::calculateContours(std::vector<cv::Mat> &subTiffSlices, std::vector<std::vector<cv::Point3d>> &contours3D)
-{
-    // Helper function for getsplitcells, calculates contours of the cells
-    // Later used to find point cloud
-    for(int n = 0; n < subTiffSlices.size(); ++n)
-    {
-        cv::Mat &sliceN = subTiffSlices[n];
-        sliceN.convertTo(sliceN, CV_8UC1);
-        std::vector<std::vector<cv::Point>> contours;
-        findContours(sliceN, contours, cv::RETR_LIST, cv::CHAIN_APPROX_NONE);
-
-        cv::cvtColor(sliceN, sliceN, cv::COLOR_GRAY2BGR);
-
-        for (size_t i = 0; i < contours.size(); i++)
-        {
-            // Calculate the area of each contour
-            double area = cv::contourArea(contours[i]);
-            // // Ignore contours that are too small or too large
-            if (area < 1e2 || 1e5 < area) continue; 
-
-            // Create 3D contour and then add it to contours3D
-            std::vector<cv::Point3d> contour3D;
-            for(const auto& point : contours[i])
-            {
-                contour3D.push_back(cv::Point3d(point.x, point.y, n)); // n being nth slice
-            }
-            contours3D.push_back(contour3D);
-        }
-    }
-}
-
-std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells(const std::vector<cv::Mat> &realTiffSlices) const
+std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<cv::Mat> &realTiffSlices) const
 {
     // remove calback function
     // make z scale same as x and y scale
@@ -168,7 +178,7 @@ std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells(const std::vector<cv::Mat
     // using brightness values interpolate
     auto [min_corner, max_corner] = calculateCorners();
 
-    double scaleFactor = Sphere::cellConfig.boundingBoxScale;
+    double scaleFactor = Spheroid::cellConfig.boundingBoxScale;
 
     for (int i = 0; i < 3; ++i){
         float midPoint = 0.5 * (min_corner[i] + max_corner[i]);
@@ -275,56 +285,64 @@ std::tuple<Sphere, Sphere, bool> Sphere::getSplitCells(const std::vector<cv::Mat
     cv::Point3f new_position2 = _position - offset;
 
     double halfRadius = _radius / 2.0;
+    double halfAAxis = _a_axis / 2.0;
+    double halfBAxis = _b_axis / 2.0;
+    double halfCAxis = _c_axis / 2.0;
 
-    Sphere cell1(SphereParams(_name + "0", new_position1.x, new_position1.y, new_position1.z, halfRadius));
-    Sphere cell2(SphereParams(_name + "1", new_position2.x, new_position2.y, new_position2.z, halfRadius));
+    Spheroid cell1(SpheroidParams(_name + "0", new_position1.x, new_position1.y, new_position1.z, halfRadius, halfAAxis, halfBAxis, halfCAxis));
+    Spheroid cell2(SpheroidParams(_name + "1", new_position2.x, new_position2.y, new_position2.z, halfRadius, halfAAxis, halfBAxis, halfCAxis));
 
     bool constraints = cell1.checkConstraints() && cell2.checkConstraints();
 
-    // Cell cell1Base = static_cast<Cell>(cell1);
-    // Cell cell2Base = static_cast<Cell>(cell2);//convert Sphere to Cell
-
-    return std::make_tuple(Sphere(cell1), Sphere(cell2), constraints);
+    return std::make_tuple(Spheroid(cell1), Spheroid(cell2), constraints);
     }
 
     return std::make_tuple(*this, *this, false);
 }
 
 
-bool Sphere::checkConstraints() const
+bool Spheroid::checkConstraints() const
 {
     SphereConfig config;
-    return (config.minRadius <= _radius) && (_radius <= config.maxRadius);
+    return (config.minRadius <= _radius) && (_radius <= config.maxRadius) &&
+           (config.minRadius <= _a_axis) && (_a_axis <= config.maxRadius) &&
+           (config.minRadius <= _b_axis) && (_b_axis <= config.maxRadius) &&
+           (config.minRadius <= _c_axis) && (_c_axis <= config.maxRadius);
 }
 
-float Sphere::getRadiusAt(float z)
+float Spheroid::getRadiusAt(float z)
 {
-    if (std::abs(_position.z - z) > _radius)
+    // For spheroid, use the c_axis (z-axis) for z calculations
+    if (std::abs(_position.z - z) > _c_axis)
     {
         return 0;
     }
-    return std::sqrt((_radius * _radius) - ((_position.z - z) * (_position.z - z)));
+    // Calculate elliptical cross-section at z level
+    double z_factor = (_position.z - z) / _c_axis;
+    double scale_factor = std::sqrt(1 - z_factor * z_factor);
+    // Return average of a and b axes scaled by z factor
+    return (_a_axis + _b_axis) * 0.5 * scale_factor;
 }
 
-CellParams Sphere::getCellParams() const
+CellParams Spheroid::getCellParams() const
 {
-    return SphereParams(_name, _position.x, _position.y, _position.z, _radius);
+    return SpheroidParams(_name, _position.x, _position.y, _position.z, _radius, _a_axis, _b_axis, _c_axis);
 }
 
-std::pair<std::vector<float>, std::vector<float>> Sphere::calculateCorners() const
+std::pair<std::vector<float>, std::vector<float>> Spheroid::calculateCorners() const
 {
-    std::vector<float> min_corner = {static_cast<float>(_position.x) - static_cast<float>(_radius),
-                                     static_cast<float>(_position.y) - static_cast<float>(_radius),
-                                     static_cast<float>(_position.z) - static_cast<float>(_radius)};
+    std::vector<float> min_corner = {static_cast<float>(_position.x) - static_cast<float>(_a_axis),
+                                     static_cast<float>(_position.y) - static_cast<float>(_b_axis),
+                                     static_cast<float>(_position.z) - static_cast<float>(_c_axis)};
 
-    std::vector<float> max_corner = {static_cast<float>(_position.x) + static_cast<float>(_radius),
-                                     static_cast<float>(_position.y) + static_cast<float>(_radius),
-                                     static_cast<float>(_position.z) + static_cast<float>(_radius)};
+    std::vector<float> max_corner = {static_cast<float>(_position.x) + static_cast<float>(_a_axis),
+                                     static_cast<float>(_position.y) + static_cast<float>(_b_axis),
+                                     static_cast<float>(_position.z) + static_cast<float>(_c_axis)};
 
     return std::make_pair(min_corner, max_corner);
 }
 
-std::pair<std::vector<float>, std::vector<float>> Sphere::calculateMinimumBox(Sphere &perturbed_cell) const
+std::pair<std::vector<float>, std::vector<float>> Spheroid::calculateMinimumBox(Spheroid &perturbed_cell) const
 {
     auto [cell1_min_corner, cell1_max_corner] = calculateCorners();
     auto [cell2_min_corner, cell2_max_corner] = perturbed_cell.calculateCorners();
@@ -338,15 +356,16 @@ std::pair<std::vector<float>, std::vector<float>> Sphere::calculateMinimumBox(Sp
     return std::make_pair(min_corner, max_corner);
 }
 
-bool Sphere::checkIfCellsOverlap(const std::vector<Sphere> &spheres)
+bool Spheroid::checkIfCellsOverlap(const std::vector<Spheroid> &spheroids)
 {
     std::vector<std::vector<float>> positions;
     std::vector<float> radii;
 
-    for (const auto &cell : spheres)
+    for (const auto &cell : spheroids)
     {
         positions.push_back({cell._position.x, cell._position.y, cell._position.z});
-        radii.push_back(cell._radius * 0.95);
+        // Use average of all axes for overlap detection
+        radii.push_back((cell._a_axis + cell._b_axis + cell._c_axis) / 3.0 * 0.95);
     }
 
     std::vector<std::vector<float>> distances;
@@ -378,9 +397,9 @@ bool Sphere::checkIfCellsOverlap(const std::vector<Sphere> &spheres)
     }
 
     bool overlap = false;
-    for (std::size_t i = 0; i < spheres.size(); ++i)
+    for (std::size_t i = 0; i < spheroids.size(); ++i)
     {
-        for (std::size_t j = 0; j < spheres.size(); ++j)
+        for (std::size_t j = 0; j < spheroids.size(); ++j)
         {
             if (i != j && distances[i][j] < radii_sums[i][j])
             {

@@ -6,7 +6,7 @@
 #include "ConfigTypes.hpp"
 #include "CellFactory.hpp"
 #include "yaml-cpp/yaml.h"
-#include "Sphere.hpp"
+#include "Spheroid.hpp"
 #include "Lineage.hpp"
 #include <chrono>
 
@@ -111,7 +111,7 @@ int main(int argc, char *argv[])
 
     // load cells here
     CellFactory cellFactory(config);
-    std::map<Path, std::vector<Sphere>> cells = cellFactory.createCells(args.initial, config.simulation.z_slices / 2,
+    std::map<Path, std::vector<Spheroid>> cells = cellFactory.createCells(args.initial, config.simulation.z_slices / 2,
                                                                         config.simulation.z_scaling);
     // create lineage here
     Lineage lineage = Lineage(cells, imageFilePaths, config, args.output, args.continueFrom);
