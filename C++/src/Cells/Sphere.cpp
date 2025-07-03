@@ -19,19 +19,26 @@ void Sphere::draw(cv::Mat &image, SimulationConfig simulationConfig, cv::Mat *ce
         return;
     }
 
-    float currentRadius = getRadiusAt(z);
-    if (currentRadius <= 0)
-    {
-        return;
-    }
-
     float background_color = simulationConfig.background_color;
     float cell_color = simulationConfig.cell_color;
+#if USE_Z_CIRCLE // no more!
+    float currentRadius = getRadiusAt(z);
+    if (currentRadius <= 0) return;
 
     cv::Point center(_position.x, _position.y);
     cv::circle(image, center, static_cast<int>(currentRadius), cv::Scalar(cell_color), -1);
+#else
+    // iterate through a bounding square around the cell (square centered in (pos.x,pos.y) +/- 1.1*r
+    // r is the radius of the Cell in THREE dimensions, NOT the radius of a circle at this Z-slice.
+    // for(i from x.pos-1.1*r to x.pos+1.1*r)
+    //   for(j from x.pos-1.1*r to x.pos+1.1*r)
+    //     call Sphere::IsInside(image, i,j), and if it returns true, cal cv::voxel(image, pos.x, pos.y)
+#endif
 }
 
+//
+// Boolean Sphere::IsInside(image, i,j) { return (sqrt((i-pos.x)^2 + (j-pos.y)^2) < _radius); }
+//
 void Sphere::drawOutline(cv::Mat &image, float color, float z) const
 {
     if (dormant)
