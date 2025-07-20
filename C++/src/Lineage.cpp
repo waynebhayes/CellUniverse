@@ -274,11 +274,11 @@ void Lineage::optimize(int frameIndex)
             std::vector<std::string> options = {"split", "perturbation"};
             std::vector<double> probabilities = {config.prob.split, config.prob.perturbation};
 
-            std::random_device rd;
-            std::mt19937 gen(rd());
-            std::discrete_distribution<> dist(probabilities.begin(), probabilities.end());
-
-            int chosenIndex = dist(gen);
+#if USE_MERSENNE
+            int chosenIndex = std::discrete_distribution<>(probabilities.begin(), probabilities.end())(get_mt_generator());
+#else
+            int chosenIndex = std::discrete_distribution<>(probabilities.begin(), probabilities.end())(get_lc_generator());
+#endif
             std::string chosenOption = options[chosenIndex];
 
             CostCallbackPair result;
