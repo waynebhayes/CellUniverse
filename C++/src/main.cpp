@@ -10,6 +10,11 @@
 #include "Lineage.hpp"
 #include <chrono>
 
+#if USE_MERSENNE
+// Global seed for Mersenne Twister
+std::uint32_t global_mt_seed;
+#endif
+
 class Args
 {
 public:
@@ -106,6 +111,14 @@ int main(int argc, char *argv[])
     BaseConfig config;
     loadConfig(args.config, config);
     config.printConfig();
+    
+#if USE_MERSENNE
+    // Initialize Mersenne Twister seed once
+    global_mt_seed = static_cast<std::uint32_t>(std::chrono::high_resolution_clock::now().time_since_epoch().count());
+    std::cout << "Mersenne Twister seed: " << global_mt_seed << std::endl;
+#else
+    std::cout << "Using Linear Congruential generator (seeding every call)" << std::endl;
+#endif
     // load file paths here
     PathVec imageFilePaths = getImageFilePaths(args.input, args.firstFrame, args.lastFrame, config);
 
