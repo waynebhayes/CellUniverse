@@ -4,8 +4,34 @@
 #include <vector>
 #include <random>
 #include <string>
+#include <chrono>
 #include "yaml-cpp/yaml.h"
 #include <iostream>
+
+// Toggle between Mersenne Twister (1) and Linear Congruential (0)
+#define USE_MERSENNE 1
+
+#if USE_MERSENNE
+// Global seed for Mersenne Twister (set once in main)
+extern std::uint32_t global_mt_seed;
+
+// Helper function to get a properly seeded Mersenne Twister generator
+inline std::mt19937& get_mt_generator() {
+    static thread_local std::mt19937 gen;
+    static thread_local bool is_seeded = false;
+    if (!is_seeded) {
+        gen.seed(global_mt_seed);
+        is_seeded = true;
+    }
+    return gen;
+}
+#else
+// Helper function to get Linear Congruential generator (static thread_local - NEW WAY)
+inline std::minstd_rand& get_lc_generator() {
+    static thread_local std::minstd_rand gen(std::random_device{}());
+    return gen;
+}
+#endif
 
 class SimulationConfig {
 public:
@@ -85,16 +111,19 @@ public:
         sigma = node["sigma"].as<float>();
     }
     [[nodiscard]] float getPerturbOffset() const {
-        std::random_device rd; // Obtain a random number from hardware
-        std::mt19937 gen(rd()); // Seed the generator
-        std::uniform_real_distribution<> dis(0.0, 1.0); // Distribution for probability
-
-        if (dis(gen) < prob) {
-            std::normal_distribution<> d(mu, sigma); // Distribution for the Gaussian
-            return d(gen);
+#if USE_MERSENNE
+        if (std::uniform_real_distribution<>(0.0, 1.0)(get_mt_generator()) < prob) {
+            return std::normal_distribution<>(mu, sigma)(get_mt_generator());
         } else {
             return mu;
         }
+#else
+        if (std::uniform_real_distribution<>(0.0, 1.0)(get_lc_generator()) < prob) {
+            return std::normal_distribution<>(mu, sigma)(get_lc_generator());
+        } else {
+            return mu;
+        }
+#endif
     }
 };
 

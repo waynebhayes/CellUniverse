@@ -254,12 +254,12 @@ size_t Frame::length() const
 
 CostCallbackPair Frame::perturb()
 {
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_int_distribution<> distrib(0, cells.size() - 1);
-
     // Randomly pick an index for a cell
-    size_t index = distrib(gen);
+#if USE_MERSENNE
+    size_t index = std::uniform_int_distribution<>(0, cells.size() - 1)(get_mt_generator());
+#else
+    size_t index = std::uniform_int_distribution<>(0, cells.size() - 1)(get_lc_generator());
+#endif
 
     // Store old cell // no reference
     Spheroid oldCell = cells[index];
@@ -302,12 +302,12 @@ CostCallbackPair Frame::perturb()
 CostCallbackPair Frame::split()
 {
     // std::cout << " real " << _realFrame.size() << " synth " << _synthFrame.size();
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_int_distribution<> distrib(0, cells.size() - 1);
-
     // Randomly pick an index for a cell
-    size_t index = distrib(gen);
+#if USE_MERSENNE
+    size_t index = std::uniform_int_distribution<>(0, cells.size() - 1)(get_mt_generator());
+#else
+    size_t index = std::uniform_int_distribution<>(0, cells.size() - 1)(get_lc_generator());
+#endif
 
     // Store old cell
     Spheroid oldCell = cells[index];
