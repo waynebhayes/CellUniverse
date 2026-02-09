@@ -34,7 +34,7 @@ PathVec getImageFilePaths(const std::string &inputPattern, int firstFrame, int l
     PathVec imagePaths;
     for (int i = firstFrame; lastFrame == -1 || i <= lastFrame; ++i)
     {
-        char buffer[100];
+        char buffer[512];
         sprintf(buffer, inputPattern.c_str(), i);
         fs::path file(buffer);
 
