@@ -30,7 +30,7 @@
   ```
 - Run the bash script in the examples folder (assume current director is C++)
   ```bash
-    cd examples/3d
+    cd examples
     ./runcpp.sh
   ```
 - Change the mode of the bash script if you don't have the permission by running the following command
