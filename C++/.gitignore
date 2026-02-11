@@ -1,5 +1,4 @@
-examples/input/
-!src/
-
 *.tif
 *.yaml
+
+!src/
