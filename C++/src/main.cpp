@@ -34,15 +34,7 @@ PathVec getImageFilePaths(const std::string &input, int firstFrame, int lastFram
     //printf-style pattern like .../t%03d.tif
     if (input.find('%') != std::string::npos)
     {
-<<<<<<< Updated upstream
-        char buffer[100];
-        sprintf(buffer, inputPattern.c_str(), i);
-        fs::path file(buffer);
-
-        if (fs::exists(file) && fs::is_regular_file(file))
-=======
         for (int frame = firstFrame; frame <= lastFrame; ++frame)
->>>>>>> Stashed changes
         {
             char buffer[2048];
             std::snprintf(buffer, sizeof(buffer), input.c_str(), frame);
