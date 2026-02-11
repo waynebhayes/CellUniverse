@@ -38,12 +38,12 @@ cd "$BUILD_DIR"
 
 # Run & filter noisy TIFF warnings on stderr
 ./celluniverse \
-  0 \
-  2 \
-  "$INITIAL_FILE" \
+  1 \
+  19 \
   "$INPUT_DIR/t%03d.tif" \
   "$OUT_DIR" \
-  "$CONFIG_FILE" 2> >(grep -v "TIFF_Warning TIFFReadDirectory: Unknown field with tag 6500" >&2)
+  "$CONFIG_FILE" \
+  "$INITIAL_FILE" 2> >(grep -v "TIFF_Warning TIFFReadDirectory: Unknown field with tag 6500" >&2)
 
 echo "========================================="
 echo "Run finished (exit=0)."
