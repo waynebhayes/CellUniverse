@@ -1,0 +1,4 @@
+*.tif
+*.yaml
+
+!src/
