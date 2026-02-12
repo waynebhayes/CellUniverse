@@ -34,15 +34,7 @@ PathVec getImageFilePaths(const std::string &input, int firstFrame, int lastFram
     //printf-style pattern like .../t%03d.tif
     if (input.find('%') != std::string::npos)
     {
-<<<<<<< Updated upstream
-        char buffer[100];
-        sprintf(buffer, inputPattern.c_str(), i);
-        fs::path file(buffer);
-
-        if (fs::exists(file) && fs::is_regular_file(file))
-=======
         for (int frame = firstFrame; frame <= lastFrame; ++frame)
->>>>>>> Stashed changes
         {
             char buffer[2048];
             std::snprintf(buffer, sizeof(buffer), input.c_str(), frame);
@@ -136,15 +128,15 @@ void loadConfig(const std::string &path, BaseConfig &config)
 int main(int argc, char *argv[])
 {
     // Expected fixed order:
-    // celluniverse <firstFrame> <lastFrame> <initial.csv> <input_pattern_or_dir> <output_dir> <config.yaml>
+    // celluniverse <firstFrame> <lastFrame> <input_pattern_or_dir> <output_dir> <config.yaml> <initial.csv>
     if (argc != 7)
     {
         std::cerr
             << "Usage:\n"
-            << "  celluniverse <firstFrame> <lastFrame> <initial.csv> <input_pattern_or_dir> <output_dir> <config.yaml>\n\n"
+            << "  celluniverse <firstFrame> <lastFrame> <input_pattern_or_dir> <output_dir> <config.yaml> <initial.csv>\n\n"
             << "Examples:\n"
-            << "  celluniverse 0 10 initial.csv images/t%03d.tif out config.yaml\n"
-            << "  celluniverse 0 10 initial.csv /path/to/tiffs out config.yaml\n";
+            << "  celluniverse 0 10 images/t%03d.tif out config.yaml initial.csv\n"
+            << "  celluniverse 0 10 /path/to/tiffs out config.yaml initial.csv\n";
         return 1;
     }
 
@@ -160,10 +152,10 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    args.initial = argv[3];
-    args.input = argv[4];
-    args.output = argv[5];
-    args.config = argv[6];
+    args.input = argv[3];
+    args.output = argv[4];
+    args.config = argv[5];
+    args.initial = argv[6];
     args.continueFrom = -1;
 
     std::cout << "Loading args:\n";

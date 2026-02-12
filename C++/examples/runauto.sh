@@ -10,7 +10,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CPP_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 BUILD_DIR="$CPP_ROOT/build"
-INPUT_DIR="$CPP_ROOT/examples/input/C.elegans_developing embryo_Fluo-N3DH-CE_Training/01"
+#INPUT_DIR="$CPP_ROOT/examples/input/C.elegans_developing embryo_Fluo-N3DH-CE_Training/01"
+INPUT_DIR=$CPP_ROOT/examples/
 CONFIG_FILE="$CPP_ROOT/examples/config.yaml"
 INITIAL_FILE="$CPP_ROOT/examples/initial_auto.csv"
 OUT_DIR="$CPP_ROOT/examples/output_comprehensive_$(date +%Y%m%d_%H%M%S)"
@@ -37,12 +38,12 @@ cd "$BUILD_DIR"
 
 # Run & filter noisy TIFF warnings on stderr
 ./celluniverse \
-  0 \
-  2 \
-  "$INITIAL_FILE" \
+  1 \
+  19 \
   "$INPUT_DIR/t%03d.tif" \
   "$OUT_DIR" \
-  "$CONFIG_FILE" 2> >(grep -v "TIFF_Warning TIFFReadDirectory: Unknown field with tag 6500" >&2)
+  "$CONFIG_FILE" \
+  "$INITIAL_FILE" 2> >(grep -v "TIFF_Warning TIFFReadDirectory: Unknown field with tag 6500" >&2)
 
 echo "========================================="
 echo "Run finished (exit=0)."
