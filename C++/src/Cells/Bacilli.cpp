@@ -25,7 +25,7 @@ void Bacilli::_refresh() {
     _needs_refresh = false;
 }
 
-vvoid Bacilli::draw(cv::Mat& image, cv::Mat& cell_map, bool is_cell, cv::Scalar background_color, cv::Scalar cell_color, std::map<std::string, std::string> simulation_config) {
+void Bacilli::draw(cv::Mat& image, cv::Mat& cell_map, bool is_cell, cv::Scalar background_color, cv::Scalar cell_color, std::map<std::string, std::string> simulation_config) {
     if (dormant)
         return;
 
