@@ -58,6 +58,21 @@ resolve_path() {
   fi
 }
 
+validate_input_path() {
+  local p="$1"
+  local dir_part=""
+
+  # printf-pattern input like frame%03d.tif: validate its parent directory.
+  if [[ "$p" == *%* ]]; then
+    dir_part="$(dirname "$p")"
+    [ -d "$dir_part" ]
+    return
+  fi
+
+  # Normal path: can be a directory or a single file.
+  [ -e "$p" ]
+}
+
 ini_get() {
   local ini_file="$1"
   local section="$2"
@@ -413,7 +428,7 @@ hr "="
 echo
 
 [ -d "$BUILD_DIR" ] || { err "[FATAL] build dir not found: $BUILD_DIR"; exit 1; }
-[ -e "$INPUT_PATH" ] || { err "[FATAL] input path not found: $INPUT_PATH"; exit 1; }
+validate_input_path "$INPUT_PATH" || { err "[FATAL] input path invalid or not found: $INPUT_PATH"; exit 1; }
 [ -f "$CELL_CONFIG_FILE" ] || { err "[FATAL] config yaml not found: $CELL_CONFIG_FILE"; exit 1; }
 [ -f "$INITIAL_FILE" ] || { err "[FATAL] initial csv not found: $INITIAL_FILE"; exit 1; }
 
