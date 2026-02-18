@@ -1,5 +1,9 @@
 ## 02/11/2026 Update
-
+1. analyzed the existing C++ file and provided report for the program structure and functionality
+2. revised the program auto execution scripts to make it easier to use without conflict
+3. everyone's path and parameter is managed in an .ini file
+4. provided an script for remove all old outputs but only keep the latest one
+5. revised the REDME.md, archived update log
 ## 02/11/2026 Update
 
 ### Generate `initial_auto.csv` for new 3D datasets
