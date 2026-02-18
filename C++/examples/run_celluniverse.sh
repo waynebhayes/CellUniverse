@@ -388,6 +388,10 @@ INITIAL_FILE="$(resolve_path "$INITIAL_RAW" "$INI_DIR")"
 CLI_ARGS_FILE=""
 if [ -n "$CLI_ARGS_RAW" ]; then
   CLI_ARGS_FILE="$(resolve_path "$CLI_ARGS_RAW" "$INI_DIR")"
+  if [ ! -f "$CLI_ARGS_FILE" ]; then
+    echo "[WARN] cli_args_file not found, continue without extra args: $CLI_ARGS_FILE" >&2
+    CLI_ARGS_FILE=""
+  fi
 fi
 
 OUT_DIR="$(build_unique_output_dir "$OUTPUT_BASE_DIR" "$OUTPUT_RULE" "$PRESET")"
@@ -412,10 +416,6 @@ echo
 [ -e "$INPUT_PATH" ] || { err "[FATAL] input path not found: $INPUT_PATH"; exit 1; }
 [ -f "$CELL_CONFIG_FILE" ] || { err "[FATAL] config yaml not found: $CELL_CONFIG_FILE"; exit 1; }
 [ -f "$INITIAL_FILE" ] || { err "[FATAL] initial csv not found: $INITIAL_FILE"; exit 1; }
-if [ -n "$CLI_ARGS_FILE" ] && [ ! -f "$CLI_ARGS_FILE" ]; then
-  err "[FATAL] CLI args file not found: $CLI_ARGS_FILE"
-  exit 1
-fi
 
 mkdir -p "$OUT_DIR"
 cp "$INI_FILE" "$OUT_DIR/run_preset_used.ini"
