@@ -205,7 +205,6 @@ int main(int argc, char *argv[])
         std::cerr << "Failed to resolve input frames: " << e.what() << std::endl;
         return 1;
     }
-
     if (imageFilePaths.empty())
     {
         std::cerr << "No input frames found. Check your input path/pattern and frame range." << std::endl;

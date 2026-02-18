@@ -36,12 +36,11 @@ mkdir -p "$OUT_DIR"
 
 cd "$BUILD_DIR"
 
-#  "$INPUT_DIR/t%03d.tif" \
 # Run & filter noisy TIFF warnings on stderr
 ./celluniverse \
   1 \
   19 \
-  "$INPUT_DIR/frame%03d.tif" \
+  "$INPUT_DIR/t%03d.tif" \
   "$OUT_DIR" \
   "$CONFIG_FILE" \
   "$INITIAL_FILE" 2> >(grep -v "TIFF_Warning TIFFReadDirectory: Unknown field with tag 6500" >&2)

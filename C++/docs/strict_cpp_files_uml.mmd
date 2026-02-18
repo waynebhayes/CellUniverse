@@ -1,0 +1,66 @@
+%% Strict C++ file dependency graph (only local #include and CMake source references)
+flowchart LR
+  f_main["src/main.cpp"]
+  f_lineage_cpp["src/Lineage.cpp"]
+  f_frame_cpp["src/Frame.cpp"]
+  f_factory_cpp["src/CellFactory.cpp"]
+  f_sphere_cpp["src/Cells/Sphere.cpp"]
+  f_spheroid_cpp["src/Cells/Spheroid.cpp"]
+  f_bacilli_cpp["src/Cells/Bacilli.cpp"]
+
+  h_cell["includes/Cell.hpp"]
+  h_factory["includes/CellFactory.hpp"]
+  h_config["includes/ConfigTypes.hpp"]
+  h_frame["includes/Frame.hpp"]
+  h_lineage["includes/Lineage.hpp"]
+  h_sphere["includes/Sphere.hpp"]
+  h_spheroid["includes/Spheroid.hpp"]
+  h_bacilli["includes/Bacilli.hpp"]
+  h_types["includes/types.hpp"]
+  h_math["includes/mathhelper.hpp"]
+
+  cmake["CMakeLists.txt"]
+
+  %% Header includes
+  h_cell --> h_config
+  h_cell --> h_types
+  h_factory --> h_config
+  h_factory --> h_cell
+  h_factory --> h_spheroid
+  h_factory --> h_types
+  h_frame --> h_cell
+  h_frame --> h_types
+  h_frame --> h_config
+  h_frame --> h_spheroid
+  h_lineage --> h_cell
+  h_lineage --> h_config
+  h_lineage --> h_frame
+  h_lineage --> h_types
+  h_lineage --> h_spheroid
+  h_sphere --> h_cell
+  h_sphere --> h_config
+  h_spheroid --> h_cell
+  h_spheroid --> h_config
+
+  %% Source includes
+  f_main --> h_types
+  f_main --> h_config
+  f_main --> h_factory
+  f_main --> h_spheroid
+  f_main --> h_lineage
+
+  f_lineage_cpp --> h_lineage
+  f_frame_cpp --> h_frame
+  f_factory_cpp --> h_factory
+  f_sphere_cpp --> h_sphere
+  f_spheroid_cpp --> h_spheroid
+  f_bacilli_cpp --> h_bacilli
+  f_bacilli_cpp --> h_cell
+
+  %% CMake explicit source wiring
+  cmake --> f_main
+  cmake --> f_factory_cpp
+  cmake --> f_lineage_cpp
+  cmake --> f_frame_cpp
+  cmake --> f_sphere_cpp
+  cmake --> f_spheroid_cpp

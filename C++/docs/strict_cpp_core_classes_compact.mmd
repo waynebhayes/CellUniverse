@@ -1,0 +1,189 @@
+%%{init: {"theme":"default","class":{"hideEmptyMembersBox":false},"themeVariables":{"fontSize":"10px"}}}%%
+classDiagram
+direction TB
+
+class TypeAliases {
+  +Path = std::string
+  +VecMat = vector~cv::Mat~
+  +MapCells = map~Path, vector~Spheroid~~
+  +StrFloatMap = unordered_map~string,float~
+  +Corners = pair~vector~float~,vector~float~~
+}
+
+class Cell {
+  +draw(image: cv::Mat&, simulationConfig: SimulationConfig, cellMap: cv::Mat*, z: float) const
+  +drawOutline(image: cv::Mat&, color: float, z: float) const
+  +getPerturbedCell() const Cell*
+  +getParameterizedCell(params: StrFloatMap) const Cell*
+  +getSplitCells() const tuple~Cell*,Cell*,bool~
+  +getCellParams() const CellParams
+  +calculateCorners() const MinBox
+  +calculateMinimumBox(perturbed_cell: Cell&) const MinBox
+}
+
+class SimulationConfig {
+  +iterations_per_cell: int
+  +background_color: float
+  +cell_color: float
+  +padding: int
+  +z_scaling: float
+  +blur_sigma: float
+  +z_slices: int
+  +z_values: vector~int~
+  +explodeConfig(node: YAML::Node) void
+  +printConfig() void
+}
+
+class ProbabilityConfig {
+  +perturbation: float
+  +split: float
+  +explodeConfig(node: YAML::Node) void
+  +printConfig() void
+}
+
+class CellParams {
+  +name: std::string
+}
+
+class PerturbParams {
+  +prob: float
+  +mu: float
+  +sigma: float
+  +explodeParams(node: YAML::Node) void
+  +getPerturbOffset() const float
+}
+
+class CellConfig {
+  +explodeConfig(node: YAML::Node)*
+}
+
+class SphereConfig {
+  +x: PerturbParams
+  +y: PerturbParams
+  +z: PerturbParams
+  +radius: PerturbParams
+  +minRadius: double
+  +maxRadius: double
+  +boundingBoxScale: double
+  +explodeConfig(node: YAML::Node) void
+}
+
+class BaseConfig {
+  +cellType: std::string
+  +cell: SphereConfig*
+  +simulation: SimulationConfig
+  +prob: ProbabilityConfig
+  +explodeConfig(node: YAML::Node) void
+  +printConfig() void
+}
+
+class SphereParams {
+  +x: float
+  +y: float
+  +z: float
+  +radius: float
+}
+
+class Sphere {
+  +cellConfig: SphereConfig$
+  +getRadiusAt(z: double) const double
+  +draw(image: cv::Mat&, simulationConfig: SimulationConfig, cellMap: cv::Mat*, z: float) const
+  +drawOutline(image: cv::Mat&, color: float, z: float) const
+  +getPerturbedCell() const Sphere
+  +getParameterizedCell(params: StrFloatMap) const Sphere
+  +getSplitCells(realTiffSlices: VecMat) const tuple~Sphere,Sphere,bool~
+  +getCellParams() const CellParams
+  +calculateCorners() const Corners
+  +calculateMinimumBox(perturbed_cell: Sphere&) const Corners
+}
+
+class SpheroidParams {
+  +x: float
+  +y: float
+  +z: float
+  +radius: float
+  +a_axis: float
+  +b_axis: float
+  +c_axis: float
+}
+
+class Spheroid {
+  +cellConfig: SphereConfig$
+  +getRadiusAt(z: double) const double
+  +draw(image: cv::Mat&, simulationConfig: SimulationConfig, cellMap: cv::Mat*, z: float) const
+  +drawOutline(image: cv::Mat&, color: float, z: float) const
+  +getPerturbedCell() const Spheroid
+  +getParameterizedCell(params: StrFloatMap) const Spheroid
+  +getSplitCells(realTiffSlices: VecMat) const tuple~Spheroid,Spheroid,bool~
+  +getCellParams() const CellParams
+  +calculateCorners() const Corners
+  +calculateMinimumBox(perturbed_cell: Spheroid&) const Corners
+  +getAxisRadiusAt(z: double, axis_length: double) const double
+}
+
+class Bacilli {
+  -name: std::string
+  -position: Vector
+  -width: double
+  -length: double
+  -rotation: double
+  -opacity: double
+  -split_alpha: double
+  +_refresh() void
+  +draw() void
+  +drawOutline() void
+  +split(alpha: double) void
+  +combine(cell: Bacilli*) void
+}
+
+class Frame {
+  +cells: vector~Spheroid~
+  +generateSynthFrame() VecMat
+  +generateSynthFrameFast(oldCell: Spheroid&, newCell: Spheroid&) VecMat
+  +calculateCost(synthFrame: VecMat) Cost
+  +generateOutputFrame() VecMat
+  +generateOutputSynthFrame() VecMat
+  +length() const size_t
+  +perturb() CostCallbackPair
+  +split() CostCallbackPair
+  +gradientDescent() Cost
+}
+
+class Lineage {
+  +Lineage(initialCells: map~string,vector~Spheroid~~, imagePaths: PathVec, config: BaseConfig&, outputPath: string, continueFrom: int)
+  +optimize(frameIndex: int) void
+  +saveFrame(frameIndex: int) void
+  +saveCells(frameIndex: int) void
+  +copyCellsForward(to: int) void
+  +length() unsigned int
+}
+
+class CellFactory {
+  +CellFactory(config: BaseConfig)
+  +createCells(init_params_path: Path, z_offset: int, z_scaling: float) MapCells
+}
+
+class Vector {
+  +x: double
+  +y: double
+  +z: double
+  +operator+(other: Vector) const Vector
+  +operator+(val: double) const Vector
+  +dotProduct(other: Vector) const double
+}
+
+CellConfig <|-- SphereConfig
+CellParams <|-- SphereParams
+CellParams <|-- SpheroidParams
+Cell <|-- Bacilli
+BaseConfig *-- SimulationConfig
+BaseConfig *-- ProbabilityConfig
+BaseConfig o-- SphereConfig
+Frame *-- Spheroid
+Lineage *-- Frame
+Lineage *-- BaseConfig
+Sphere ..> SphereConfig
+Spheroid ..> SphereConfig
+CellFactory ..> BaseConfig
+CellFactory ..> Spheroid
+Bacilli ..> Vector
