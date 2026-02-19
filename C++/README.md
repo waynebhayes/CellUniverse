@@ -84,7 +84,7 @@
   ``` zsh
    cd ../../examples
   # select the configuration through cil UI
-  ./run_cell_universe.sh
+  ./run_cell_universe.sh -i
   ```
     - Change the mode of the bash script if you don't have the permission by running the following command
   ```zsh
