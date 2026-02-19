@@ -1,0 +1,311 @@
+%%{init: {"theme":"default","class":{"hideEmptyMembersBox":false},"themeVariables":{"fontSize":"10px"}}}%%
+%% Strict C++ class diagram with members + main call dependencies
+classDiagram
+direction TB
+
+class MainProgram {
+  +getImageFilePaths(input: string, firstFrame: int, lastFrame: int) PathVec
+  +loadConfig(path: string, config: BaseConfig&) void
+  +main(argc: int, argv: char**) int
+}
+
+class ArgsMain {
+  +config: std::string
+  +input: std::string
+  +firstFrame: int
+  +lastFrame: int
+  +initial: std::string
+  +output: std::string
+  +continueFrom: int
+}
+
+class ArgsCLI {
+  +input: std::string
+  +output: fs::path
+  +config: fs::path
+  +initial: fs::path
+  +debug: optional~fs::path~
+  +first_frame: int
+  +last_frame: int
+  +workers: int
+  +jobs: int
+  +cluster: std::string
+  +no_parallel: bool
+  +auto_temp: bool
+  +start_temp: optional~float~
+  +end_temp: optional~float~
+  +residual: optional~fs::path~
+  +continue_from: int
+  +seed: optional~int~
+  +batches: int
+  +postInit() void
+}
+
+class Cell {
+  +Cell()
+  +~Cell()
+  +draw(image: cv::Mat&, simulationConfig: SimulationConfig, cellMap: cv::Mat*, z: float) const
+  +drawOutline(image: cv::Mat&, color: float, z: float) const
+  +getPerturbedCell() const Cell*
+  +getParameterizedCell(params: unordered_map~string,float~) const Cell*
+  +getSplitCells() const tuple~Cell*,Cell*,bool~
+  +getCellParams() const CellParams
+  +checkIfCellsValid(cells: vector~Cell*~) bool
+  +calculateCorners() const MinBox
+  +calculateMinimumBox(perturbed_cell: Cell&) const MinBox
+}
+
+class SimulationConfig {
+  +iterations_per_cell: int
+  +background_color: float
+  +cell_color: float
+  +padding: int
+  +z_scaling: float
+  +blur_sigma: float
+  +z_slices: int
+  +z_values: vector~int~
+  +SimulationConfig()
+  +explodeConfig(node: YAML::Node) void
+  +printConfig() void
+}
+
+class ProbabilityConfig {
+  +perturbation: float
+  +split: float
+  +ProbabilityConfig()
+  +explodeConfig(node: YAML::Node) void
+  +printConfig() void
+}
+
+class CellParams {
+  +name: std::string
+  +CellParams(name_: std::string)
+}
+
+class PerturbParams {
+  +prob: float
+  +mu: float
+  +sigma: float
+  +explodeParams(node: YAML::Node) void
+  +getPerturbOffset() const float
+}
+
+class CellConfig {
+  +explodeConfig(node: YAML::Node)*
+  +~CellConfig()
+}
+
+class SphereConfig {
+  +x: PerturbParams
+  +y: PerturbParams
+  +z: PerturbParams
+  +radius: PerturbParams
+  +minRadius: double
+  +maxRadius: double
+  +boundingBoxScale: double
+  +~SphereConfig()
+  +explodeConfig(node: YAML::Node) void
+}
+
+class BaseConfig {
+  +cellType: std::string
+  +cell: SphereConfig*
+  +simulation: SimulationConfig
+  +prob: ProbabilityConfig
+  +BaseConfig()
+  +operator=(other: BaseConfig) BaseConfig&
+  +BaseConfig(other: BaseConfig)
+  +~BaseConfig()
+  +explodeConfig(node: YAML::Node) void
+  +printConfig() void
+}
+
+class SphereParams {
+  +x: float
+  +y: float
+  +z: float
+  +radius: float
+  +SphereParams()
+  +SphereParams(name: std::string, x: float, y: float, z: float, radius: float)
+}
+
+class Sphere {
+  -_name: std::string
+  -_position: cv::Point3f
+  -_radius: double
+  -_rotation: double
+  -dormant: bool
+  +cellConfig: SphereConfig$
+  +Sphere(init_props: SphereParams)
+  +Sphere()
+  +printCellInfo() const
+  +getRadiusAt(z: double) const double
+  +draw(image: cv::Mat&, simulationConfig: SimulationConfig, cellMap: cv::Mat*, z: float) const
+  +drawOutline(image: cv::Mat&, color: float, z: float) const
+  +getPerturbedCell() const Sphere
+  +getParameterizedCell(params: unordered_map~string,float~) const Sphere
+  +performPCA(pts: vector~cv::Point3d~, frame: vector~cv::Mat~) const vector
+  +calculateContours(subTiffSlices: vector~cv::Mat~, contours3D: vector) static
+  +getSplitCells(realTiffSlices: vector~cv::Mat~) const tuple~Sphere,Sphere,bool~
+  +checkConstraints() const bool
+  +getRadiusAt(z: float) float
+  +getCellParams() const CellParams
+  +calculateCorners() const pair
+  +checkIfCellsValid(spheres: vector~Sphere~) bool
+  +calculateMinimumBox(perturbed_cell: Sphere&) const pair
+  +checkIfCellsOverlap(spheres: vector~Sphere~) static bool
+}
+
+class SpheroidParams {
+  +x: float
+  +y: float
+  +z: float
+  +radius: float
+  +a_axis: float
+  +b_axis: float
+  +c_axis: float
+  +SpheroidParams()
+  +SpheroidParams(name: std::string, x: float, y: float, z: float, radius: float)
+  +SpheroidParams(name: std::string, x: float, y: float, z: float, radius: float, a: float, b: float, c: float)
+}
+
+class Spheroid {
+  -_name: std::string
+  -_position: cv::Point3f
+  -_radius: double
+  -dormant: bool
+  -_a_axis: double
+  -_b_axis: double
+  -_c_axis: double
+  +cellConfig: SphereConfig$
+  +Spheroid(init_props: SpheroidParams)
+  +Spheroid()
+  +printCellInfo() const
+  +getRadiusAt(z: double) const double
+  +draw(image: cv::Mat&, simulationConfig: SimulationConfig, cellMap: cv::Mat*, z: float) const
+  +drawOutline(image: cv::Mat&, color: float, z: float) const
+  +getPerturbedCell() const Spheroid
+  +getParameterizedCell(params: unordered_map~string,float~) const Spheroid
+  +performPCA(pts: vector~cv::Point3d~, frame: vector~cv::Mat~) const vector
+  +getSplitCells(realTiffSlices: vector~cv::Mat~) const tuple~Spheroid,Spheroid,bool~
+  +checkConstraints() const bool
+  +getRadiusAt(z: float) float
+  +getCellParams() const CellParams
+  +calculateCorners() const pair
+  +checkIfCellsValid(spheroids: vector~Spheroid~) bool
+  +calculateMinimumBox(perturbed_cell: Spheroid&) const pair
+  +checkIfCellsOverlap(spheroids: vector~Spheroid~) static bool
+  +getAxisRadiusAt(z: double, axis_length: double) const double
+}
+
+class Bacilli {
+  -name: std::string
+  -position: Vector
+  -width: double
+  -length: double
+  -rotation: double
+  -opacity: double
+  -split_alpha: double
+  -_needs_refresh: bool
+  -dormant: bool
+  -_position: Vector
+  -_head_center: Vector
+  -_tail_center: Vector
+  -_head_right: Vector
+  -_head_left: Vector
+  -_tail_right: Vector
+  -_tail_left: Vector
+  -_region: Rectangle
+  +Bacilli(name: std::string, x: double, y: double, width: double, length: double, rotation: double, split_alpha: double, opacity: double)
+  +_refresh() void
+  +draw() void
+  +drawOutline() void
+  +split(alpha: double) void
+  +combine(cell: Bacilli*) void
+  +simulated_region() void
+}
+
+class Frame {
+  +cells: vector~Spheroid~
+  +Frame(realFrame: vector~cv::Mat~, simulationConfig: SimulationConfig, cells: vector~Spheroid~, outputPath: Path, imageName: string)
+  +padRealFrame() void
+  +generateSynthFrame() vector~cv::Mat~
+  +generateSynthFrameFast(oldCell: Spheroid&, newCell: Spheroid&) vector~cv::Mat~
+  +calculateCost(synthFrame: vector~cv::Mat~) Cost
+  +generateOutputFrame() vector~cv::Mat~
+  +generateOutputSynthFrame() vector~cv::Mat~
+  +length() const size_t
+  +perturb() CostCallbackPair
+  +split() CostCallbackPair
+  +gradientDescent() Cost
+  +getSynthFrame() vector~cv::Mat~
+  -z_slices: vector~double~
+  -simulationConfig: SimulationConfig
+  -outputPath: std::string
+  -imageName: std::string
+  -_realFrame: vector~cv::Mat~
+  -_realFrameCopy: vector~cv::Mat~
+  -_synthFrame: vector~cv::Mat~
+  -getImageShape() cv::Size
+  -costOfPerturb(perturbParam: string, perturbVal: float, index: size_t, oldCell: Cell) Cost
+  -getSynthPerturbedCells(index: size_t, params: ParamValMap, perturbLength: float, oldCell: Cell) ParamImageMap
+}
+
+class Lineage {
+  +Lineage(initialCells: map~string,vector~Spheroid~~, imagePaths: PathVec, config: BaseConfig&, outputPath: string, continueFrom: int)
+  +optimize(frameIndex: int) void
+  +saveFrame(frameIndex: int) void
+  +saveCells(frameIndex: int) void
+  +copyCellsForward(to: int) void
+  +length() unsigned int
+  -config: BaseConfig
+  -frames: vector~Frame~
+  -outputPath: std::string
+}
+
+class CellFactory {
+  +CellFactory(config: BaseConfig)
+  +createCells(init_params_path: Path, z_offset: int, z_scaling: float) map~Path,vector~Spheroid~~
+}
+
+class Vector {
+  +x: double
+  +y: double
+  +z: double
+  +Vector()
+  +Vector(x: double, y: double, z: double)
+  +operator+(other: Vector) const Vector
+  +operator+(val: double) const Vector
+  +dotProduct(other: Vector) const double
+}
+
+class YAML {
+  +LoadFile(path: string) static Node
+}
+
+%% Inheritance
+CellConfig <|-- SphereConfig
+CellParams <|-- SphereParams
+CellParams <|-- SpheroidParams
+Cell <|-- Bacilli
+
+%% Aggregation/composition from explicit members
+BaseConfig *-- SimulationConfig
+BaseConfig *-- ProbabilityConfig
+BaseConfig o-- SphereConfig
+Frame *-- Spheroid
+Lineage *-- Frame
+Lineage *-- BaseConfig
+Sphere ..> SphereConfig
+Spheroid ..> SphereConfig
+CellFactory ..> BaseConfig
+CellFactory ..> Spheroid
+Bacilli ..> Vector
+
+%% main.cpp call dependencies on same graph
+MainProgram ..> ArgsMain : uses
+MainProgram ..> BaseConfig : calls explodeConfig()/printConfig()
+MainProgram ..> YAML : calls LoadFile()
+MainProgram ..> CellFactory : calls ctor/createCells()
+MainProgram ..> Lineage : calls ctor/length()/optimize()/copyCellsForward()/saveFrame()
+MainProgram ..> SimulationConfig : reads z_slices/z_scaling

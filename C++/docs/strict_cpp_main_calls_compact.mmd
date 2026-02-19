@@ -1,0 +1,54 @@
+%%{init: {"theme":"default","class":{"hideEmptyMembersBox":false},"themeVariables":{"fontSize":"10px"}}}%%
+classDiagram
+direction TB
+
+class MainProgram {
+  +getImageFilePaths(input: string, firstFrame: int, lastFrame: int) PathVec
+  +loadConfig(path: string, config: BaseConfig&) void
+  +main(argc: int, argv: char**) int
+}
+
+class ArgsMain {
+  +config: std::string
+  +input: std::string
+  +firstFrame: int
+  +lastFrame: int
+  +initial: std::string
+  +output: std::string
+  +continueFrom: int
+}
+
+class BaseConfig {
+  +explodeConfig(node: YAML::Node) void
+  +printConfig() void
+  +simulation: SimulationConfig
+}
+
+class SimulationConfig {
+  +z_slices: int
+  +z_scaling: float
+}
+
+class CellFactory {
+  +CellFactory(config: BaseConfig)
+  +createCells(init_params_path: Path, z_offset: int, z_scaling: float) map~Path,vector~Spheroid~~
+}
+
+class Lineage {
+  +Lineage(cells: map~Path,vector~Spheroid~~, imagePaths: PathVec, config: BaseConfig, outputPath: string, continueFrom: int)
+  +length() unsigned int
+  +optimize(frame: int) void
+  +copyCellsForward(to: int) void
+  +saveFrame(frame: int) void
+}
+
+class YAML {
+  +LoadFile(path: string) static Node
+}
+
+MainProgram ..> ArgsMain : parse argv
+MainProgram ..> YAML : load config file
+MainProgram ..> BaseConfig : explodeConfig()/printConfig()
+MainProgram ..> SimulationConfig : read z_slices/z_scaling
+MainProgram ..> CellFactory : ctor/createCells()
+MainProgram ..> Lineage : ctor/length()/optimize()/copyCellsForward()/saveFrame()

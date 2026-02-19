@@ -1,0 +1,114 @@
+%%{init: {"theme":"default","class":{"hideEmptyMembersBox":false},"themeVariables":{"fontSize":"10px"}}}%%
+classDiagram
+direction TB
+
+class TypeAliases {
+  +Path = std::string
+  +VecMat = vector~cv::Mat~
+  +MapCells = map~Path, vector~Spheroid~~
+  +Corners = pair~vector~float~,vector~float~~
+}
+
+class SimulationConfig {
+  +iterations_per_cell: int
+  +background_color: float
+  +cell_color: float
+  +padding: int
+  +z_scaling: float
+  +blur_sigma: float
+  +z_slices: int
+  +z_values: vector~int~
+  +explodeConfig(node: YAML::Node) void
+  +printConfig() void
+}
+
+class ProbabilityConfig {
+  +perturbation: float
+  +split: float
+  +explodeConfig(node: YAML::Node) void
+  +printConfig() void
+}
+
+class CellConfig {
+  +explodeConfig(node: YAML::Node)*
+}
+
+class SphereConfig {
+  +minRadius: double
+  +maxRadius: double
+  +boundingBoxScale: double
+  +explodeConfig(node: YAML::Node) void
+}
+
+class BaseConfig {
+  +cellType: std::string
+  +cell: SphereConfig*
+  +simulation: SimulationConfig
+  +prob: ProbabilityConfig
+  +explodeConfig(node: YAML::Node) void
+  +printConfig() void
+}
+
+class Sphere {
+  +cellConfig: SphereConfig$
+  +getRadiusAt(z: double) const double
+  +draw(image: cv::Mat&, simulationConfig: SimulationConfig, cellMap: cv::Mat*, z: float) const
+  +drawOutline(image: cv::Mat&, color: float, z: float) const
+  +getPerturbedCell() const Sphere
+  +getParameterizedCell(params: unordered_map~string,float~) const Sphere
+  +getSplitCells(realTiffSlices: VecMat) const tuple~Sphere,Sphere,bool~
+  +calculateCorners() const Corners
+  +calculateMinimumBox(perturbed_cell: Sphere&) const Corners
+}
+
+class Spheroid {
+  +cellConfig: SphereConfig$
+  +getRadiusAt(z: double) const double
+  +draw(image: cv::Mat&, simulationConfig: SimulationConfig, cellMap: cv::Mat*, z: float) const
+  +drawOutline(image: cv::Mat&, color: float, z: float) const
+  +getPerturbedCell() const Spheroid
+  +getParameterizedCell(params: unordered_map~string,float~) const Spheroid
+  +getSplitCells(realTiffSlices: VecMat) const tuple~Spheroid,Spheroid,bool~
+  +calculateCorners() const Corners
+  +calculateMinimumBox(perturbed_cell: Spheroid&) const Corners
+  +getAxisRadiusAt(z: double, axis_length: double) const double
+}
+
+class Frame {
+  +cells: vector~Spheroid~
+  +generateSynthFrame() VecMat
+  +generateSynthFrameFast(oldCell: Spheroid&, newCell: Spheroid&) VecMat
+  +calculateCost(synthFrame: VecMat) Cost
+  +generateOutputFrame() VecMat
+  +generateOutputSynthFrame() VecMat
+  +length() const size_t
+  +perturb() CostCallbackPair
+  +split() CostCallbackPair
+  +gradientDescent() Cost
+}
+
+class Lineage {
+  +Lineage(initialCells: map~string,vector~Spheroid~~, imagePaths: PathVec, config: BaseConfig&, outputPath: string, continueFrom: int)
+  +optimize(frameIndex: int) void
+  +saveFrame(frameIndex: int) void
+  +saveCells(frameIndex: int) void
+  +copyCellsForward(to: int) void
+  +length() unsigned int
+}
+
+class CellFactory {
+  +CellFactory(config: BaseConfig)
+  +createCells(init_params_path: Path, z_offset: int, z_scaling: float) MapCells
+}
+
+CellConfig <|-- SphereConfig
+BaseConfig *-- SimulationConfig
+BaseConfig *-- ProbabilityConfig
+BaseConfig o-- SphereConfig
+Frame *-- Spheroid
+Lineage *-- Frame
+Lineage *-- BaseConfig
+Sphere ..> SphereConfig
+Spheroid ..> SphereConfig
+CellFactory ..> BaseConfig
+CellFactory ..> Spheroid
