@@ -1,12 +1,13 @@
 #!/bin/bash
 set -euo pipefail
 
-# run_celluniverse.sh [preset_config.ini] [preset_name]
+# run_celluniverse.sh -i
+# run_celluniverse.sh <preset_config.ini> [preset_name]
 #
 # Mode 1:
 #   ./run_celluniverse.sh /path/to/user_input_configurations.ini preset_name
 # Mode 2:
-#   ./run_celluniverse.sh
+#   ./run_celluniverse.sh -i
 #   -> interactive loop that asks for config path and preset.
 
 if [ -t 2 ]; then
@@ -353,14 +354,37 @@ print_kv() {
   '
 }
 
-if [ "$#" -gt 2 ]; then
-  echo "Usage: $0 [preset_config.ini] [preset_name]"
+INTERACTIVE=0
+INI_FILE=""
+PRESET_ARG=""
+
+usage() {
+  echo "Usage:" >&2
+  echo "  $0 -i" >&2
+  echo "  $0 <preset_config.ini> [preset_name]" >&2
+}
+
+if [ "$#" -eq 0 ]; then
+  err "[FATAL] missing arguments."
+  usage
+  exit 1
+elif [ "$1" = "-i" ]; then
+  if [ "$#" -ne 1 ]; then
+    err "[FATAL] -i does not accept extra arguments."
+    usage
+    exit 1
+  fi
+  INTERACTIVE=1
+elif [ "$#" -ge 1 ] && [ "$#" -le 2 ]; then
+  INI_FILE="$1"
+  PRESET_ARG="${2:-}"
+else
+  err "[FATAL] invalid arguments."
+  usage
   exit 1
 fi
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-INI_FILE="${1:-}"
-if [ -z "$INI_FILE" ]; then
+if [ "$INTERACTIVE" -eq 1 ]; then
   INI_FILE="$(choose_config_file)"
 else
   INI_FILE="$(expand_home "$INI_FILE")"
@@ -373,7 +397,7 @@ else
 fi
 
 INI_DIR="$(cd "$(dirname "$INI_FILE")" && pwd)"
-PRESET="$(choose_preset "$INI_FILE" "${2:-}")"
+PRESET="$(choose_preset "$INI_FILE" "$PRESET_ARG")"
 
 BUILD_DIR_RAW="$(ini_get "$INI_FILE" "$PRESET" "build_dir")"
 INPUT_PATH_RAW="$(ini_get "$INI_FILE" "$PRESET" "input_path")"
