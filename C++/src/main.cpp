@@ -9,6 +9,7 @@
 #include "Spheroid.hpp"
 #include "Lineage.hpp"
 #include <chrono>
+#include <algorithm>
 
 class Args
 {
@@ -23,41 +24,108 @@ public:
     // Add other arguments as necessary
 };
 
+static void updateTiffConfigIfNeeded(const fs::path &file, BaseConfig &config)
+{
+    if (!(file.extension() == ".tif" || file.extension() == ".tiff"))
+    {
+        return;
+    }
+
+    std::vector<cv::Mat> images;
+    cv::imreadmulti(file.string(), images, cv::IMREAD_UNCHANGED);
+    int slices = static_cast<int>(images.size());
+    config.simulation.z_slices = slices;
+    config.simulation.z_values.clear();
+    for (int j = 0; j < slices; ++j)
+    {
+        config.simulation.z_values.push_back(j - slices / 2);
+    }
+}
+
 // helper function to get all image file paths
-PathVec getImageFilePaths(const std::string &inputPattern, int firstFrame, int lastFrame, BaseConfig &config)
+PathVec getImageFilePaths(const std::string &input, int firstFrame, int lastFrame, BaseConfig &config)
 {
     PathVec imagePaths;
-    for (int i = firstFrame; lastFrame == -1 || i <= lastFrame; ++i)
+
+    // printf-style pattern input, e.g. frame%03d.tif
+    if (input.find('%') != std::string::npos)
     {
-        char buffer[100];
-        sprintf(buffer, inputPattern.c_str(), i);
-        fs::path file(buffer);
-
-        if (fs::exists(file) && fs::is_regular_file(file))
+        for (int i = firstFrame; lastFrame == -1 || i <= lastFrame; ++i)
         {
-            imagePaths.push_back(file);
+            char buffer[1024];
+            std::snprintf(buffer, sizeof(buffer), input.c_str(), i);
+            fs::path file(buffer);
 
-            // Setup some configurations automatically if they are tif files
-            if (file.extension() == ".tif" || file.extension() == ".tiff")
+            if (fs::exists(file) && fs::is_regular_file(file))
             {
-                std::vector<cv::Mat> images;
-                cv::imreadmulti(file.string(), images, cv::IMREAD_UNCHANGED);
-                //                std::cout << "Loaded " << images.size() << " images from the TIFF file." << std::endl;
-                int slices = images.size(); // Assuming the first dimension is the number of slices
-                // set the uninitialized z_slices and z_values
-                config.simulation.z_slices = slices;
-                config.simulation.z_values.clear();
-                for (int j = 0; j < slices; ++j)
-                {
-                    config.simulation.z_values.push_back(j - slices / 2);
-                }
+                imagePaths.push_back(file);
+                continue;
             }
-        }
-        else
-        {
+
             std::cerr << "Input file not found \"" << file << "\"" << std::endl;
             throw std::runtime_error("Input file not found");
         }
+    }
+    // Directory input, auto-detect image files
+    else if (fs::is_directory(input))
+    {
+        PathVec allFiles;
+        for (const auto &entry : fs::directory_iterator(input))
+        {
+            if (!entry.is_regular_file())
+            {
+                continue;
+            }
+            const fs::path &p = entry.path();
+            if (p.extension() == ".tif" || p.extension() == ".tiff")
+            {
+                allFiles.push_back(p);
+            }
+        }
+
+        if (allFiles.empty())
+        {
+            throw std::runtime_error("No .tif/.tiff files found in directory: " + input);
+        }
+
+        std::sort(allFiles.begin(), allFiles.end());
+
+        if (firstFrame < 0)
+        {
+            throw std::runtime_error("firstFrame must be >= 0 for directory input");
+        }
+
+        int start = firstFrame;
+        int end = (lastFrame < 0) ? static_cast<int>(allFiles.size()) - 1
+                                  : std::min(lastFrame, static_cast<int>(allFiles.size()) - 1);
+
+        if (start >= static_cast<int>(allFiles.size()))
+        {
+            throw std::runtime_error("firstFrame is out of range for directory input");
+        }
+        if (start > end)
+        {
+            throw std::runtime_error("Invalid frame range for directory input");
+        }
+
+        for (int i = start; i <= end; ++i)
+        {
+            imagePaths.push_back(allFiles[i]);
+        }
+    }
+    // Single file input
+    else if (fs::exists(input) && fs::is_regular_file(input))
+    {
+        imagePaths.push_back(input);
+    }
+    else
+    {
+        throw std::runtime_error("Input is neither a pattern, directory, nor file: " + input);
+    }
+
+    if (!imagePaths.empty())
+    {
+        updateTiffConfigIfNeeded(imagePaths.front(), config);
     }
 
     // Print paths for verification
@@ -80,6 +148,11 @@ int main(int argc, char *argv[])
 {
     // parse args here
     Args args;
+    if (argc < 7)
+    {
+        std::cerr << "Usage: celluniverse <firstFrame> <lastFrame> <input_pattern_or_dir_or_file> <output_dir> <config.yaml> <initial.csv>\n";
+        return 1;
+    }
 
     args.firstFrame = std::stoi(argv[ff]);
     std::cout << "Loading args:\n";
@@ -92,7 +165,7 @@ int main(int argc, char *argv[])
     std::cout << "Initial CSV path: " << args.initial << std::endl
               << std::flush;
     args.input = argv[input];
-    std::cout << "Input folder: " << args.input << std::endl
+    std::cout << "Input: " << args.input << std::endl
               << std::flush;
     args.output = argv[output];
     std::cout << "Output folder: " << args.output << std::endl
