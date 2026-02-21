@@ -47,40 +47,34 @@ Image processImage(const Image &image, const BaseConfig &config)
     // TODO: use GaussianBlur with custom sigma
     SimulationConfig simConfig = config.simulation;
     //    std::cout << "The blur sigma is: " <<  simConfig.blur_sigma << std::endl;
-    cv::GaussianBlur(processedImage, processedImage, cv::Size(0, 0), 3);
+    cv::GaussianBlur(processedImage, processedImage, cv::Size(0, 0), 1.5);
 
     return processedImage;
 }
 
 std::vector<cv::Mat> loadFrame(const std::string &imageFile, const BaseConfig &config)
 {
-    std::vector<cv::Mat> processedZSlices;
+    std::vector<cv::Mat> processedZSlices; // vector of matrices, each matrix is a 2D image
     std::vector<cv::Mat> interpolatedZSlices;
 
-    size_t numTiffSlices = 0;                 // visible after the if-block
-    const int expandFactor = config.simulation.z_scaling;
-
+    // Get the file extension
     std::string extension = imageFile.substr(imageFile.find_last_of('.') + 1);
     if (extension == "tiff" || extension == "tif")
     {
         std::vector<cv::Mat> tiffImage;
         cv::imreadmulti(imageFile, tiffImage, cv::IMREAD_ANYDEPTH | cv::IMREAD_COLOR);
-
-        numTiffSlices = tiffImage.size();
-        if (numTiffSlices == 0)
-        {
-            throw std::runtime_error("TIFF has 0 slices (imreadmulti failed?)");
-        }
-        std::cout << "[INFO] TIFF slices detected: " << numTiffSlices << std::endl;
-
+        long unsigned numTiffSlices {tiffImage.size()};
+	    assert(numTiffSlices == 33); // FIXME: just for the Pavak's test files
         cv::Mat img = tiffImage[0];
+
         if (img.empty())
         {
             std::cout << "Error: Could not read the TIFF image" << std::endl;
             return processedZSlices;
         }
 
-        for (size_t i = 0; i < numTiffSlices; ++i)
+        // Iterate through tiffImage, begin coversion to black and white, blurring
+        for (unsigned i = 0; i < numTiffSlices; ++i) // should we end at == slices?
         {
             cv::Mat slice = tiffImage[i].clone();
             cv::cvtColor(slice, slice, cv::COLOR_BGR2GRAY);
@@ -88,51 +82,35 @@ std::vector<cv::Mat> loadFrame(const std::string &imageFile, const BaseConfig &c
             processedZSlices.push_back(processedImg);
         }
 
-        const size_t numSynthSlices = static_cast<size_t>(expandFactor) * (numTiffSlices - 1) + 1;
+        const int expandFactor = config.simulation.z_scaling; 
+        // there will be (expandFactor-1) interpolated slices between each "real" one.
+        // we need one extra at the very top to hold the top "real" z-Slice.
+        unsigned numSynthSlices = expandFactor * (numTiffSlices-1) + 1; // 225 for 33 slices
 
-        for (size_t synthSlice = 0; synthSlice < numSynthSlices; ++synthSlice)
-        {
-            size_t tiffSlice = synthSlice / static_cast<size_t>(expandFactor);
-
-            if (synthSlice % static_cast<size_t>(expandFactor) == 0)
-            {
-                interpolatedZSlices.push_back(processedZSlices[tiffSlice]);
+        // for checking
+        // std::cout << "Number of synthetic slices: " << numSynthSlices << std::endl;
+        
+        // iterate through synthslices and interpolate between each "real" slice
+        for (int synthSlice = 0; synthSlice < numSynthSlices; ++synthSlice) {
+            int tiffSlice = int(synthSlice / expandFactor); // "real" slice index 
+            if(synthSlice % expandFactor == 0) 
+            { // copy the real slice to the synth one, verbatim
+            interpolatedZSlices.push_back(processedZSlices[tiffSlice]);
+            } 
+            else if (synthSlice % expandFactor == 1) {
+                // Interpolate between realTiff[tiffSlice] and realTiff[tiffSlice + 1]
+                interpolateSlices(processedZSlices[tiffSlice], 
+                                processedZSlices[tiffSlice + 1], 
+                                interpolatedZSlices, 
+                                expandFactor - 1);
             }
-            else if (synthSlice % static_cast<size_t>(expandFactor) == 1)
-            {
-                interpolateSlices(
-                    processedZSlices[tiffSlice],
-                    processedZSlices[tiffSlice + 1],
-                    interpolatedZSlices,
-                    expandFactor - 1);
-            }
         }
-
-        if (interpolatedZSlices.empty())
-        {
-            throw std::runtime_error("interpolatedZSlices is empty (TIFF read failed?)");
-        }
-
-        const size_t expected = static_cast<size_t>(expandFactor) * (numTiffSlices - 1) + 1;
-        if (interpolatedZSlices.size() != expected)
-        {
-            throw std::runtime_error(
-                "interpolatedZSlices size mismatch: expected " + std::to_string(expected) +
-                ", got " + std::to_string(interpolatedZSlices.size()) +
-                " (numTiffSlices=" + std::to_string(numTiffSlices) +
-                ", z_scaling=" + std::to_string(expandFactor) + ")");
-        }
-
-        std::cout << "[INFO] Interpolated Z slices built: " << interpolatedZSlices.size()
-                  << " (expected=" << expected
-                  << ", numTiffSlices=" << numTiffSlices
-                  << ", z_scaling=" << expandFactor << ")\n";
-
-        std::cout << std::to_string(interpolatedZSlices.size()) << " slices built successfully" << std::endl;
-        return interpolatedZSlices;
+        // here do one FINAL copy of the very top tiff [number 32] to the very top interp [225, not 224!]
+        // interpolatedZSlices.push_back(processedZSlices[32]);
     }
     else
     {
+        // TODO: fix this
         cv::Mat img = cv::imread(imageFile);
         if (img.empty())
         {
@@ -146,15 +124,16 @@ std::vector<cv::Mat> loadFrame(const std::string &imageFile, const BaseConfig &c
         }
 
         processedZSlices.push_back(processImage(img, config));
-
-        if (processedZSlices.empty())
-        {
-            throw std::runtime_error("processedZSlices is empty (image read failed?)");
-        }
-
-        return processedZSlices;
     }
+    if (interpolatedZSlices.size() != 225) {
+        std::string errorMessage = "interpolatedZSlices must have exactly 255 slices, but has " +
+                                std::to_string(interpolatedZSlices.size()) + " slices";
+        throw std::runtime_error(errorMessage);
+    }
+    std::cout << std::to_string(interpolatedZSlices.size()) << "slices built successfully" << std::endl;
+    return interpolatedZSlices;
 }
+
 
 Lineage::Lineage(std::map<std::string, std::vector<Spheroid>> initialCells, PathVec imagePaths, BaseConfig &config, std::string outputPath, int continueFrom)
     : config(config), outputPath(outputPath)
@@ -163,7 +142,7 @@ Lineage::Lineage(std::map<std::string, std::vector<Spheroid>> initialCells, Path
     {
         std::vector<Image> real_frame;
         real_frame = loadFrame(imagePaths[i], config);
-        // loadFrame interpolates frames, update to config is needed
+        // loadFrame interpolate frames, update to config is needed
         config.simulation.z_slices = real_frame.size();
 
         fs::path path(imagePaths[i]);
@@ -189,106 +168,113 @@ void Lineage::optimize(int frameIndex)
     }
 
     Frame &frame = frames[frameIndex];
-    std::string algorithm = "hill"; // Set default algorithm
     size_t totalIterations = frame.length() * config.simulation.iterations_per_cell;
     std::cout << "Total iterations: " << totalIterations << std::endl;
 
-    double tolerance = 0.5;
-    bool minimaReached = false;
-   // Cost curCost = 0;
- //   Cost newCost = 0;
     Cost costDiff = 0;
     double residSum = 0;
     double residCount = 0;
     double ovrResidual = 0;
 
+    // ============================================================
+    // Phase 1: Perturbation-only optimization
+    // Settle all existing cells into their best positions first.
+    // ============================================================
+    std::cout << "[Phase 1] Perturbation optimization for frame " << frameIndex
+              << " (" << frame.cells.size() << " cells, " << totalIterations << " iterations)" << std::endl;
+
     for (size_t i = 0; i < totalIterations; ++i) {
-        if(costDiff<0){
+        if (costDiff < 0) {
             residSum += costDiff;
             residCount++;
         }
         if (i % 100 == 0) {
-            ovrResidual = residSum/residCount;
-            if (residCount>0){
-            std::cout << "Frame " << frameIndex << ", iteration " << i << " Difference of Residuals " << ovrResidual << std::endl;
-            }else{
-               std::cout << "Frame " << frameIndex << ", iteration " << i << " -- No synthezised images selected" << std::endl; 
+            ovrResidual = residSum / residCount;
+            if (residCount > 0) {
+                std::cout << "Frame " << frameIndex << ", iteration " << i
+                          << " Difference of Residuals " << ovrResidual << std::endl;
+            } else {
+                std::cout << "Frame " << frameIndex << ", iteration " << i
+                          << " -- No synthezised images selected" << std::endl;
             }
             residSum = 0;
             residCount = 0;
         }
-        if (algorithm == "simulated annealing") {
-            // Simulated annealing logic
+
+        auto result = frame.perturb();
+        costDiff = result.first;
+        std::function<void(bool)> accept = result.second;
+        accept(costDiff < 0);
+    }
+
+    // ============================================================
+    // Phase 2: Post-optimization split detection
+    // Try splitting each original cell exactly once. Accept only if
+    // cost improves by more than split_cost. After each accepted
+    // split, run extra perturbation iterations so daughters settle.
+    // ============================================================
+    std::vector<std::string> cellNames;
+    for (const auto &cell : frame.cells) {
+        cellNames.push_back(cell.getCellParams().name);
+    }
+
+    std::cout << "[Phase 2] Split detection for frame " << frameIndex
+              << " (" << cellNames.size() << " cells)" << std::endl;
+
+    for (const auto &name : cellNames) {
+        // Find current index of this cell by name
+        size_t idx = SIZE_MAX;
+        for (size_t j = 0; j < frame.cells.size(); ++j) {
+            if (frame.cells[j].getCellParams().name == name) {
+                idx = j;
+                break;
+            }
         }
-        else if (algorithm == "gradient descent")
-        {
-            //            std::cout << "Current iteration: " << i + 1 << std::endl;
-            //            if (minimaReached) {
-            //                continue;
-            //            }
-            //            curCost = frame.calculateCost(frame.getSynthImageStack());
-            //            newCost = frame.gradientDescent();
-            //
-            //            if ((curCost - newCost) < tolerance) {
-            //                minimaReached = true;
-            //            }
-        }
-        else
-        {
-            std::vector<std::string> options = {"split", "perturbation"};
-            std::vector<double> probabilities = {config.prob.split, config.prob.perturbation};
+        if (idx == SIZE_MAX) continue;
 
-#if USE_MERSENNE
-            int chosenIndex = std::discrete_distribution<>(probabilities.begin(), probabilities.end())(get_mt_generator());
-#else
-            int chosenIndex = std::discrete_distribution<>(probabilities.begin(), probabilities.end())(get_lc_generator());
-#endif
-            std::string chosenOption = options[chosenIndex];
+        auto result = frame.trySplitCell(idx);
+        costDiff = result.first;
+        std::function<void(bool)> accept = result.second;
 
-            CostCallbackPair result;
-            if (chosenOption == "perturbation")
-            {
-                // std::cout << "attempting to perturb..." << std::endl;
-                result = frame.perturb();
-            }
-            else if (chosenOption == "split")
-            {
-                // std::cout << "attempting to split..." << std::endl;
-                result = frame.split();
-            }
-            else
-            {
-                throw std::invalid_argument("Invalid option");
-            }
-            costDiff = result.first;
-            std::function<void(bool)> accept = result.second;
+        if (costDiff < -config.prob.split_cost) {
+            accept(true);
+            std::cout << "[Split Accepted] " << name << " split in frame "
+                      << frameIndex << " (diff=" << costDiff << ")" << std::endl;
 
-            accept(costDiff < 0);
-            // Hill climbing logic
+            // Run extra perturbation iterations so daughters can settle
+            size_t postSplitIters = 2 * config.simulation.iterations_per_cell;
+            for (size_t j = 0; j < postSplitIters; ++j) {
+                auto presult = frame.perturb();
+                presult.second(presult.first < 0);
+            }
+        } else {
+            accept(false);
         }
     }
 }
 
-void Lineage::saveFrame(int frameIndex)
+void Lineage::saveImages(int frameIndex)
 {
     if (frameIndex < 0 || static_cast<size_t>(frameIndex) >= frames.size())
     {
         throw std::invalid_argument("Invalid frame index");
     }
 
-    std::vector<cv::Mat> realFrame = frames[frameIndex].generateOutputFrame();
-    std::vector<cv::Mat> synthFrame = frames[frameIndex].generateOutputSynthFrame();
+    std::vector<Image> realImages = frames[frameIndex].generateOutputFrame();
+    std::vector<Image> synthImages = frames[frameIndex].generateOutputSynthFrame();
     std::cout << "Saving images for frame " << frameIndex << "..." << std::endl;
+    std::cout << "Real Image Type: " << realImages[frameIndex].type() << std::endl;
+    std::cout << "Synth Image Type: " << synthImages[frameIndex].type() << std::endl;
 
     std::string realOutputPath = outputPath + "/real/" + std::to_string(frameIndex);
     if (!std::filesystem::exists(realOutputPath))
     {
         std::filesystem::create_directories(realOutputPath);
     }
-    for (size_t i = 0; i < realFrame.size(); ++i)
+    for (size_t i = 0; i < realImages.size(); ++i)
     {
         // Save real images
-        cv::imwrite(realOutputPath + "/" + std::to_string(i) + ".png", realFrame[i]);
+        cv::imwrite(realOutputPath + "/" + std::to_string(i) + ".png", realImages[i]);
     }
 
     std::string synthOutputPath = outputPath + "/synth/" + std::to_string(frameIndex);
@@ -296,40 +282,59 @@ void Lineage::saveFrame(int frameIndex)
     {
         std::filesystem::create_directories(synthOutputPath);
     }
-    for (size_t i = 0; i < synthFrame.size(); ++i)
+    for (size_t i = 0; i < synthImages.size(); ++i)
     {
         // Save synthetic images
-        cv::imwrite(synthOutputPath + "/" + std::to_string(i) + ".png", synthFrame[i]);
+        cv::imwrite(synthOutputPath + "/" + std::to_string(i) + ".png", synthImages[i]);
     }
 
     std::cout << "Done" << std::endl;
 }
 
-// void Lineage::saveCells(int frameIndex)
-//{
-//     std::vector<CellParams> all_cells;
-//
-//     // Concatenating cell data from each frame
-//     for (int i = 0; i <= frameIndex && i < frames.size(); ++i) {
-//         auto frame_cells = frames[i].get_cells_as_params();
-//         all_cells.insert(all_cells.end(), frame_cells.begin(), frame_cells.end());
-//     }
-//
-//     // Sorting cells by frame and then by cell ID
-//     std::sort(all_cells.begin(), all_cells.end(), [](const CellParams& a, const CellParams& b) {
-//         return a.file < b.file || (a.file == b.file && a.name < b.name);
-//     });
-//
-//     // Writing to CSV
-//     std::ofstream file(outputPath + "cells.csv");
-//     if (file.is_open()) {
-//         // Assuming you want to write the file and name fields
-//         file << "file,name\n";
-//         for (const auto& cell : all_cells) {
-//             file << cell.file << "," << cell.name << "\n";
-//         }
-//     }
-// }
+void Lineage::saveCells(int frameIndex)
+{
+    std::string cellsPath = outputPath + "/cells.csv";
+    bool fileExists = std::filesystem::exists(cellsPath);
+
+    // Append mode: each frame adds its rows as it finishes optimizing
+    std::ofstream file(cellsPath, std::ios::app);
+    if (!file.is_open()) {
+        std::cerr << "Error: Could not open " << cellsPath << " for writing" << std::endl;
+        return;
+    }
+
+    // Write header only for the first frame
+    if (!fileExists || frameIndex == 0) {
+        // Truncate if frame 0 (fresh run)
+        if (frameIndex == 0) {
+            file.close();
+            file.open(cellsPath, std::ios::trunc);
+        }
+        file << "file,name,x,y,z,majorRadius,minorRadius,theta_x,theta_y,theta_z" << std::endl;
+    }
+
+    Frame &frame = frames[frameIndex];
+    std::string imageName = frame.getImageName();
+
+    for (const auto &cell : frame.cells) {
+        SpheroidParams params = cell.getCellParams();
+        cell.printCellInfo();
+        file << imageName << ","
+             << params.name << ","
+             << params.x << ","
+             << params.y << ","
+             << params.z << ","
+             << params.majorRadius << ","
+             << params.minorRadius << ","
+             << params.theta_x << ","
+             << params.theta_y << ","
+             << params.theta_z
+             << std::endl;
+    }
+
+    std::cout << "Saved " << frame.cells.size() << " cells for frame " << frameIndex
+              << " to " << cellsPath << std::endl;
+}
 
 void Lineage::copyCellsForward(int to)
 {

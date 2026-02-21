@@ -4,34 +4,8 @@
 #include <vector>
 #include <random>
 #include <string>
-#include <chrono>
 #include "yaml-cpp/yaml.h"
 #include <iostream>
-
-// Toggle between Mersenne Twister (1) and Linear Congruential (0)
-#define USE_MERSENNE 1
-
-#if USE_MERSENNE
-// Global seed for Mersenne Twister (set once in main)
-extern std::uint32_t global_mt_seed;
-
-// Helper function to get a properly seeded Mersenne Twister generator
-inline std::mt19937& get_mt_generator() {
-    static thread_local std::mt19937 gen;
-    static thread_local bool is_seeded = false;
-    if (!is_seeded) {
-        gen.seed(global_mt_seed);
-        is_seeded = true;
-    }
-    return gen;
-}
-#else
-// Helper function to get Linear Congruential generator (static thread_local - NEW WAY)
-inline std::minstd_rand& get_lc_generator() {
-    static thread_local std::minstd_rand gen(std::random_device{}());
-    return gen;
-}
-#endif
 
 class SimulationConfig {
 public:
@@ -72,7 +46,8 @@ class ProbabilityConfig {
 public:
     float perturbation;
     float split;
-    ProbabilityConfig() : perturbation(0.0f), split(0.0f) {
+    float split_cost;
+    ProbabilityConfig() : perturbation(0.0f), split(0.0f), split_cost(0.0f) {
     }
 
     void explodeConfig(const YAML::Node& node) {
@@ -82,11 +57,15 @@ public:
         if (node["split"]) {
             split = node["split"].as<float>();
         }
+        if (node["split_cost"]) {
+            split_cost = node["split_cost"].as<float>();
+        }
     }
     void printConfig() {
         std::cout << "Probability Config\n";
         std::cout << "perturbation: " << perturbation << std::endl;
         std::cout << "split: " << split << std::endl;
+        std::cout << "split_cost: " << split_cost << std::endl;
     }
 };
 
@@ -111,19 +90,16 @@ public:
         sigma = node["sigma"].as<float>();
     }
     [[nodiscard]] float getPerturbOffset() const {
-#if USE_MERSENNE
-        if (std::uniform_real_distribution<>(0.0, 1.0)(get_mt_generator()) < prob) {
-            return std::normal_distribution<>(mu, sigma)(get_mt_generator());
+        std::random_device rd; // Obtain a random number from hardware
+        std::mt19937 gen(rd()); // Seed the generator
+        std::uniform_real_distribution<> dis(0.0, 1.0); // Distribution for probability
+
+        if (dis(gen) < prob) {
+            std::normal_distribution<> d(mu, sigma); // Distribution for the Gaussian
+            return d(gen);
         } else {
             return mu;
         }
-#else
-        if (std::uniform_real_distribution<>(0.0, 1.0)(get_lc_generator()) < prob) {
-            return std::normal_distribution<>(mu, sigma)(get_lc_generator());
-        } else {
-            return mu;
-        }
-#endif
     }
 };
 
@@ -144,8 +120,6 @@ public:
     PerturbParams radius{};
     double minRadius{};
     double maxRadius{};
-    double boundingBoxScale{1.25};
-
     ~SphereConfig() = default;
 
     void explodeConfig(const YAML::Node& node) override
@@ -156,24 +130,54 @@ public:
         radius.explodeParams(node["radius"]);
         minRadius = node["minRadius"].as<double>();
         maxRadius = node["maxRadius"].as<double>();
+    }
+};
 
-        if (node["boundingBoxScale"]) {
-            boundingBoxScale = node["boundingBoxScale"].as<double>();
-        }
+class SpheroidConfig: public CellConfig {
+public:
+    PerturbParams x{};
+    PerturbParams y{};
+    PerturbParams z{};
+    PerturbParams majorRadius{};
+    PerturbParams minorRadius{};
+    PerturbParams thetaX{};
+    PerturbParams thetaY{};
+    PerturbParams thetaZ{};
+    double minMajorRadius{};
+    double maxMajorRadius{};
+    double minMinorRadius{};
+    double maxMinorRadius{};
+    ~SpheroidConfig() = default;
+
+    void explodeConfig(const YAML::Node& node) override
+    {
+        x.explodeParams(node["x"]);
+        y.explodeParams(node["y"]);
+        z.explodeParams(node["z"]);
+        majorRadius.explodeParams(node["majorRadius"]);
+        minorRadius.explodeParams(node["minorRadius"]);
+        thetaX.explodeParams(node["thetaX"]);
+        thetaY.explodeParams(node["thetaY"]);
+        thetaZ.explodeParams(node["thetaZ"]);
+
+        minMajorRadius = node["minMajorRadius"].as<double>();
+        maxMajorRadius = node["maxMajorRadius"].as<double>();
+        minMinorRadius = node["minMinorRadius"].as<double>();
+        maxMinorRadius = node["maxMinorRadius"].as<double>();
     }
 };
 
 class BaseConfig {
 public:
     std::string cellType;
-    SphereConfig* cell;
+    SpheroidConfig* cell;
     SimulationConfig simulation;
     ProbabilityConfig prob;
     BaseConfig() :cell(nullptr) {};
     BaseConfig& operator=(const BaseConfig& other) {
         if (this != &other) {
             if (other.cell != nullptr) {
-                cell = new SphereConfig(*other.cell);
+                cell = new SpheroidConfig(*other.cell);
             }
             else {
                 cell = nullptr;
@@ -185,7 +189,7 @@ public:
     }
     BaseConfig(const BaseConfig& other) {
         if (other.cell != nullptr) {
-            cell = new SphereConfig(*other.cell);
+            cell = new SpheroidConfig(*other.cell);
         }
         else {
             cell = nullptr;
@@ -199,8 +203,8 @@ public:
     // load the BaseConfig with a YAML node
     void explodeConfig(const YAML::Node& node) {
         cellType = node["cellType"].as<std::string>();
-        // TODO: Now cell is always pointing to a sphere config, make it more dynamic later
-        cell = new SphereConfig;
+        // TODO: Now cell is always pointing to a spheroid config, make it more dynamic later
+        cell = new SpheroidConfig;
         cell->explodeConfig(node["cell"]);
         simulation.explodeConfig(node["simulation"]);
         prob.explodeConfig(node["prob"]);

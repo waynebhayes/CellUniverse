@@ -1,5 +1,5 @@
 # Global settings
-cellType: sphere
+cellType: spheroid
 #pixelsPerMicron: 1
 #framesPerSecond: 1
 
@@ -17,13 +17,30 @@ cell:
     prob: 0.35
     mu: 0
     sigma: 12
-  radius:
+  majorRadius:
     prob: 0.2
     mu: 0
     sigma: 4
-  minRadius: 15
-  maxRadius: 60
-  boundingBoxScale: 1.25
+  minorRadius:
+    prob: 0.2
+    mu: 0
+    sigma: 4
+  thetaX:
+    prob: 0.3
+    mu: 0
+    sigma: 0.1
+  thetaY:
+    prob: 0.3
+    mu: 0
+    sigma: 0.1
+  thetaZ:
+    prob: 0.3
+    mu: 0
+    sigma: 0.1
+  minMajorRadius: 15
+  maxMajorRadius: 60
+  minMinorRadius: 8
+  maxMinorRadius: 30
 
 # Simulation settings
 simulation:
@@ -31,14 +48,14 @@ simulation:
   background_color: 0.39
   cell_color: 0.53
   padding: 0
-  # z_scaling MUST be an integer
-  z_scaling: 7 # physical expand factor (nearest integer) between Z-slice voxel high and the (x,y) dimensions. Pavak said 6.925.
+  z_scaling: 7
   blur_sigma: 0
 
 # Probability of changes
 prob:
-  perturbation: 0.99
-  split: 0.01
+  perturbation: 0.97
+  split: 0.03
+  split_cost: 0.5
 #  combine: 0.1
 #  camera_shift: 0.0
 

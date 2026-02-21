@@ -29,15 +29,12 @@ Frame::Frame(const std::vector<cv::Mat> &realFrame, const SimulationConfig &simu
     // Calculate z_slices
     for (int i = 0; i < simulationConfig.z_slices; ++i)
     {
-        double zValue = i; //simulationConfig.z_scaling * (i - simulationConfig.z_slices / 2);
+        double zValue = i;
         z_slices.push_back(zValue);
     }
     // TODO: Fix padding
     //    padRealImage();
-    
     _synthFrame = generateSynthFrame();
-    //std::cout << " SYNTH FRAME SIZE: " << _synthFrame.size();
-
 }
 
 void Frame::padRealFrame()
@@ -64,12 +61,16 @@ std::vector<cv::Mat> Frame::generateSynthFrame()
 
     cv::Size shape = getImageShape(); // Assuming getImageShape returns a cv::Size
     std::vector<cv::Mat> frame;
+
     unsigned int x = 0;
+    // std::cout << "Num of Cells to draw : " << cells.size() << std::endl;
     for (double z : z_slices)
     {
         Image synthImage = cv::Mat(shape, CV_32F, cv::Scalar(simulationConfig.background_color)); // Assuming background color is in cv::Scalar format
         for (const auto &cell : cells)
         {
+            cell.printCellInfo();
+            // cell.print();
             cell.draw(synthImage, simulationConfig, nullptr, z);
         }
         // if(!frame.empty() && x > 0)
@@ -100,8 +101,7 @@ Cost Frame::calculateCost(const std::vector<cv::Mat> &synthFrame)
 {
     if (_realFrame.size() != synthFrame.size())
     {
-        //throw std::runtime_error("Mismatch in image stack sizes");
-        std::cerr << " real frame size " << _realFrame.size() << " synth frame size " << synthFrame.size();
+        throw std::runtime_error("Mismatch in image stack sizes");
     }
 
     double totalCost = 0.0;
@@ -129,7 +129,6 @@ std::vector<cv::Mat> Frame::generateSynthFrameFast(Spheroid &oldCell, Spheroid &
 
     // preallocate space to avoid reallocation
     synthFrame.reserve(z_slices.size());
-    
     for (size_t i = 0; i < z_slices.size(); ++i)
     {
         double z = z_slices[i];
@@ -150,98 +149,63 @@ std::vector<cv::Mat> Frame::generateSynthFrameFast(Spheroid &oldCell, Spheroid &
 
         synthFrame.push_back(synthImage);
     }
+
     return synthFrame;
 }
 
-/**
- * Generates a vector of output frames with outlines drawn around cells.
- * 
- * This function processes a series of grayscale 3D TIFF image slices (_realFrame) by:
- * 1. Converting each grayscale image to an RGB image.
- * 2. Drawing outlines for detected cells on the respective slice.
- * 3. Ensuring the output frames are converted to 8-bit images if necessary.
- * 
- * @return A std::vector<cv::Mat> containing the processed RGB frames with cell outlines.
- */
 std::vector<cv::Mat> Frame::generateOutputFrame()
 {
-    // Vector to store the processed output frames with outlines
     std::vector<cv::Mat> realFrameWithOutlines;
 
-    // Loop through each slice (image) in the 3D TIFF volume
     for (size_t i = 0; i < _realFrame.size(); ++i)
     {
-        const cv::Mat &realImage = _realFrame[i]; // Get the current grayscale image slice
-        double z = z_slices[i]; // Get the corresponding z-coordinate for the slice
+        const cv::Mat &realImage = _realFrame[i];
+        double z = z_slices[i];
 
-        // Step 1: Convert the grayscale image to an RGB image
+        // Convert grayscale to RGB
         cv::Mat outputFrame;
         cv::cvtColor(realImage, outputFrame, cv::COLOR_GRAY2BGR);
 
-        // Step 2: Draw outlines for detected cells on the RGB image
+        // Draw outlines for each cell
         for (const auto &cell : cells)
         {
-            // Draw the outline of the cell on the image.
-            // Passes the z-coordinate of the current slice for 3D context.
-            cell.drawOutline(outputFrame, 0, z);
+            cell.drawOutline(outputFrame, 1.0, z); // Assuming drawOutline takes a cv::Scalar for color
         }
 
-        // Step 3: Ensure the output frame is an 8-bit image
-        // If the image is not already 8-bit, convert it to 8-bit with appropriate scaling
+        // Convert to 8-bit image if necessary
         if (outputFrame.depth() != CV_8U)
         {
             outputFrame.convertTo(outputFrame, CV_8U, 255.0);
         }
 
-        // Add the processed frame to the result vector
         realFrameWithOutlines.push_back(outputFrame);
     }
 
-    // Return the vector of processed frames
     return realFrameWithOutlines;
 }
 
-/**
- * Generates a vector of output synthetic frames, ensuring all images are 8-bit.
- * 
- * This function processes synthetic images stored in `_synthFrame` by:
- * 1. Checking each image's depth.
- * 2. Converting images to 8-bit format if necessary, with appropriate scaling.
- * 3. Returning a vector of converted or cloned images.
- * 
- * @return A std::vector<cv::Mat> containing 8-bit synthetic image frames.
- */
 std::vector<cv::Mat> Frame::generateOutputSynthFrame()
 {
-    // Vector to store the processed synthetic frames
     std::vector<cv::Mat> outputSynthFrame;
 
-    // Loop through each synthetic image in `_synthFrame`
     for (const auto &synthImage : _synthFrame)
     {
-        cv::Mat outputImage; // Placeholder for the processed image
-
-        // Step 1: Check if the image is already 8-bit
+        cv::Mat outputImage;
         if (synthImage.depth() != CV_8U)
         {
-            // Step 2: Convert to 8-bit if necessary
-            // Scale pixel values by 255.0 to map the original range to 8-bit
+            // Convert to 8-bit image if necessary, scaling pixel values by 255
             synthImage.convertTo(outputImage, CV_8U, 255.0);
         }
         else
         {
-            // Step 3: If already 8-bit, clone the image to avoid modifying the original
             outputImage = synthImage.clone();
         }
 
-        // Add the processed image to the output vector
         outputSynthFrame.push_back(outputImage);
     }
 
-    // Return the vector of processed synthetic frames
     return outputSynthFrame;
 }
-
 
 // size_t Frame::length() const
 // {
@@ -254,12 +218,12 @@ size_t Frame::length() const
 
 CostCallbackPair Frame::perturb()
 {
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> distrib(0, cells.size() - 1);
+
     // Randomly pick an index for a cell
-#if USE_MERSENNE
-    size_t index = std::uniform_int_distribution<>(0, cells.size() - 1)(get_mt_generator());
-#else
-    size_t index = std::uniform_int_distribution<>(0, cells.size() - 1)(get_lc_generator());
-#endif
+    size_t index = distrib(gen);
 
     // Store old cell // no reference
     Spheroid oldCell = cells[index];
@@ -282,6 +246,7 @@ CostCallbackPair Frame::perturb()
 
     // If the difference is greater than the threshold, revert to the old cell
     double oldCost = calculateCost(_synthFrame);
+
     CallBackFunc callback = [this, newSynthFrame, oldCell, index](bool accept)
     {
         if (accept)
@@ -294,36 +259,34 @@ CostCallbackPair Frame::perturb()
         }
     };
     if (newCost - oldCost < 0){
-        std::cout << " New Residual Accepted: " << newCost - oldCost << std::endl;
+        std::cout << " New Residual Accepted: " << newCost << std::endl;
+    } else {
+        // std::cout << "Residual Too High: " << newCost-oldCost << std::endl;
     }
     return {newCost - oldCost, callback};
 }
 
 CostCallbackPair Frame::split()
 {
-    // std::cout << " real " << _realFrame.size() << " synth " << _synthFrame.size();
-    // Randomly pick an index for a cell
-#if USE_MERSENNE
-    size_t index = std::uniform_int_distribution<>(0, cells.size() - 1)(get_mt_generator());
-#else
-    size_t index = std::uniform_int_distribution<>(0, cells.size() - 1)(get_lc_generator());
-#endif
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> distrib(0, cells.size() - 1);
+    size_t index = distrib(gen);
+    return trySplitCell(index);
+}
 
-    // Store old cell
+CostCallbackPair Frame::trySplitCell(size_t index)
+{
+    if (index >= cells.size()) {
+        return {0.0, [](bool accept) {}};
+    }
+
     Spheroid oldCell = cells[index];
 
-    // Replace the cell at that index with new cells
     Spheroid child1;
     Spheroid child2;
     bool valid;
-    //     std::tie(child1, child2, valid) = oldCell.getSplitCells();
-    /*
-    Get split cells will return 2 cells with eigen_pairs
-    Check if cells are valid
-    Generate synth frame that uses new oblate sphere class
-    Then we calculate the cost
-    */
-    std::tie(child1, child2, valid) = oldCell.getSplitCells(_realFrame);
+    std::tie(child1, child2, valid) = oldCell.getSplitCells(_realFrame, simulationConfig.z_scaling);
     if (!valid)
     {
         return {0.0, [](bool accept) {}};
@@ -331,24 +294,95 @@ CostCallbackPair Frame::split()
 
     cells.erase(cells.begin() + index);
     cells.push_back(child1);
+    cells.push_back(child2);
 
-    bool areCellsValid = oldCell.checkIfCellsValid(cells);
-    if (!areCellsValid)
-    {
+    // Check daughters against existing cells only (not each other).
+    // Daughters split from a single parent so they naturally overlap each
+    // other initially. The cost function and burn-in handle separation.
+    size_t d1Idx = cells.size() - 2;
+    size_t d2Idx = cells.size() - 1;
+    bool overlapWithExisting = false;
+    for (size_t i = 0; i < d1Idx; ++i) {
+        for (size_t di : {d1Idx, d2Idx}) {
+            cv::Point3f diff = cells[i].get_center() - cells[di].get_center();
+            float dist = std::sqrt(diff.x * diff.x + diff.y * diff.y + diff.z * diff.z);
+            auto pi = cells[i].getCellParams();
+            auto pd = cells[di].getCellParams();
+            if (dist < (pi.majorRadius + pd.majorRadius) * 0.95f &&
+                dist < (pi.minorRadius + pd.minorRadius) * 0.95f) {
+                overlapWithExisting = true;
+                break;
+            }
+        }
+        if (overlapWithExisting) break;
+    }
+    if (overlapWithExisting) {
+        cells.pop_back();
         cells.pop_back();
         cells.insert(cells.begin() + index, oldCell);
         return {0.0, [](bool accept) {}};
     }
 
-    auto newSynthFrame = generateSynthFrame(); 
-    double newCost = calculateCost(newSynthFrame);
+    // --- Post-split burn-in: optimize daughters before cost comparison ---
+    auto bestSynthFrame = generateSynthFrame();
+    double bestCost = calculateCost(bestSynthFrame);
     double oldCost = calculateCost(_synthFrame);
 
-    CallBackFunc callback = [this, newSynthFrame, oldCell, index](bool accept)
+    auto savedSynthFrame = _synthFrame;
+    _synthFrame = bestSynthFrame;
+
+    const int BURN_IN_ITERATIONS = 100;
+    int accepted = 0;
+    for (int iter = 0; iter < BURN_IN_ITERATIONS; ++iter) {
+        size_t dIdx = (iter % 2 == 0) ? d1Idx : d2Idx;
+
+        Spheroid saved = cells[dIdx];
+        cells[dIdx] = cells[dIdx].getPerturbedCell();
+
+        // Check perturbed daughter against non-daughter cells only.
+        // Daughter-daughter overlap is allowed — cost function handles it.
+        bool burnInValid = true;
+        for (size_t i = 0; i < d1Idx; ++i) {
+            cv::Point3f diff = cells[i].get_center() - cells[dIdx].get_center();
+            float dist = std::sqrt(diff.x * diff.x + diff.y * diff.y + diff.z * diff.z);
+            auto pi = cells[i].getCellParams();
+            auto pd = cells[dIdx].getCellParams();
+            if (dist < (pi.majorRadius + pd.majorRadius) * 0.95f &&
+                dist < (pi.minorRadius + pd.minorRadius) * 0.95f) {
+                burnInValid = false;
+                break;
+            }
+        }
+        if (!burnInValid) {
+            cells[dIdx] = saved;
+            continue;
+        }
+
+        auto trialFrame = generateSynthFrameFast(saved, cells[dIdx]);
+        double trialCost = calculateCost(trialFrame);
+
+        if (trialCost < bestCost) {
+            bestSynthFrame = trialFrame;
+            bestCost = trialCost;
+            _synthFrame = trialFrame;
+            accepted++;
+        } else {
+            cells[dIdx] = saved;
+        }
+    }
+
+    _synthFrame = savedSynthFrame;
+
+    std::cout << "[Split Burn-in] " << oldCell.getCellParams().name
+              << " burn_in_accepted=" << accepted << "/" << BURN_IN_ITERATIONS
+              << " oldCost=" << oldCost << " newCost=" << bestCost
+              << " diff=" << (bestCost - oldCost) << std::endl;
+
+    CallBackFunc callback = [this, bestSynthFrame, oldCell, index](bool accept)
     {
         if (accept)
         {
-            this->_synthFrame = newSynthFrame;
+            this->_synthFrame = bestSynthFrame;
         }
         else
         {
@@ -358,7 +392,7 @@ CostCallbackPair Frame::split()
         }
     };
 
-    return {newCost - oldCost, callback};
+    return {bestCost - oldCost, callback};
 }
 
 Cost Frame::costOfPerturb(const std::string &perturbParam, float perturbVal, size_t index, const Cell &oldCell)
