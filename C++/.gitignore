@@ -2,3 +2,9 @@
 *.yaml
 
 !src/
+# Ignore all generated output folders
+examples/output/
+examples/output_*/
+output/
+build/
+cmake-build-*/
