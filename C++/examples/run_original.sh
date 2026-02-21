@@ -13,7 +13,7 @@ CONFIG_YAML="$CPP_ROOT/examples/config.yaml"
 OUT_DIR="$CPP_ROOT/examples/output_original"
 
 FIRST=1
-LAST=19
+LAST=5
 
 mkdir -p "$OUT_DIR"
 
@@ -45,10 +45,10 @@ export OPENCV_LOG_LEVEL=SILENT
 ARGS=(
   "$FIRST"
   "$LAST"
-  "$INITIAL_CSV"
   "$INPUT_PATTERN"
   "$OUT_DIR"
   "$CONFIG_YAML"
+  "$INITIAL_CSV"
 )
 
 echo "[CMD] ./celluniverse ${ARGS[*]}"

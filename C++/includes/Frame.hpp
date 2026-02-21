@@ -10,6 +10,7 @@
 #include "ConfigTypes.hpp"
 #include <random>
 #include <functional>
+#include "Sphere.hpp"
 #include "Spheroid.hpp"
 #include <opencv2/core/mat.hpp>
 
@@ -34,8 +35,10 @@ public:
     size_t length() const;
     CostCallbackPair perturb();
     CostCallbackPair split();
+    CostCallbackPair trySplitCell(size_t cellIndex);
     Cost gradientDescent();
     std::vector<cv::Mat> getSynthFrame();
+    std::string getImageName() const { return imageName; }
     std::vector<Spheroid> cells;
 
 private:
