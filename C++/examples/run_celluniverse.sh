@@ -74,6 +74,18 @@ validate_input_path() {
   [ -e "$p" ]
 }
 
+build_runtime_input_arg() {
+  local p="$1"
+  # Current binary expects printf-style pattern, not directory input.
+  if [[ "$p" == *%* ]]; then
+    printf '%s\n' "$p"
+  elif [ -d "$p" ]; then
+    printf '%s/frame%%03d.tif\n' "$p"
+  else
+    printf '%s\n' "$p"
+  fi
+}
+
 ini_get() {
   local ini_file="$1"
   local section="$2"
@@ -434,6 +446,7 @@ if [ -n "$CLI_ARGS_RAW" ]; then
 fi
 
 OUT_DIR="$(build_unique_output_dir "$OUTPUT_BASE_DIR" "$OUTPUT_RULE" "$PRESET")"
+RUNTIME_INPUT_ARG="$(build_runtime_input_arg "$INPUT_PATH")"
 
 hr "="
 echo "Cell Universe Auto Run"
@@ -447,6 +460,9 @@ hr "-"
 print_kv "Build Path" "$BUILD_DIR"
 print_kv "Frames" "$FIRST_FRAME to $LAST_FRAME"
 print_kv "Input Path" "$INPUT_PATH"
+if [ "$RUNTIME_INPUT_ARG" != "$INPUT_PATH" ]; then
+  print_kv "Input Arg (runtime)" "$RUNTIME_INPUT_ARG"
+fi
 print_kv "Output Path" "$OUT_DIR"
 hr "="
 echo
@@ -467,7 +483,7 @@ fi
 
 cd "$BUILD_DIR"
 
-CMD=(./celluniverse "$FIRST_FRAME" "$LAST_FRAME" "$INPUT_PATH" "$OUT_DIR" "$CELL_CONFIG_FILE" "$INITIAL_FILE")
+CMD=(./celluniverse "$FIRST_FRAME" "$LAST_FRAME" "$RUNTIME_INPUT_ARG" "$OUT_DIR" "$CELL_CONFIG_FILE" "$INITIAL_FILE")
 if [ "${#EXTRA_ARGS[@]}" -gt 0 ]; then
   CMD+=("${EXTRA_ARGS[@]}")
 fi
