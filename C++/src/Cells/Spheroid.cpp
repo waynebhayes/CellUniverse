@@ -252,8 +252,10 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
 
     int minX = std::max(0, static_cast<int>(std::floor(min_corner[0])));
     int maxX = std::min(static_cast<int>(image[0].cols) - 1, static_cast<int>(std::ceil(max_corner[0])));
+
     int minY = std::max(0, static_cast<int>(std::floor(min_corner[1])));
     int maxY = std::min(static_cast<int>(image[0].rows) - 1, static_cast<int>(std::ceil(max_corner[1])));
+
     int minZ = std::max(0, static_cast<int>(std::floor(min_corner[2])));
     int maxZ = std::min(static_cast<int>(image.size()) - 1, static_cast<int>(std::ceil(max_corner[2])));
 

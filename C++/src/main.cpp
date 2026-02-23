@@ -113,6 +113,7 @@ PathVec getImageFilePaths(const std::string &input, int firstFrame, int lastFram
             imagePaths.push_back(allFiles[i]);
         }
     }
+
     // Single file input
     else if (fs::exists(input) && fs::is_regular_file(input))
     {
@@ -144,15 +145,9 @@ void loadConfig(const std::string &path, BaseConfig &config)
     config.explodeConfig(node);
 }
 
-int main(int argc, char *argv[])
-{
+Args initArgs(int argc, char *argv[]) {
     // parse args here
     Args args;
-    if (argc < 7)
-    {
-        std::cerr << "Usage: celluniverse <firstFrame> <lastFrame> <input_pattern_or_dir_or_file> <output_dir> <config.yaml> <initial.csv>\n";
-        return 1;
-    }
 
     args.firstFrame = std::stoi(argv[ff]);
     std::cout << "Loading args:\n";
@@ -175,30 +170,51 @@ int main(int argc, char *argv[])
               << std::flush;
     args.continueFrom = -1;
 
-    // load config here
+    return args;
+}
+
+int main(int argc, char *argv[])
+{
+    if (argc < 7)
+    {
+        std::cerr << "Usage: celluniverse <firstFrame> <lastFrame> <input_pattern_or_dir_or_file> <output_dir> <config.yaml> <initial.csv>\n";
+        return 1;
+    }
+
+    // parse args
+    Args args = initArgs(argc, argv);
+
+    // load config
     BaseConfig config;
     loadConfig(args.config, config);
     config.printConfig();
-    // load file paths here
+
+    // load file paths
     PathVec imageFilePaths = getImageFilePaths(args.input, args.firstFrame, args.lastFrame, config);
 
-    // load cells here
+    // load cells
     CellFactory cellFactory(config);
     std::map<Path, std::vector<Spheroid>> cells = cellFactory.createCells(args.initial, config.simulation.z_slices / 2,
                                                                         config.simulation.z_scaling);
-    // create lineage here
+    // create lineage
     Lineage lineage = Lineage(cells, imageFilePaths, config, args.output, args.continueFrom);
 
-    // Run
+    // Run CellUniverse program
     auto start = std::chrono::steady_clock::now();
+
     for (int frame = 0; frame < lineage.length(); ++frame)
     {
         lineage.optimize(frame);
+
         lineage.copyCellsForward(frame + 1);
+
         lineage.saveImages(frame);
+
         lineage.saveCells(frame);
     }
+
     auto end = std::chrono::steady_clock::now();
+
     std::chrono::duration<double> elapsed_seconds = end - start;
 
     std::cout << "Time elapsed: " << elapsed_seconds.count() << " seconds" << std::endl;
