@@ -431,6 +431,7 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
 
         // Compute per-axis standard deviation (data is already zero-centered)
         float sx = 0, sy = 0, sz = 0;
+        float invSx, invSy, invSz;
         for (int i = 0; i < n; ++i) {
             float vx = data.at<float>(i, 0);
             float vy = data.at<float>(i, 1);
@@ -442,11 +443,13 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
         sx = std::sqrt(sx / n);
         sy = std::sqrt(sy / n);
         sz = std::sqrt(sz / n);
-
+        invSx = 1.0 / sx;
+        invSy = 1.0 / sy;
+        invSz = 1.0 / sz;
         // Normalize each axis to unit variance
-        if (sx > 1e-6f) for (int i = 0; i < n; ++i) data.at<float>(i, 0) /= sx;
-        if (sy > 1e-6f) for (int i = 0; i < n; ++i) data.at<float>(i, 1) /= sy;
-        if (sz > 1e-6f) for (int i = 0; i < n; ++i) data.at<float>(i, 2) /= sz;
+        if (sx > 1e-6f) for (int i = 0; i < n; ++i) data.at<float>(i, 0) *= invSx;
+        if (sy > 1e-6f) for (int i = 0; i < n; ++i) data.at<float>(i, 1) *= invSy;
+        if (sz > 1e-6f) for (int i = 0; i < n; ++i) data.at<float>(i, 2) *= invSz;
 
         cv::PCA pca(data, cv::Mat(), cv::PCA::DATA_AS_ROW);
 
@@ -470,6 +473,7 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
         float norm = std::sqrt(ev_image.x * ev_image.x +
                                ev_image.y * ev_image.y +
                                ev_image.z * ev_image.z);
+
         if (norm > 1e-6f) {
             split_axis = ev_image * (1.0f / norm);
         } else {
@@ -508,9 +512,9 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
     int count1 = 0, count2 = 0;
 
     for (const auto &pt : rawPoints) {
-        float dx = pt.x - _position.x;
-        float dy = pt.y - _position.y;
-        float dz = pt.z - _position.z;
+        dx = pt.x - _position.x;
+        dy = pt.y - _position.y;
+        dz = pt.z - _position.z;
         float projection = dx * split_axis.x + dy * split_axis.y + dz * split_axis.z;
 
         if (projection >= 0) {
