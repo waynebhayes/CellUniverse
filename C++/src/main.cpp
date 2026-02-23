@@ -175,11 +175,13 @@ Args initArgs(int argc, char *argv[]) {
 
 int main(int argc, char *argv[])
 {
+    // check user input
     if (argc < 7)
     {
         std::cerr << "Usage: celluniverse <firstFrame> <lastFrame> <input_pattern_or_dir_or_file> <output_dir> <config.yaml> <initial.csv>\n";
         return 1;
     }
+
 
     // parse args
     Args args = initArgs(argc, argv);
@@ -213,6 +215,8 @@ int main(int argc, char *argv[])
         lineage.saveCells(frame);
     }
 
+
+    // ending this program
     auto end = std::chrono::steady_clock::now();
 
     std::chrono::duration<double> elapsed_seconds = end - start;
