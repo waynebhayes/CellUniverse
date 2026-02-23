@@ -145,7 +145,7 @@ void loadConfig(const std::string &path, BaseConfig &config)
     config.explodeConfig(node);
 }
 
-Args initArgs(int argc, char *argv[]) {
+Args initArgs(char *argv[]) {
     // parse args here
     Args args;
 
@@ -184,7 +184,7 @@ int main(int argc, char *argv[])
 
 
     // parse args
-    Args args = initArgs(argc, argv);
+    Args args = initArgs(argv);
 
     // load config
     BaseConfig config;
@@ -202,8 +202,7 @@ int main(int argc, char *argv[])
     Lineage lineage = Lineage(cells, imageFilePaths, config, args.output, args.continueFrom);
 
     // Run CellUniverse program
-    auto start = std::chrono::steady_clock::now();
-
+    auto start = std::chrono::steady_clock::now(); // timer start
     for (int frame = 0; frame < lineage.length(); ++frame)
     {
         lineage.optimize(frame);
@@ -214,11 +213,10 @@ int main(int argc, char *argv[])
 
         lineage.saveCells(frame);
     }
+    auto end = std::chrono::steady_clock::now(); // timer end
 
 
-    // ending this program
-    auto end = std::chrono::steady_clock::now();
-
+    // end this program
     std::chrono::duration<double> elapsed_seconds = end - start;
 
     std::cout << "Time elapsed: " << elapsed_seconds.count() << " seconds" << std::endl;

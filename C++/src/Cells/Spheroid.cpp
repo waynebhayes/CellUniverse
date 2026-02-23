@@ -19,34 +19,58 @@ static double _get_magnitude(std::vector<double> vec){
 void Spheroid::inverseRotatePoint(double dx, double dy, double dz,
                                    double &lx, double &ly, double &lz) const 
 {
-    // Undo rotation around z (apply Rz^T)
-    double cos_z = std::cos(_theta_z);
-    double sin_z = std::sin(_theta_z);
-    double tx =  cos_z * dx + sin_z * dy;
-    double ty = -sin_z * dx + cos_z * dy;
-    double tz = dz;
-
-    // Undo rotation around y (apply Ry^T)
-    double cos_y = std::cos(_theta_y);
-    double sin_y = std::sin(_theta_y);
-    double ux =  cos_y * tx + (-sin_y) * tz;
-    double uy = ty;
-    double uz =  sin_y * tx + cos_y * tz;
-
-    // Undo rotation around x (apply Rx^T)
-    double cos_x = std::cos(_theta_x);
-    double sin_x = std::sin(_theta_x);
-    lx = ux;
-    ly =  cos_x * uy + sin_x * uz;
-    lz = -sin_x * uy + cos_x * uz;
+    std::array<double, 9> R_T;
+    generateInverseRotationMatrix(R_T);
+    lx = R_T[0] * dx + R_T[1] * dy + R_T[2] * dz;
+    ly = R_T[3] * dx + R_T[4] * dy + R_T[5] * dz;
+    lz = R_T[6] * dx + R_T[7] * dy + R_T[8] * dz;
 }
+
+void Spheroid::generateInverseRotationMatrix(std::array<double, 9> &R_T) const {
+    const double cx = std::cos(_theta_x), sx = std::sin(_theta_x);
+    const double cy = std::cos(_theta_y), sy = std::sin(_theta_y);
+    const double cz = std::cos(_theta_z), sz = std::sin(_theta_z);
+
+    // R = Rz * Ry * Rx
+    const double R00 = cz * cy;
+    const double R01 = cz * sy * sx - sz * cx;
+    const double R02 = cz * sy * cx + sz * sx;
+
+    const double R10 = sz * cy;
+    const double R11 = sz * sy * sx + cz * cx;
+    const double R12 = sz * sy * cx - cz * sx;
+
+    const double R20 = -sy;
+    const double R21 = cy * sx;
+    const double R22 = cy * cx;
+
+    // Store R^T in row-major order.
+    R_T[0] = R00; R_T[1] = R10; R_T[2] = R20;
+    R_T[3] = R01; R_T[4] = R11; R_T[5] = R21;
+    R_T[6] = R02; R_T[7] = R12; R_T[8] = R22;
+}
+
+bool Spheroid::computeSliceBounds(const cv::Mat &image, float z,
+                                  int &minX, int &maxX, int &minY, int &maxY) const {
+    float maxR = std::max({(float)a, (float)b, (float)c});
+    if (std::abs(z - _position.z) > maxR) {
+        return false;
+    }
+
+    minX = std::max(0, (int)std::floor(_position.x - maxR));
+    maxX = std::min(image.cols - 1, (int)std::ceil(_position.x + maxR));
+    minY = std::max(0, (int)std::floor(_position.y - maxR));
+    maxY = std::min(image.rows - 1, (int)std::ceil(_position.y + maxR));
+    return true;
+}
+
 
 // ---- SIMPLIFIED CONSTRUCTOR ----
 // No voxel matrix construction needed — drawing is done analytically.
-Spheroid::Spheroid(const SpheroidParams &init_props) 
+Spheroid::Spheroid(const SpheroidParams &init_props)
 : _name(init_props.name), _position{init_props.x, init_props.y, init_props.z},
           _major_radius(init_props.majorRadius), _minor_radius(init_props.minorRadius),  // BUG FIX: was majorRadius
-          _rotation(0), 
+          _rotation(0),
           _theta_x(init_props.theta_x), _theta_y(init_props.theta_y), _theta_z(init_props.theta_z),
           dormant(false)
 {
@@ -69,7 +93,7 @@ Spheroid::Spheroid(const SpheroidParams &init_props)
 
     // No matrix construction needed — draw() uses analytic inverse rotation
     // // DEBUG: Print to verify values — remove after confirming correctness
-    // std::cout << "[Spheroid INIT] " << _name 
+    // std::cout << "[Spheroid INIT] " << _name
     //         << " a=" << a << " b=" << b << " c=" << c
     //         << " theta=(" << _theta_x << ", " << _theta_y << ", " << _theta_z << ")"
     //         << std::endl;
@@ -88,7 +112,7 @@ cv::Point3f Spheroid::get_center() const {
 }
 
 void Spheroid::print() const {
-    std::cout << "Spheroid: " << _name 
+    std::cout << "Spheroid: " << _name
               << " pos=(" << _position.x << ", " << _position.y << ", " << _position.z << ")"
               << " a=" << a << " b=" << b << " c=" << c
               << " theta=(" << _theta_x << ", " << _theta_y << ", " << _theta_z << ")"
@@ -111,47 +135,52 @@ std::vector<double> Spheroid::getShapeAt(double z) const
 // Instead of checking a voxel matrix, we analytically test each pixel
 // against the rotated spheroid by inverse-transforming back to local coords.
 void Spheroid::draw(cv::Mat &image, SimulationConfig simulationConfig, cv::Mat *cellMap, float z) const{
+    (void)cellMap;
+
     if (dormant)
     {
         return;
     }
 
     // TEMPORARY DEBUG — remove after testing
-    // std::cout << "[DRAW] " << _name 
+    // std::cout << "[DRAW] " << _name
     //         << " a=" << a << " b=" << b << " c=" << c
-    //         << " theta_y=" << _theta_y 
+    //         << " theta_y=" << _theta_y
     //         << " z=" << z << " pos_z=" << _position.z << std::endl;
 
-    // Conservative bounding box: the max reach in any direction after rotation
-    float maxR = std::max({(float)a, (float)b, (float)c});
+    int minX, maxX, minY, maxY;
+    if (!computeSliceBounds(image, z, minX, maxX, minY, maxY)) return;
 
-    // Quick check: does this z-slice potentially intersect?
-    if (std::abs(z - _position.z) > maxR) return;
+    std::array<double, 9> R_T;
+    generateInverseRotationMatrix(R_T);
 
-    int minX = std::max(0, (int)std::floor(_position.x - maxR));
-    int maxX = std::min(image.cols - 1, (int)std::ceil(_position.x + maxR));
-    int minY = std::max(0, (int)std::floor(_position.y - maxR));
-    int maxY = std::min(image.rows - 1, (int)std::ceil(_position.y + maxR));
+    const double invA2 = 1.0 / (a * a);
+    const double invB2 = 1.0 / (b * b);
+    const double invC2 = 1.0 / (c * c);
+    const double stepXx = R_T[0];
+    const double stepXy = R_T[3];
+    const double stepXz = R_T[6];
+    const double dz = static_cast<double>(z) - _position.z;
+    const double baseDx = static_cast<double>(minX) - _position.x;
 
-    for (int i = minX; i <= maxX; ++i) {
-        for (int j = minY; j <= maxY; ++j) {
-            // Displacement from spheroid center in world space
-            double dx = (double)i - _position.x;
-            double dy = (double)j - _position.y;
-            double dz = (double)z - _position.z;
+    for (int y = minY; y <= maxY; ++y) {
+        const double dy = static_cast<double>(y) - _position.y;
+        double lx = R_T[0] * baseDx + R_T[1] * dy + R_T[2] * dz;
+        double ly = R_T[3] * baseDx + R_T[4] * dy + R_T[5] * dz;
+        double lz = R_T[6] * baseDx + R_T[7] * dy + R_T[8] * dz;
 
-            // Transform to local (upright) coordinate frame
-            double lx, ly, lz;
-            inverseRotatePoint(dx, dy, dz, lx, ly, lz);
-
-            // Check against upright spheroid equation: x²/a² + y²/b² + z²/c² <= 1
-            double val = (lx * lx) / (a * a) 
-                       + (ly * ly) / (b * b) 
-                       + (lz * lz) / (c * c);
+        for (int x = minX; x <= maxX; ++x) {
+            const double val = (lx * lx) * invA2
+                             + (ly * ly) * invB2
+                             + (lz * lz) * invC2;
 
             if (val <= 1.0) {
-                image.at<float>(j, i) = simulationConfig.cell_color;
+                image.at<float>(y, x) = simulationConfig.cell_color;
             }
+
+            lx += stepXx;
+            ly += stepXy;
+            lz += stepXz;
         }
     }
 }
@@ -161,35 +190,64 @@ void Spheroid::draw(cv::Mat &image, SimulationConfig simulationConfig, cv::Mat *
 void Spheroid::drawOutline(cv::Mat &image, float color, float z) const {
     if (dormant) return;
 
-    float maxR = std::max({(float)a, (float)b, (float)c});
-    if (std::abs(z - _position.z) > maxR) return;
+    int minX, maxX, minY, maxY;
+    if (!computeSliceBounds(image, z, minX, maxX, minY, maxY)) return;
 
-    int minX = std::max(0, (int)std::floor(_position.x - maxR));
-    int maxX = std::min(image.cols - 1, (int)std::ceil(_position.x + maxR));
-    int minY = std::max(0, (int)std::floor(_position.y - maxR));
-    int maxY = std::min(image.rows - 1, (int)std::ceil(_position.y + maxR));
+    std::array<double, 9> R_T;
+    generateInverseRotationMatrix(R_T);
 
-    for (int i = minX; i <= maxX; ++i) {
-        for (int j = minY; j <= maxY; ++j) {
-            double dx = (double)i - _position.x;
-            double dy = (double)j - _position.y;
-            double dz = (double)z - _position.z;
+    const double invA2 = 1.0 / (a * a);
+    const double invB2 = 1.0 / (b * b);
+    const double invC2 = 1.0 / (c * c);
+    const double stepXx = R_T[0];
+    const double stepXy = R_T[3];
+    const double stepXz = R_T[6];
+    const double dz = static_cast<double>(z) - _position.z;
+    const double baseDx = static_cast<double>(minX) - _position.x;
 
-            double lx, ly, lz;
-            inverseRotatePoint(dx, dy, dz, lx, ly, lz);
+    const int channels = image.channels();
 
-            double val = (lx * lx) / (a * a) 
-                       + (ly * ly) / (b * b) 
-                       + (lz * lz) / (c * c);
+    if (channels == 1) {
+        for (int y = minY; y <= maxY; ++y) {
+            const double dy = static_cast<double>(y) - _position.y;
+            double lx = R_T[0] * baseDx + R_T[1] * dy + R_T[2] * dz;
+            double ly = R_T[3] * baseDx + R_T[4] * dy + R_T[5] * dz;
+            double lz = R_T[6] * baseDx + R_T[7] * dy + R_T[8] * dz;
 
-            // Outline: only draw pixels near the surface
-            if (val >= 0.95 && val <= 1.05) {
-                if (image.channels() == 1) {
-                    image.at<float>(j, i) = color;
-                } else if (image.channels() == 3) {
-                    // BGR float image (from cvtColor of CV_32F grayscale)
-                    image.at<cv::Vec3f>(j, i) = cv::Vec3f(0, color, 0);
+            for (int x = minX; x <= maxX; ++x) {
+                const double val = (lx * lx) * invA2
+                                 + (ly * ly) * invB2
+                                 + (lz * lz) * invC2;
+
+                if (val >= 0.95 && val <= 1.05) {
+                    image.at<float>(y, x) = color;
                 }
+
+                lx += stepXx;
+                ly += stepXy;
+                lz += stepXz;
+            }
+        }
+    } else if (channels == 3) {
+        const cv::Vec3f drawColor(color, color, color);
+        for (int y = minY; y <= maxY; ++y) {
+            const double dy = static_cast<double>(y) - _position.y;
+            double lx = R_T[0] * baseDx + R_T[1] * dy + R_T[2] * dz;
+            double ly = R_T[3] * baseDx + R_T[4] * dy + R_T[5] * dz;
+            double lz = R_T[6] * baseDx + R_T[7] * dy + R_T[8] * dz;
+
+            for (int x = minX; x <= maxX; ++x) {
+                const double val = (lx * lx) * invA2
+                                 + (ly * ly) * invB2
+                                 + (lz * lz) * invC2;
+
+                if (val >= 0.95 && val <= 1.05) {
+                    image.at<cv::Vec3f>(y, x) = drawColor;
+                }
+
+                lx += stepXx;
+                ly += stepXy;
+                lz += stepXz;
             }
         }
     }
@@ -268,24 +326,48 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
     // pixels and PCA finds the axis between them.
 
     // First pass: compute mean brightness inside the spheroid boundary
-    double brightnessSum = 0;
+    // Precompute constants for fast evaluation
+    double dx, dy, dz;
+    std::array<double, 9> R_T;
+    generateInverseRotationMatrix(R_T);
+
+    const double invA2 = 1.0 / (a * a);
+    const double invB2 = 1.0 / (b * b);
+    const double invC2 = 1.0 / (c * c);
+
+    const double stepXx = R_T[0];
+    const double stepXy = R_T[3];
+    const double stepXz = R_T[6];
+
+    double brightnessSum = 0.0;
     int brightnessCount = 0;
+
     for (int z = minZ; z <= maxZ; ++z) {
+        dz = (double)z - _position.z;
         for (int y = minY; y <= maxY; ++y) {
+            dy = (double)y - _position.y;
+
+            // Start at x = minX for this (z,y) row
+            dx = (double)minX - _position.x;
+            double lx = R_T[0] * dx + R_T[1] * dy + R_T[2] * dz;
+            double ly = R_T[3] * dx + R_T[4] * dy + R_T[5] * dz;
+            double lz = R_T[6] * dx + R_T[7] * dy + R_T[8] * dz;
+
+            const float* row = image[z].ptr<float>(y);
             for (int x = minX; x <= maxX; ++x) {
-                double dx = (double)x - _position.x;
-                double dy = (double)y - _position.y;
-                double dz = (double)z - _position.z;
-                double lx, ly, lz;
-                inverseRotatePoint(dx, dy, dz, lx, ly, lz);
-                double val = (lx * lx) / (a * a) + (ly * ly) / (b * b) + (lz * lz) / (c * c);
+                const double val = (lx * lx) * invA2 + (ly * ly) * invB2 + (lz * lz) * invC2;
                 if (val <= 1.0) {
-                    brightnessSum += image[z].at<float>(y, x);
+                    brightnessSum += row[x];
                     brightnessCount++;
                 }
+
+                lx += stepXx;
+                ly += stepXy;
+                lz += stepXz;
             }
         }
     }
+
     float meanBrightness = (brightnessCount > 0) ? (float)(brightnessSum / brightnessCount) : 0.4f;
 
     // Second pass: collect bright pixels within an expanded boundary (1.5x radius).
@@ -293,26 +375,37 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
     // Only pixels brighter than the mean are included (cell tissue, not background).
     // Store raw image-space coordinates for centroid-based daughter placement.
     std::vector<cv::Point3f> rawPoints;
+    rawPoints.reserve((maxX - minX + 1) * (maxY - minY + 1));
+
+    // Expanded boundary threshold: val <= 2.25 means ~1.5x the radius
+    const double expandedThresh = 2.25;
+
     for (int z = minZ; z <= maxZ; ++z) {
+        dz = (double)z - _position.z;
         for (int y = minY; y <= maxY; ++y) {
+            dy = (double)y - _position.y;
+
+            dx = (double)minX - _position.x;
+            double lx = R_T[0] * dx + R_T[1] * dy + R_T[2] * dz;
+            double ly = R_T[3] * dx + R_T[4] * dy + R_T[5] * dz;
+            double lz = R_T[6] * dx + R_T[7] * dy + R_T[8] * dz;
+
+            const float* row = image[z].ptr<float>(y);
             for (int x = minX; x <= maxX; ++x) {
-                float pixel = image[z].at<float>(y, x);
-                if (pixel <= meanBrightness) continue;
-
-                double dx = (double)x - _position.x;
-                double dy = (double)y - _position.y;
-                double dz = (double)z - _position.z;
-                double lx, ly, lz;
-                inverseRotatePoint(dx, dy, dz, lx, ly, lz);
-
-                // Expanded boundary: val <= 2.25 means ~1.5x the radius
-                double val = (lx * lx) / (a * a) + (ly * ly) / (b * b) + (lz * lz) / (c * c);
-                if (val <= 2.25) {
-                    rawPoints.emplace_back(
-                        static_cast<float>(x),
-                        static_cast<float>(y),
-                        static_cast<float>(z));
+                const float pixel = row[x];
+                if (pixel > meanBrightness) {
+                    const double val = (lx * lx) * invA2 + (ly * ly) * invB2 + (lz * lz) * invC2;
+                    if (val <= expandedThresh) {
+                        rawPoints.emplace_back(
+                            static_cast<float>(x),
+                            static_cast<float>(y),
+                            static_cast<float>(z));
+                    }
                 }
+
+                lx += stepXx;
+                ly += stepXy;
+                lz += stepXz;
             }
         }
     }
@@ -459,6 +552,9 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
         std::cout << "[Split Placement] one-sided (" << count1 << "/" << count2
                   << "), using fixed offset=" << offset << std::endl;
     }
+
+
+    //TODO use a batter way to represent the cell relationships
 
     // Inherit parent rotation angles
     Spheroid cell1(SpheroidParams(
