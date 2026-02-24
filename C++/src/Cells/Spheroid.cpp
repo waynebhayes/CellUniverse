@@ -2,6 +2,78 @@
 #include <random>
 // #include <iostream>
 
+namespace {
+template <typename Visitor>
+void scanSpheroidSlice(
+    int minX, int maxX, int minY, int maxY,
+    const cv::Point3f &position, double z,
+    const std::array<double, 9> &R_T,
+    double invA2, double invB2, double invC2,
+    Visitor &&visitor)
+{
+    const double stepXx = R_T[0];
+    const double stepXy = R_T[3];
+    const double stepXz = R_T[6];
+    const double dz = z - position.z;
+    const double baseDx = static_cast<double>(minX) - position.x;
+
+    for (int y = minY; y <= maxY; ++y) {
+        const double dy = static_cast<double>(y) - position.y;
+        double lx = R_T[0] * baseDx + R_T[1] * dy + R_T[2] * dz;
+        double ly = R_T[3] * baseDx + R_T[4] * dy + R_T[5] * dz;
+        double lz = R_T[6] * baseDx + R_T[7] * dy + R_T[8] * dz;
+
+        for (int x = minX; x <= maxX; ++x) {
+            const double val = (lx * lx) * invA2
+                             + (ly * ly) * invB2
+                             + (lz * lz) * invC2;
+            visitor(x, y, val);
+
+            lx += stepXx;
+            ly += stepXy;
+            lz += stepXz;
+        }
+    }
+}
+
+template <typename Visitor>
+void scanSpheroidVolume(
+    const std::vector<cv::Mat> &image,
+    int minX, int maxX, int minY, int maxY, int minZ, int maxZ,
+    const cv::Point3f &position,
+    const std::array<double, 9> &R_T,
+    double invA2, double invB2, double invC2,
+    Visitor &&visitor)
+{
+    const double stepXx = R_T[0];
+    const double stepXy = R_T[3];
+    const double stepXz = R_T[6];
+    const double baseDx = static_cast<double>(minX) - position.x;
+
+    for (int z = minZ; z <= maxZ; ++z) {
+        const double dz = static_cast<double>(z) - position.z;
+        for (int y = minY; y <= maxY; ++y) {
+            const double dy = static_cast<double>(y) - position.y;
+            double lx = R_T[0] * baseDx + R_T[1] * dy + R_T[2] * dz;
+            double ly = R_T[3] * baseDx + R_T[4] * dy + R_T[5] * dz;
+            double lz = R_T[6] * baseDx + R_T[7] * dy + R_T[8] * dz;
+
+            const float *row = image[z].ptr<float>(y);
+            for (int x = minX; x <= maxX; ++x) {
+                const double val = (lx * lx) * invA2
+                                 + (ly * ly) * invB2
+                                 + (lz * lz) * invC2;
+                visitor(x, y, z, row[x], val);
+
+                lx += stepXx;
+                ly += stepXy;
+                lz += stepXz;
+            }
+        }
+    }
+}
+} // namespace
+
 SpheroidParams Spheroid::paramClass = SpheroidParams();
 SpheroidConfig Spheroid::cellConfig = SpheroidConfig();
 
@@ -157,32 +229,16 @@ void Spheroid::draw(cv::Mat &image, SimulationConfig simulationConfig, cv::Mat *
     const double invA2 = 1.0 / (a * a);
     const double invB2 = 1.0 / (b * b);
     const double invC2 = 1.0 / (c * c);
-    const double stepXx = R_T[0];
-    const double stepXy = R_T[3];
-    const double stepXz = R_T[6];
-    const double dz = static_cast<double>(z) - _position.z;
-    const double baseDx = static_cast<double>(minX) - _position.x;
 
-    for (int y = minY; y <= maxY; ++y) {
-        const double dy = static_cast<double>(y) - _position.y;
-        double lx = R_T[0] * baseDx + R_T[1] * dy + R_T[2] * dz;
-        double ly = R_T[3] * baseDx + R_T[4] * dy + R_T[5] * dz;
-        double lz = R_T[6] * baseDx + R_T[7] * dy + R_T[8] * dz;
-
-        for (int x = minX; x <= maxX; ++x) {
-            const double val = (lx * lx) * invA2
-                             + (ly * ly) * invB2
-                             + (lz * lz) * invC2;
-
+    scanSpheroidSlice(
+        minX, maxX, minY, maxY,
+        _position, static_cast<double>(z),
+        R_T, invA2, invB2, invC2,
+        [&](int x, int y, double val) {
             if (val <= 1.0) {
                 image.at<float>(y, x) = simulationConfig.cell_color;
             }
-
-            lx += stepXx;
-            ly += stepXy;
-            lz += stepXz;
-        }
-    }
+        });
 }
 
 // ---- ROTATION-AWARE drawOutline() ----
@@ -199,57 +255,30 @@ void Spheroid::drawOutline(cv::Mat &image, float color, float z) const {
     const double invA2 = 1.0 / (a * a);
     const double invB2 = 1.0 / (b * b);
     const double invC2 = 1.0 / (c * c);
-    const double stepXx = R_T[0];
-    const double stepXy = R_T[3];
-    const double stepXz = R_T[6];
-    const double dz = static_cast<double>(z) - _position.z;
-    const double baseDx = static_cast<double>(minX) - _position.x;
 
     const int channels = image.channels();
 
     if (channels == 1) {
-        for (int y = minY; y <= maxY; ++y) {
-            const double dy = static_cast<double>(y) - _position.y;
-            double lx = R_T[0] * baseDx + R_T[1] * dy + R_T[2] * dz;
-            double ly = R_T[3] * baseDx + R_T[4] * dy + R_T[5] * dz;
-            double lz = R_T[6] * baseDx + R_T[7] * dy + R_T[8] * dz;
-
-            for (int x = minX; x <= maxX; ++x) {
-                const double val = (lx * lx) * invA2
-                                 + (ly * ly) * invB2
-                                 + (lz * lz) * invC2;
-
+        scanSpheroidSlice(
+            minX, maxX, minY, maxY,
+            _position, static_cast<double>(z),
+            R_T, invA2, invB2, invC2,
+            [&](int x, int y, double val) {
                 if (val >= 0.95 && val <= 1.05) {
                     image.at<float>(y, x) = color;
                 }
-
-                lx += stepXx;
-                ly += stepXy;
-                lz += stepXz;
-            }
-        }
+            });
     } else if (channels == 3) {
         const cv::Vec3f drawColor(color, color, color);
-        for (int y = minY; y <= maxY; ++y) {
-            const double dy = static_cast<double>(y) - _position.y;
-            double lx = R_T[0] * baseDx + R_T[1] * dy + R_T[2] * dz;
-            double ly = R_T[3] * baseDx + R_T[4] * dy + R_T[5] * dz;
-            double lz = R_T[6] * baseDx + R_T[7] * dy + R_T[8] * dz;
-
-            for (int x = minX; x <= maxX; ++x) {
-                const double val = (lx * lx) * invA2
-                                 + (ly * ly) * invB2
-                                 + (lz * lz) * invC2;
-
+        scanSpheroidSlice(
+            minX, maxX, minY, maxY,
+            _position, static_cast<double>(z),
+            R_T, invA2, invB2, invC2,
+            [&](int x, int y, double val) {
                 if (val >= 0.95 && val <= 1.05) {
                     image.at<cv::Vec3f>(y, x) = drawColor;
                 }
-
-                lx += stepXx;
-                ly += stepXy;
-                lz += stepXz;
-            }
-        }
+            });
     }
 }
 
@@ -327,7 +356,6 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
 
     // First pass: compute mean brightness inside the spheroid boundary
     // Precompute constants for fast evaluation
-    double dx, dy, dz;
     std::array<double, 9> R_T;
     generateInverseRotationMatrix(R_T);
 
@@ -335,38 +363,18 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
     const double invB2 = 1.0 / (b * b);
     const double invC2 = 1.0 / (c * c);
 
-    const double stepXx = R_T[0];
-    const double stepXy = R_T[3];
-    const double stepXz = R_T[6];
-
     double brightnessSum = 0.0;
     int brightnessCount = 0;
 
-    for (int z = minZ; z <= maxZ; ++z) {
-        dz = (double)z - _position.z;
-        for (int y = minY; y <= maxY; ++y) {
-            dy = (double)y - _position.y;
-
-            // Start at x = minX for this (z,y) row
-            dx = (double)minX - _position.x;
-            double lx = R_T[0] * dx + R_T[1] * dy + R_T[2] * dz;
-            double ly = R_T[3] * dx + R_T[4] * dy + R_T[5] * dz;
-            double lz = R_T[6] * dx + R_T[7] * dy + R_T[8] * dz;
-
-            const float* row = image[z].ptr<float>(y);
-            for (int x = minX; x <= maxX; ++x) {
-                const double val = (lx * lx) * invA2 + (ly * ly) * invB2 + (lz * lz) * invC2;
-                if (val <= 1.0) {
-                    brightnessSum += row[x];
-                    brightnessCount++;
-                }
-
-                lx += stepXx;
-                ly += stepXy;
-                lz += stepXz;
+    scanSpheroidVolume(
+        image, minX, maxX, minY, maxY, minZ, maxZ, _position,
+        R_T, invA2, invB2, invC2,
+        [&](int /*x*/, int /*y*/, int /*z*/, float pixel, double val) {
+            if (val <= 1.0) {
+                brightnessSum += pixel;
+                brightnessCount++;
             }
-        }
-    }
+        });
 
     float meanBrightness = (brightnessCount > 0) ? (float)(brightnessSum / brightnessCount) : 0.4f;
 
@@ -380,35 +388,17 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
     // Expanded boundary threshold: val <= 2.25 means ~1.5x the radius
     const double expandedThresh = 2.25;
 
-    for (int z = minZ; z <= maxZ; ++z) {
-        dz = (double)z - _position.z;
-        for (int y = minY; y <= maxY; ++y) {
-            dy = (double)y - _position.y;
-
-            dx = (double)minX - _position.x;
-            double lx = R_T[0] * dx + R_T[1] * dy + R_T[2] * dz;
-            double ly = R_T[3] * dx + R_T[4] * dy + R_T[5] * dz;
-            double lz = R_T[6] * dx + R_T[7] * dy + R_T[8] * dz;
-
-            const float* row = image[z].ptr<float>(y);
-            for (int x = minX; x <= maxX; ++x) {
-                const float pixel = row[x];
-                if (pixel > meanBrightness) {
-                    const double val = (lx * lx) * invA2 + (ly * ly) * invB2 + (lz * lz) * invC2;
-                    if (val <= expandedThresh) {
-                        rawPoints.emplace_back(
-                            static_cast<float>(x),
-                            static_cast<float>(y),
-                            static_cast<float>(z));
-                    }
-                }
-
-                lx += stepXx;
-                ly += stepXy;
-                lz += stepXz;
+    scanSpheroidVolume(
+        image, minX, maxX, minY, maxY, minZ, maxZ, _position,
+        R_T, invA2, invB2, invC2,
+        [&](int x, int y, int z, float pixel, double val) {
+            if (pixel > meanBrightness && val <= expandedThresh) {
+                rawPoints.emplace_back(
+                    static_cast<float>(x),
+                    static_cast<float>(y),
+                    static_cast<float>(z));
             }
-        }
-    }
+        });
 
     // Step 3: Run PCA with per-axis stddev normalization.
     // Normalize each axis to unit standard deviation before PCA so that
@@ -512,9 +502,9 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
     int count1 = 0, count2 = 0;
 
     for (const auto &pt : rawPoints) {
-        dx = pt.x - _position.x;
-        dy = pt.y - _position.y;
-        dz = pt.z - _position.z;
+        const double dx = pt.x - _position.x;
+        const double dy = pt.y - _position.y;
+        const double dz = pt.z - _position.z;
         float projection = dx * split_axis.x + dy * split_axis.y + dz * split_axis.z;
 
         if (projection >= 0) {
