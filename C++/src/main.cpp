@@ -187,7 +187,7 @@ int main(int argc, char *argv[])
     std::map<Path, std::vector<Spheroid>> cells = cellFactory.createCells(args.initial, config.simulation.z_slices / 2,
                                                                         config.simulation.z_scaling);
     // create lineage here
-    Lineage lineage = Lineage(cells, imageFilePaths, config, args.output, args.continueFrom);
+    Lineage lineage = Lineage(cells, imageFilePaths, config, args.output, args.firstFrame, args.continueFrom);
 
     // Run
     auto start = std::chrono::steady_clock::now();

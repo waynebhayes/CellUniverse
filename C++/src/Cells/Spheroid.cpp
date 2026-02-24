@@ -43,10 +43,10 @@ void Spheroid::inverseRotatePoint(double dx, double dy, double dz,
 
 // ---- SIMPLIFIED CONSTRUCTOR ----
 // No voxel matrix construction needed — drawing is done analytically.
-Spheroid::Spheroid(const SpheroidParams &init_props) 
+Spheroid::Spheroid(const SpheroidParams &init_props)
 : _name(init_props.name), _position{init_props.x, init_props.y, init_props.z},
           _major_radius(init_props.majorRadius), _minor_radius(init_props.minorRadius),  // BUG FIX: was majorRadius
-          _rotation(0), 
+          _rotation(0),
           _theta_x(init_props.theta_x), _theta_y(init_props.theta_y), _theta_z(init_props.theta_z),
           dormant(false)
 {
@@ -246,16 +246,31 @@ Spheroid Spheroid::getParameterizedCell(std::unordered_map<std::string, float> p
     return Spheroid(spheroidParams);
 }
 
-std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<cv::Mat> &image, float z_scaling) const {
-    // Step 1: Get the bounding box
-    auto [min_corner, max_corner] = calculateCorners();
+std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<cv::Mat> &image, float z_scaling,
+    const std::vector<cv::Point3f> &neighborCenters,
+    float preOptMajorR, float preOptMinorR) const {
+    // Step 1: Get the bounding box, expanded for split detection.
+    // Use pre-optimization radii if available (Phase 1 may collapse the cell).
+    float effA = (preOptMajorR > 0.0f) ? std::max((float)a, preOptMajorR) : (float)a;
+    float effB = (preOptMajorR > 0.0f) ? std::max((float)b, preOptMajorR) : (float)b;
+    float effC = (preOptMinorR > 0.0f) ? std::max((float)c, preOptMinorR) : (float)c;
+    float maxR = std::max({effA, effB, effC});
+    float splitSearchRadius = maxR * 2.0f;
 
-    int minX = std::max(0, static_cast<int>(std::floor(min_corner[0])));
-    int maxX = std::min(static_cast<int>(image[0].cols) - 1, static_cast<int>(std::ceil(max_corner[0])));
-    int minY = std::max(0, static_cast<int>(std::floor(min_corner[1])));
-    int maxY = std::min(static_cast<int>(image[0].rows) - 1, static_cast<int>(std::ceil(max_corner[1])));
-    int minZ = std::max(0, static_cast<int>(std::floor(min_corner[2])));
-    int maxZ = std::min(static_cast<int>(image.size()) - 1, static_cast<int>(std::ceil(max_corner[2])));
+    if (preOptMajorR > 0.0f && (effA > (float)a || effC > (float)c)) {
+        std::cout << "[Split PreOpt] " << _name
+                  << " current=(" << a << "," << b << "," << c << ")"
+                  << " preOpt=(" << preOptMajorR << "," << preOptMajorR << "," << preOptMinorR << ")"
+                  << " effective=(" << effA << "," << effB << "," << effC << ")"
+                  << " searchRadius=" << splitSearchRadius << std::endl;
+    }
+
+    int minX = std::max(0, static_cast<int>(std::floor(_position.x - splitSearchRadius)));
+    int maxX = std::min(static_cast<int>(image[0].cols) - 1, static_cast<int>(std::ceil(_position.x + splitSearchRadius)));
+    int minY = std::max(0, static_cast<int>(std::floor(_position.y - splitSearchRadius)));
+    int maxY = std::min(static_cast<int>(image[0].rows) - 1, static_cast<int>(std::ceil(_position.y + splitSearchRadius)));
+    int minZ = std::max(0, static_cast<int>(std::floor(_position.z - splitSearchRadius)));
+    int maxZ = std::min(static_cast<int>(image.size()) - 1, static_cast<int>(std::ceil(_position.z + splitSearchRadius)));
 
     // Step 2: Collect bright pixels from the REAL IMAGE near this cell.
     // Previously we used the spheroid boundary (geometric shape), but for
@@ -286,9 +301,10 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
     }
     float meanBrightness = (brightnessCount > 0) ? (float)(brightnessSum / brightnessCount) : 0.4f;
 
-    // Second pass: collect bright pixels within an expanded boundary (1.5x radius).
+    // Second pass: collect bright pixels within an expanded boundary (2.0x radius).
     // The expansion captures daughter blobs that may extend beyond the parent's boundary.
     // Only pixels brighter than the mean are included (cell tissue, not background).
+    // Skip pixels closer to a neighbor cell than to this cell (prevents PCA contamination).
     // Store raw image-space coordinates for centroid-based daughter placement.
     std::vector<cv::Point3f> rawPoints;
     for (int z = minZ; z <= maxZ; ++z) {
@@ -303,9 +319,26 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
                 double lx, ly, lz;
                 inverseRotatePoint(dx, dy, dz, lx, ly, lz);
 
-                // Expanded boundary: val <= 2.25 means ~1.5x the radius
-                double val = (lx * lx) / (a * a) + (ly * ly) / (b * b) + (lz * lz) / (c * c);
-                if (val <= 2.25) {
+                // Expanded ellipsoidal boundary: val <= 4.0 means ~2.0x the radius
+                // Uses effective radii (max of current and pre-optimization) so that
+                // Phase 1 collapsing a cell doesn't shrink the search area.
+                double val = (lx * lx) / ((double)effA * effA) + (ly * ly) / ((double)effB * effB) + (lz * lz) / ((double)effC * effC);
+                if (val <= 4.0) {
+                    // Skip pixel if it's closer to any neighbor than to this cell
+                    float distSqToSelf = (float)(dx * dx + dy * dy + dz * dz);
+                    bool closerToNeighbor = false;
+                    for (const auto &nc : neighborCenters) {
+                        float ndx = (float)x - nc.x;
+                        float ndy = (float)y - nc.y;
+                        float ndz = (float)z - nc.z;
+                        float distSqToNeighbor = ndx * ndx + ndy * ndy + ndz * ndz;
+                        if (distSqToNeighbor < distSqToSelf) {
+                            closerToNeighbor = true;
+                            break;
+                        }
+                    }
+                    if (closerToNeighbor) continue;
+
                     rawPoints.emplace_back(
                         static_cast<float>(x),
                         static_cast<float>(y),
@@ -405,9 +438,15 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
     // Split into positive/negative groups and compute 3D centroids.
     // This places daughters where the real bright pixel clusters are,
     // instead of at a fixed offset that may not match the data.
+    // Use pre-optimization radii for daughter sizes when available.
+    // Phase 1 may collapse the parent (e.g. majorR 31→22 when fitting one cell
+    // to two blobs), making daughters too small to produce meaningful cost improvement.
+    // The pre-optimization size reflects the true biological cell size before collapse.
+    double effMajorR = (preOptMajorR > 0.0f) ? std::max(_major_radius, (double)preOptMajorR) : _major_radius;
+    double effMinorR = (preOptMinorR > 0.0f) ? std::max(_minor_radius, (double)preOptMinorR) : _minor_radius;
     double volumeScale = std::cbrt(0.5);
-    double daughterMajorRadius = _major_radius * volumeScale;
-    double daughterMinorRadius = _minor_radius * volumeScale;
+    double daughterMajorRadius = effMajorR * volumeScale;
+    double daughterMinorRadius = effMinorR * volumeScale;
 
     cv::Point3f centroid1(0, 0, 0), centroid2(0, 0, 0);
     int count1 = 0, count2 = 0;
@@ -448,7 +487,9 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
         std::cout << "[Split Placement] centroid-based:"
                   << " c1=(" << new_position1.x << "," << new_position1.y << "," << new_position1.z << ")"
                   << " c2=(" << new_position2.x << "," << new_position2.y << "," << new_position2.z << ")"
-                  << " sep=" << sep << std::endl;
+                  << " sep=" << sep
+                  << " daughterMajorR=" << daughterMajorRadius
+                  << " daughterMinorR=" << daughterMinorRadius << std::endl;
     } else {
         // All pixels on one side — fall back to small offset along split axis
         float offset = static_cast<float>(daughterMajorRadius * 0.5);
@@ -458,7 +499,7 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
                   << "), using fixed offset=" << offset << std::endl;
     }
 
-    // Inherit parent rotation angles
+    // Inherit parent rotation angles.
     Spheroid cell1(SpheroidParams(
         _name + "0", new_position1.x, new_position1.y, new_position1.z,
         daughterMajorRadius, daughterMinorRadius, _theta_x, _theta_y, _theta_z));

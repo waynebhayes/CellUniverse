@@ -25,7 +25,7 @@ std::vector<cv::Mat> loadFrame(const std::string &imageFile, const BaseConfig &c
 class Lineage
 {
 public:
-   Lineage(std::map<std::string, std::vector<Spheroid>> initialCells, PathVec imagePaths, BaseConfig &config, std::string outputPath, int continueFrom = -1);
+   Lineage(std::map<std::string, std::vector<Spheroid>> initialCells, PathVec imagePaths, BaseConfig &config, std::string outputPath, int firstFrame = 0, int continueFrom = -1);
 
    void optimize(int frameIndex);
 
@@ -41,6 +41,7 @@ private:
    BaseConfig config;
    std::vector<Frame> frames;
    std::string outputPath;
+   int firstFrame;
 };
 
 #endif

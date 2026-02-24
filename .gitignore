@@ -266,6 +266,7 @@ ehthumbs_vista.db
 
 # Folder config file
 Desktop.ini
+*.ini
 
 # Recycle Bin used on file shares
 $RECYCLE.BIN/
@@ -354,6 +355,8 @@ Temporary Items
 
 # Output directory
 [oO]utput/
+C++/examples/output_*/
+C++/examples/user_input_configurations.ini
 
 # Input directory
 [fF]rames/
