@@ -182,6 +182,17 @@ int main(int argc, char *argv[])
     // load file paths here
     PathVec imageFilePaths = getImageFilePaths(args.input, args.firstFrame, args.lastFrame, config);
 
+    // [PATCH] Provide the first-frame filename for 4-column initial CSV (cell_type,z,y,x).
+    // CellFactory needs a frame key (e.g., "t000.tif") to attach initial cells.
+    // We pass it via an environment variable to avoid changing function signatures.
+    if (!imageFilePaths.empty()) {
+        const std::string firstFrameFile = imageFilePaths.front().filename().string();
+        setenv("CELLUNIVERSE_INITIAL_FRAME_FILE", firstFrameFile.c_str(), 1);
+        std::cout << "[INFO] CELLUNIVERSE_INITIAL_FRAME_FILE=" << firstFrameFile << std::endl;
+    } else {
+        std::cerr << "[WARN] imageFilePaths is empty; cannot set initial frame filename." << std::endl;
+    }
+
     // load cells here
     CellFactory cellFactory(config);
     std::map<Path, std::vector<Spheroid>> cells = cellFactory.createCells(args.initial, config.simulation.z_slices / 2,

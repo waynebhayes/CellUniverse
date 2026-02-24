@@ -22,40 +22,93 @@ std::map<Path, std::vector<Spheroid>> CellFactory::createCells(const Path &init_
     std::getline(file, firstLine); // remove the header
     std::map<Path, std::vector<Spheroid>> initialCells;
     int line_cnt = 0;
-    while (std::getline(file, line)) {
-        std::istringstream ss(line);
-        float x, y, z, majorRadius, minorRadius;
-        std::string floatStr;
-        std::string filePath;
-        std::string cellName;
-        std::getline(ss, filePath, ',');
-//        std::cout << "File Path: " << filePath << std::endl;
-        std::getline(ss, cellName, ',');
-        std::getline(ss, floatStr, ',');
-        x = std::stof(floatStr);
-        std::getline(ss, floatStr, ',');
-        y = std::stof(floatStr);
-        std::getline(ss, floatStr, ',');
-        z = std::stof(floatStr);
-        std::getline(ss, floatStr, ',');
-        majorRadius = std::stof(floatStr);
-        std::getline(ss, floatStr, ',');
-        minorRadius = std::stof(floatStr);
-        z *= z_scaling;
-        // std::cout << "One new cell added!" << std::endl;
-        // std::cout << "Input Major : " << majorRadius << std::endl;
-        // std::cout << "Input Minor : " << minorRadius << std::endl;
-        // std::cout << "Output Major : " << Spheroid::paramClass.majorRadius << std::endl;
-        // std::cout << "Output Minor : " << Spheroid::paramClass.minorRadius << std::endl;
 
+while (std::getline(file, line)) {
+    if (line.empty()) {
+        continue;
+    }
+
+    // Split CSV row into tokens (supports both 7-col and 4-col formats).
+    std::vector<std::string> tokens;
+    {
+        std::istringstream ss(line);
+        std::string tok;
+        while (std::getline(ss, tok, ',')) {
+            // Trim spaces (very simple trim)
+            while (!tok.empty() && (tok.front() == ' ' || tok.front() == '\t')) tok.erase(tok.begin());
+            while (!tok.empty() && (tok.back() == ' ' || tok.back() == '\t' || tok.back() == '\r')) tok.pop_back();
+            tokens.push_back(tok);
+        }
+    }
+
+    // ----------------------------
+    // Case A: Original 7-column format:
+    // filePath, cellName, x, y, z, majorRadius, minorRadius
+    // ----------------------------
+    if (tokens.size() >= 7) {
+        std::string filePath = tokens[0];
+        std::string cellName = tokens[1];
+
+        float x = std::stof(tokens[2]);
+        float y = std::stof(tokens[3]);
+        float z = std::stof(tokens[4]);
+        float majorRadius = std::stof(tokens[5]);
+        float minorRadius = std::stof(tokens[6]);
+
+        z *= z_scaling;
 
         initialCells[filePath].push_back(
-        Spheroid(SpheroidParams(cellName, x, y, z, majorRadius, minorRadius)));
-        
+            Spheroid(SpheroidParams(cellName, x, y, z, majorRadius, minorRadius))
+        );
+
         ++line_cnt;
         continue;
     }
+
+    // ----------------------------
+    // Case B: 4-column Napari format:
+    // cell_type, z, y, x
+    // We must attach cells to a frame key, e.g., "t000.tif".
+    // main.cpp sets it via env var: CELLUNIVERSE_INITIAL_FRAME_FILE
+    // ----------------------------
+    if (tokens.size() == 4) {
+        const char* envFrame = std::getenv("CELLUNIVERSE_INITIAL_FRAME_FILE");
+        std::string filePath = (envFrame && std::string(envFrame).size() > 0) ? std::string(envFrame) : std::string("t000.tif");
+
+        const std::string cellType = tokens[0];
+
+        float z = std::stof(tokens[1]);
+        float y = std::stof(tokens[2]);
+        float x = std::stof(tokens[3]);
+
+        // Apply z scaling (index -> scaled space used by the C++ tracker)
+        z *= z_scaling;
+
+        // Default radii for embryo initial points (tunable)
+        // You can adjust these later if needed.
+        const float defaultMajorRadius = 10.0f;
+        const float defaultMinorRadius = 10.0f;
+
+        // Generate a stable name
+        const std::string cellName = cellType + "_" + std::to_string(line_cnt + 1);
+
+        initialCells[filePath].push_back(
+            Spheroid(SpheroidParams(cellName, x, y, z, defaultMajorRadius, defaultMinorRadius))
+        );
+
+        ++line_cnt;
+        continue;
+    }
+
+    // Unknown/invalid line
+    std::cerr << "[WARN] Skipping invalid initial CSV row (expected 7 or 4 columns): " << line << std::endl;
+}
+
     std::cout << "Input Line Count : " << line_cnt << std::endl;
-    std::cout << "initCells Size : " << initialCells["frame001.tif"].size() << std::endl;
+    std::cout << "Initial frame keys loaded : " << initialCells.size() << std::endl;
+    if (!initialCells.empty()) {
+        const auto& firstKey = initialCells.begin()->first;
+        std::cout << "Example key : " << firstKey << "  cell count : " << initialCells.begin()->second.size() << std::endl;
+    }
     return initialCells;
 }
