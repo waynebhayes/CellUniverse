@@ -175,7 +175,7 @@ std::vector<cv::Mat> Frame::generateOutputFrame()
         // Draw outlines for each cell
         for (const auto &cell : cells)
         {
-            cell.drawOutline(outputFrame, 1.0, z); // Assuming drawOutline takes a cv::Scalar for color
+            cell.drawOutline(outputFrame, 0.5, z); // Assuming drawOutline takes a cv::Scalar for color
         }
 
         // Convert to 8-bit image if necessary

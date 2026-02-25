@@ -1,8 +1,12 @@
 #include "../../includes/Spheroid.hpp"
 #include <random>
+#include <type_traits>
 // #include <iostream>
 
 namespace {
+template <typename>
+inline constexpr bool alwaysFalseV = false;
+
 template <typename Visitor>
 void scanSpheroidSlice(
     int minX, int maxX, int minY, int maxY,
@@ -60,11 +64,19 @@ void scanSpheroidVolume(
 
             const float *row = image[z].ptr<float>(y);
             for (int x = minX; x <= maxX; ++x) {
-                const double dx = static_cast<double>(y) - position.x;
+                const double dx = static_cast<double>(x) - position.x;
                 const double val = (lx * lx) * invA2
                                  + (ly * ly) * invB2
                                  + (lz * lz) * invC2;
-                visitor(dx, dy, dz, x, y, z, row[x], val);
+                if constexpr (std::is_invocable_v<Visitor, double, double, double, int, int, int, float, double>) {
+                    visitor(dx, dy, dz, x, y, z, row[x], val);
+                } else if constexpr (std::is_invocable_v<Visitor, int, int, int, float, double>) {
+                    visitor(x, y, z, row[x], val);
+                } else {
+                    static_assert(alwaysFalseV<Visitor>,
+                                  "scanSpheroidVolume visitor must be invocable with either "
+                                  "(dx,dy,dz,x,y,z,pixel,val) or (x,y,z,pixel,val).");
+                }
 
                 lx += stepXx;
                 ly += stepXy;
@@ -427,7 +439,7 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
                             break;
                         }
                     }
-                    if (!closerToNeighbor) return;
+                    if (closerToNeighbor) return;
 
                     rawPoints.emplace_back(
                         static_cast<float>(x),
