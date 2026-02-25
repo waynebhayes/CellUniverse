@@ -1,4 +1,3 @@
-// Lineage.cpp
 #include "../includes/Lineage.hpp"
 
 namespace utils

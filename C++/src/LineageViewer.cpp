@@ -1,12 +1,17 @@
-// LineageViewer.cpp
 #include "../includes/LineageViewer.hpp"
 #include <algorithm>
-#include <cmath>
-#include <iostream>
+
+/**
+ * LineageViewer
+ * -------------
+ * Real-time visualization module for cell tracking results.
+ * Displays current frame cells, split events, and lost cell events.
+ * Fully decoupled from core tracking logic (read-only consumer of data).
+ * Intended for debugging, validation, and interpretability of lineage behavior.
+ */
 
 LineageViewer::LineageViewer()
 {
-    // window created lazily on first render
 }
 
 bool LineageViewer::isDaughterName(const std::string &name)
@@ -116,7 +121,7 @@ void LineageViewer::render2D(int frameIndex, const std::vector<CellViz> &cells)
 
     cv::Mat canvas(H, W, CV_8UC3, cv::Scalar(0, 0, 0)); // black background
 
-    // Title
+    //Title
     std::string title = "Realtime Lineage (2D)  |  frame=" + std::to_string(frameIndex) +
                         "  |  nodes(current)=" + std::to_string(cells.size()) +
                         "  |  nodes(total)=" + std::to_string(nodesByRaw.size());
@@ -150,19 +155,17 @@ void LineageViewer::render2D(int frameIndex, const std::vector<CellViz> &cells)
     double sy = (double)(H - 2 * margin) / dy;
     double s = std::min(sx, sy);
 
-    // Helper: map data (x,y) -> pixel
+    // map data (x,y) to pixel
     auto toPixel = [&](float x, float y) -> cv::Point
     {
         // Map x right, y down (standard screen). If you want y-up, invert here.
         int px = margin + (int)std::lround((x - minX) * s);
         int py = margin + (int)std::lround((y - minY) * s);
-
         // Keep inside
         px = std::clamp(px, 0, W - 1);
         py = std::clamp(py, 0, H - 1);
         return cv::Point(px, py);
     };
-
     // Draw axes box
     cv::rectangle(canvas, cv::Rect(margin, margin, W - 2 * margin, H - 2 * margin),
                   cv::Scalar(60, 60, 60), 1, cv::LINE_AA);
@@ -172,14 +175,11 @@ void LineageViewer::render2D(int frameIndex, const std::vector<CellViz> &cells)
     {
         auto it = nodesByRaw.find(c.rawName);
         if (it == nodesByRaw.end()) continue;
-
         const Node &n = it->second;
         cv::Point p = toPixel(c.x, c.y);
-
         // node
         cv::circle(canvas, p, 10, n.colorBGR, -1, cv::LINE_AA);
         cv::circle(canvas, p, 10, cv::Scalar(255, 255, 255), 1, cv::LINE_AA);
-
         // label (short)
         cv::putText(canvas, n.shortLabel, p + cv::Point(14, 5),
                     cv::FONT_HERSHEY_SIMPLEX, 0.55, cv::Scalar(255, 255, 255), 1, cv::LINE_AA);

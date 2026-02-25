@@ -1,4 +1,3 @@
-// Lineage.hpp
 #ifndef LINEAGE_HPP
 #define LINEAGE_HPP
 

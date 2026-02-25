@@ -23,7 +23,6 @@ public:
     std::string initial{};
     std::string output{};
     int continueFrom = -1;
-    // Add other arguments as necessary
 };
 
 static void updateTiffConfigIfNeeded(const fs::path &file, BaseConfig &config)
