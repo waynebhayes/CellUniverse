@@ -19,21 +19,21 @@ static double _get_magnitude(std::vector<double> vec){
 void Spheroid::inverseRotatePoint(double dx, double dy, double dz,
                                    double &lx, double &ly, double &lz) const 
 {
-    // Undo rotation around z (apply Rz^T)
+    // rotation around z (apply Rz^T)
     double cos_z = std::cos(_theta_z);
     double sin_z = std::sin(_theta_z);
     double tx =  cos_z * dx + sin_z * dy;
     double ty = -sin_z * dx + cos_z * dy;
     double tz = dz;
 
-    // Undo rotation around y (apply Ry^T)
+    // rotation around y (apply Ry^T)
     double cos_y = std::cos(_theta_y);
     double sin_y = std::sin(_theta_y);
     double ux =  cos_y * tx + (-sin_y) * tz;
     double uy = ty;
     double uz =  sin_y * tx + cos_y * tz;
 
-    // Undo rotation around x (apply Rx^T)
+    // rotation around x (apply Rx^T)
     double cos_x = std::cos(_theta_x);
     double sin_x = std::sin(_theta_x);
     lx = ux;
