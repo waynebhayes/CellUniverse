@@ -24,8 +24,16 @@ target_include_directories(${PROJECT_NAME} PUBLIC
         ${cwd}/src/Cells
 )
 
-target_link_libraries(${PROJECT_NAME} ${OpenCV_LIBS})
-target_link_libraries(${PROJECT_NAME} yaml-cpp)
-target_include_directories(${PROJECT_NAME} PRIVATE lib/yaml-cpp/include)
-add_subdirectory(tests)
+# Build third-party libs
 add_subdirectory(lib/yaml-cpp)
+add_subdirectory(tests)
+
+# Link dependencies (Eigen is header-only, but this supplies include dirs)
+target_link_libraries(${PROJECT_NAME} PRIVATE
+        ${OpenCV_LIBS}
+        yaml-cpp
+)
+
+# If you vendor yaml-cpp, it should already export include dirs via the target;
+# keep the manual include only if your yaml-cpp target doesn't.
+# target_include_directories(${PROJECT_NAME} PRIVATE lib/yaml-cpp/include)

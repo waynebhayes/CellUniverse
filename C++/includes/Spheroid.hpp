@@ -5,6 +5,7 @@
 #include <vector>
 #include <cmath>
 #include <string>
+
 #include <opencv2/opencv.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
@@ -12,6 +13,7 @@
 #include <algorithm>
 #include <string>
 #include <unordered_map>
+
 #include "Cell.hpp"
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -85,7 +87,12 @@ class Spheroid
         // Inverse rotation: transforms world-space displacement back to local (upright) frame
         void inverseRotatePoint(double dx, double dy, double dz,
                                 double &lx, double &ly, double &lz) const;
-    
+
+        void generateInverseRotationMatrix(std::array<double, 9> &R_T) const;
+
+        bool computeSliceBounds(const cv::Mat &image, float z,
+                                int &minX, int &maxX, int &minY, int &maxY) const;
+
     public:
         static SpheroidParams paramClass;
         static SpheroidConfig cellConfig;
