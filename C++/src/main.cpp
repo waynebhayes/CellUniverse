@@ -11,6 +11,8 @@
 #include <chrono>
 #include <algorithm>
 
+#include "LineageViewer.hpp"
+
 class Args
 {
 public:
@@ -200,11 +202,29 @@ int main(int argc, char *argv[])
     // create lineage here
     Lineage lineage = Lineage(cells, imageFilePaths, config, args.output, args.continueFrom);
 
+    LineageViewer viewer;
+
     // Run
     auto start = std::chrono::steady_clock::now();
     for (int frame = 0; frame < lineage.length(); ++frame)
     {
         lineage.optimize(frame);
+
+        // Build 2D viz list: rawName + x,y from current detected cells
+        std::vector<LineageViewer::CellViz> viz;
+        const auto &cellsNow = lineage.getCells(frame);
+        viz.reserve(cellsNow.size());
+        for (const auto &cell : cellsNow)
+        {
+            const auto params = cell.getCellParams();
+            LineageViewer::CellViz c;
+            c.rawName = params.name;
+            c.x = (float)params.x;
+            c.y = (float)params.y;
+            viz.push_back(c);
+        }
+        viewer.update(frame, viz);
+
         lineage.copyCellsForward(frame + 1);
         lineage.saveImages(frame);
         lineage.saveCells(frame);
@@ -213,6 +233,18 @@ int main(int argc, char *argv[])
     std::chrono::duration<double> elapsed_seconds = end - start;
 
     std::cout << "Time elapsed: " << elapsed_seconds.count() << " seconds" << std::endl;
+
+    std::cout << "Processing finished. Close the window manually to exit." << std::endl;
+    // Keep window alive until user closes it
+    while (true)
+    {
+        int key = cv::waitKey(30);
+        // If window was manually closed
+        if (cv::getWindowProperty("Cell Lineage (Realtime)", cv::WND_PROP_VISIBLE) < 1)
+        {
+            break;
+        }
+    }
 
     return 0;
 }

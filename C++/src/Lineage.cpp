@@ -355,4 +355,24 @@ unsigned int Lineage::length()
 {
     return frames.size();
 }
-    
+
+const std::vector<Spheroid> &Lineage::getCells(int frameIndex) const
+{
+    if (frameIndex < 0 || static_cast<size_t>(frameIndex) >= frames.size())
+    {
+        throw std::invalid_argument("Lineage::getCells - invalid frameIndex");
+    }
+    return frames[frameIndex].cells;
+}
+
+std::vector<std::string> Lineage::getCellNames(int frameIndex) const
+{
+    const auto &cells = getCells(frameIndex);
+    std::vector<std::string> names;
+    names.reserve(cells.size());
+    for (const auto &c : cells)
+    {
+        names.push_back(c.getCellParams().name);
+    }
+    return names;
+}

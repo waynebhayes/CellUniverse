@@ -80,7 +80,7 @@ BIN="$BUILD_DIR/celluniverse"
 #   ./run_original_data.sh 3 8    -> 3..8
 # -----------------------------------------
 FIRST_FRAME=1
-LAST_FRAME=5
+LAST_FRAME=19
 
 if [ "${1:-}" != "" ] && [ "${2:-}" != "" ]; then
   FIRST_FRAME="$1"

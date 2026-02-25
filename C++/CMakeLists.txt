@@ -25,6 +25,7 @@ add_executable(${PROJECT_NAME}
         ${cwd}/src/CellFactory.cpp
         ${cwd}/src/Lineage.cpp
         ${cwd}/src/Frame.cpp
+        ${cwd}/src/LineageViewer.cpp
         ${cwd}/src/Cells/Sphere.cpp
         ${cwd}/src/Cells/Spheroid.cpp
 )
