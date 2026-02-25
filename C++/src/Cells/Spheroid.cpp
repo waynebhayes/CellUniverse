@@ -408,6 +408,8 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
 
     float meanBrightness = (brightnessCount > 0) ? (float)(brightnessSum / brightnessCount) : 0.4f;
 
+
+
     // Second pass: collect bright pixels within an expanded boundary (2.0x radius).
     // The expansion captures daughter blobs that may extend beyond the parent's boundary.
     // Only pixels brighter than the mean are included (cell tissue, not background).
@@ -427,13 +429,14 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
         [&](double dx, double dy, double dz, int x, int y, int z, float pixel, double val) {
             if (pixel > meanBrightness && val <= expandedThresh) {
                 // Skip pixel if it's closer to any neighbor than to this cell
-                    float distSqToSelf = (float)(dx * dx + dy * dy + dz * dz);
+                    float distSqToSelf = static_cast<float>(dx * dx + dy * dy + dz * dz);
                     bool closerToNeighbor = false;
+                    float ndx, ndy, ndz, distSqToNeighbor;
                     for (const auto &nc : neighborCenters) {
-                        float ndx = (float)x - nc.x;
-                        float ndy = (float)y - nc.y;
-                        float ndz = (float)z - nc.z;
-                        float distSqToNeighbor = ndx * ndx + ndy * ndy + ndz * ndz;
+                        ndx = static_cast<float>(x) - nc.x;
+                        ndy = static_cast<float>(y) - nc.y;
+                        ndz = static_cast<float>(z) - nc.z;
+                        distSqToNeighbor = ndx * ndx + ndy * ndy + ndz * ndz;
                         if (distSqToNeighbor < distSqToSelf) {
                             closerToNeighbor = true;
                             break;
