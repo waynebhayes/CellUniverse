@@ -211,10 +211,10 @@ int main(int argc, char *argv[])
     CellFactory cellFactory(config);
     std::map<Path, std::vector<Spheroid>> cells = cellFactory.createCells(args.initial, config.simulation.z_slices / 2,
                                                                         config.simulation.z_scaling);
-    // create lineage here
-    Lineage lineage = Lineage(cells, imageFilePaths, config, args.output, args.firstFrame, args.continueFrom);
+    // // create lineage here
+    // Lineage lineage = Lineage(cells, imageFilePaths, config, args.output, args.firstFrame, args.continueFrom);
     // create lineage
-    //Lineage lineage = Lineage(cells, imageFilePaths, config, args.output, args.continueFrom);
+    Lineage lineage = Lineage(cells, imageFilePaths, config, args.output, args.continueFrom);
 
     LineageViewer viewer;
 
