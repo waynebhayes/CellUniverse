@@ -139,8 +139,12 @@ std::vector<cv::Mat> loadFrame(const std::string &imageFile, const BaseConfig &c
 }
 
 
-Lineage::Lineage(std::map<std::string, std::vector<Spheroid>> initialCells, PathVec imagePaths, BaseConfig &config, std::string outputPath, int firstFrame, int continueFrom)
-    : config(config), outputPath(outputPath), firstFrame(firstFrame)
+Lineage::Lineage(std::map<std::string, std::vector<Spheroid>> initialCells,
+                 PathVec imagePaths,
+                 BaseConfig &config,
+                 std::string outputPath,
+                 int continueFrom)
+: config(config), outputPath(outputPath), firstFrame(firstFrame)
 {
     for (size_t i = 0; i < imagePaths.size(); ++i)
     {
