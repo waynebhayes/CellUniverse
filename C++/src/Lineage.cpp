@@ -1,4 +1,3 @@
-// Lineage.cpp
 #include "../includes/Lineage.hpp"
 
 namespace utils
@@ -63,8 +62,13 @@ std::vector<cv::Mat> loadFrame(const std::string &imageFile, const BaseConfig &c
     {
         std::vector<cv::Mat> tiffImage;
         cv::imreadmulti(imageFile, tiffImage, cv::IMREAD_ANYDEPTH | cv::IMREAD_COLOR);
+
         long unsigned numTiffSlices {tiffImage.size()};
-	    assert(numTiffSlices == 33); // FIXME: just for the Pavak's test files
+        // assert(numTiffSlices == 33); // REMOVE: dataset-dependent, CE embryo has 249 slices
+        if (numTiffSlices == 0) {
+            throw std::runtime_error("TIFF has 0 slices: " + imageFile);
+        }
+
         cv::Mat img = tiffImage[0];
 
         if (img.empty())
@@ -85,6 +89,7 @@ std::vector<cv::Mat> loadFrame(const std::string &imageFile, const BaseConfig &c
         const int expandFactor = config.simulation.z_scaling; 
         // there will be (expandFactor-1) interpolated slices between each "real" one.
         // we need one extra at the very top to hold the top "real" z-Slice.
+
         unsigned numSynthSlices = expandFactor * (numTiffSlices-1) + 1; // 225 for 33 slices
 
         // for checking
@@ -92,21 +97,24 @@ std::vector<cv::Mat> loadFrame(const std::string &imageFile, const BaseConfig &c
         
         // iterate through synthslices and interpolate between each "real" slice
         for (int synthSlice = 0; synthSlice < numSynthSlices; ++synthSlice) {
-            int tiffSlice = int(synthSlice / expandFactor); // "real" slice index 
-            if(synthSlice % expandFactor == 0) 
-            { // copy the real slice to the synth one, verbatim
-            interpolatedZSlices.push_back(processedZSlices[tiffSlice]);
-            } 
-            else if (synthSlice % expandFactor == 1) {
-                // Interpolate between realTiff[tiffSlice] and realTiff[tiffSlice + 1]
-                interpolateSlices(processedZSlices[tiffSlice], 
-                                processedZSlices[tiffSlice + 1], 
-                                interpolatedZSlices, 
-                                expandFactor - 1);
+            int tiffSlice = int(synthSlice / expandFactor); // "real" slice index
+            if (synthSlice % expandFactor == 0) {
+                interpolatedZSlices.push_back(processedZSlices[tiffSlice]);
+            } else if (synthSlice % expandFactor == 1) {
+                interpolateSlices(processedZSlices[tiffSlice],
+                                  processedZSlices[tiffSlice + 1],
+                                  interpolatedZSlices,
+                                  expandFactor - 1);
             }
         }
-        // here do one FINAL copy of the very top tiff [number 32] to the very top interp [225, not 224!]
-        // interpolatedZSlices.push_back(processedZSlices[32]);
+
+        // [PATCH] Validate synthetic slice count (only for TIFF branch)
+        if (interpolatedZSlices.size() != numSynthSlices) {
+            std::string errorMessage =
+                "interpolatedZSlices must have exactly " + std::to_string(numSynthSlices) +
+                " slices, but has " + std::to_string(interpolatedZSlices.size()) + " slices";
+            throw std::runtime_error(errorMessage);
+        }
     }
     else
     {
@@ -125,11 +133,7 @@ std::vector<cv::Mat> loadFrame(const std::string &imageFile, const BaseConfig &c
 
         processedZSlices.push_back(processImage(img, config));
     }
-    if (interpolatedZSlices.size() != 225) {
-        std::string errorMessage = "interpolatedZSlices must have exactly 255 slices, but has " +
-                                std::to_string(interpolatedZSlices.size()) + " slices";
-        throw std::runtime_error(errorMessage);
-    }
+
     std::cout << std::to_string(interpolatedZSlices.size()) << "slices built successfully" << std::endl;
     return interpolatedZSlices;
 }
@@ -409,4 +413,24 @@ unsigned int Lineage::length()
 {
     return frames.size();
 }
-    
+
+const std::vector<Spheroid> &Lineage::getCells(int frameIndex) const
+{
+    if (frameIndex < 0 || static_cast<size_t>(frameIndex) >= frames.size())
+    {
+        throw std::invalid_argument("Lineage::getCells - invalid frameIndex");
+    }
+    return frames[frameIndex].cells;
+}
+
+std::vector<std::string> Lineage::getCellNames(int frameIndex) const
+{
+    const auto &cells = getCells(frameIndex);
+    std::vector<std::string> names;
+    names.reserve(cells.size());
+    for (const auto &c : cells)
+    {
+        names.push_back(c.getCellParams().name);
+    }
+    return names;
+}

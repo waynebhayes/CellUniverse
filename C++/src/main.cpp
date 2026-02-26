@@ -11,6 +11,8 @@
 #include <chrono>
 #include <algorithm>
 
+#include "LineageViewer.hpp"
+
 class Args
 {
 public:
@@ -21,7 +23,6 @@ public:
     std::string initial{};
     std::string output{};
     int continueFrom = -1;
-    // Add other arguments as necessary
 };
 
 static void updateTiffConfigIfNeeded(const fs::path &file, BaseConfig &config)
@@ -195,6 +196,18 @@ int main(int argc, char *argv[])
     PathVec imageFilePaths = getImageFilePaths(args.input, args.firstFrame, args.lastFrame, config);
 
     // load cells
+    // [PATCH] Provide the first-frame filename for 4-column initial CSV (cell_type,z,y,x).
+    // CellFactory needs a frame key (e.g., "t000.tif") to attach initial cells.
+    // We pass it via an environment variable to avoid changing function signatures.
+    if (!imageFilePaths.empty()) {
+        const std::string firstFrameFile = imageFilePaths.front().filename().string();
+        setenv("CELLUNIVERSE_INITIAL_FRAME_FILE", firstFrameFile.c_str(), 1);
+        std::cout << "[INFO] CELLUNIVERSE_INITIAL_FRAME_FILE=" << firstFrameFile << std::endl;
+    } else {
+        std::cerr << "[WARN] imageFilePaths is empty; cannot set initial frame filename." << std::endl;
+    }
+
+    // load cells here
     CellFactory cellFactory(config);
     std::map<Path, std::vector<Spheroid>> cells = cellFactory.createCells(args.initial, config.simulation.z_slices / 2,
                                                                         config.simulation.z_scaling);
@@ -203,11 +216,29 @@ int main(int argc, char *argv[])
     // create lineage
     //Lineage lineage = Lineage(cells, imageFilePaths, config, args.output, args.continueFrom);
 
-    // Run CellUniverse program
-    auto start = std::chrono::steady_clock::now(); // timer start
+    LineageViewer viewer;
+
+    // Run
+    auto start = std::chrono::steady_clock::now();
     for (int frame = 0; frame < lineage.length(); ++frame)
     {
         lineage.optimize(frame);
+
+
+        // Build 2D viz list: rawName + x,y from current detected cells
+        std::vector<LineageViewer::CellViz> viz;
+        const auto &cellsNow = lineage.getCells(frame);
+        viz.reserve(cellsNow.size());
+        for (const auto &cell : cellsNow)
+        {
+            const auto params = cell.getCellParams();
+            LineageViewer::CellViz c;
+            c.rawName = params.name;
+            c.x = (float)params.x;
+            c.y = (float)params.y;
+            viz.push_back(c);
+        }
+        viewer.update(frame, viz);
 
         lineage.copyCellsForward(frame + 1);
 
@@ -222,6 +253,18 @@ int main(int argc, char *argv[])
     std::chrono::duration<double> elapsed_seconds = end - start;
 
     std::cout << "Time elapsed: " << elapsed_seconds.count() << " seconds" << std::endl;
+
+    std::cout << "Processing finished. Close the window manually to exit." << std::endl;
+    // Keep window alive until user closes it
+    while (true)
+    {
+        int key = cv::waitKey(30);
+        // If window was manually closed
+        if (cv::getWindowProperty("Cell Lineage (Realtime)", cv::WND_PROP_VISIBLE) < 1)
+        {
+            break;
+        }
+    }
 
     return 0;
 }
