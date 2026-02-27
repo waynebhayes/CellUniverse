@@ -1070,3 +1070,77 @@ Daughters with parent-sized radii were stacking in z to mimic the parent volume.
 ### Reverted: real image normalization (per-cell)
 
 Normalization weakened the optimizer (733 accepted perturbations vs 1545 without), caused false splits where daughters stacked in z to mimic the parent, and froze cells across frames. Even with the brightness threshold fix, the fundamental issue remained: normalizing pixels inside the model ellipsoid couples the cost function to the current model position, creating stale artifacts as cells move. Three approaches to the dim cell problem have now been tried and reverted: perturbable `_intensity`, analytically computed `_brightness` rendering, and real image normalization. All reverted from `Spheroid.hpp`, `Spheroid.cpp`, `Frame.hpp`, `Frame.cpp`, and `Lineage.cpp`. The deep-clone fix for `_realFrameCopy` and the 0.5 daughter-daughter overlap threshold are kept as independent improvements.
+
+## 2026-02-26
+
+### Fixed: `firstFrame` self-initialization bug (merge artifact)
+
+The merge of `yuancen_pu_22_02_2026` into `merge_jh_yp_02_24_2026` removed the `int firstFrame` parameter from the Lineage constructor but left `firstFrame(firstFrame)` in the member initializer list. This caused the member to be initialized with its own uninitialized value (undefined behavior), producing garbage frame numbers in all output paths and logs.
+
+**File:** `C++/includes/Lineage.hpp`
+
+- **Line 28-32:** Restored `int firstFrame = 0` parameter
+
+  ```cpp
+  // Before (broken — missing firstFrame parameter):
+  Lineage(std::map<std::string, std::vector<Spheroid>> initialCells,
+          PathVec imagePaths, BaseConfig &config, std::string outputPath,
+          int continueFrom = -1);
+  // After:
+  Lineage(std::map<std::string, std::vector<Spheroid>> initialCells,
+          PathVec imagePaths, BaseConfig &config, std::string outputPath,
+          int firstFrame = 0, int continueFrom = -1);
+  ```
+
+**File:** `C++/src/Lineage.cpp`
+
+- **Lines 142-147:** Restored `int firstFrame` parameter in constructor definition
+
+  ```cpp
+  // Before (broken):
+  Lineage::Lineage(..., int continueFrom)
+      : config(config), outputPath(outputPath), firstFrame(firstFrame)  // self-init!
+  // After:
+  Lineage::Lineage(..., int firstFrame, int continueFrom)
+      : config(config), outputPath(outputPath), firstFrame(firstFrame)  // now reads parameter
+  ```
+
+**File:** `C++/src/main.cpp`
+
+- **Line 217:** Restored `args.firstFrame` argument to Lineage constructor call
+
+  ```cpp
+  // Before (broken — firstFrame not passed):
+  Lineage lineage = Lineage(cells, imageFilePaths, config, args.output, args.continueFrom);
+  // After:
+  Lineage lineage = Lineage(cells, imageFilePaths, config, args.output, args.firstFrame, args.continueFrom);
+  ```
+
+### Fixed: Pre-optimization radii inflating daughter sizes, blocking all splits
+
+The pre-optimization boundary preservation (added 2026-02-23) used `max(current, preOpt)` radii for BOTH the PCA search boundary AND daughter cell sizing. Using inflated radii for daughter sizing made daughters too large, causing the daughter-daughter overlap threshold (`0.5 × sum majorR`) to reject all valid splits.
+
+**Example (cell `12345679...` in frame 2):**
+- Phase 1 collapsed majorR from 29.3 → 21.8
+- With pre-opt sizing: daughterMajorR = 29.3 × 0.794 = 23.2, threshold = 23.2, separation = 22.7 → REJECTED
+- With current sizing: daughterMajorR = 21.8 × 0.794 = 17.3, threshold = 17.3, separation = 22.7 → PASSES
+
+Fix: use pre-opt radii only for the PCA search boundary (correct — prevents shrinkage), use current radii for daughter sizing.
+
+**File:** `C++/src/Cells/Spheroid.cpp`
+
+- **Lines 554-558:** Changed daughter sizing to use current radii
+
+  ```cpp
+  // Before (inflated daughter sizes):
+  double effMajorR = (preOptMajorR > 0.0f) ? std::max(_major_radius, (double)preOptMajorR) : _major_radius;
+  double effMinorR = (preOptMinorR > 0.0f) ? std::max(_minor_radius, (double)preOptMinorR) : _minor_radius;
+  double volumeScale = std::cbrt(0.5);
+  double daughterMajorRadius = effMajorR * volumeScale;
+  double daughterMinorRadius = effMinorR * volumeScale;
+
+  // After (current radii for daughters):
+  double volumeScale = std::cbrt(0.5);
+  double daughterMajorRadius = _major_radius * volumeScale;
+  double daughterMinorRadius = _minor_radius * volumeScale;
+  ```

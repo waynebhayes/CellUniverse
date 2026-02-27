@@ -551,11 +551,13 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
     // Phase 1 may collapse the parent (e.g. majorR 31→22 when fitting one cell
     // to two blobs), making daughters too small to produce meaningful cost improvement.
     // The pre-optimization size reflects the true biological cell size before collapse.
-    double effMajorR = (preOptMajorR > 0.0f) ? std::max(_major_radius, (double)preOptMajorR) : _major_radius;
-    double effMinorR = (preOptMinorR > 0.0f) ? std::max(_minor_radius, (double)preOptMinorR) : _minor_radius;
+    // Use CURRENT radii for daughter sizing (not inflated pre-opt radii).
+    // Pre-opt radii are used only for the PCA search boundary above.
+    // Using pre-opt radii here inflated daughters, making the daughter-daughter
+    // overlap threshold (0.5 × sum majorR) impossible to pass.
     double volumeScale = std::cbrt(0.5);
-    double daughterMajorRadius = effMajorR * volumeScale;
-    double daughterMinorRadius = effMinorR * volumeScale;
+    double daughterMajorRadius = _major_radius * volumeScale;
+    double daughterMinorRadius = _minor_radius * volumeScale;
 
     cv::Point3f centroid1(0, 0, 0), centroid2(0, 0, 0);
     int count1 = 0, count2 = 0;

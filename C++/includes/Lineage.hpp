@@ -29,6 +29,7 @@ public:
             PathVec imagePaths,
             BaseConfig &config,
             std::string outputPath,
+            int firstFrame = 0,
             int continueFrom = -1);
 
     void optimize(int frameIndex);

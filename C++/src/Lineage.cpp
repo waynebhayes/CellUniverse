@@ -143,6 +143,7 @@ Lineage::Lineage(std::map<std::string, std::vector<Spheroid>> initialCells,
                  PathVec imagePaths,
                  BaseConfig &config,
                  std::string outputPath,
+                 int firstFrame,
                  int continueFrom)
 : config(config), outputPath(outputPath), firstFrame(firstFrame)
 {

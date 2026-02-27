@@ -256,10 +256,10 @@ For each existing cell i, for each daughter d:
         OVERLAP → log "[Split Overlap] daughter c1/c2 overlaps with <cell>"
 ```
 
-**Daughter vs. daughter** (lines 334–351):
+**Daughter vs. daughter** (lines 344–357):
 ```
 ddDist = ||center[d1] - center[d2]||
-ddThresh = (majorR[d1] + majorR[d2]) × 0.2
+ddThresh = (majorR[d1] + majorR[d2]) × 0.5
 
 if ddDist < ddThresh:
     OVERLAP → log "[Split Overlap] daughters too close"
@@ -282,7 +282,7 @@ For iter = 0 to 299:
     if overlap with any existing cell → revert
 
     // Check perturbed daughter against sibling
-    if too close to sibling (< 0.2 × sum majorR) → revert
+    if too close to sibling (< 0.5 × sum majorR) → revert
 
     // Evaluate cost
     trialFrame = generateSynthFrameFast(saved, cells[dIdx])
@@ -562,7 +562,7 @@ file, name, x, y, z, majorRadius, minorRadius, theta_x, theta_y, theta_z
            │   ├── Each daughter vs. all existing cells
            │   │   (threshold: 0.95 × sum of radii)
            │   └── Daughter vs. daughter
-           │       (threshold: 0.2 × sum of major radii)
+           │       (threshold: 0.5 × sum of major radii)
            │
            ├── BURN-IN (300 iterations)
            │   ├── Alternate perturbing daughter 1 and daughter 2
@@ -597,8 +597,8 @@ file, name, x, y, z, majorRadius, minorRadius, theta_x, theta_y, theta_z
 | `z_scaling` | 7 | config.yaml | Z-interpolation factor (33 → 225 slices) |
 | Daughter volume scale | ∛0.5 ≈ 0.794 | Spheroid.cpp:436 | Each daughter has ~half the parent volume |
 | Existing-cell overlap | 0.95 × sum | Frame.cpp:322 | Max overlap allowed with neighbors |
-| Daughter-daughter min sep | 0.2 × sum major | Frame.cpp:344 | Prevents daughters collapsing together |
-| Split search radius | max(2×maxR, 50px) | Spheroid.cpp:258 | PCA pixel collection area |
+| Daughter-daughter min sep | 0.5 × sum major | Frame.cpp:350 | Prevents daughters collapsing together |
+| Split search radius | 2×maxR (effective) | Spheroid.cpp:360 | PCA pixel collection area (uses pre-opt radii) |
 | Expanded boundary | val ≤ 4.0 (2×maxR) | Spheroid.cpp:321 | Ellipsoidal pixel inclusion limit |
 | Surface outline band | 0.95–1.05 | Spheroid.cpp:186 | Pixels drawn as cell outline |
 
