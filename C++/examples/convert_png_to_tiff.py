@@ -3,6 +3,7 @@ import tifffile as tiff
 import imageio.v2 as imageio
 import numpy as np
 import argparse
+import re
 
 # ---------- command line arguments ----------
 parser = argparse.ArgumentParser(
@@ -21,9 +22,14 @@ input_root = Path(args.i)
 output_root = Path(args.o)
 output_root.mkdir(parents=True, exist_ok=True)
 
+def numeric_filename_key(path: Path):
+    # Natural sort by numeric chunks in filename (e.g., img2 before img10).
+    return [int(token) if token.isdigit() else token.lower()
+            for token in re.split(r"(\d+)", path.stem)]
+
 # ---------- processing ----------
 # Case A: PNGs directly under root (no subfolders)
-root_pngs = sorted(input_root.glob("*.png"))
+root_pngs = sorted(input_root.glob("*.png"), key=numeric_filename_key)
 if root_pngs:
     imgs = [imageio.imread(f) for f in root_pngs]
     stack = np.stack(imgs)
@@ -37,7 +43,7 @@ for folder in input_root.iterdir():
     if not folder.is_dir():
         continue
 
-    pngs = sorted(folder.glob("*.png"))
+    pngs = sorted(folder.glob("*.png"), key=numeric_filename_key)
     if not pngs:
         continue
 
