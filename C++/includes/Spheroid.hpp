@@ -5,6 +5,7 @@
 #include <vector>
 #include <cmath>
 #include <string>
+
 #include <opencv2/opencv.hpp>
 #include <opencv2/core.hpp>
 #include <opencv2/imgproc.hpp>
@@ -12,6 +13,7 @@
 #include <algorithm>
 #include <string>
 #include <unordered_map>
+
 #include "Cell.hpp"
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -33,9 +35,9 @@ public:
     float theta_z; // rotation about z-axis (radians)
 
     SpheroidParams() : CellParams(""), x(0), y(0), z(0), majorRadius(0), minorRadius(0), theta_x(0), theta_y(0), theta_z(0) {}
-    SpheroidParams(const std::string &name, float x, float y, float z, float majorRadius, float minorRadius) 
+    SpheroidParams(const std::string &name, float x, float y, float z, float majorRadius, float minorRadius)
         : CellParams(name), x(x), y(y), z(z), majorRadius(majorRadius), minorRadius(minorRadius), theta_x(0), theta_y(0), theta_z(0) {}
-    SpheroidParams(const std::string &name, float x, float y, float z, float majorRadius, float minorRadius, float theta_x, float theta_y, float theta_z) 
+    SpheroidParams(const std::string &name, float x, float y, float z, float majorRadius, float minorRadius, float theta_x, float theta_y, float theta_z)
         : CellParams(name), x(x), y(y), z(z), majorRadius(majorRadius), minorRadius(minorRadius), theta_x(theta_x), theta_y(theta_y), theta_z(theta_z) {}
     SpheroidParams(const std::string &name, float x, float y, float z, std::vector<float> _x_vec, std::vector<float> _y_vec, std::vector<float> _z_vec)
         : CellParams(name), x(x), y(y), z(z), x_vec(_x_vec), y_vec(_y_vec), z_vec(_z_vec)
@@ -85,7 +87,12 @@ class Spheroid
         // Inverse rotation: transforms world-space displacement back to local (upright) frame
         void inverseRotatePoint(double dx, double dy, double dz,
                                 double &lx, double &ly, double &lz) const;
-    
+
+        void generateInverseRotationMatrix(std::array<double, 9> &R_T) const;
+
+        bool computeSliceBounds(const cv::Mat &image, float z,
+                                int &minX, int &maxX, int &minY, int &maxY) const;
+
     public:
         static SpheroidParams paramClass;
         static SpheroidConfig cellConfig;
@@ -108,7 +115,9 @@ class Spheroid
 
         Spheroid getParameterizedCell(std::unordered_map<std::string, float> params) const;
 
-        std::tuple<Spheroid, Spheroid, bool> getSplitCells(const std::vector<cv::Mat> &image, float z_scaling) const;
+        std::tuple<Spheroid, Spheroid, bool> getSplitCells(const std::vector<cv::Mat> &image, float z_scaling,
+            const std::vector<cv::Point3f> &neighborCenters = {},
+            float preOptMajorR = 0.0f, float preOptMinorR = 0.0f) const;
 
         std::vector<std::pair<float, cv::Vec3f>> performPCA(const std::vector<cv::Point3f> &points) const;
 

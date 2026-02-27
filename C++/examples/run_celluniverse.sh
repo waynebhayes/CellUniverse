@@ -473,19 +473,23 @@ if [ "${#EXTRA_ARGS[@]}" -gt 0 ]; then
 fi
 
 echo "[CMD] ${CMD[*]}"
-TMP_ERR="$OUT_DIR/.celluniverse.stderr.log"
-if "${CMD[@]}" 2>"$TMP_ERR"; then
-  grep -Ev "TIFF_Warning TIFFReadDirectory: Unknown field with tag 6500(0|1)?" "$TMP_ERR" >&2 || true
-  rm -f "$TMP_ERR"
+DEBUG_LOG="$OUT_DIR/debug_log.txt"
+echo "[CMD] ${CMD[*]}" > "$DEBUG_LOG"
+echo "Started: $(date)" >> "$DEBUG_LOG"
+echo "==========================================" >> "$DEBUG_LOG"
+if "${CMD[@]}" > >(tee -a "$DEBUG_LOG") 2> >(grep -Ev "TIFF_Warning TIFFReadDirectory: Unknown field with tag 6500(0|1)?" | tee -a "$DEBUG_LOG" >&2); then
+  :
 else
-  grep -Ev "TIFF_Warning TIFFReadDirectory: Unknown field with tag 6500(0|1)?" "$TMP_ERR" >&2 || true
   err "[FATAL] celluniverse failed."
-  rm -f "$TMP_ERR"
+  echo "[FATAL] celluniverse failed." >> "$DEBUG_LOG"
   exit 1
 fi
+echo "==========================================" >> "$DEBUG_LOG"
+echo "Finished: $(date)" >> "$DEBUG_LOG"
 
 hr "="
 echo "Run finished (exit=0)."
 echo "Results saved to:"
 echo "$OUT_DIR"
+echo "Debug log: $DEBUG_LOG"
 hr "="

@@ -39,7 +39,7 @@ cell:
     sigma: 0.1
   minMajorRadius: 15
   maxMajorRadius: 60
-  minMinorRadius: 8
+  minMinorRadius: 5
   maxMinorRadius: 30
 
 # Simulation settings
@@ -55,7 +55,7 @@ simulation:
 prob:
   perturbation: 0.97
   split: 0.03
-  split_cost: 0.5
+  split_cost: 1 # accpet more than -value
 #  combine: 0.1
 #  camera_shift: 0.0
 

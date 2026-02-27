@@ -22,9 +22,15 @@ Frame::Frame(const std::vector<cv::Mat> &realFrame, const SimulationConfig &simu
       simulationConfig(simulationConfig),
       outputPath(outputPath),
       imageName(imageName),
-      _realFrameCopy(realFrame), // Make a copy of the input image stack
       _realFrame(realFrame)
 {
+    // Deep-clone _realFrameCopy so it has its own pixel buffers.
+    // cv::Mat copy constructor is shallow (shared data pointer), so
+    // modifications to _realFrame would corrupt _realFrameCopy without this.
+    _realFrameCopy.reserve(realFrame.size());
+    for (const auto &mat : realFrame) {
+        _realFrameCopy.push_back(mat.clone());
+    }
 
     // Calculate z_slices
     for (int i = 0; i < simulationConfig.z_slices; ++i)
@@ -169,7 +175,7 @@ std::vector<cv::Mat> Frame::generateOutputFrame()
         // Draw outlines for each cell
         for (const auto &cell : cells)
         {
-            cell.drawOutline(outputFrame, 1.0, z); // Assuming drawOutline takes a cv::Scalar for color
+            cell.drawOutline(outputFrame, 0.5, z); // Assuming drawOutline takes a cv::Scalar for color
         }
 
         // Convert to 8-bit image if necessary
@@ -275,7 +281,7 @@ CostCallbackPair Frame::split()
     return trySplitCell(index);
 }
 
-CostCallbackPair Frame::trySplitCell(size_t index)
+CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float preOptMinorR)
 {
     if (index >= cells.size()) {
         return {0.0, [](bool accept) {}};
@@ -283,12 +289,22 @@ CostCallbackPair Frame::trySplitCell(size_t index)
 
     Spheroid oldCell = cells[index];
 
+    // Collect neighbor cell centers (all cells except the one being split)
+    std::vector<cv::Point3f> neighborCenters;
+    for (size_t i = 0; i < cells.size(); ++i) {
+        if (i != index) {
+            neighborCenters.push_back(cells[i].get_center());
+        }
+    }
+
     Spheroid child1;
     Spheroid child2;
     bool valid;
-    std::tie(child1, child2, valid) = oldCell.getSplitCells(_realFrame, simulationConfig.z_scaling);
+    std::tie(child1, child2, valid) = oldCell.getSplitCells(_realFrame, simulationConfig.z_scaling, neighborCenters, preOptMajorR, preOptMinorR);
     if (!valid)
     {
+        std::cout << "[Split Skip] " << oldCell.getCellParams().name
+                  << " getSplitCells returned invalid" << std::endl;
         return {0.0, [](bool accept) {}};
     }
 
@@ -296,27 +312,51 @@ CostCallbackPair Frame::trySplitCell(size_t index)
     cells.push_back(child1);
     cells.push_back(child2);
 
-    // Check daughters against existing cells only (not each other).
-    // Daughters split from a single parent so they naturally overlap each
-    // other initially. The cost function and burn-in handle separation.
+    // Check daughters against existing cells and against each other.
     size_t d1Idx = cells.size() - 2;
     size_t d2Idx = cells.size() - 1;
-    bool overlapWithExisting = false;
+    bool overlapDetected = false;
+
+    // Check daughters against existing cells
+    std::string overlapReason;
     for (size_t i = 0; i < d1Idx; ++i) {
         for (size_t di : {d1Idx, d2Idx}) {
             cv::Point3f diff = cells[i].get_center() - cells[di].get_center();
             float dist = std::sqrt(diff.x * diff.x + diff.y * diff.y + diff.z * diff.z);
             auto pi = cells[i].getCellParams();
             auto pd = cells[di].getCellParams();
-            if (dist < (pi.majorRadius + pd.majorRadius) * 0.95f &&
-                dist < (pi.minorRadius + pd.minorRadius) * 0.95f) {
-                overlapWithExisting = true;
+            float majorThresh = (pi.majorRadius + pd.majorRadius) * 0.95f;
+            float minorThresh = (pi.minorRadius + pd.minorRadius) * 0.95f;
+            if (dist < majorThresh && dist < minorThresh) {
+                overlapDetected = true;
+                std::string dLabel = (di == d1Idx) ? "c1" : "c2";
+                std::cout << "[Split Overlap] " << oldCell.getCellParams().name
+                          << " daughter " << dLabel << " overlaps with " << pi.name
+                          << " dist=" << dist
+                          << " majorThresh=" << majorThresh
+                          << " minorThresh=" << minorThresh << std::endl;
                 break;
             }
         }
-        if (overlapWithExisting) break;
+        if (overlapDetected) break;
     }
-    if (overlapWithExisting) {
+
+    // Check daughter-daughter overlap: daughters must be separated
+    if (!overlapDetected) {
+        cv::Point3f dd = cells[d1Idx].get_center() - cells[d2Idx].get_center();
+        float ddDist = std::sqrt(dd.x * dd.x + dd.y * dd.y + dd.z * dd.z);
+        auto p1 = cells[d1Idx].getCellParams();
+        auto p2 = cells[d2Idx].getCellParams();
+        float ddThresh = (p1.majorRadius + p2.majorRadius) * 0.5f;
+        if (ddDist < ddThresh) {
+            overlapDetected = true;
+            std::cout << "[Split Overlap] " << oldCell.getCellParams().name
+                      << " daughters too close: dist=" << ddDist
+                      << " thresh=" << ddThresh << std::endl;
+        }
+    }
+
+    if (overlapDetected) {
         cells.pop_back();
         cells.pop_back();
         cells.insert(cells.begin() + index, oldCell);
@@ -331,7 +371,7 @@ CostCallbackPair Frame::trySplitCell(size_t index)
     auto savedSynthFrame = _synthFrame;
     _synthFrame = bestSynthFrame;
 
-    const int BURN_IN_ITERATIONS = 100;
+    const int BURN_IN_ITERATIONS = 300;
     int accepted = 0;
     for (int iter = 0; iter < BURN_IN_ITERATIONS; ++iter) {
         size_t dIdx = (iter % 2 == 0) ? d1Idx : d2Idx;
@@ -339,8 +379,7 @@ CostCallbackPair Frame::trySplitCell(size_t index)
         Spheroid saved = cells[dIdx];
         cells[dIdx] = cells[dIdx].getPerturbedCell();
 
-        // Check perturbed daughter against non-daughter cells only.
-        // Daughter-daughter overlap is allowed — cost function handles it.
+        // Check perturbed daughter against existing cells and sibling daughter
         bool burnInValid = true;
         for (size_t i = 0; i < d1Idx; ++i) {
             cv::Point3f diff = cells[i].get_center() - cells[dIdx].get_center();
@@ -351,6 +390,17 @@ CostCallbackPair Frame::trySplitCell(size_t index)
                 dist < (pi.minorRadius + pd.minorRadius) * 0.95f) {
                 burnInValid = false;
                 break;
+            }
+        }
+        // Check daughter-daughter: prevent siblings from collapsing together
+        if (burnInValid) {
+            size_t siblingIdx = (dIdx == d1Idx) ? d2Idx : d1Idx;
+            cv::Point3f dd = cells[dIdx].get_center() - cells[siblingIdx].get_center();
+            float ddDist = std::sqrt(dd.x * dd.x + dd.y * dd.y + dd.z * dd.z);
+            auto pd = cells[dIdx].getCellParams();
+            auto ps = cells[siblingIdx].getCellParams();
+            if (ddDist < (pd.majorRadius + ps.majorRadius) * 0.5f) {
+                burnInValid = false;
             }
         }
         if (!burnInValid) {

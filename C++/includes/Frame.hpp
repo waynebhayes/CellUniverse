@@ -35,9 +35,10 @@ public:
     size_t length() const;
     CostCallbackPair perturb();
     CostCallbackPair split();
-    CostCallbackPair trySplitCell(size_t cellIndex);
+    CostCallbackPair trySplitCell(size_t cellIndex, float preOptMajorR = 0.0f, float preOptMinorR = 0.0f);
     Cost gradientDescent();
     std::vector<cv::Mat> getSynthFrame();
+    void regenerateSynthFrame() { _synthFrame = generateSynthFrame(); }
     std::string getImageName() const { return imageName; }
     std::vector<Spheroid> cells;
 
