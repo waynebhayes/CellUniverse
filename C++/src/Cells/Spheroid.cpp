@@ -282,7 +282,7 @@ void Spheroid::drawOutline(cv::Mat &image, float color, float z) const {
                 }
             });
     } else if (channels == 3) {
-        const cv::Vec3f drawColor(color, color, color);
+        const cv::Vec3f drawColor(0.0f, color, 0.0f);
         scanSpheroidSlice(
             minX, maxX, minY, maxY,
             _position, static_cast<double>(z),
@@ -357,7 +357,7 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
     float effC = (preOptMinorR > 0.0f) ? std::max((float)c, preOptMinorR) : (float)c;
     float maxR = std::max({effA, effB, effC});
 
-    float splitSearchRadius = maxR * 2.0f;
+    float splitSearchRadius = maxR * 3.0f;
 
     if (preOptMajorR > 0.0f && (effA > (float)a || effC > (float)c)) {
         std::cout << "[Split PreOpt] " << _name
@@ -418,16 +418,16 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
     std::vector<cv::Point3f> rawPoints;
     rawPoints.reserve((maxX - minX + 1) * (maxY - minY + 1));
 
-    // Expanded ellipsoidal boundary: val <= 4.0 means ~2.0x the radius
-    // Uses effective radii (max of current and pre-optimization) so that
-    // Phase 1 collapsing a cell doesn't shrink the search area.
-    const double expandedThresh = 4.0;
+    // No ellipsoidal boundary — the bounding box (3×maxR) and neighbor
+    // exclusion naturally limit the search area. Removing the ellipsoidal
+    // gate fixes the inconsistency where the bounding box used pre-opt
+    // radii but the ellipsoid check used current (possibly collapsed) radii.
 
     scanSpheroidVolume(
         image, minX, maxX, minY, maxY, minZ, maxZ, _position,
         R_T, invA2, invB2, invC2,
-        [&](double dx, double dy, double dz, int x, int y, int z, float pixel, double val) {
-            if (pixel > meanBrightness && val <= expandedThresh) {
+        [&](double dx, double dy, double dz, int x, int y, int z, float pixel, double /*val*/) {
+            if (pixel > meanBrightness) {
                 // Skip pixel if it's closer to any neighbor than to this cell
                     float distSqToSelf = static_cast<float>(dx * dx + dy * dy + dz * dz);
                     bool closerToNeighbor = false;
@@ -551,13 +551,16 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
     // Phase 1 may collapse the parent (e.g. majorR 31→22 when fitting one cell
     // to two blobs), making daughters too small to produce meaningful cost improvement.
     // The pre-optimization size reflects the true biological cell size before collapse.
-    // Use CURRENT radii for daughter sizing (not inflated pre-opt radii).
-    // Pre-opt radii are used only for the PCA search boundary above.
-    // Using pre-opt radii here inflated daughters, making the daughter-daughter
-    // overlap threshold (0.5 × sum majorR) impossible to pass.
+    // Use pre-opt radii for daughter sizing when available. Phase 1 may
+    // collapse the parent (e.g. 28→21) when fitting one sphere to a two-cell
+    // image, making current-radius daughters too small for meaningful cost
+    // improvement. Pre-opt radii reflect the cell size before collapse.
+    // (Previously this was blocked by daughter-daughter overlap gates, now removed.)
+    double effMajorR = (preOptMajorR > 0.0f) ? std::max(_major_radius, (double)preOptMajorR) : _major_radius;
+    double effMinorR = (preOptMinorR > 0.0f) ? std::max(_minor_radius, (double)preOptMinorR) : _minor_radius;
     double volumeScale = std::cbrt(0.5);
-    double daughterMajorRadius = _major_radius * volumeScale;
-    double daughterMinorRadius = _minor_radius * volumeScale;
+    double daughterMajorRadius = effMajorR * volumeScale;
+    double daughterMinorRadius = effMinorR * volumeScale;
 
     cv::Point3f centroid1(0, 0, 0), centroid2(0, 0, 0);
     int count1 = 0, count2 = 0;

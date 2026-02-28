@@ -40,11 +40,11 @@ cell:
   minMajorRadius: 15
   maxMajorRadius: 60
   minMinorRadius: 5
-  maxMinorRadius: 30
+  maxMinorRadius: 45
 
 # Simulation settings
 simulation:
-  iterations_per_cell: 350
+  iterations_per_cell: 500
   background_color: 0.39
   cell_color: 0.53
   padding: 0

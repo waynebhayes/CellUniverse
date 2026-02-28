@@ -1144,3 +1144,387 @@ Fix: use pre-opt radii only for the PCA search boundary (correct — prevents sh
   double daughterMajorRadius = _major_radius * volumeScale;
   double daughterMinorRadius = _minor_radius * volumeScale;
   ```
+
+## 2026-02-27
+
+### Removed daughter-daughter overlap hard gate (let cost function decide)
+
+The daughter-daughter overlap threshold (initially 0.2, raised to 0.5, lowered to 0.3) was blocking legitimate splits even at 0.3. The centroid-based daughter placement often produces daughters closer than the threshold, especially when Phase 1 collapses cells to spheres. The cost function (L2 real vs synth) already handles this: if daughters are placed badly (stacking, collapsing), the synthetic image won't match the real data, costDiff will be positive, and the split is naturally rejected.
+
+**File:** `C++/src/Frame.cpp`
+
+- **Lines 344-357 (removed):** Removed initial daughter-daughter overlap check before burn-in
+
+  ```cpp
+  // Before:
+  if (!overlapDetected) {
+      cv::Point3f dd = cells[d1Idx].get_center() - cells[d2Idx].get_center();
+      float ddDist = std::sqrt(dd.x * dd.x + dd.y * dd.y + dd.z * dd.z);
+      auto p1 = cells[d1Idx].getCellParams();
+      auto p2 = cells[d2Idx].getCellParams();
+      float ddThresh = (p1.majorRadius + p2.majorRadius) * 0.3f;
+      if (ddDist < ddThresh) {
+          overlapDetected = true;
+          // ... log ...
+      }
+  }
+
+  // After: (removed entirely — cost function decides)
+  // Daughter-daughter overlap check removed — let the cost function decide.
+  // If daughters are placed badly, burn-in won't improve the fit and
+  // costDiff will be positive, naturally rejecting the split.
+  ```
+
+- **Lines 395-404 (removed):** Removed daughter-daughter check inside burn-in loop
+
+  ```cpp
+  // Before:
+  if (burnInValid) {
+      size_t siblingIdx = (dIdx == d1Idx) ? d2Idx : d1Idx;
+      cv::Point3f dd = cells[dIdx].get_center() - cells[siblingIdx].get_center();
+      float ddDist = std::sqrt(dd.x * dd.x + dd.y * dd.y + dd.z * dd.z);
+      auto pd = cells[dIdx].getCellParams();
+      auto ps = cells[siblingIdx].getCellParams();
+      if (ddDist < (pd.majorRadius + ps.majorRadius) * 0.3f) {
+          burnInValid = false;
+      }
+  }
+
+  // After: (removed entirely — optimizer explores freely, cost rejects bad configs)
+  ```
+
+### Relaxed existing-cell overlap threshold in burn-in from 0.95 to 0.8
+
+Newly born daughters may legitimately start near existing neighbors. The strict 0.95 threshold during burn-in prevented daughters from optimizing their positions near neighbors. Relaxed to 0.8 during burn-in only (Phase 1 perturbation keeps 0.95).
+
+**File:** `C++/src/Frame.cpp`
+
+- **Lines 378-379:** Changed burn-in existing-cell overlap threshold
+
+  ```cpp
+  // Before:
+  if (dist < (pi.majorRadius + pd.majorRadius) * 0.95f &&
+      dist < (pi.minorRadius + pd.minorRadius) * 0.95f) {
+
+  // After:
+  if (dist < (pi.majorRadius + pd.majorRadius) * 0.8f &&
+      dist < (pi.minorRadius + pd.minorRadius) * 0.8f) {
+  ```
+
+### Increased burn-in iterations from 300 to 500
+
+With hard geometric constraints removed, the optimizer needs more iterations to find good daughter positions. Increased from 300 to 500 to compensate.
+
+**File:** `C++/src/Frame.cpp`
+
+- **Line 363:**
+
+  ```cpp
+  // Before:
+  const int BURN_IN_ITERATIONS = 300;
+  // After:
+  const int BURN_IN_ITERATIONS = 500;
+  ```
+
+### Removed ellipsoidal pixel inclusion limit from PCA split detection
+
+The second pass in `getSplitCells()` used `val <= 4.0` (an ellipsoidal boundary at ~2× radius) to filter which bright pixels are collected for PCA. This had a critical inconsistency: the bounding box (line 360) used pre-opt effective radii, but the ellipsoidal check used current radii (`invA2, invB2, invC2`). If Phase 1 collapsed a cell from radius 28→15, the bounding box extended to 2×28=56 but the ellipsoidal gate only included pixels within 2×15=30 — defeating the pre-opt boundary preservation.
+
+Removed the ellipsoidal gate entirely. The bounding box and neighbor exclusion naturally limit the search area. Brightness thresholding already filters out background pixels.
+
+**File:** `C++/src/Cells/Spheroid.cpp`
+
+- **Lines 421-430:** Removed `expandedThresh` constant and `val <= expandedThresh` condition
+
+  ```cpp
+  // Before:
+  // Expanded ellipsoidal boundary: val <= 4.0 means ~2.0x the radius
+  // Uses effective radii (max of current and pre-optimization) so that
+  // Phase 1 collapsing a cell doesn't shrink the search area.
+  const double expandedThresh = 4.0;
+
+  scanSpheroidVolume(
+      image, minX, maxX, minY, maxY, minZ, maxZ, _position,
+      R_T, invA2, invB2, invC2,
+      [&](double dx, double dy, double dz, int x, int y, int z, float pixel, double val) {
+          if (pixel > meanBrightness && val <= expandedThresh) {
+
+  // After:
+  // No ellipsoidal boundary — the bounding box (3×maxR) and neighbor
+  // exclusion naturally limit the search area. Removing the ellipsoidal
+  // gate fixes the inconsistency where the bounding box used pre-opt
+  // radii but the ellipsoid check used current (possibly collapsed) radii.
+
+  scanSpheroidVolume(
+      image, minX, maxX, minY, maxY, minZ, maxZ, _position,
+      R_T, invA2, invB2, invC2,
+      [&](double dx, double dy, double dz, int x, int y, int z, float pixel, double /*val*/) {
+          if (pixel > meanBrightness) {
+  ```
+
+### Increased split search radius from 2× to 3×
+
+With the ellipsoidal gate removed, the bounding box is the only spatial limit on PCA pixel collection. Increased from 2×maxR to 3×maxR so daughter blobs further from the parent center are captured. The neighbor exclusion check prevents contamination from other cells.
+
+**File:** `C++/src/Cells/Spheroid.cpp`
+
+- **Line 360:**
+
+  ```cpp
+  // Before:
+  float splitSearchRadius = maxR * 2.0f;
+  // After:
+  float splitSearchRadius = maxR * 3.0f;
+  ```
+
+### Restored pre-opt radii for daughter sizing
+
+Phase 1 collapses the parent cell (e.g. 28→21 radius) when fitting one sphere to a two-cell real image. Daughters sized from the collapsed parent (`21.3 × 0.794 = 16.88`) are too small to cover the real cell mass, resulting in near-zero cost improvement (e.g. diff=-0.033 for e9077 in frame 3). Using pre-opt radii gives `28.3 × 0.794 = 22.5` — much closer to the true daughter size.
+
+This was previously blocked by the daughter-daughter overlap hard gate (inflated daughters couldn't pass the threshold). Now that the gate is removed, pre-opt sizing works safely — bad splits are rejected by the cost function.
+
+**File:** `C++/src/Cells/Spheroid.cpp`
+
+- **Lines 554-560:** Changed daughter sizing from current radii to max(current, pre-opt)
+
+  ```cpp
+  // Before:
+  // Use CURRENT radii for daughter sizing (not inflated pre-opt radii).
+  // Pre-opt radii are used only for the PCA search boundary above.
+  // Using pre-opt radii here inflated daughters, making the daughter-daughter
+  // overlap threshold (0.5 × sum majorR) impossible to pass.
+  double volumeScale = std::cbrt(0.5);
+  double daughterMajorRadius = _major_radius * volumeScale;
+  double daughterMinorRadius = _minor_radius * volumeScale;
+
+  // After:
+  // Use pre-opt radii for daughter sizing when available. Phase 1 may
+  // collapse the parent (e.g. 28→21) when fitting one sphere to a two-cell
+  // image, making current-radius daughters too small for meaningful cost
+  // improvement. Pre-opt radii reflect the cell size before collapse.
+  // (Previously this was blocked by daughter-daughter overlap gates, now removed.)
+  double effMajorR = (preOptMajorR > 0.0f) ? std::max(_major_radius, (double)preOptMajorR) : _major_radius;
+  double effMinorR = (preOptMinorR > 0.0f) ? std::max(_minor_radius, (double)preOptMinorR) : _minor_radius;
+  double volumeScale = std::cbrt(0.5);
+  double daughterMajorRadius = effMajorR * volumeScale;
+  double daughterMinorRadius = effMinorR * volumeScale;
+  ```
+
+### Added then reverted: perturbable per-cell `_brightness` parameter
+
+Dim cells shrink to minimum radii because the fixed `cell_color` (0.53) doesn't match their real brightness (~0.45). Added per-cell brightness as a slow, tightly-bounded perturbable parameter (bounds [0.43, 0.63], sigma 0.02, prob 0.15). **Reverted** — same root cause as previous brightness attempts: when brightness drifts lower (e.g. 0.47), the background penalty drops from |0.53-0.39|²=0.0196 to |0.47-0.39|²=0.0064 (67% reduction), causing excessive false splits. This is the 4th failed approach to the dim cell problem. All code below was added then reverted.
+
+**File:** `C++/includes/ConfigTypes.hpp`
+
+- **Line 150:** Added `PerturbParams brightness{}` to SpheroidConfig
+
+  ```cpp
+  // Before:
+  PerturbParams thetaZ{};
+  double minMajorRadius{};
+  // After:
+  PerturbParams thetaZ{};
+  PerturbParams brightness{};
+  double minMajorRadius{};
+  ```
+- **Lines 155-156:** Added `minBrightness` and `maxBrightness` bounds
+
+  ```cpp
+  // Before:
+  double maxMinorRadius{};
+  ~SpheroidConfig() = default;
+  // After:
+  double maxMinorRadius{};
+  double minBrightness{};
+  double maxBrightness{};
+  ~SpheroidConfig() = default;
+  ```
+- **Line 167:** Added brightness parsing in `explodeConfig()`
+
+  ```cpp
+  // Before:
+  thetaZ.explodeParams(node["thetaZ"]);
+  // After:
+  thetaZ.explodeParams(node["thetaZ"]);
+  brightness.explodeParams(node["brightness"]);
+  ```
+- **Lines 174-175:** Added brightness bounds parsing
+
+  ```cpp
+  // Before:
+  maxMinorRadius = node["maxMinorRadius"].as<double>();
+  // After:
+  maxMinorRadius = node["maxMinorRadius"].as<double>();
+  minBrightness = node["minBrightness"].as<double>();
+  maxBrightness = node["maxBrightness"].as<double>();
+  ```
+
+**File:** `C++/includes/Spheroid.hpp`
+
+- **Line 36:** Added `float brightness` to SpheroidParams
+
+  ```cpp
+  // Before:
+  float theta_z; // rotation about z-axis (radians)
+  // After:
+  float theta_z; // rotation about z-axis (radians)
+  float brightness;
+  ```
+- **Lines 37-41:** Updated all SpheroidParams constructors to include brightness (default 0.53f)
+
+  ```cpp
+  // Before:
+  SpheroidParams() : CellParams(""), x(0), ..., theta_z(0) {}
+  SpheroidParams(..., float theta_z)
+      : CellParams(name), ..., theta_z(theta_z) {}
+  // After:
+  SpheroidParams() : CellParams(""), ..., theta_z(0), brightness(0.53f) {}
+  SpheroidParams(..., float theta_z, float brightness = 0.53f)
+      : CellParams(name), ..., theta_z(theta_z), brightness(brightness) {}
+  ```
+- **Line 86:** Added `double _brightness` private member
+
+  ```cpp
+  // Before:
+  double _theta_z;
+  bool dormant;
+  // After:
+  double _theta_z;
+  double _brightness;
+  bool dormant;
+  ```
+- **Line 104:** Added `_brightness(0.53)` to default constructor
+
+  ```cpp
+  // Before:
+  Spheroid() : ..., _theta_z(0), dormant(false) {}
+  // After:
+  Spheroid() : ..., _theta_z(0), _brightness(0.53), dormant(false) {}
+  ```
+- **Line 106:** Added brightness to `printCellInfo()`
+
+  ```cpp
+  // Before:
+  << " theta_z: " << _theta_z << " isDormant: " << dormant
+  // After:
+  << " theta_z: " << _theta_z << " brightness: " << _brightness << " isDormant: " << dormant
+  ```
+
+**File:** `C++/src/Cells/Spheroid.cpp`
+
+- **Line 160:** Added `_brightness(init_props.brightness)` to constructor initializer list
+
+  ```cpp
+  // Before:
+  _theta_z(init_props.theta_z),
+  dormant(false)
+  // After:
+  _theta_z(init_props.theta_z),
+  _brightness(init_props.brightness),
+  dormant(false)
+  ```
+- **Lines 168-169:** Added brightness clamping in constructor body
+
+  ```cpp
+  // Before: (no brightness clamping)
+  // After:
+  _brightness = std::fmax(_brightness, cellConfig.minBrightness);
+  _brightness = std::fmin(_brightness, cellConfig.maxBrightness);
+  ```
+- **Line 254:** Changed `draw()` to use `_brightness` instead of `simulationConfig.cell_color`
+
+  ```cpp
+  // Before:
+  image.at<float>(y, x) = simulationConfig.cell_color;
+  // After:
+  image.at<float>(y, x) = static_cast<float>(_brightness);
+  ```
+- **Line 310:** Added brightness perturbation to `getPerturbedCell()`
+
+  ```cpp
+  // Before:
+  _theta_z + cellConfig.thetaZ.getPerturbOffset());
+  // After:
+  _theta_z + cellConfig.thetaZ.getPerturbOffset(),
+  _brightness + cellConfig.brightness.getPerturbOffset());
+  ```
+- **Lines 314-346:** Added brightness offset to `getParameterizedCell()`
+
+  ```cpp
+  // Before: (no brightness offset)
+  // After:
+  float brightnessOffset = params["brightness"];
+  // ... in empty-params fallback:
+  brightnessOffset = Spheroid::cellConfig.brightness.getPerturbOffset();
+  // ... clamping:
+  float newBrightness = fmin(fmax(Spheroid::cellConfig.minBrightness, _brightness + brightnessOffset), Spheroid::cellConfig.maxBrightness);
+  // ... passed to SpheroidParams constructor
+  ```
+- **Line 672:** Added brightness bounds to `checkConstraints()`
+
+  ```cpp
+  // Before:
+  return ... && (_minor_radius <= cellConfig.maxMinorRadius);
+  // After:
+  return ... && (_minor_radius <= cellConfig.maxMinorRadius)
+      && (cellConfig.minBrightness <= _brightness) && (_brightness <= cellConfig.maxBrightness);
+  ```
+- **Line 676:** Added brightness to `getCellParams()` return
+
+  ```cpp
+  // Before:
+  return SpheroidParams(_name, ..., _theta_z);
+  // After:
+  return SpheroidParams(_name, ..., _theta_z, _brightness);
+  ```
+- **Lines 622-627:** Daughters inherit parent brightness in `getSplitCells()`
+
+  ```cpp
+  // Before:
+  ..., _theta_x, _theta_y, _theta_z));
+  // After:
+  ..., _theta_x, _theta_y, _theta_z, _brightness));
+  ```
+
+**File:** `C++/src/Lineage.cpp`
+
+- **Line 381:** Updated CSV header
+
+  ```cpp
+  // Before:
+  file << "file,name,x,y,z,majorRadius,minorRadius,theta_x,theta_y,theta_z" << std::endl;
+  // After:
+  file << "file,name,x,y,z,majorRadius,minorRadius,theta_x,theta_y,theta_z,brightness" << std::endl;
+  ```
+- **Lines 399-400:** Added brightness to CSV output
+
+  ```cpp
+  // Before:
+  << params.theta_z
+  << std::endl;
+  // After:
+  << params.theta_z << ","
+  << params.brightness
+  << std::endl;
+  ```
+
+**File:** `C++/examples/config.yaml`
+
+- **Lines 40-44:** Added brightness perturbation section
+
+  ```yaml
+  # Before: (no brightness section)
+  # After:
+    brightness:
+      prob: 0.15
+      mu: 0
+      sigma: 0.02
+  ```
+- **Lines 48-49:** Added brightness bounds
+
+  ```yaml
+  # Before: (no brightness bounds)
+  # After:
+    minBrightness: 0.43
+    maxBrightness: 0.63
+  ```
