@@ -19,8 +19,13 @@ set(CMAKE_WARN_DEPRECATED ${_OLD_CMAKE_WARN_DEPRECATED})
 add_executable(core_unit_test
         hello_test.cc
         interpolate_test.cc
+        frame_test.cc
+        process_image_test.cc
         spheroid_test.cc
+        spheroid_params_test.cc
+        spheroid_rotation_test.cc
         ${CMAKE_SOURCE_DIR}/src/Frame.cpp
+        ${CMAKE_SOURCE_DIR}/src/Lineage.cpp
         ${CMAKE_SOURCE_DIR}/src/Cells/Spheroid.cpp
 )
 
