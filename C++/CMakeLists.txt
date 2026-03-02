@@ -7,6 +7,7 @@ if(POLICY CMP0135)
 endif()
 
 project(celluniverse LANGUAGES C CXX)
+enable_testing()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

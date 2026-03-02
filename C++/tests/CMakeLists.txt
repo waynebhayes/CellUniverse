@@ -16,8 +16,30 @@ FetchContent_MakeAvailable(googletest)
 # Restore original setting
 set(CMAKE_WARN_DEPRECATED ${_OLD_CMAKE_WARN_DEPRECATED})
 
-add_executable(hello_test hello_test.cc)
-target_link_libraries(hello_test PRIVATE gtest_main)
+add_executable(core_unit_test
+        hello_test.cc
+        interpolate_test.cc
+        spheroid_test.cc
+        ${CMAKE_SOURCE_DIR}/src/Frame.cpp
+        ${CMAKE_SOURCE_DIR}/src/Cells/Spheroid.cpp
+)
+
+target_include_directories(core_unit_test PRIVATE
+        ${OpenCV_INCLUDE_DIRS}
+        ${CMAKE_SOURCE_DIR}/includes
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/Cells
+        ${CMAKE_SOURCE_DIR}/lib/yaml-cpp/include
+)
+
+target_link_libraries(core_unit_test PRIVATE
+        gtest_main
+        ${OpenCV_LIBS}
+        yaml-cpp
+)
 
 include(GoogleTest)
-gtest_discover_tests(hello_test)
+gtest_discover_tests(core_unit_test
+        DISCOVERY_MODE PRE_TEST
+        DISCOVERY_TIMEOUT 60
+)
