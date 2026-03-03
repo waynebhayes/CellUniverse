@@ -236,7 +236,7 @@ int main(int argc, char *argv[])
             c.y = (float)params.y;
             viz.push_back(c);
         }
-        viewer.update(args.firstFrame + frame, viz);
+        // viewer.update(args.firstFrame + frame, viz);
 
         lineage.copyCellsForward(frame + 1);
 

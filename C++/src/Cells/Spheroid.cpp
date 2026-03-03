@@ -346,11 +346,14 @@ Spheroid Spheroid::getParameterizedCell(std::unordered_map<std::string, float> p
     return Spheroid(spheroidParams);
 }
 
-std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<cv::Mat> &image, float z_scaling,
+std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::vector<cv::Mat> &image, float z_scaling,
     const std::vector<cv::Point3f> &neighborCenters,
-    float preOptMajorR, float preOptMinorR) const {
+    float preOptMajorR, float preOptMinorR,
+    float preOptX, float preOptY, float preOptZ) const {
     // Step 1: Get the bounding box, expanded for split detection.
     // Use pre-optimization radii if available (Phase 1 may collapse the cell).
+    // Use pre-optimization position if available (Phase 1 may shift the cell
+    // toward one blob, making PCA look spherical from the shifted center).
 
     float effA = (preOptMajorR > 0.0f) ? std::max((float)a, preOptMajorR) : (float)a;
     float effB = (preOptMajorR > 0.0f) ? std::max((float)b, preOptMajorR) : (float)b;
@@ -359,22 +362,32 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
 
     float splitSearchRadius = maxR * 3.0f;
 
-    if (preOptMajorR > 0.0f && (effA > (float)a || effC > (float)c)) {
+    // PCA center: use pre-opt position when available so PCA sees both blobs
+    // from the original midpoint, not the Phase-1-shifted position.
+    cv::Point3f pcaCenter = _position;
+    if (preOptMajorR > 0.0f) {
+        pcaCenter = cv::Point3f(preOptX, preOptY, preOptZ);
+    }
+
+    if (preOptMajorR > 0.0f) {
         std::cout << "[Split PreOpt] " << _name
                   << " current=(" << a << "," << b << "," << c << ")"
                   << " preOpt=(" << preOptMajorR << "," << preOptMajorR << "," << preOptMinorR << ")"
                   << " effective=(" << effA << "," << effB << "," << effC << ")"
-                  << " searchRadius=" << splitSearchRadius << std::endl;
+                  << " searchRadius=" << splitSearchRadius
+                  << " pcaCenter=(" << pcaCenter.x << "," << pcaCenter.y << "," << pcaCenter.z << ")"
+                  << " currentPos=(" << _position.x << "," << _position.y << "," << _position.z << ")"
+                  << std::endl;
     }
 
-    int minX = std::max(0, static_cast<int>(std::floor(_position.x - splitSearchRadius)));
-    int maxX = std::min(static_cast<int>(image[0].cols) - 1, static_cast<int>(std::ceil(_position.x + splitSearchRadius)));
+    int minX = std::max(0, static_cast<int>(std::floor(pcaCenter.x - splitSearchRadius)));
+    int maxX = std::min(static_cast<int>(image[0].cols) - 1, static_cast<int>(std::ceil(pcaCenter.x + splitSearchRadius)));
 
-    int minY = std::max(0, static_cast<int>(std::floor(_position.y - splitSearchRadius)));
-    int maxY = std::min(static_cast<int>(image[0].rows) - 1, static_cast<int>(std::ceil(_position.y + splitSearchRadius)));
+    int minY = std::max(0, static_cast<int>(std::floor(pcaCenter.y - splitSearchRadius)));
+    int maxY = std::min(static_cast<int>(image[0].rows) - 1, static_cast<int>(std::ceil(pcaCenter.y + splitSearchRadius)));
 
-    int minZ = std::max(0, static_cast<int>(std::floor(_position.z - splitSearchRadius)));
-    int maxZ = std::min(static_cast<int>(image.size()) - 1, static_cast<int>(std::ceil(_position.z + splitSearchRadius)));
+    int minZ = std::max(0, static_cast<int>(std::floor(pcaCenter.z - splitSearchRadius)));
+    int maxZ = std::min(static_cast<int>(image.size()) - 1, static_cast<int>(std::ceil(pcaCenter.z + splitSearchRadius)));
 
     // Step 2: Collect bright pixels from the REAL IMAGE near this cell.
     // Previously we used the spheroid boundary (geometric shape), but for
@@ -426,10 +439,15 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
     scanSpheroidVolume(
         image, minX, maxX, minY, maxY, minZ, maxZ, _position,
         R_T, invA2, invB2, invC2,
-        [&](double dx, double dy, double dz, int x, int y, int z, float pixel, double /*val*/) {
+        [&](double /*dx*/, double /*dy*/, double /*dz*/, int x, int y, int z, float pixel, double /*val*/) {
             if (pixel > meanBrightness) {
-                // Skip pixel if it's closer to any neighbor than to this cell
-                    float distSqToSelf = static_cast<float>(dx * dx + dy * dy + dz * dz);
+                // Skip pixel if it's closer to any neighbor than to pcaCenter
+                // (use pcaCenter = pre-opt position so distance is measured from
+                // the original cell midpoint, not the Phase-1-shifted position)
+                    float selfDx = static_cast<float>(x) - pcaCenter.x;
+                    float selfDy = static_cast<float>(y) - pcaCenter.y;
+                    float selfDz = static_cast<float>(z) - pcaCenter.z;
+                    float distSqToSelf = selfDx * selfDx + selfDy * selfDy + selfDz * selfDz;
                     bool closerToNeighbor = false;
                     float ndx, ndy, ndz, distSqToNeighbor;
                     for (const auto &nc : neighborCenters) {
@@ -451,48 +469,88 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
             }
         });
 
-    // Step 3: Run PCA with per-axis stddev normalization.
-    // Normalize each axis to unit standard deviation before PCA so that
-    // the axis with the largest absolute spread doesn't dominate. For
-    // oblate spheroids, bright pixels cluster near (center_x, center_y)
-    // in each z-slice but span many z-slices, making z-variance dominate.
-    // Per-axis normalization equalizes the axes so PCA detects bimodal
-    // structure (two blobs = split) regardless of direction.
+    // Step 2b: Iterative centroid refinement.
+    // If pcaCenter drifted onto one blob (Phase 1 of previous frame dragged
+    // it there), the neighbor exclusion clips the far blob. Compute the
+    // centroid of collected pixels; if it differs significantly from
+    // pcaCenter, re-collect using the centroid as the new center. This
+    // shifts the Voronoi boundary to capture both blobs more evenly.
+    if (rawPoints.size() >= 10) {
+        cv::Point3f centroid(0, 0, 0);
+        for (const auto &pt : rawPoints) {
+            centroid.x += pt.x;
+            centroid.y += pt.y;
+            centroid.z += pt.z;
+        }
+        centroid *= (1.0f / rawPoints.size());
+
+        float driftSq = (centroid.x - pcaCenter.x) * (centroid.x - pcaCenter.x)
+                       + (centroid.y - pcaCenter.y) * (centroid.y - pcaCenter.y)
+                       + (centroid.z - pcaCenter.z) * (centroid.z - pcaCenter.z);
+
+        if (driftSq > 25.0f) { // > 5 pixels drift
+            std::cout << "[PCA Recenter] " << _name
+                      << " pcaCenter=(" << pcaCenter.x << "," << pcaCenter.y << "," << pcaCenter.z << ")"
+                      << " centroid=(" << centroid.x << "," << centroid.y << "," << centroid.z << ")"
+                      << " drift=" << std::sqrt(driftSq) << std::endl;
+            pcaCenter = centroid;
+            rawPoints.clear();
+
+            scanSpheroidVolume(
+                image, minX, maxX, minY, maxY, minZ, maxZ, _position,
+                R_T, invA2, invB2, invC2,
+                [&](double /*dx*/, double /*dy*/, double /*dz*/, int x, int y, int z, float pixel, double /*val*/) {
+                    if (pixel > meanBrightness) {
+                        float selfDx = static_cast<float>(x) - pcaCenter.x;
+                        float selfDy = static_cast<float>(y) - pcaCenter.y;
+                        float selfDz = static_cast<float>(z) - pcaCenter.z;
+                        float distSqToSelf = selfDx * selfDx + selfDy * selfDy + selfDz * selfDz;
+                        bool closerToNeighbor = false;
+                        for (const auto &nc : neighborCenters) {
+                            float ndx = static_cast<float>(x) - nc.x;
+                            float ndy = static_cast<float>(y) - nc.y;
+                            float ndz = static_cast<float>(z) - nc.z;
+                            float distSqToNeighbor = ndx * ndx + ndy * ndy + ndz * ndz;
+                            if (distSqToNeighbor < distSqToSelf) {
+                                closerToNeighbor = true;
+                                break;
+                            }
+                        }
+                        if (closerToNeighbor) return;
+                        rawPoints.emplace_back(
+                            static_cast<float>(x),
+                            static_cast<float>(y),
+                            static_cast<float>(z));
+                    }
+                });
+        }
+    }
+
+    // Step 3: Run PCA with isotropic normalization.
     cv::Point3f split_axis;
+    float elongationRatio = 1.0f;
 
     if (rawPoints.size() >= 3) {
-        // Build centered data matrix
         int n = static_cast<int>(rawPoints.size());
         cv::Mat data(n, 3, CV_32F);
         for (int i = 0; i < n; ++i) {
-            data.at<float>(i, 0) = rawPoints[i].x - _position.x;
-            data.at<float>(i, 1) = rawPoints[i].y - _position.y;
-            data.at<float>(i, 2) = rawPoints[i].z - _position.z;
+            data.at<float>(i, 0) = rawPoints[i].x - pcaCenter.x;
+            data.at<float>(i, 1) = rawPoints[i].y - pcaCenter.y;
+            data.at<float>(i, 2) = rawPoints[i].z - pcaCenter.z;
         }
 
-        // Compute per-axis standard deviation (data is already zero-centered)
-        float sx = 0, sy = 0, sz = 0;
-        float invSx, invSy, invSz;
+        // Isotropic normalization: divide all axes by majorR (effA).
+        // Per-axis normalization (effA, effB, effC) suppresses x-y splits
+        // in pancaked cells because the small z-radius amplifies z-noise,
+        // inflating all eigenvalues while keeping the ratio low.
+        // Isotropic normalization preserves the true shape of the bright
+        // pixel distribution regardless of cell aspect ratio.
+        float normR = (effA > 1e-6f) ? effA : 1.0f;
+        float invS = 1.0f / normR;
 
-        for (int i = 0; i < n; ++i) {
-            float vx = data.at<float>(i, 0);
-            float vy = data.at<float>(i, 1);
-            float vz = data.at<float>(i, 2);
-            sx += vx * vx;
-            sy += vy * vy;
-            sz += vz * vz;
-        }
-        sx = std::sqrt(sx / n);
-        sy = std::sqrt(sy / n);
-        sz = std::sqrt(sz / n);
-        invSx = 1.0 / sx;
-        invSy = 1.0 / sy;
-        invSz = 1.0 / sz;
-
-        // Normalize each axis to unit variance
-        if (sx > 1e-6f) for (int i = 0; i < n; ++i) data.at<float>(i, 0) *= invSx;
-        if (sy > 1e-6f) for (int i = 0; i < n; ++i) data.at<float>(i, 1) *= invSy;
-        if (sz > 1e-6f) for (int i = 0; i < n; ++i) data.at<float>(i, 2) *= invSz;
+        for (int i = 0; i < n; ++i) data.at<float>(i, 0) *= invS;
+        for (int i = 0; i < n; ++i) data.at<float>(i, 1) *= invS;
+        for (int i = 0; i < n; ++i) data.at<float>(i, 2) *= invS;
 
         cv::PCA pca(data, cv::Mat(), cv::PCA::DATA_AS_ROW);
 
@@ -506,11 +564,11 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
             pca.eigenvectors.at<float>(0, 1),
             pca.eigenvectors.at<float>(0, 2));
 
-        // Transform back to image space: multiply by per-axis stddev
+        // With isotropic normalization, eigenvector direction is unchanged
         cv::Point3f ev_image(
-            ev_norm.x * sx,
-            ev_norm.y * sy,
-            ev_norm.z * sz);
+            ev_norm.x * normR,
+            ev_norm.y * normR,
+            ev_norm.z * normR);
 
         // Normalize to unit vector
         float norm = std::sqrt(ev_image.x * ev_image.x +
@@ -525,13 +583,13 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
             split_axis = cv::Point3f(sin(phi) * cos(theta), sin(phi) * sin(theta), cos(phi));
         }
 
-        float elongationRatio = (lambda2 > 1e-6f) ? (lambda1 / lambda2) : 1.0f;
+        elongationRatio = (lambda2 > 1e-6f) ? (lambda1 / lambda2) : 1.0f;
         std::cout << "[PCA Split] " << _name
                   << " elongation_ratio=" << elongationRatio
                   << " split_axis=(" << split_axis.x << ", " << split_axis.y << ", " << split_axis.z << ")"
                   << " eigenvalues=(" << lambda1 << ", " << lambda2 << ", " << lambda3 << ")"
                   << " num_bright_pixels=" << rawPoints.size()
-                  << " stddev=(" << sx << ", " << sy << ", " << sz << ")"
+                  << " normR=" << normR
                   << std::endl;
     } else {
         std::cout << "[PCA Split] " << _name
@@ -566,9 +624,9 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
     int count1 = 0, count2 = 0;
 
     for (const auto &pt : rawPoints) {
-        const double dx = pt.x - _position.x;
-        const double dy = pt.y - _position.y;
-        const double dz = pt.z - _position.z;
+        const double dx = pt.x - pcaCenter.x;
+        const double dy = pt.y - pcaCenter.y;
+        const double dz = pt.z - pcaCenter.z;
         float projection = dx * split_axis.x + dy * split_axis.y + dz * split_axis.z;
 
         if (projection >= 0) {
@@ -607,8 +665,8 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
     } else {
         // All pixels on one side — fall back to small offset along split axis
         float offset = static_cast<float>(daughterMajorRadius * 0.5);
-        new_position1 = _position + split_axis * offset;
-        new_position2 = _position - split_axis * offset;
+        new_position1 = pcaCenter + split_axis * offset;
+        new_position2 = pcaCenter - split_axis * offset;
         std::cout << "[Split Placement] one-sided (" << count1 << "/" << count2
                   << "), using fixed offset=" << offset << std::endl;
     }
@@ -625,7 +683,7 @@ std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(const std::vector<c
         daughterMajorRadius, daughterMinorRadius, _theta_x, _theta_y, _theta_z));
 
     bool constraints = cell1.checkConstraints() && cell2.checkConstraints();
-    return std::make_tuple(Spheroid(cell1), Spheroid(cell2), constraints);
+    return std::make_tuple(Spheroid(cell1), Spheroid(cell2), constraints, elongationRatio);
 }
 
 std::vector<std::pair<float, cv::Vec3f>> Spheroid::performPCA(const std::vector<cv::Point3f> &points) const {

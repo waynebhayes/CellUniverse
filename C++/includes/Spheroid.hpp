@@ -115,9 +115,10 @@ class Spheroid
 
         Spheroid getParameterizedCell(std::unordered_map<std::string, float> params) const;
 
-        std::tuple<Spheroid, Spheroid, bool> getSplitCells(const std::vector<cv::Mat> &image, float z_scaling,
+        std::tuple<Spheroid, Spheroid, bool, float> getSplitCells(const std::vector<cv::Mat> &image, float z_scaling,
             const std::vector<cv::Point3f> &neighborCenters = {},
-            float preOptMajorR = 0.0f, float preOptMinorR = 0.0f) const;
+            float preOptMajorR = 0.0f, float preOptMinorR = 0.0f,
+            float preOptX = 0.0f, float preOptY = 0.0f, float preOptZ = 0.0f) const;
 
         std::vector<std::pair<float, cv::Vec3f>> performPCA(const std::vector<cv::Point3f> &points) const;
 

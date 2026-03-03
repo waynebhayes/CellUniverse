@@ -75,7 +75,7 @@ std::vector<cv::Mat> Frame::generateSynthFrame()
         Image synthImage = cv::Mat(shape, CV_32F, cv::Scalar(simulationConfig.background_color)); // Assuming background color is in cv::Scalar format
         for (const auto &cell : cells)
         {
-            cell.printCellInfo();
+            // cell.printCellInfo();
             // cell.print();
             cell.draw(synthImage, simulationConfig, nullptr, z);
         }
@@ -281,7 +281,9 @@ CostCallbackPair Frame::split()
     return trySplitCell(index);
 }
 
-CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float preOptMinorR)
+CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float preOptMinorR,
+                                     float preOptX, float preOptY, float preOptZ,
+                                     float splitElongationThreshold)
 {
     if (index >= cells.size()) {
         return {0.0, [](bool accept) {}};
@@ -300,11 +302,19 @@ CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float pre
     Spheroid child1;
     Spheroid child2;
     bool valid;
-    std::tie(child1, child2, valid) = oldCell.getSplitCells(_realFrame, simulationConfig.z_scaling, neighborCenters, preOptMajorR, preOptMinorR);
+    float elongationRatio;
+    std::tie(child1, child2, valid, elongationRatio) = oldCell.getSplitCells(_realFrame, simulationConfig.z_scaling, neighborCenters, preOptMajorR, preOptMinorR, preOptX, preOptY, preOptZ);
     if (!valid)
     {
         std::cout << "[Split Skip] " << oldCell.getCellParams().name
                   << " getSplitCells returned invalid" << std::endl;
+        return {0.0, [](bool accept) {}};
+    }
+
+    if (splitElongationThreshold > 0.0f && elongationRatio < splitElongationThreshold) {
+        std::cout << "[Split Skip] " << oldCell.getCellParams().name
+                  << " elongation_ratio=" << elongationRatio
+                  << " < threshold=" << splitElongationThreshold << std::endl;
         return {0.0, [](bool accept) {}};
     }
 

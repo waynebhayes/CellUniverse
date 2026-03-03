@@ -44,7 +44,7 @@ cell:
 
 # Simulation settings
 simulation:
-  iterations_per_cell: 500
+  iterations_per_cell: 350
   background_color: 0.39
   cell_color: 0.53
   padding: 0
@@ -56,6 +56,7 @@ prob:
   perturbation: 0.97
   split: 0.03
   split_cost: 1 # accpet more than -value
+  split_elongation_threshold: 4 # skip split burn-in if PCA elongation ratio < this
 #  combine: 0.1
 #  camera_shift: 0.0
 

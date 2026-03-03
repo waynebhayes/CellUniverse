@@ -25,7 +25,7 @@ CellUniverse tracks 3D cells across time-lapse microscopy frames. For each frame
 The YAML config (e.g., `config.yaml`) is parsed into three sub-configs:
 
 - **SimulationConfig** (lines 10–43): `iterations_per_cell`, `background_color`, `cell_color`, `z_scaling`, `blur_sigma`, `z_slices`
-- **ProbabilityConfig** (lines 45–70): `perturbation`, `split`, `split_cost`
+- **ProbabilityConfig** (lines 45–73): `perturbation`, `split`, `split_cost`, `split_elongation_threshold`
 - **SpheroidConfig** (lines 130–172): Per-parameter perturbation settings (`x`, `y`, `z`, `majorRadius`, `minorRadius`, `thetaX`, `thetaY`, `thetaZ`) each with `prob`, `mu`, `sigma` plus global constraints (`minMajorRadius`, `maxMajorRadius`, `minMinorRadius`, `maxMinorRadius`)
 
 Each perturbation parameter has a `PerturbParams` struct (lines 81–104) with:
@@ -225,21 +225,35 @@ if any splits applied:
     Run 2 × iterations_per_cell × num_splits post-split perturbations
 ```
 
-### 6.2 `Frame::trySplitCell()` in `Frame.cpp` (lines 278–440)
+### 6.2 `Frame::trySplitCell()` in `Frame.cpp` (lines 284–440)
 
 The main split evaluation function. Takes a cell index and returns `{costDiff, callback}`.
 
-#### Step A: Get Split Geometry (lines 284–303)
+#### Step A: Get Split Geometry (lines 284–310)
 
 ```cpp
 // Collect neighbor cell centers (excluding the cell being split)
 neighborCenters = [center of every other cell]
 
 // Call PCA-based split detection
-(child1, child2, valid) = oldCell.getSplitCells(realFrame, z_scaling, neighborCenters)
+(child1, child2, valid, elongationRatio) = oldCell.getSplitCells(realFrame, z_scaling, neighborCenters)
 ```
 
 If `valid == false` (too few bright pixels or constraint failure), logs `[Split Skip]` and returns.
+
+#### Step A.5: Elongation Ratio Filter (lines 312–317)
+
+Before the expensive burn-in, check whether the PCA elongation ratio indicates a likely split:
+
+```
+if splitElongationThreshold > 0.0 AND elongationRatio < splitElongationThreshold:
+    Log "[Split Skip] <name> elongation_ratio=X < threshold=Y"
+    Return {0.0, no-op}
+```
+
+- `elongationRatio ≈ 1.0`: Spherical bright pixels → no split signal → skip
+- `elongationRatio > threshold (default 1.3)`: Elongated → proceed to burn-in
+- Setting `split_elongation_threshold: 0` in config disables the filter (old behavior)
 
 #### Step B: Overlap Checks (lines 305–358)
 
@@ -305,7 +319,7 @@ return {costDiff, callback}
 
 ### 7.1 `Spheroid::getSplitCells()` in `Spheroid.cpp` (lines 249–499)
 
-This is the core algorithm that determines WHERE to place daughter cells. Returns `tuple<Spheroid, Spheroid, bool>`.
+This is the core algorithm that determines WHERE to place daughter cells. Returns `tuple<Spheroid, Spheroid, bool, float>` (daughters, validity, elongation ratio).
 
 #### Step 1: Define Search Area (lines 253–265)
 
@@ -313,9 +327,13 @@ This is the core algorithm that determines WHERE to place daughter cells. Return
 maxR = max(majorRadius, majorRadius, minorRadius)  // = majorRadius for oblate
 splitSearchRadius = maxR × 3.0                     // Generous bounding box
 
-// 3D bounding box in image coordinates
-minX = max(0, floor(position.x - splitSearchRadius))
-maxX = min(cols-1, ceil(position.x + splitSearchRadius))
+// PCA center: use pre-opt position when available (Phase 1 may shift
+// the cell toward one blob, making PCA look spherical from that center)
+pcaCenter = (preOptMajorR > 0) ? preOptPosition : currentPosition
+
+// 3D bounding box centered at pcaCenter
+minX = max(0, floor(pcaCenter.x - splitSearchRadius))
+maxX = min(cols-1, ceil(pcaCenter.x + splitSearchRadius))
 // Same for Y, Z
 ```
 
@@ -342,8 +360,9 @@ Second pass: collect all bright pixels within the bounding box. These are the in
 For each pixel (x,y,z) in bounding box:
     if pixel_brightness ≤ meanBrightness: skip (background)
 
-    // Neighbor exclusion: skip if closer to another cell
-    distToSelf = dx² + dy² + dz²
+    // Neighbor exclusion: skip if closer to another cell than to pcaCenter
+    // (uses pre-opt position so distance is from original midpoint)
+    distToSelf = (x-pcaCenter.x)² + (y-pcaCenter.y)² + (z-pcaCenter.z)²
     for each neighbor center:
         distToNeighbor = (x-nc.x)² + (y-nc.y)² + (z-nc.z)²
         if distToNeighbor < distToSelf: skip (belongs to neighbor)
@@ -361,9 +380,9 @@ For each pixel (x,y,z) in bounding box:
 PCA (Principal Component Analysis) finds the direction of maximum spread in the point cloud. If the cell has split, the bright pixels form two clusters and PCA finds the axis connecting them.
 
 ```
-// Center the data: subtract cell position
+// Center the data: subtract pcaCenter (pre-opt position when available)
 For each point:
-    data[i] = (point.x - center.x, point.y - center.y, point.z - center.z)
+    data[i] = (point.x - pcaCenter.x, point.y - pcaCenter.y, point.z - pcaCenter.z)
 
 // Compute per-axis standard deviation
 sx = stddev of all x-values
@@ -586,6 +605,7 @@ file, name, x, y, z, majorRadius, minorRadius, theta_x, theta_y, theta_z
 | Daughter-daughter min sep | *(removed)* | — | Removed: cost function handles this naturally |
 | Split search radius | 3×maxR (effective) | Spheroid.cpp:360 | PCA pixel collection bounding box (uses pre-opt radii) |
 | Expanded boundary | *(removed)* | — | Removed: bounding box + neighbor exclusion handle this |
+| Split elongation threshold | 1.3 (config) | Frame.cpp:312 | PCA elongation ratio below which burn-in is skipped |
 | Surface outline band | 0.95–1.05 | Spheroid.cpp:186 | Pixels drawn as cell outline |
 
 ---

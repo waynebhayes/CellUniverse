@@ -1528,3 +1528,347 @@ Dim cells shrink to minimum radii because the fixed `cell_color` (0.53) doesn't 
     minBrightness: 0.43
     maxBrightness: 0.63
   ```
+
+## 2026-03-02
+
+### Added iterative centroid refinement for PCA center
+
+If Phase 1 of the previous frame dragged the cell toward one blob, pcaCenter (pre-opt position) lands on that blob. The neighbor exclusion then clips the far blob's pixels (closer to a neighbor than to the biased pcaCenter), reducing the PCA elongation ratio. For `1f2ed...` in frame 11, this dropped elongation from what should be ~10+ to only 4.6.
+
+After the initial bright pixel collection, compute the centroid of collected pixels. If it differs from pcaCenter by >5 pixels, re-collect using the centroid as the new center. This shifts the Voronoi boundary between the cell and its neighbors to capture both blobs more symmetrically.
+
+**File:** `C++/src/Cells/Spheroid.cpp`
+- **Lines 472-522 (new Step 2b):** Added centroid computation after first bright pixel collection, drift check (>5px threshold), and re-collection scan with updated pcaCenter. Logs `[PCA Recenter]` when triggered.
+
+---
+
+### Changed PCA normalization from per-axis to isotropic
+
+Per-axis normalization (dividing x by effA, y by effB, z by effC) suppressed x-y splits in pancaked cells. The small z-radius (minorR) amplified z-noise, inflating all eigenvalues while keeping the ratio low. For `1f2ed...` in frame 11 (majorR=32, minorR=12), elongation ratio was only 3.15 despite clear visual elongation.
+
+Changed to isotropic normalization: all axes divided by `majorR` (effA). This preserves the true shape of the bright pixel distribution regardless of cell aspect ratio.
+
+**File:** `C++/src/Cells/Spheroid.cpp`
+- **Lines 496-506:** Replaced per-axis `invSx/invSy/invSz` with single `invS = 1/normR` applied to all axes
+- **Lines 521-524:** Transform-back uses `normR` for all axes instead of per-axis radii
+- **Line 545:** Log prints single `normR` instead of per-axis `normRadii`
+
+---
+
+### Fixed stale `_synthFrame` after `copyCellsForward`
+
+The Frame constructor generates `_synthFrame` with whatever cells it receives. For frames after the initial one, the Lineage constructor passes empty cells, so `_synthFrame` = background-only. `copyCellsForward()` copies cells but does NOT regenerate `_synthFrame`. This means Phase 1 starts with a stale background-only baseline, causing the first perturbation of any cell to be accepted regardless of direction (any cell drawing beats background). For dim cells already biased toward shrinking, this amplifies the collapse.
+
+**File:** `C++/src/Lineage.cpp`
+- **Line 182 (after):** Added `frame.regenerateSynthFrame()` at the start of `optimize()`, right after getting the frame reference.
+
+```cpp
+// Before:
+    Frame &frame = frames[frameIndex];
+    size_t totalIterations = frame.length() * config.simulation.iterations_per_cell;
+
+// After:
+    Frame &frame = frames[frameIndex];
+    frame.regenerateSynthFrame();
+    size_t totalIterations = frame.length() * config.simulation.iterations_per_cell;
+```
+
+---
+
+### Added pre-opt position for PCA center in split detection
+
+Phase 1 shifts the cell center toward one blob, making PCA from the shifted center see a spherical distribution (low elongation ratio) even when two blobs exist. Now `getSplitCells` accepts pre-opt position (`preOptX/Y/Z`) and uses it as `pcaCenter` — the center for bounding box, neighbor exclusion, PCA centering, pixel projection, and fallback placement. This ensures PCA sees both blobs from the original midpoint.
+
+**File:** `C++/src/Lineage.cpp`
+
+- **Lines 192-195:** Added `x, y, z` to `PreOptShape` struct:
+
+  ```cpp
+  // Before:
+  struct PreOptShape { float majorR; float minorR; };
+  // After:
+  struct PreOptShape { float majorR; float minorR; float x, y, z; };
+  ```
+
+- **Lines 199-200:** Save position alongside radii:
+
+  ```cpp
+  // Before:
+  preOptShapes[params.name] = {(float)params.majorRadius, (float)params.minorRadius};
+  // After:
+  preOptShapes[params.name] = {(float)params.majorRadius, (float)params.minorRadius,
+                               params.x, params.y, params.z};
+  ```
+
+- **Lines 270-276:** Look up and pass pre-opt position:
+
+  ```cpp
+  // Before:
+  float preOptMajorR = 0.0f, preOptMinorR = 0.0f;
+  // After:
+  float preOptMajorR = 0.0f, preOptMinorR = 0.0f;
+  float preOptX = 0.0f, preOptY = 0.0f, preOptZ = 0.0f;
+  // ... it->second.x/y/z ...
+  frame.trySplitCell(idx, preOptMajorR, preOptMinorR, preOptX, preOptY, preOptZ, ...)
+  ```
+
+**File:** `C++/includes/Frame.hpp`
+
+- **Lines 38-40:** Added pre-opt position parameters:
+
+  ```cpp
+  // Before:
+  CostCallbackPair trySplitCell(size_t cellIndex, float preOptMajorR = 0.0f, float preOptMinorR = 0.0f, float splitElongationThreshold = 1.3f);
+  // After:
+  CostCallbackPair trySplitCell(size_t cellIndex, float preOptMajorR = 0.0f, float preOptMinorR = 0.0f,
+                                float preOptX = 0.0f, float preOptY = 0.0f, float preOptZ = 0.0f,
+                                float splitElongationThreshold = 1.3f);
+  ```
+
+**File:** `C++/src/Frame.cpp`
+
+- **Lines 284-286:** Updated signature to accept pre-opt position and pass to `getSplitCells`.
+
+**File:** `C++/includes/Spheroid.hpp`
+
+- **Lines 118-121:** Added `preOptX/Y/Z` parameters:
+
+  ```cpp
+  // Before:
+  ... float preOptMajorR = 0.0f, float preOptMinorR = 0.0f) const;
+  // After:
+  ... float preOptMajorR = 0.0f, float preOptMinorR = 0.0f,
+      float preOptX = 0.0f, float preOptY = 0.0f, float preOptZ = 0.0f) const;
+  ```
+
+**File:** `C++/src/Cells/Spheroid.cpp`
+
+- **Lines 349-351:** Updated signature.
+
+- **Lines 369-372:** Create `pcaCenter` from pre-opt position:
+
+  ```cpp
+  cv::Point3f pcaCenter = _position;
+  if (preOptMajorR > 0.0f) {
+      pcaCenter = cv::Point3f(preOptX, preOptY, preOptZ);
+  }
+  ```
+
+- **Lines 374-384:** Updated `[Split PreOpt]` log to show `pcaCenter` and `currentPos`.
+
+- **Lines 386-393:** Bounding box now centered at `pcaCenter` instead of `_position`.
+
+- **Lines 442-448:** Neighbor exclusion distance computed from `pcaCenter`:
+
+  ```cpp
+  // Before:
+  float distSqToSelf = static_cast<float>(dx * dx + dy * dy + dz * dz);
+  // After:
+  float selfDx = static_cast<float>(x) - pcaCenter.x;
+  float selfDy = static_cast<float>(y) - pcaCenter.y;
+  float selfDz = static_cast<float>(z) - pcaCenter.z;
+  float distSqToSelf = selfDx * selfDx + selfDy * selfDy + selfDz * selfDz;
+  ```
+
+- **Lines 481-483:** PCA data matrix centered at `pcaCenter`:
+
+  ```cpp
+  // Before:
+  data.at<float>(i, 0) = rawPoints[i].x - _position.x;
+  // After:
+  data.at<float>(i, 0) = rawPoints[i].x - pcaCenter.x;
+  ```
+
+- **Lines 585-587:** Pixel projection for daughter placement uses `pcaCenter`:
+
+  ```cpp
+  // Before:
+  const double dx = pt.x - _position.x;
+  // After:
+  const double dx = pt.x - pcaCenter.x;
+  ```
+
+- **Lines 626-627:** Fallback placement uses `pcaCenter`:
+
+  ```cpp
+  // Before:
+  new_position1 = _position + split_axis * offset;
+  // After:
+  new_position1 = pcaCenter + split_axis * offset;
+  ```
+
+### Changed PCA normalization from per-axis stddev to cell-radius
+
+Per-axis stddev normalization suppressed the Z-direction split signal: if two blobs are separated in Z, Z-stddev is large, and dividing by it compresses the separation. Now normalizes by the cell's effective radii (`effA`, `effB`, `effC`) instead. A non-splitting cell looks spherical in normalized space; a splitting cell shows elongation in the split direction.
+
+**File:** `C++/src/Cells/Spheroid.cpp`
+
+- **Lines 472-480:** Updated comment explaining the change from stddev to cell-radius normalization.
+
+- **Lines 493-498:** Replaced stddev computation with cell-radius normalization:
+
+  ```cpp
+  // Before:
+  float sx = 0, sy = 0, sz = 0;
+  // ... compute stddev from data ...
+  invSx = 1.0 / sx;  invSy = 1.0 / sy;  invSz = 1.0 / sz;
+
+  // After:
+  float invSx = (effA > 1e-6f) ? (1.0f / effA) : 1.0f;
+  float invSy = (effB > 1e-6f) ? (1.0f / effB) : 1.0f;
+  float invSz = (effC > 1e-6f) ? (1.0f / effC) : 1.0f;
+  ```
+
+- **Lines 540-542:** Eigenvector transform back to image space uses radii:
+
+  ```cpp
+  // Before:
+  ev_norm.x * sx, ev_norm.y * sy, ev_norm.z * sz
+  // After:
+  ev_norm.x * effA, ev_norm.y * effB, ev_norm.z * effC
+  ```
+
+- **Line 558:** Debug log changed `stddev=(...)` to `normRadii=(...)`.
+
+### Added PCA elongation ratio filter to skip non-splitting cells
+
+Phase 2 split detection now checks the PCA elongation ratio before running the expensive 500-iteration burn-in. Cells with nearly spherical bright pixel distributions (elongation ratio < threshold) are skipped, saving significant runtime.
+
+**File:** `C++/includes/ConfigTypes.hpp`
+
+- **Line 48:** Added `float split_elongation_threshold;` member to `ProbabilityConfig`
+- **Line 50:** Updated constructor initializer to include `split_elongation_threshold(1.3f)`
+- **Lines 63-65:** Added YAML parsing in `explodeConfig()`:
+
+  ```cpp
+  // Before: (no parsing)
+  // After:
+  if (node["split_elongation_threshold"]) {
+      split_elongation_threshold = node["split_elongation_threshold"].as<float>();
+  }
+  ```
+
+- **Line 71:** Added print in `printConfig()`:
+
+  ```cpp
+  // Before: (no print)
+  // After:
+  std::cout << "split_elongation_threshold: " << split_elongation_threshold << std::endl;
+  ```
+
+**File:** `C++/includes/Spheroid.hpp`
+
+- **Line 118:** Changed `getSplitCells` return type:
+
+  ```cpp
+  // Before:
+  std::tuple<Spheroid, Spheroid, bool> getSplitCells(...) const;
+  // After:
+  std::tuple<Spheroid, Spheroid, bool, float> getSplitCells(...) const;
+  ```
+
+**File:** `C++/src/Cells/Spheroid.cpp`
+
+- **Line 349:** Changed function signature to match new return type:
+
+  ```cpp
+  // Before:
+  std::tuple<Spheroid, Spheroid, bool> Spheroid::getSplitCells(...)
+  // After:
+  std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(...)
+  ```
+
+- **Line 462:** Declared outer `elongationRatio` variable before PCA branch:
+
+  ```cpp
+  // Before: (no variable)
+  // After:
+  float elongationRatio = 1.0f;
+  ```
+
+- **Line 529:** Changed from local declaration to assignment to outer variable:
+
+  ```cpp
+  // Before:
+  float elongationRatio = (lambda2 > 1e-6f) ? (lambda1 / lambda2) : 1.0f;
+  // After:
+  elongationRatio = (lambda2 > 1e-6f) ? (lambda1 / lambda2) : 1.0f;
+  ```
+
+- **Line 629:** Added `elongationRatio` to return tuple:
+
+  ```cpp
+  // Before:
+  return std::make_tuple(Spheroid(cell1), Spheroid(cell2), constraints);
+  // After:
+  return std::make_tuple(Spheroid(cell1), Spheroid(cell2), constraints, elongationRatio);
+  ```
+
+**File:** `C++/includes/Frame.hpp`
+
+- **Line 38:** Added threshold parameter to `trySplitCell()`:
+
+  ```cpp
+  // Before:
+  CostCallbackPair trySplitCell(size_t cellIndex, float preOptMajorR = 0.0f, float preOptMinorR = 0.0f);
+  // After:
+  CostCallbackPair trySplitCell(size_t cellIndex, float preOptMajorR = 0.0f, float preOptMinorR = 0.0f, float splitElongationThreshold = 1.3f);
+  ```
+
+**File:** `C++/src/Frame.cpp`
+
+- **Line 284:** Updated signature:
+
+  ```cpp
+  // Before:
+  CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float preOptMinorR)
+  // After:
+  CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float preOptMinorR, float splitElongationThreshold)
+  ```
+
+- **Lines 303-304:** Unpack 4th tuple element:
+
+  ```cpp
+  // Before:
+  bool valid;
+  std::tie(child1, child2, valid) = oldCell.getSplitCells(...)
+  // After:
+  bool valid;
+  float elongationRatio;
+  std::tie(child1, child2, valid, elongationRatio) = oldCell.getSplitCells(...)
+  ```
+
+- **Lines 312-317:** Added elongation ratio filter (after validity check, before burn-in):
+
+  ```cpp
+  // Before: (no filter)
+  // After:
+  if (splitElongationThreshold > 0.0f && elongationRatio < splitElongationThreshold) {
+      std::cout << "[Split Skip] " << oldCell.getCellParams().name
+                << " elongation_ratio=" << elongationRatio
+                << " < threshold=" << splitElongationThreshold << std::endl;
+      return {0.0, [](bool accept) {}};
+  }
+  ```
+
+**File:** `C++/src/Lineage.cpp`
+
+- **Line 276:** Pass threshold from config:
+
+  ```cpp
+  // Before:
+  auto result = frame.trySplitCell(idx, preOptMajorR, preOptMinorR);
+  // After:
+  auto result = frame.trySplitCell(idx, preOptMajorR, preOptMinorR, config.prob.split_elongation_threshold);
+  ```
+
+**File:** `C++/examples/config.yaml`
+
+- **Line 59:** Added parameter under `prob:` section:
+
+  ```yaml
+  # Before: (no entry)
+  # After:
+  split_elongation_threshold: 1.3 # skip split burn-in if PCA elongation ratio < this
+  ```
+
