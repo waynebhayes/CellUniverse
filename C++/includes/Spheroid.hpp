@@ -12,7 +12,9 @@
 #include <opencv2/imgproc.hpp>
 #include "Cell.hpp"
 #include "ConfigTypes.hpp"
+#ifndef M_PI
 #define M_PI 3.14159265358979323846
+#endif
 
 class SpheroidParams : public CellParams
 {

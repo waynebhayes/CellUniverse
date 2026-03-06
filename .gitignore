@@ -1,3 +1,21 @@
+# IDE setting
+# VSCode
+.vscode/
+
+# JetBrains IDEs (IntelliJ, PyCharm, CLion, WebStorm, etc.)
+.idea/
+
+# JetBrains module files
+*.iml
+
+# Eclipse (optional)
+.project
+.classpath
+.settings/
+
+# macOS Finder
+.DS_Store
+
 # Compiled source
 *.com
 *.class
