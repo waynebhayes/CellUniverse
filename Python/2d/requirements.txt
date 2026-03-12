@@ -50,6 +50,6 @@ sphinxcontrib-serializinghtml==1.1.4
 svgwrite==1.4.1
 tblib==1.6.0
 toolz==0.10.0
-tornado==6.5.1
+tornado==6.5.5
 urllib3==2.6.3
 zict==2.0.0
