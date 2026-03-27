@@ -75,7 +75,7 @@ std::vector<cv::Mat> Frame::generateSynthFrame()
         Image synthImage = cv::Mat(shape, CV_32F, cv::Scalar(simulationConfig.background_color)); // Assuming background color is in cv::Scalar format
         for (const auto &cell : cells)
         {
-            cell.printCellInfo();
+            // cell.printCellInfo();
             // cell.print();
             cell.draw(synthImage, simulationConfig, nullptr, z);
         }
@@ -175,7 +175,7 @@ std::vector<cv::Mat> Frame::generateOutputFrame()
         // Draw outlines for each cell
         for (const auto &cell : cells)
         {
-            cell.drawOutline(outputFrame, 0.5, z); // Assuming drawOutline takes a cv::Scalar for color
+            cell.drawOutline(outputFrame, 1.0, z); // Assuming drawOutline takes a cv::Scalar for color
         }
 
         // Convert to 8-bit image if necessary
@@ -281,7 +281,9 @@ CostCallbackPair Frame::split()
     return trySplitCell(index);
 }
 
-CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float preOptMinorR)
+CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float preOptMinorR,
+                                     float preOptX, float preOptY, float preOptZ,
+                                     float splitElongationThreshold)
 {
     if (index >= cells.size()) {
         return {0.0, [](bool accept) {}};
@@ -300,11 +302,19 @@ CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float pre
     Spheroid child1;
     Spheroid child2;
     bool valid;
-    std::tie(child1, child2, valid) = oldCell.getSplitCells(_realFrame, simulationConfig.z_scaling, neighborCenters, preOptMajorR, preOptMinorR);
+    float elongationRatio;
+    std::tie(child1, child2, valid, elongationRatio) = oldCell.getSplitCells(_realFrame, simulationConfig.z_scaling, neighborCenters, preOptMajorR, preOptMinorR, preOptX, preOptY, preOptZ);
     if (!valid)
     {
         std::cout << "[Split Skip] " << oldCell.getCellParams().name
                   << " getSplitCells returned invalid" << std::endl;
+        return {0.0, [](bool accept) {}};
+    }
+
+    if (splitElongationThreshold > 0.0f && elongationRatio < splitElongationThreshold) {
+        std::cout << "[Split Skip] " << oldCell.getCellParams().name
+                  << " elongation_ratio=" << elongationRatio
+                  << " < threshold=" << splitElongationThreshold << std::endl;
         return {0.0, [](bool accept) {}};
     }
 
@@ -341,20 +351,9 @@ CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float pre
         if (overlapDetected) break;
     }
 
-    // Check daughter-daughter overlap: daughters must be separated
-    if (!overlapDetected) {
-        cv::Point3f dd = cells[d1Idx].get_center() - cells[d2Idx].get_center();
-        float ddDist = std::sqrt(dd.x * dd.x + dd.y * dd.y + dd.z * dd.z);
-        auto p1 = cells[d1Idx].getCellParams();
-        auto p2 = cells[d2Idx].getCellParams();
-        float ddThresh = (p1.majorRadius + p2.majorRadius) * 0.5f;
-        if (ddDist < ddThresh) {
-            overlapDetected = true;
-            std::cout << "[Split Overlap] " << oldCell.getCellParams().name
-                      << " daughters too close: dist=" << ddDist
-                      << " thresh=" << ddThresh << std::endl;
-        }
-    }
+    // Daughter-daughter overlap check removed — let the cost function decide.
+    // If daughters are placed badly, burn-in won't improve the fit and
+    // costDiff will be positive, naturally rejecting the split.
 
     if (overlapDetected) {
         cells.pop_back();
@@ -371,7 +370,7 @@ CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float pre
     auto savedSynthFrame = _synthFrame;
     _synthFrame = bestSynthFrame;
 
-    const int BURN_IN_ITERATIONS = 300;
+    const int BURN_IN_ITERATIONS = 500;
     int accepted = 0;
     for (int iter = 0; iter < BURN_IN_ITERATIONS; ++iter) {
         size_t dIdx = (iter % 2 == 0) ? d1Idx : d2Idx;
@@ -379,30 +378,22 @@ CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float pre
         Spheroid saved = cells[dIdx];
         cells[dIdx] = cells[dIdx].getPerturbedCell();
 
-        // Check perturbed daughter against existing cells and sibling daughter
+        // Check perturbed daughter against existing cells (relaxed to 0.8× during
+        // burn-in so daughters near neighbors can still optimize their positions)
         bool burnInValid = true;
         for (size_t i = 0; i < d1Idx; ++i) {
             cv::Point3f diff = cells[i].get_center() - cells[dIdx].get_center();
             float dist = std::sqrt(diff.x * diff.x + diff.y * diff.y + diff.z * diff.z);
             auto pi = cells[i].getCellParams();
             auto pd = cells[dIdx].getCellParams();
-            if (dist < (pi.majorRadius + pd.majorRadius) * 0.95f &&
-                dist < (pi.minorRadius + pd.minorRadius) * 0.95f) {
+            if (dist < (pi.majorRadius + pd.majorRadius) * 0.8f &&
+                dist < (pi.minorRadius + pd.minorRadius) * 0.8f) {
                 burnInValid = false;
                 break;
             }
         }
-        // Check daughter-daughter: prevent siblings from collapsing together
-        if (burnInValid) {
-            size_t siblingIdx = (dIdx == d1Idx) ? d2Idx : d1Idx;
-            cv::Point3f dd = cells[dIdx].get_center() - cells[siblingIdx].get_center();
-            float ddDist = std::sqrt(dd.x * dd.x + dd.y * dd.y + dd.z * dd.z);
-            auto pd = cells[dIdx].getCellParams();
-            auto ps = cells[siblingIdx].getCellParams();
-            if (ddDist < (pd.majorRadius + ps.majorRadius) * 0.5f) {
-                burnInValid = false;
-            }
-        }
+        // Daughter-daughter check removed from burn-in — let the optimizer
+        // explore freely. Bad configurations are rejected by cost.
         if (!burnInValid) {
             cells[dIdx] = saved;
             continue;

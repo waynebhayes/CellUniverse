@@ -177,6 +177,14 @@ void Lineage::optimize(int frameIndex)
     }
 
     Frame &frame = frames[frameIndex];
+
+    // Regenerate _synthFrame so it reflects the current cells.
+    // After copyCellsForward(), _synthFrame is stale (background-only from
+    // the Frame constructor which received empty cells). Without this,
+    // Phase 1 compares perturbations against a no-cell baseline, causing
+    // any perturbation direction to be accepted during the bootstrap phase.
+    frame.regenerateSynthFrame();
+
     size_t totalIterations = frame.length() * config.simulation.iterations_per_cell;
     std::cout << "Total iterations: " << totalIterations << std::endl;
 
@@ -192,11 +200,13 @@ void Lineage::optimize(int frameIndex)
     struct PreOptShape {
         float majorR;
         float minorR;
+        float x, y, z;
     };
     std::map<std::string, PreOptShape> preOptShapes;
     for (const auto &cell : frame.cells) {
         auto params = cell.getCellParams();
-        preOptShapes[params.name] = {(float)params.majorRadius, (float)params.minorRadius};
+        preOptShapes[params.name] = {(float)params.majorRadius, (float)params.minorRadius,
+                                     params.x, params.y, params.z};
     }
 
     // ============================================================
@@ -265,15 +275,19 @@ void Lineage::optimize(int frameIndex)
         }
         if (idx == SIZE_MAX) continue;
 
-        // Look up pre-optimization radii for this cell
+        // Look up pre-optimization radii and position for this cell
         float preOptMajorR = 0.0f, preOptMinorR = 0.0f;
+        float preOptX = 0.0f, preOptY = 0.0f, preOptZ = 0.0f;
         auto it = preOptShapes.find(name);
         if (it != preOptShapes.end()) {
             preOptMajorR = it->second.majorR;
             preOptMinorR = it->second.minorR;
+            preOptX = it->second.x;
+            preOptY = it->second.y;
+            preOptZ = it->second.z;
         }
 
-        auto result = frame.trySplitCell(idx, preOptMajorR, preOptMinorR);
+        auto result = frame.trySplitCell(idx, preOptMajorR, preOptMinorR, preOptX, preOptY, preOptZ, config.prob.split_elongation_threshold);
         costDiff = result.first;
         std::function<void(bool)> callback = result.second;
 

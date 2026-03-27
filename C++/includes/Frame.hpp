@@ -35,7 +35,9 @@ public:
     size_t length() const;
     CostCallbackPair perturb();
     CostCallbackPair split();
-    CostCallbackPair trySplitCell(size_t cellIndex, float preOptMajorR = 0.0f, float preOptMinorR = 0.0f);
+    CostCallbackPair trySplitCell(size_t cellIndex, float preOptMajorR = 0.0f, float preOptMinorR = 0.0f,
+                                  float preOptX = 0.0f, float preOptY = 0.0f, float preOptZ = 0.0f,
+                                  float splitElongationThreshold = 1.3f);
     Cost gradientDescent();
     std::vector<cv::Mat> getSynthFrame();
     void regenerateSynthFrame() { _synthFrame = generateSynthFrame(); }

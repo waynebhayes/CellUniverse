@@ -40,7 +40,7 @@ cell:
   minMajorRadius: 15
   maxMajorRadius: 60
   minMinorRadius: 5
-  maxMinorRadius: 30
+  maxMinorRadius: 45
 
 # Simulation settings
 simulation:
@@ -56,6 +56,7 @@ prob:
   perturbation: 0.97
   split: 0.03
   split_cost: 1 # accpet more than -value
+  split_elongation_threshold: 4 # skip split burn-in if PCA elongation ratio < this
 #  combine: 0.1
 #  camera_shift: 0.0
 

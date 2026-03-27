@@ -47,7 +47,8 @@ public:
     float perturbation;
     float split;
     float split_cost;
-    ProbabilityConfig() : perturbation(0.0f), split(0.0f), split_cost(0.0f) {
+    float split_elongation_threshold;
+    ProbabilityConfig() : perturbation(0.0f), split(0.0f), split_cost(0.0f), split_elongation_threshold(1.3f) {
     }
 
     void explodeConfig(const YAML::Node& node) {
@@ -60,12 +61,16 @@ public:
         if (node["split_cost"]) {
             split_cost = node["split_cost"].as<float>();
         }
+        if (node["split_elongation_threshold"]) {
+            split_elongation_threshold = node["split_elongation_threshold"].as<float>();
+        }
     }
     void printConfig() {
         std::cout << "Probability Config\n";
         std::cout << "perturbation: " << perturbation << std::endl;
         std::cout << "split: " << split << std::endl;
         std::cout << "split_cost: " << split_cost << std::endl;
+        std::cout << "split_elongation_threshold: " << split_elongation_threshold << std::endl;
     }
 };
 

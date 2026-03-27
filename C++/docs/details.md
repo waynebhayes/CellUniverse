@@ -25,7 +25,7 @@ CellUniverse tracks 3D cells across time-lapse microscopy frames. For each frame
 The YAML config (e.g., `config.yaml`) is parsed into three sub-configs:
 
 - **SimulationConfig** (lines 10–43): `iterations_per_cell`, `background_color`, `cell_color`, `z_scaling`, `blur_sigma`, `z_slices`
-- **ProbabilityConfig** (lines 45–70): `perturbation`, `split`, `split_cost`
+- **ProbabilityConfig** (lines 45–73): `perturbation`, `split`, `split_cost`, `split_elongation_threshold`
 - **SpheroidConfig** (lines 130–172): Per-parameter perturbation settings (`x`, `y`, `z`, `majorRadius`, `minorRadius`, `thetaX`, `thetaY`, `thetaZ`) each with `prob`, `mu`, `sigma` plus global constraints (`minMajorRadius`, `maxMajorRadius`, `minMinorRadius`, `maxMinorRadius`)
 
 Each perturbation parameter has a `PerturbParams` struct (lines 81–104) with:
@@ -225,21 +225,35 @@ if any splits applied:
     Run 2 × iterations_per_cell × num_splits post-split perturbations
 ```
 
-### 6.2 `Frame::trySplitCell()` in `Frame.cpp` (lines 278–440)
+### 6.2 `Frame::trySplitCell()` in `Frame.cpp` (lines 284–440)
 
 The main split evaluation function. Takes a cell index and returns `{costDiff, callback}`.
 
-#### Step A: Get Split Geometry (lines 284–303)
+#### Step A: Get Split Geometry (lines 284–310)
 
 ```cpp
 // Collect neighbor cell centers (excluding the cell being split)
 neighborCenters = [center of every other cell]
 
 // Call PCA-based split detection
-(child1, child2, valid) = oldCell.getSplitCells(realFrame, z_scaling, neighborCenters)
+(child1, child2, valid, elongationRatio) = oldCell.getSplitCells(realFrame, z_scaling, neighborCenters)
 ```
 
 If `valid == false` (too few bright pixels or constraint failure), logs `[Split Skip]` and returns.
+
+#### Step A.5: Elongation Ratio Filter (lines 312–317)
+
+Before the expensive burn-in, check whether the PCA elongation ratio indicates a likely split:
+
+```
+if splitElongationThreshold > 0.0 AND elongationRatio < splitElongationThreshold:
+    Log "[Split Skip] <name> elongation_ratio=X < threshold=Y"
+    Return {0.0, no-op}
+```
+
+- `elongationRatio ≈ 1.0`: Spherical bright pixels → no split signal → skip
+- `elongationRatio > threshold (default 1.3)`: Elongated → proceed to burn-in
+- Setting `split_elongation_threshold: 0` in config disables the filter (old behavior)
 
 #### Step B: Overlap Checks (lines 305–358)
 
@@ -256,23 +270,16 @@ For each existing cell i, for each daughter d:
         OVERLAP → log "[Split Overlap] daughter c1/c2 overlaps with <cell>"
 ```
 
-**Daughter vs. daughter** (lines 344–357):
-```
-ddDist = ||center[d1] - center[d2]||
-ddThresh = (majorR[d1] + majorR[d2]) × 0.5
+**Daughter vs. daughter**: *(removed)* — the cost function handles this naturally. If daughters stack or collapse, the synthetic image won't match the real data and costDiff will be positive, rejecting the split.
 
-if ddDist < ddThresh:
-    OVERLAP → log "[Split Overlap] daughters too close"
-```
-
-If any overlap → revert and return `{0.0, no-op}`.
+If daughter-existing overlap → revert and return `{0.0, no-op}`.
 
 #### Step C: Burn-in Optimization (lines 360–416)
 
 300 iterations of alternating perturbation on daughter 1 and daughter 2:
 
 ```
-For iter = 0 to 299:
+For iter = 0 to 499:
     dIdx = (iter even) ? daughter1 : daughter2
 
     saved = cells[dIdx]
@@ -281,8 +288,7 @@ For iter = 0 to 299:
     // Check perturbed daughter against existing cells
     if overlap with any existing cell → revert
 
-    // Check perturbed daughter against sibling
-    if too close to sibling (< 0.5 × sum majorR) → revert
+    // Daughter-daughter check: removed (cost function decides)
 
     // Evaluate cost
     trialFrame = generateSynthFrameFast(saved, cells[dIdx])
@@ -313,17 +319,21 @@ return {costDiff, callback}
 
 ### 7.1 `Spheroid::getSplitCells()` in `Spheroid.cpp` (lines 249–499)
 
-This is the core algorithm that determines WHERE to place daughter cells. Returns `tuple<Spheroid, Spheroid, bool>`.
+This is the core algorithm that determines WHERE to place daughter cells. Returns `tuple<Spheroid, Spheroid, bool, float>` (daughters, validity, elongation ratio).
 
 #### Step 1: Define Search Area (lines 253–265)
 
 ```cpp
 maxR = max(majorRadius, majorRadius, minorRadius)  // = majorRadius for oblate
-splitSearchRadius = max(maxR × 2.0, 50.0)          // At least 50px
+splitSearchRadius = maxR × 3.0                     // Generous bounding box
 
-// 3D bounding box in image coordinates
-minX = max(0, floor(position.x - splitSearchRadius))
-maxX = min(cols-1, ceil(position.x + splitSearchRadius))
+// PCA center: use pre-opt position when available (Phase 1 may shift
+// the cell toward one blob, making PCA look spherical from that center)
+pcaCenter = (preOptMajorR > 0) ? preOptPosition : currentPosition
+
+// 3D bounding box centered at pcaCenter
+minX = max(0, floor(pcaCenter.x - splitSearchRadius))
+maxX = min(cols-1, ceil(pcaCenter.x + splitSearchRadius))
 // Same for Y, Z
 ```
 
@@ -344,21 +354,15 @@ meanBrightness = brightnessSum / count
 
 #### Step 3: Collect Bright Pixels (lines 297–344)
 
-Second pass: collect all bright pixels within an expanded boundary. These are the input to PCA.
+Second pass: collect all bright pixels within the bounding box. These are the input to PCA. No ellipsoidal boundary is applied — the bounding box (3×maxR) and neighbor exclusion naturally limit the area.
 
 ```
 For each pixel (x,y,z) in bounding box:
     if pixel_brightness ≤ meanBrightness: skip (background)
 
-    Transform to local frame: (lx,ly,lz) = inverseRotate(dx,dy,dz)
-
-    // Expanded ellipsoidal boundary using maxR for all axes
-    // Reaches 2×maxR in every direction (spherical in local space)
-    val = (lx² + ly² + lz²) / maxR²
-    if val > 4.0: skip (too far)
-
-    // Neighbor exclusion: skip if closer to another cell
-    distToSelf = dx² + dy² + dz²
+    // Neighbor exclusion: skip if closer to another cell than to pcaCenter
+    // (uses pre-opt position so distance is from original midpoint)
+    distToSelf = (x-pcaCenter.x)² + (y-pcaCenter.y)² + (z-pcaCenter.z)²
     for each neighbor center:
         distToNeighbor = (x-nc.x)² + (y-nc.y)² + (z-nc.z)²
         if distToNeighbor < distToSelf: skip (belongs to neighbor)
@@ -368,7 +372,7 @@ For each pixel (x,y,z) in bounding box:
 
 **Why this matters:**
 - The **brightness threshold** filters out dark background pixels, keeping only cell tissue
-- The **expanded boundary** (2×maxR) captures daughter blobs that extend beyond the parent cell's fitted boundary
+- The **bounding box** (3×maxR) sets the computational limit using pre-opt effective radii
 - The **neighbor exclusion** prevents bright pixels from adjacent cells from contaminating the PCA
 
 #### Step 4: PCA with Per-Axis Normalization (lines 346–426)
@@ -376,9 +380,9 @@ For each pixel (x,y,z) in bounding box:
 PCA (Principal Component Analysis) finds the direction of maximum spread in the point cloud. If the cell has split, the bright pixels form two clusters and PCA finds the axis connecting them.
 
 ```
-// Center the data: subtract cell position
+// Center the data: subtract pcaCenter (pre-opt position when available)
 For each point:
-    data[i] = (point.x - center.x, point.y - center.y, point.z - center.z)
+    data[i] = (point.x - pcaCenter.x, point.y - pcaCenter.y, point.z - pcaCenter.z)
 
 // Compute per-axis standard deviation
 sx = stddev of all x-values
@@ -416,8 +420,10 @@ Split the bright pixels into two groups and compute their centroids:
 ```
 // Volume conservation: each daughter has half the parent's volume
 volumeScale = ∛(0.5) ≈ 0.794
-daughterMajorR = parentMajorR × 0.794
-daughterMinorR = parentMinorR × 0.794
+effMajorR = max(currentMajorR, preOptMajorR)  // Use pre-Phase-1 size if larger
+effMinorR = max(currentMinorR, preOptMinorR)
+daughterMajorR = effMajorR × 0.794
+daughterMinorR = effMinorR × 0.794
 
 // Partition pixels by projection onto split axis
 For each bright pixel point:
@@ -550,8 +556,8 @@ file, name, x, y, z, majorRadius, minorRadius, theta_x, theta_y, theta_z
            ├── PCA SPLIT DETECTION
            │   Spheroid::getSplitCells() [Spheroid.cpp:249-499]
            │   ├── Compute mean brightness inside cell boundary
-           │   ├── Collect bright pixels in expanded search area
-           │   │   (2×maxR radius, skip neighbor-owned pixels)
+           │   ├── Collect bright pixels in bounding box
+           │   │   (3×maxR radius, brightness + neighbor filtering)
            │   ├── PCA with per-axis normalization
            │   │   → split_axis, elongation_ratio
            │   ├── Partition pixels by split axis → two groups
@@ -561,8 +567,7 @@ file, name, x, y, z, majorRadius, minorRadius, theta_x, theta_y, theta_z
            ├── OVERLAP CHECKS
            │   ├── Each daughter vs. all existing cells
            │   │   (threshold: 0.95 × sum of radii)
-           │   └── Daughter vs. daughter
-           │       (threshold: 0.5 × sum of major radii)
+           │   └── Daughter vs. daughter: removed (cost function decides)
            │
            ├── BURN-IN (300 iterations)
            │   ├── Alternate perturbing daughter 1 and daughter 2
@@ -593,13 +598,14 @@ file, name, x, y, z, majorRadius, minorRadius, theta_x, theta_y, theta_z
 
 | Constant | Value | Location | Purpose |
 |----------|-------|----------|---------|
-| `BURN_IN_ITERATIONS` | 300 | Frame.cpp:368 | Perturbations per daughter after split placement |
+| `BURN_IN_ITERATIONS` | 500 | Frame.cpp:363 | Perturbations per daughter after split placement |
 | `z_scaling` | 7 | config.yaml | Z-interpolation factor (33 → 225 slices) |
 | Daughter volume scale | ∛0.5 ≈ 0.794 | Spheroid.cpp:436 | Each daughter has ~half the parent volume |
 | Existing-cell overlap | 0.95 × sum | Frame.cpp:322 | Max overlap allowed with neighbors |
-| Daughter-daughter min sep | 0.5 × sum major | Frame.cpp:350 | Prevents daughters collapsing together |
-| Split search radius | 2×maxR (effective) | Spheroid.cpp:360 | PCA pixel collection area (uses pre-opt radii) |
-| Expanded boundary | val ≤ 4.0 (2×maxR) | Spheroid.cpp:321 | Ellipsoidal pixel inclusion limit |
+| Daughter-daughter min sep | *(removed)* | — | Removed: cost function handles this naturally |
+| Split search radius | 3×maxR (effective) | Spheroid.cpp:360 | PCA pixel collection bounding box (uses pre-opt radii) |
+| Expanded boundary | *(removed)* | — | Removed: bounding box + neighbor exclusion handle this |
+| Split elongation threshold | 1.3 (config) | Frame.cpp:312 | PCA elongation ratio below which burn-in is skipped |
 | Surface outline band | 0.95–1.05 | Spheroid.cpp:186 | Pixels drawn as cell outline |
 
 ---
