@@ -23,15 +23,13 @@ add_executable(${PROJECT_NAME}
         ${cwd}/src/Lineage.cpp
         ${cwd}/src/Frame.cpp
         ${cwd}/src/LineageViewer.cpp
-        ${cwd}/src/Cells/Sphere.cpp
-        ${cwd}/src/Cells/Spheroid.cpp
+        ${cwd}/src/Spheroid.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE
         ${OpenCV_INCLUDE_DIRS}
         ${cwd}/includes
         ${cwd}/src
-        ${cwd}/src/Cells
 )
 
 target_link_libraries(${PROJECT_NAME} ${OpenCV_LIBS})

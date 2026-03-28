@@ -1,0 +1,80 @@
+%%{init: {"theme":"default","class":{"hideEmptyMembersBox":false},"themeVariables":{"fontSize":"10px"}}}%%
+classDiagram
+direction TB
+
+class Cell {
+  +draw(image: cv::Mat&, simulationConfig: SimulationConfig, cellMap: cv::Mat*, z: float) const
+  +drawOutline(image: cv::Mat&, color: float, z: float) const
+  +getPerturbedCell() const Cell*
+  +getParameterizedCell(params: unordered_map~string,float~) const Cell*
+  +getSplitCells() const tuple~Cell*,Cell*,bool~
+  +getCellParams() const CellParams
+  +calculateCorners() const MinBox
+  +calculateMinimumBox(perturbed_cell: Cell&) const MinBox
+}
+
+class Bacilli {
+  -name: std::string
+  -position: Vector
+  -width: double
+  -length: double
+  -rotation: double
+  -opacity: double
+  -split_alpha: double
+  +_refresh() void
+  +draw() void
+  +drawOutline() void
+  +split(alpha: double) void
+  +combine(cell: Bacilli*) void
+}
+
+class CellParams {
+  +name: std::string
+}
+
+class SphereParams {
+  +x: float
+  +y: float
+  +z: float
+  +radius: float
+}
+
+class SpheroidParams {
+  +x: float
+  +y: float
+  +z: float
+  +radius: float
+  +a_axis: float
+  +b_axis: float
+  +c_axis: float
+}
+
+class PerturbParams {
+  +prob: float
+  +mu: float
+  +sigma: float
+  +explodeParams(node: YAML::Node) void
+  +getPerturbOffset() const float
+}
+
+class SphereConfig {
+  +x: PerturbParams
+  +y: PerturbParams
+  +z: PerturbParams
+  +radius: PerturbParams
+}
+
+class Vector {
+  +x: double
+  +y: double
+  +z: double
+  +operator+(other: Vector) const Vector
+  +operator+(val: double) const Vector
+  +dotProduct(other: Vector) const double
+}
+
+Cell <|-- Bacilli
+CellParams <|-- SphereParams
+CellParams <|-- SpheroidParams
+SphereConfig *-- PerturbParams
+Bacilli ..> Vector

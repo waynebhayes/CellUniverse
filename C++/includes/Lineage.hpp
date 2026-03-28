@@ -2,7 +2,6 @@
 #define LINEAGE_HPP
 
 #include <opencv2/opencv.hpp>
-#include "Cell.hpp"
 #include "ConfigTypes.hpp"
 #include "Frame.hpp"
 #include "types.hpp"

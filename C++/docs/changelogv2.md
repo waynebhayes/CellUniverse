@@ -1872,3 +1872,44 @@ Phase 2 split detection now checks the PCA elongation ratio before running the e
   split_elongation_threshold: 1.3 # skip split burn-in if PCA elongation ratio < this
   ```
 
+## 2026-03-27
+
+### Reorganized `examples/` into `config/`, `scripts/`, `data/`, `outputs/`
+
+Directory restructuring (no code changes, file moves only).
+
+**Moved to `C++/config/` (6 files):**
+- `examples/config.yaml` -> `config/config.yaml`
+- `examples/initial.csv` -> `config/initial.csv`
+- `examples/initial_auto.csv` -> `config/initial_auto.csv`
+- `examples/initial_embryo.csv` -> `config/initial_embryo.csv`
+- `examples/user_input_configurations.ini` -> `config/user_input_configurations.ini`
+- `examples/runauto.args` -> `config/runauto.args`
+
+**Moved to `C++/scripts/` (6 files):**
+- `examples/run_celluniverse.sh` -> `scripts/run_celluniverse.sh`
+- `examples/run_original.sh` -> `scripts/run_original.sh`
+- `examples/run_embryo.sh` -> `scripts/run_embryo.sh`
+- `examples/runauto.sh` -> `scripts/runauto.sh`
+- `examples/remove_old_outputs.sh` -> `scripts/remove_old_outputs.sh`
+- `examples/convert_png_to_tiff.py` -> `scripts/convert_png_to_tiff.py`
+
+**Moved to `C++/data/`:**
+- `examples/input/` -> `data/input/`
+
+**Moved to `C++/outputs/`:**
+- `examples/brightness_hist_*.svg`, `runtime_log` -> `outputs/`
+- Any `examples/output_*` directories -> `outputs/`
+
+**Removed:** `C++/examples/` (directory deleted)
+
+**Updated paths in `C++/config/user_input_configurations.ini`:**
+All preset sections updated:
+- `input_path`: prepended `../data/` (e.g., `input/original_data` -> `../data/input/original_data`)
+- `output_base_dir`: changed from `.` to `../outputs`
+- `build_dir`, `cell_config_file`, `initial_csv_file`, `cli_args_file`: unchanged (same relative depth)
+
+**Updated `C++/docs/details.md` section 11 (File Reference):**
+- `C++/examples/config.yaml` -> `C++/config/config.yaml`
+- `C++/examples/initial.csv` -> `C++/config/initial.csv`
+

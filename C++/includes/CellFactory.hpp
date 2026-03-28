@@ -11,7 +11,6 @@
 #include <fstream>
 #include <sstream>
 #include "ConfigTypes.hpp"
-#include "Cell.hpp"
 #include "Spheroid.hpp"
 #include "types.hpp"
 

@@ -1,0 +1,3 @@
+# Optional extra celluniverse arguments.
+# One argument per line. Lines starting with # are ignored.
+# Keep this file empty if no extra arguments are needed.

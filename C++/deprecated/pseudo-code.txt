@@ -1,0 +1,17 @@
+
+init internal state S
+optimize S frame 000
+for f in frames 001... 999
+    initialize frame f from state S of frame (f-1)
+    new state SS = optimize frame (S, f)
+end
+
+function optimize(state S, frame f)
+    choose method to use
+    switch(method) {
+    case HC: return Optimize_HC(S, f); break;
+    case SA: return Optimize_SA(S, f); break;
+    case GD: return Optimize_GD(S, f); break;
+    default:	error "unknown optim method"
+end function
+

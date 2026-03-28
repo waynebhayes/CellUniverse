@@ -2,7 +2,6 @@
 #ifndef FRAME_HPP
 #define FRAME_HPP
 
-#include "Cell.hpp"
 #include <vector>
 #include <string>
 #include <opencv2/opencv.hpp>
@@ -10,7 +9,6 @@
 #include "ConfigTypes.hpp"
 #include <random>
 #include <functional>
-#include "Sphere.hpp"
 #include "Spheroid.hpp"
 #include <opencv2/core/mat.hpp>
 
@@ -38,7 +36,6 @@ public:
     CostCallbackPair trySplitCell(size_t cellIndex, float preOptMajorR = 0.0f, float preOptMinorR = 0.0f,
                                   float preOptX = 0.0f, float preOptY = 0.0f, float preOptZ = 0.0f,
                                   float splitElongationThreshold = 1.3f);
-    Cost gradientDescent();
     std::vector<cv::Mat> getSynthFrame();
     void regenerateSynthFrame() { _synthFrame = generateSynthFrame(); }
     std::string getImageName() const { return imageName; }
@@ -53,7 +50,7 @@ private:
     std::vector<cv::Mat> _realFrameCopy; // copy of realFrame
     std::vector<cv::Mat> _synthFrame;
     cv::Size getImageShape();
-    Cost costOfPerturb(const std::string &perturbParam, float perturbVal, size_t index, const Cell &oldCell);
-    ParamImageMap getSynthPerturbedCells(size_t index, const ParamValMap &params, float perturbLength, const Cell &oldCell);
+    Cost costOfPerturb(const std::string &perturbParam, float perturbVal, size_t index);
+    ParamImageMap getSynthPerturbedCells(size_t index, const ParamValMap &params, float perturbLength);
 };
 #endif // FRAME_H

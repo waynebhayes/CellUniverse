@@ -1,0 +1,26 @@
+%%{init: {"theme":"default","class":{"hideEmptyMembersBox":false},"themeVariables":{"fontSize":"10px"}}}%%
+classDiagram
+
+direction TB
+
+class MainCpp {
+  +main(argc, argv)
+  +loadConfig(path, config)
+  +getImageFilePaths(input, firstFrame, lastFrame)
+}
+
+class ArgsMain
+class BaseConfig
+class SimulationConfig
+class CellFactory
+class Lineage
+class YAML
+class StdLib
+
+MainCpp ..> ArgsMain : parse argv
+MainCpp ..> BaseConfig : explodeConfig()/printConfig()
+MainCpp ..> SimulationConfig : read z_slices/z_scaling
+MainCpp ..> CellFactory : ctor + createCells()
+MainCpp ..> Lineage : ctor + loop calls
+MainCpp ..> YAML : LoadFile() in loadConfig()
+MainCpp ..> StdLib : stoi() + chrono_now()

@@ -93,7 +93,7 @@ For each z-slice (0 to 224):
         cell.draw(image, config, nullptr, z)
 ```
 
-### 3.2 `Spheroid::draw()` in `C++/src/Cells/Spheroid.cpp` (lines 113–157)
+### 3.2 `Spheroid::draw()` in `C++/src/Spheroid.cpp` (lines 113–157)
 
 Renders one spheroid into one z-slice. This is a **per-pixel analytical test** — no voxel matrix is stored.
 
@@ -617,12 +617,12 @@ file, name, x, y, z, majorRadius, minorRadius, theta_x, theta_y, theta_z
 | `C++/src/main.cpp` | Entry point, argument parsing, image loading |
 | `C++/src/Lineage.cpp` | Frame management, Phase 1 + Phase 2 optimization, I/O |
 | `C++/src/Frame.cpp` | Synthetic rendering, cost function, perturbation, split evaluation |
-| `C++/src/Cells/Spheroid.cpp` | Cell geometry, drawing, PCA split detection, perturbation |
+| `C++/src/Spheroid.cpp` | Cell geometry, drawing, PCA split detection, perturbation |
 | `C++/src/CellFactory.cpp` | CSV parsing, cell initialization |
 | `C++/includes/Lineage.hpp` | Lineage class declaration |
 | `C++/includes/Frame.hpp` | Frame class declaration |
 | `C++/includes/Spheroid.hpp` | Spheroid class + SpheroidParams declaration |
 | `C++/includes/ConfigTypes.hpp` | All config structs, YAML parsing |
 | `C++/includes/types.hpp` | Type aliases (Cost, CostCallbackPair, etc.) |
-| `C++/examples/config.yaml` | Runtime configuration |
-| `C++/examples/initial.csv` | Initial cell positions and shapes |
+| `C++/config/config.yaml` | Runtime configuration |
+| `C++/config/initial.csv` | Initial cell positions and shapes |

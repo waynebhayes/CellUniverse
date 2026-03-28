@@ -1,0 +1,483 @@
+classDiagram
+direction LR
+
+%% ============================================================
+%% CURRENT STATE — verified against actual source code 2026-03-27
+%% Branch: jh-split-fix-03042026
+%% ============================================================
+
+class CellParams {
+  +string name
+  +CellParams(name)
+}
+
+class SphereParams {
+  +float x
+  +float y
+  +float z
+  +float radius
+  +SphereParams()
+  +SphereParams(name, x, y, z, radius)
+}
+
+class SpheroidParams {
+  +float x
+  +float y
+  +float z
+  +vector~float~ x_vec
+  +vector~float~ y_vec
+  +vector~float~ z_vec
+  +float majorRadius
+  +float minorRadius
+  +float theta_x
+  +float theta_y
+  +float theta_z
+  +float brightness
+  +SpheroidParams()
+  +SpheroidParams(name, x, y, z, majorRadius, minorRadius)
+  +SpheroidParams(name, x, y, z, majorRadius, minorRadius, theta_x, theta_y, theta_z)
+  +SpheroidParams(name, x, y, z, x_vec, y_vec, z_vec)
+  +parseParams(x, y, z, x_vec, y_vec, z_vec)
+}
+
+class Vector {
+  <<orphaned - mathhelper.hpp>>
+  +double x
+  +double y
+  +double z
+  +Vector()
+  +Vector(x, y, z)
+  +operator+(other)
+  +operator+(val)
+  +dotProduct(other)
+}
+
+class Cell {
+  <<abstract - VESTIGIAL>>
+  +Cell()
+  +~Cell()
+  +draw(image, simulationConfig, cellMap, z)*
+  +drawOutline(image, color, z)*
+  +getPerturbedCell() Cell**
+  +getParameterizedCell(params) Cell**
+  +getSplitCells() tuple~Cell* Cell* bool~*
+  +getCellParams() CellParams*
+  +checkIfCellsValid(cells)$
+  +calculateCorners()*
+  +calculateMinimumBox(perturbed_cell)*
+}
+
+class SimulationConfig {
+  +int iterations_per_cell
+  +float background_color
+  +float cell_color
+  +int padding
+  +float z_scaling
+  +float blur_sigma
+  +float sigmoid_k
+  +float sigmoid_center
+  +float sigmoid_center_offset
+  +int z_slices
+  +vector~int~ z_values
+  +int calibration_x
+  +int calibration_y
+  +int calibration_z
+  +int calibration_width
+  +int calibration_height
+  +SimulationConfig()
+  +explodeConfig(node)
+  +printConfig()
+}
+
+class ProbabilityConfig {
+  +float perturbation
+  +float split
+  +float split_cost
+  +float split_elongation_threshold
+  +float min_relative_split_gain_base
+  +float min_relative_split_gain_strict
+  +float phase1_accept_rate_threshold
+  +float strong_split_cost_multiplier
+  +float strong_split_min_aspect_ratio
+  +float brightness_update_ema_alpha
+  +float max_volume_growth_from_initial
+  +bool enable_brightness_recovery
+  +float nonsplit_shrink_trigger_ratio
+  +float nonsplit_recover_target_ratio
+  +float split_shrink_trigger_ratio
+  +float split_recover_target_ratio
+  +float brightness_retry_step
+  +int brightness_retry_max_attempts
+  +int brightness_retry_iters_per_attempt
+  +float brightness_retry_background_margin
+  +float brightness_recovery_floor
+  +float min_split_brightness
+  +float nonsplit_expand_trigger_ratio
+  +float nonsplit_expand_target_ratio
+  +ProbabilityConfig()
+  +explodeConfig(node)
+  +printConfig()
+}
+
+class PerturbParams {
+  +float prob
+  +float mu
+  +float sigma
+  +explodeParams(node)
+  +getPerturbOffset()
+}
+
+class CellConfig {
+  <<abstract>>
+  +explodeConfig(node)*
+  +~CellConfig()
+}
+
+class SphereConfig {
+  +PerturbParams x
+  +PerturbParams y
+  +PerturbParams z
+  +PerturbParams radius
+  +double minRadius
+  +double maxRadius
+  +double boundingBoxScale
+  +explodeConfig(node)
+  +~SphereConfig()
+}
+
+class SpheroidConfig {
+  +PerturbParams x
+  +PerturbParams y
+  +PerturbParams z
+  +PerturbParams majorRadius
+  +PerturbParams minorRadius
+  +PerturbParams thetaX
+  +PerturbParams thetaY
+  +PerturbParams thetaZ
+  +double minMajorRadius
+  +double maxMajorRadius
+  +double minMinorRadius
+  +double maxMinorRadius
+  +explodeConfig(node)
+  +~SpheroidConfig()
+}
+
+class BaseConfig {
+  +string cellType
+  +SpheroidConfig* cell
+  +SimulationConfig simulation
+  +ProbabilityConfig prob
+  +BaseConfig()
+  +operator=(other)
+  +BaseConfig(other)
+  +~BaseConfig()
+  +explodeConfig(node)
+  +printConfig()
+}
+
+class Sphere {
+  <<DEAD - compiled but never instantiated>>
+  -string _name
+  -Point3f _position
+  -double _radius
+  -double _rotation
+  -bool dormant
+  +SphereConfig cellConfig$
+  +Sphere(init_props)
+  +Sphere()
+  +printCellInfo()
+  +getRadiusAt(z)
+  +draw(image, simulationConfig, cellMap, z)
+  +drawOutline(image, color, z)
+  +getPerturbedCell() Sphere
+  +getParameterizedCell(params) Sphere
+  +performPCA(pts, frame)
+  +calculateContours(subTiffSlices, contours3D)$
+  +getSplitCells(realTiffSlices) tuple~Sphere Sphere bool~
+  +checkConstraints() bool
+  +getCellParams() CellParams
+  +calculateCorners()
+  +checkIfCellsValid(spheres) bool
+  +calculateMinimumBox(perturbed_cell)
+  +checkIfCellsOverlap(spheres)$ bool
+}
+
+class Spheroid {
+  -string _name
+  -vector~double~ _x_vec
+  -vector~double~ _y_vec
+  -vector~double~ _z_vec
+  -Point3f _position
+  -double _major_radius
+  -double _minor_radius
+  -double _rotation
+  -double a
+  -double b
+  -double c
+  -double _theta_x
+  -double _theta_y
+  -double _theta_z
+  -float _brightness
+  -float _brightnessMin
+  -float _brightnessMax
+  -bool _brightnessInitialized
+  -bool dormant
+  +SpheroidParams paramClass$
+  +SpheroidConfig cellConfig$
+  +Spheroid(init_props)
+  +Spheroid()
+  +printCellInfo()
+  +getShapeAt(z)
+  +draw(image, simulationConfig, cellMap, z)
+  +drawOutline(image, color, z)
+  +getPerturbedCell() Spheroid
+  +getParameterizedCell(params) Spheroid
+  +getSplitCells(image, z_scaling, neighborCenters, preOptMajorR, preOptMinorR, preOptX, preOptY, preOptZ, frameBackground) tuple~Spheroid Spheroid bool float~
+  +estimateBrightnessFromFrame(frame) float
+  +setBrightness(brightness, updateHistory)
+  +getBrightness() float
+  +getBrightnessMin() float
+  +getBrightnessMax() float
+  +hasBrightnessHistory() bool
+  +performPCA(points)
+  +checkConstraints() bool
+  +getCellParams() SpheroidParams
+  +calculateCorners()
+  +checkIfCellsValid(spheroids) bool
+  +calculateMinimumBox(perturbed_cell)
+  +checkIfCellsOverlap(spheroids)$ bool
+  +major_magnitude() float
+  +minor_magnitude() float
+  +get_center() Point3f
+  +print()
+  +get_matrix_size() int
+  -inverseRotatePoint(dx, dy, dz, lx, ly, lz)
+  -generateInverseRotationMatrix(R_T)
+  -computeSliceBounds(image, z, minX, maxX, minY, maxY)
+}
+
+class SpheroidScanHelpers {
+  <<anonymous namespace>>
+  +scanSpheroidSlice(...)$
+  +scanSpheroidVolume(...)$
+  +alwaysFalseV$
+  +_get_magnitude(vec)$
+}
+
+class Bacilli {
+  <<DEAD - never compiled>>
+  -string name
+  -Vector position
+  -double width
+  -double length
+  -double rotation
+  -double opacity
+  -double split_alpha
+  -bool _needs_refresh
+  -bool dormant
+  +Bacilli(name, x, y, width, length, rotation, split_alpha, opacity)
+  +_refresh()
+  +draw(image, cell_map, is_cell, background_color, cell_color, simulation_config)
+  +draw_outline(image, color)
+  +split(alpha)
+  +combine(cell)
+  +toString()
+}
+
+class FrameSupport {
+  <<module>>
+  +interpolateSlices(slice1, slice2, processedSlices, numInterpolations)$
+}
+
+class Frame {
+  +vector~Spheroid~ cells
+  -vector~double~ z_slices
+  -SimulationConfig simulationConfig
+  -string outputPath
+  -string imageName
+  -vector~Mat~ _realFrame
+  -vector~Mat~ _realFrameCopy
+  -vector~Mat~ _synthFrame
+  +Frame(realFrame, simulationConfig, cells, outputPath, imageName)
+  +padRealFrame()
+  +generateSynthFrame()
+  +generateSynthFrameFast(oldCell, newCell)
+  +calculateCost(synthFrame) Cost
+  +generateOutputFrame()
+  +generateOutputSynthFrame()
+  +length() size_t
+  +perturb() CostCallbackPair
+  +split() CostCallbackPair
+  +trySplitCell(index, preOptMajorR, preOptMinorR, preOptX, preOptY, preOptZ, splitElongationThreshold) CostCallbackPair
+  +gradientDescent() Cost
+  +getSynthFrame()
+  +getRealFrame()
+  +getBackgroundColor() float
+  +regenerateSynthFrame()
+  +getImageName() string
+  -getImageShape()
+  -costOfPerturb(perturbParam, perturbVal, index, oldCell~const Cell ref~) Cost
+  -getSynthPerturbedCells(index, params, perturbLength, oldCell~const Cell ref~) ParamImageMap
+}
+
+class LineageFreeFunctions {
+  <<module>>
+  +processImage(image, config)$
+  +loadFrame(imageFile, config)$
+}
+
+class Lineage {
+  -BaseConfig config
+  -vector~Frame~ frames
+  -string outputPath
+  -int firstFrame
+  -map~string_double~ referenceVolumes
+  +Lineage(initialCells, imagePaths, config, outputPath, firstFrame, continueFrom)
+  +optimize(frameIndex)
+  +saveImages(frameIndex)
+  +saveCells(frameIndex)
+  +copyCellsForward(to)
+  +length() int
+  +getCells(frameIndex)
+  +getCellNames(frameIndex)
+  +updateFrameCellBrightness(frameIndex)
+  +initializeBrightnessFromGroundTruth(frameIndex)
+}
+
+class CellFactory {
+  +CellFactory(config)
+  +createCells(init_params_path, z_offset, z_scaling) map~Path_vector~Spheroid~~
+}
+
+class LineageViewer {
+  +LineageViewer()
+  +update(frameIndex, cells)
+  +close()
+  -isDaughterName(name)$
+  -parentNameOf(name)$
+  -colorFromPalette(idx)$
+  -lighten(bgr, amount01)$
+  -ensureNodeExists(rawName)
+  -render2D(frameIndex, cells)
+  -unordered_map~string_Node~ nodesByRaw
+  -unordered_map~string_int~ rootIndexByRaw
+  -int nextRootIndex
+  -bool windowReady
+  -string windowName
+}
+
+class CellViz {
+  +string rawName
+  +float x
+  +float y
+}
+
+class ViewerNode {
+  +string rawName
+  +string parentRaw
+  +string shortLabel
+  +Scalar colorBGR
+  +bool isRoot
+}
+
+class MainModule {
+  <<module>>
+  +updateTiffConfigIfNeeded(file, config)$
+  +getImageFilePaths(input, firstFrame, lastFrame, config)$
+  +loadConfig(path, config)$
+  +main(argc, argv)$
+}
+
+class LegacyCliArgs {
+  <<DEAD - args.cpp not compiled>>
+  +string input
+  +path output
+  +int first_frame
+  +int last_frame
+  +int workers
+  +postInit()
+}
+
+%% ============================================================
+%% RELATIONSHIPS
+%% ============================================================
+
+%% Param inheritance
+CellParams <|-- SphereParams
+CellParams <|-- SpheroidParams
+
+%% Config inheritance
+CellConfig <|-- SphereConfig
+CellConfig <|-- SpheroidConfig
+
+%% Cell inheritance (only Bacilli — Sphere/Spheroid do NOT inherit)
+Cell <|-- Bacilli : only inheritor
+
+%% Composition
+BaseConfig *-- SimulationConfig
+BaseConfig *-- ProbabilityConfig
+BaseConfig o-- SpheroidConfig : cell (pointer)
+SphereConfig *-- PerturbParams
+SpheroidConfig *-- PerturbParams
+
+%% Spheroid dependencies
+Spheroid ..> SpheroidConfig : static config
+Spheroid ..> SpheroidParams : static paramClass
+Spheroid ..> SimulationConfig
+Spheroid ..> SpheroidScanHelpers
+
+%% Sphere dependencies (DEAD but compiled)
+Sphere ..> SphereConfig : static config
+Sphere ..> SphereParams
+Sphere ..> SimulationConfig
+
+%% Bacilli dependencies (DEAD)
+Bacilli ..> Vector
+
+%% Frame dependencies
+Frame *-- "0..*" Spheroid : cells
+Frame *-- SimulationConfig
+Frame ..> FrameSupport
+Frame ..> Spheroid
+Frame ..> Cell : dead ref in costOfPerturb/getSynthPerturbedCells signatures
+
+%% Lineage dependencies
+Lineage *-- "0..*" Frame
+Lineage *-- BaseConfig
+Lineage ..> LineageFreeFunctions
+Lineage ..> Spheroid
+
+%% CellFactory dependencies
+CellFactory ..> BaseConfig
+CellFactory ..> Spheroid
+CellFactory ..> SpheroidParams
+
+%% LineageViewer (standalone)
+LineageViewer *-- "0..*" ViewerNode : nodesByRaw
+LineageViewer ..> CellViz
+
+%% Main dependencies
+MainModule ..> BaseConfig
+MainModule ..> CellFactory
+MainModule ..> Lineage
+MainModule ..> LineageViewer
+
+%% Free functions
+LineageFreeFunctions ..> BaseConfig
+LineageFreeFunctions ..> FrameSupport
+
+%% ============================================================
+%% NOTES
+%% ============================================================
+
+note for Cell "VESTIGIAL abstract base class.\nSphere and Spheroid do NOT inherit it.\nOnly Bacilli inherits (but Bacilli is dead code).\nIncluded by 4 files but provides nothing they use.\nCellParams is in ConfigTypes.hpp, not here."
+
+note for Spheroid "STANDALONE class — does NOT inherit Cell.\nSrc: src/Cells/Spheroid.cpp\nHdr: includes/Spheroid.hpp\nIncludes Cell.hpp unnecessarily."
+
+note for Sphere "DEAD CODE — compiled via CMakeLists but\nnever instantiated. CellFactory only creates\nSpheroid. Does NOT inherit Cell."
+
+note for Bacilli "DEAD CODE — not in CMakeLists.txt.\nReferences undefined Rectangle class.\nWould not compile."
+
+note for Frame "costOfPerturb and getSynthPerturbedCells\ntake const Cell& oldCell but NEVER USE IT.\ngradientDescent() entirely commented out\n(80 lines of dead code in Frame.cpp:491-571)."
+
+note for Vector "ORPHANED — defined in mathhelper.hpp\nbut not included by any active file."
