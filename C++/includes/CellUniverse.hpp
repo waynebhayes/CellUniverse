@@ -1,5 +1,5 @@
-#ifndef LINEAGE_HPP
-#define LINEAGE_HPP
+#ifndef CELLUNIVERSE_HPP
+#define CELLUNIVERSE_HPP
 
 #include <opencv2/opencv.hpp>
 #include "ConfigTypes.hpp"
@@ -21,15 +21,15 @@ namespace fs = std::filesystem;
 Image processImage(const Image &image, const BaseConfig &config);
 std::vector<cv::Mat> loadFrame(const std::string &imageFile, const BaseConfig &config);
 
-class Lineage
+class CellUniverse
 {
 public:
-    Lineage(std::map<std::string, std::vector<Spheroid>> initialCells,
-            PathVec imagePaths,
-            BaseConfig &config,
-            std::string outputPath,
-            int firstFrame = 0,
-            int continueFrom = -1);
+    CellUniverse(std::map<std::string, std::vector<Spheroid>> initialCells,
+                 PathVec imagePaths,
+                 BaseConfig &config,
+                 std::string outputPath,
+                 int firstFrame = 0,
+                 int continueFrom = -1);
 
     void optimize(int frameIndex);
     void saveImages(int frameIndex);

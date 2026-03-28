@@ -1,4 +1,4 @@
-#include "../includes/Lineage.hpp"
+#include "../includes/CellUniverse.hpp"
 
 namespace utils
 {
@@ -139,12 +139,12 @@ std::vector<cv::Mat> loadFrame(const std::string &imageFile, const BaseConfig &c
 }
 
 
-Lineage::Lineage(std::map<std::string, std::vector<Spheroid>> initialCells,
-                 PathVec imagePaths,
-                 BaseConfig &config,
-                 std::string outputPath,
-                 int firstFrame,
-                 int continueFrom)
+CellUniverse::CellUniverse(std::map<std::string, std::vector<Spheroid>> initialCells,
+                           PathVec imagePaths,
+                           BaseConfig &config,
+                           std::string outputPath,
+                           int firstFrame,
+                           int continueFrom)
 : config(config), outputPath(outputPath), firstFrame(firstFrame)
 {
     for (size_t i = 0; i < imagePaths.size(); ++i)
@@ -169,7 +169,7 @@ Lineage::Lineage(std::map<std::string, std::vector<Spheroid>> initialCells,
         }
     }
 }
-void Lineage::optimize(int frameIndex)
+void CellUniverse::optimize(int frameIndex)
 {
     if (frameIndex < 0 || static_cast<size_t>(frameIndex) >= frames.size())
     {
@@ -334,7 +334,7 @@ void Lineage::optimize(int frameIndex)
     }
 }
 
-void Lineage::saveImages(int frameIndex)
+void CellUniverse::saveImages(int frameIndex)
 {
     if (frameIndex < 0 || static_cast<size_t>(frameIndex) >= frames.size())
     {
@@ -373,7 +373,7 @@ void Lineage::saveImages(int frameIndex)
     std::cout << "Done" << std::endl;
 }
 
-void Lineage::saveCells(int frameIndex)
+void CellUniverse::saveCells(int frameIndex)
 {
     std::string cellsPath = outputPath + "/cells.csv";
     bool fileExists = std::filesystem::exists(cellsPath);
@@ -418,7 +418,7 @@ void Lineage::saveCells(int frameIndex)
               << " to " << cellsPath << std::endl;
 }
 
-void Lineage::copyCellsForward(int to)
+void CellUniverse::copyCellsForward(int to)
 {
     if (to >= frames.size())
     {
@@ -428,21 +428,21 @@ void Lineage::copyCellsForward(int to)
     frames[to].cells = frames[to - 1].cells;
 }
 
-unsigned int Lineage::length()
+unsigned int CellUniverse::length()
 {
     return frames.size();
 }
 
-const std::vector<Spheroid> &Lineage::getCells(int frameIndex) const
+const std::vector<Spheroid> &CellUniverse::getCells(int frameIndex) const
 {
     if (frameIndex < 0 || static_cast<size_t>(frameIndex) >= frames.size())
     {
-        throw std::invalid_argument("Lineage::getCells - invalid frameIndex");
+        throw std::invalid_argument("CellUniverse::getCells - invalid frameIndex");
     }
     return frames[frameIndex].cells;
 }
 
-std::vector<std::string> Lineage::getCellNames(int frameIndex) const
+std::vector<std::string> CellUniverse::getCellNames(int frameIndex) const
 {
     const auto &cells = getCells(frameIndex);
     std::vector<std::string> names;

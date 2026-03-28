@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "Lineage.hpp"
+#include "CellUniverse.hpp"
 
 namespace {
 BaseConfig MakeConfig(float backgroundColor = 0.2f) {

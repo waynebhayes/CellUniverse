@@ -7,7 +7,7 @@ C++/
   config/         # config.yaml, initial.csv, user_input_configurations.ini
   scripts/        # run_celluniverse.sh and other shell scripts
   data/input/     # input images (original_data, etc.)
-  src/            # source files (main.cpp, Lineage.cpp, Spheroid.cpp, Frame.cpp, ...)
+  src/            # source files (main.cpp, CellUniverse.cpp, Spheroid.cpp, Frame.cpp, ...)
   includes/       # header files
   lib/            # external libraries (yaml-cpp)
   build/          # cmake build output

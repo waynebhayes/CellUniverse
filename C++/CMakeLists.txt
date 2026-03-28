@@ -20,7 +20,7 @@ set(cwd ${CMAKE_CURRENT_SOURCE_DIR})
 add_executable(${PROJECT_NAME}
         ${cwd}/src/main.cpp
         ${cwd}/src/CellFactory.cpp
-        ${cwd}/src/Lineage.cpp
+        ${cwd}/src/CellUniverse.cpp
         ${cwd}/src/Frame.cpp
         ${cwd}/src/LineageViewer.cpp
         ${cwd}/src/Spheroid.cpp

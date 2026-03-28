@@ -7,7 +7,7 @@
 #include "CellFactory.hpp"
 #include "yaml-cpp/yaml.h"
 #include "Spheroid.hpp"
-#include "Lineage.hpp"
+#include "CellUniverse.hpp"
 #include <chrono>
 #include <algorithm>
 
@@ -212,7 +212,7 @@ int main(int argc, char *argv[])
     std::map<Path, std::vector<Spheroid>> cells = cellFactory.createCells(args.initial, config.simulation.z_slices / 2,
                                                                         config.simulation.z_scaling);
     // create lineage
-    Lineage lineage = Lineage(cells, imageFilePaths, config, args.output, args.firstFrame, args.continueFrom);
+    CellUniverse lineage = CellUniverse(cells, imageFilePaths, config, args.output, args.firstFrame, args.continueFrom);
 
     LineageViewer viewer;
 

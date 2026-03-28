@@ -25,7 +25,7 @@ add_executable(core_unit_test
         spheroid_params_test.cc
         spheroid_rotation_test.cc
         ${CMAKE_SOURCE_DIR}/src/Frame.cpp
-        ${CMAKE_SOURCE_DIR}/src/Lineage.cpp
+        ${CMAKE_SOURCE_DIR}/src/CellUniverse.cpp
         ${CMAKE_SOURCE_DIR}/src/Spheroid.cpp
 )
 
