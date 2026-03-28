@@ -17,7 +17,8 @@
 class CellFactory {
 public:
     explicit CellFactory(const BaseConfig& config);
-    std::map<Path, std::vector<Spheroid>> createCells(const Path &init_params_path, int z_offset = 0, float z_scaling = 1.0);
+    std::map<Path, std::vector<Spheroid>> createCells(const Path &init_params_path, int z_offset = 0, float z_scaling = 1.0,
+                                                      const std::string& firstFrameFile = "");
 };
 
 

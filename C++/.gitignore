@@ -1,8 +1,8 @@
 *.tif
-*.yaml
 *.ini
 
 !src/
+!scripts/
 # Ignore all generated output folders
 examples/output/
 examples/output_*/

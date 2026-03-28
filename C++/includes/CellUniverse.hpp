@@ -19,7 +19,7 @@
 namespace fs = std::filesystem;
 
 Image processImage(const Image &image, const BaseConfig &config);
-std::vector<cv::Mat> loadFrame(const std::string &imageFile, const BaseConfig &config);
+std::vector<cv::Mat> loadFrame(const std::string &imageFile, BaseConfig &config);
 
 class CellUniverse
 {
@@ -34,7 +34,7 @@ public:
     void optimize(int frameIndex);
     void saveImages(int frameIndex);
     void saveCells(int frameIndex);
-    void copyCellsForward(int to);
+    void copyCellsForward(size_t to);
     unsigned int length();
 
     // ---- Added for realtime viewer ----
@@ -46,6 +46,7 @@ private:
    std::vector<Frame> frames;
    std::string outputPath;
    int firstFrame;
+   std::map<std::string, float> previousElongations;  // PCA elongation from previous frame, drives P(split)
 };
 
 #endif

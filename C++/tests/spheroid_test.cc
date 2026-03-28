@@ -42,19 +42,9 @@ TEST(SpheroidTest, DrawColorsCenterPixelAndLeavesFarPixelUnchanged) {
     cv::Mat image(21, 21, CV_32F, cv::Scalar(simulationConfig.background_color));
     Spheroid spheroid(SpheroidParams("cellC", 10.0f, 10.0f, 0.0f, 3.0f, 3.0f));
 
-    spheroid.draw(image, simulationConfig, nullptr, 0.0f);
+    spheroid.draw(image, simulationConfig, 0.0f);
 
     EXPECT_NEAR(image.at<float>(10, 10), simulationConfig.cell_color, 1e-6f);
     EXPECT_NEAR(image.at<float>(0, 0), simulationConfig.background_color, 1e-6f);
 }
 
-TEST(SpheroidTest, DetectsOverlapAndNonOverlap) {
-    ConfigureSpheroidBounds();
-
-    Spheroid nearA(SpheroidParams("nearA", 0.0f, 0.0f, 0.0f, 3.0f, 3.0f));
-    Spheroid nearB(SpheroidParams("nearB", 2.0f, 0.0f, 0.0f, 3.0f, 3.0f));
-    Spheroid farB(SpheroidParams("farB", 50.0f, 0.0f, 0.0f, 3.0f, 3.0f));
-
-    EXPECT_TRUE(Spheroid::checkIfCellsOverlap({nearA, nearB}));
-    EXPECT_FALSE(Spheroid::checkIfCellsOverlap({nearA, farB}));
-}

@@ -1,0 +1,71 @@
+cellType: spheroid
+
+# Cell settings — perturbation parameters for each dimension
+cell:
+  x:
+    prob: 0.45
+    mu: 0
+    sigma: 5
+  y:
+    prob: 0.45
+    mu: 0
+    sigma: 5
+  z:
+    prob: 0.35
+    mu: 0
+    sigma: 8
+  majorRadius:
+    prob: 0.2
+    mu: 0
+    sigma: 2
+  minorRadius:
+    prob: 0.2
+    mu: 0
+    sigma: 2
+  thetaX:
+    prob: 0.3
+    mu: 0
+    sigma: 0.1
+  thetaY:
+    prob: 0.3
+    mu: 0
+    sigma: 0.1
+  thetaZ:
+    prob: 0.3
+    mu: 0
+    sigma: 0.1
+  brightness:
+    prob: 0  # not perturbed — fixed from initial measurement
+    mu: 0
+    sigma: 0
+  minMajorRadius: 10
+  maxMajorRadius: 40
+  minMinorRadius: 5
+  maxMinorRadius: 35
+  minBrightness: 0.15
+  maxBrightness: 0.95
+
+# Simulation settings
+simulation:
+  iterations_per_cell: 350
+  background_color: 0.0  # post-sigmoid background is near 0
+  cell_color: 1.0        # post-sigmoid cells are near 1
+  z_scaling: 7
+  blur_sigma: 10.0  # heavy blur before sigmoid (matches working 0303 run)
+  sigmoid_k: 75.0
+  sigmoid_center: 0.445
+  sigmoid_center_offset: 0.047
+  calibration_x: 20
+  calibration_y: 20
+  calibration_z: 0
+  calibration_width: 50
+  calibration_height: 31
+
+# Probability of changes
+prob:
+  split: 0.03
+  split_cost: 20
+  split_elongation_threshold: 1.5
+  overlap_penalty_weight: 1000.0
+  split_burn_in_iterations: 500
+  max_split_probability: 0.5

@@ -87,14 +87,7 @@ void scanSpheroidVolume(
 }
 } // namespace
 
-SpheroidParams Spheroid::paramClass = SpheroidParams();
 SpheroidConfig Spheroid::cellConfig = SpheroidConfig();
-
-
-
-static double _get_magnitude(std::vector<double> vec){
-    return std::sqrt((vec[0]*vec[0])+(vec[1]*vec[1])+(vec[2]*vec[2]));
-}
 
 // ---- INVERSE ROTATION ----
 // Transforms a world-space displacement vector back into the spheroid's 
@@ -137,15 +130,15 @@ void Spheroid::generateInverseRotationMatrix(std::array<double, 9> &R_T) const {
 
 bool Spheroid::computeSliceBounds(const cv::Mat &image, float z,
                                   int &minX, int &maxX, int &minY, int &maxY) const {
-    float maxR = std::max({(float)a, (float)b, (float)c});
+    float maxR = std::max({static_cast<float>(a), static_cast<float>(b), static_cast<float>(c)});
     if (std::abs(z - _position.z) > maxR) {
         return false;
     }
 
-    minX = std::max(0, (int)std::floor(_position.x - maxR));
-    maxX = std::min(image.cols - 1, (int)std::ceil(_position.x + maxR));
-    minY = std::max(0, (int)std::floor(_position.y - maxR));
-    maxY = std::min(image.rows - 1, (int)std::ceil(_position.y + maxR));
+    minX = std::max(0, static_cast<int>(std::floor(_position.x - maxR)));
+    maxX = std::min(image.cols - 1, static_cast<int>(std::ceil(_position.x + maxR)));
+    minY = std::max(0, static_cast<int>(std::floor(_position.y - maxR)));
+    maxY = std::min(image.rows - 1, static_cast<int>(std::ceil(_position.y + maxR)));
     return true;
 }
 
@@ -154,10 +147,9 @@ bool Spheroid::computeSliceBounds(const cv::Mat &image, float z,
 // No voxel matrix construction needed — drawing is done analytically.
 Spheroid::Spheroid(const SpheroidParams &init_props)
 : _name(init_props.name), _position{init_props.x, init_props.y, init_props.z},
-          _major_radius(init_props.majorRadius), _minor_radius(init_props.minorRadius),  // BUG FIX: was majorRadius
-          _rotation(0),
+          _major_radius(init_props.majorRadius), _minor_radius(init_props.minorRadius),
           _theta_x(init_props.theta_x), _theta_y(init_props.theta_y), _theta_z(init_props.theta_z),
-          dormant(false)
+          _brightness(init_props.brightness)
 {
     _major_radius = std::fmax(_major_radius, cellConfig.minMajorRadius);
     _major_radius = std::fmin(_major_radius, cellConfig.maxMajorRadius);
@@ -167,6 +159,8 @@ Spheroid::Spheroid(const SpheroidParams &init_props)
     if (_minor_radius > _major_radius) {
         _minor_radius = _major_radius;
     }
+    _brightness = std::fmax(_brightness, static_cast<float>(cellConfig.minBrightness));
+    _brightness = std::fmin(_brightness, static_cast<float>(cellConfig.maxBrightness));
 
     this->a = this->_major_radius;
     this->b = this->a; // oblate: a == b
@@ -177,19 +171,6 @@ Spheroid::Spheroid(const SpheroidParams &init_props)
     }
 
     // No matrix construction needed — draw() uses analytic inverse rotation
-    // // DEBUG: Print to verify values — remove after confirming correctness
-    // std::cout << "[Spheroid INIT] " << _name
-    //         << " a=" << a << " b=" << b << " c=" << c
-    //         << " theta=(" << _theta_x << ", " << _theta_y << ", " << _theta_z << ")"
-    //         << std::endl;
-}
-
-float Spheroid::major_magnitude(){
-    return _get_magnitude(_x_vec); // semi-major radius
-}
-
-float Spheroid::minor_magnitude(){
-    return _get_magnitude(_z_vec); // semi-minor radius
 }
 
 cv::Point3f Spheroid::get_center() const {
@@ -201,38 +182,13 @@ void Spheroid::print() const {
               << " pos=(" << _position.x << ", " << _position.y << ", " << _position.z << ")"
               << " a=" << a << " b=" << b << " c=" << c
               << " theta=(" << _theta_x << ", " << _theta_y << ", " << _theta_z << ")"
-              << std::endl;
-}
-
-int Spheroid::get_matrix_size(){
-    // Return approximate diameter for backward compatibility
-    return (int)std::ceil(2 * std::max({a, b, c}));
-}
-
-std::vector<double> Spheroid::getShapeAt(double z) const
-{
-    // need to find axes and radii using z value
-    std::vector<double> vec = {_major_radius, _minor_radius, _position.x, _position.y};
-    return vec;
+              << '\n';
 }
 
 // ---- ROTATION-AWARE draw() ----
 // Instead of checking a voxel matrix, we analytically test each pixel
 // against the rotated spheroid by inverse-transforming back to local coords.
-void Spheroid::draw(cv::Mat &image, SimulationConfig simulationConfig, cv::Mat *cellMap, float z) const{
-    (void)cellMap;
-
-    if (dormant)
-    {
-        return;
-    }
-
-    // TEMPORARY DEBUG — remove after testing
-    // std::cout << "[DRAW] " << _name
-    //         << " a=" << a << " b=" << b << " c=" << c
-    //         << " theta_y=" << _theta_y
-    //         << " z=" << z << " pos_z=" << _position.z << std::endl;
-
+void Spheroid::draw(cv::Mat &image, const SimulationConfig &simulationConfig, float z) const{
     int minX, maxX, minY, maxY;
     if (!computeSliceBounds(image, z, minX, maxX, minY, maxY)) return;
 
@@ -257,8 +213,6 @@ void Spheroid::draw(cv::Mat &image, SimulationConfig simulationConfig, cv::Mat *
 // ---- ROTATION-AWARE drawOutline() ----
 // Scans pixels and marks those near the spheroid surface.
 void Spheroid::drawOutline(cv::Mat &image, float color, float z) const {
-    if (dormant) return;
-
     int minX, maxX, minY, maxY;
     if (!computeSliceBounds(image, z, minX, maxX, minY, maxY)) return;
 
@@ -305,44 +259,8 @@ void Spheroid::drawOutline(cv::Mat &image, float color, float z) const {
         _minor_radius + cellConfig.minorRadius.getPerturbOffset(),
         _theta_x + cellConfig.thetaX.getPerturbOffset(),
         _theta_y + cellConfig.thetaY.getPerturbOffset(),
-        _theta_z + cellConfig.thetaZ.getPerturbOffset());
-    return Spheroid(spheroidParams);
-}
-
-Spheroid Spheroid::getParameterizedCell(std::unordered_map<std::string, float> params) const {
-    float xOffset = params["x"];
-    float yOffset = params["y"];
-    float zOffset = params["z"];
-    float majorRadiusOffset = params["majorRadius"];
-    float minorRadiusOffset = params["minorRadius"];
-    float thetaXOffset = params["thetaX"];
-    float thetaYOffset = params["thetaY"];
-    float thetaZOffset = params["thetaZ"];
-
-    if (params.empty())
-    {
-        xOffset = Spheroid::cellConfig.x.getPerturbOffset();
-        yOffset = Spheroid::cellConfig.y.getPerturbOffset();
-        zOffset = Spheroid::cellConfig.z.getPerturbOffset();
-        majorRadiusOffset = Spheroid::cellConfig.majorRadius.getPerturbOffset();
-        minorRadiusOffset = Spheroid::cellConfig.minorRadius.getPerturbOffset();
-        thetaXOffset = Spheroid::cellConfig.thetaX.getPerturbOffset();
-        thetaYOffset = Spheroid::cellConfig.thetaY.getPerturbOffset();
-        thetaZOffset = Spheroid::cellConfig.thetaZ.getPerturbOffset();
-    }
-
-    float newMajorRadius = fmin(fmax(Spheroid::cellConfig.minMajorRadius, _major_radius + majorRadiusOffset), Spheroid::cellConfig.maxMajorRadius);
-    float newMinorRadius = fmin(fmax(Spheroid::cellConfig.minMinorRadius, _minor_radius + minorRadiusOffset), Spheroid::cellConfig.maxMinorRadius);
-    SpheroidParams spheroidParams(
-        _name,
-        _position.x + xOffset,
-        _position.y + yOffset,
-        _position.z + zOffset,
-        newMajorRadius,
-        newMinorRadius,
-        _theta_x + thetaXOffset,
-        _theta_y + thetaYOffset,
-        _theta_z + thetaZOffset);
+        _theta_z + cellConfig.thetaZ.getPerturbOffset(),
+        _brightness + cellConfig.brightness.getPerturbOffset());
     return Spheroid(spheroidParams);
 }
 
@@ -355,9 +273,9 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
     // Use pre-optimization position if available (Phase 1 may shift the cell
     // toward one blob, making PCA look spherical from the shifted center).
 
-    float effA = (preOptMajorR > 0.0f) ? std::max((float)a, preOptMajorR) : (float)a;
-    float effB = (preOptMajorR > 0.0f) ? std::max((float)b, preOptMajorR) : (float)b;
-    float effC = (preOptMinorR > 0.0f) ? std::max((float)c, preOptMinorR) : (float)c;
+    float effA = (preOptMajorR > 0.0f) ? std::max(static_cast<float>(a), preOptMajorR) : static_cast<float>(a);
+    float effB = (preOptMajorR > 0.0f) ? std::max(static_cast<float>(b), preOptMajorR) : static_cast<float>(b);
+    float effC = (preOptMinorR > 0.0f) ? std::max(static_cast<float>(c), preOptMinorR) : static_cast<float>(c);
     float maxR = std::max({effA, effB, effC});
 
     float splitSearchRadius = maxR * 3.0f;
@@ -377,7 +295,7 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
                   << " searchRadius=" << splitSearchRadius
                   << " pcaCenter=(" << pcaCenter.x << "," << pcaCenter.y << "," << pcaCenter.z << ")"
                   << " currentPos=(" << _position.x << "," << _position.y << "," << _position.z << ")"
-                  << std::endl;
+                  << '\n';
     }
 
     int minX = std::max(0, static_cast<int>(std::floor(pcaCenter.x - splitSearchRadius)));
@@ -407,6 +325,7 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
     const double invC2 = 1.0 / (c * c);
 
     double brightnessSum = 0.0;
+    double brightnessSqSum = 0.0;
     int brightnessCount = 0;
 
     scanSpheroidVolume(
@@ -415,11 +334,18 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
         [&](int /*x*/, int /*y*/, int /*z*/, float pixel, double val) {
             if (val <= 1.0) {
                 brightnessSum += pixel;
+                brightnessSqSum += pixel * pixel;
                 brightnessCount++;
             }
         });
 
-    float meanBrightness = (brightnessCount > 0) ? (float)(brightnessSum / brightnessCount) : 0.4f;
+    float meanBrightness = (brightnessCount > 0) ? static_cast<float>(brightnessSum / brightnessCount) : 0.4f;
+    float stddevBrightness = 0.0f;
+    if (brightnessCount > 1) {
+        double variance = (brightnessSqSum / brightnessCount) - (meanBrightness * meanBrightness);
+        stddevBrightness = (variance > 0) ? static_cast<float>(std::sqrt(variance)) : 0.0f;
+    }
+    float pixelThreshold = meanBrightness + 0.5f * stddevBrightness;
 
 
 
@@ -440,7 +366,7 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
         image, minX, maxX, minY, maxY, minZ, maxZ, _position,
         R_T, invA2, invB2, invC2,
         [&](double /*dx*/, double /*dy*/, double /*dz*/, int x, int y, int z, float pixel, double /*val*/) {
-            if (pixel > meanBrightness) {
+            if (pixel > pixelThreshold) {
                 // Skip pixel if it's closer to any neighbor than to pcaCenter
                 // (use pcaCenter = pre-opt position so distance is measured from
                 // the original cell midpoint, not the Phase-1-shifted position)
@@ -492,7 +418,7 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
             std::cout << "[PCA Recenter] " << _name
                       << " pcaCenter=(" << pcaCenter.x << "," << pcaCenter.y << "," << pcaCenter.z << ")"
                       << " centroid=(" << centroid.x << "," << centroid.y << "," << centroid.z << ")"
-                      << " drift=" << std::sqrt(driftSq) << std::endl;
+                      << " drift=" << std::sqrt(driftSq) << '\n';
             pcaCenter = centroid;
             rawPoints.clear();
 
@@ -500,7 +426,7 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
                 image, minX, maxX, minY, maxY, minZ, maxZ, _position,
                 R_T, invA2, invB2, invC2,
                 [&](double /*dx*/, double /*dy*/, double /*dz*/, int x, int y, int z, float pixel, double /*val*/) {
-                    if (pixel > meanBrightness) {
+                    if (pixel > pixelThreshold) {
                         float selfDx = static_cast<float>(x) - pcaCenter.x;
                         float selfDy = static_cast<float>(y) - pcaCenter.y;
                         float selfDz = static_cast<float>(z) - pcaCenter.z;
@@ -578,8 +504,11 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
         if (norm > 1e-6f) {
             split_axis = ev_image * (1.0f / norm);
         } else {
-            double theta = ((double)rand() / RAND_MAX) * 2 * M_PI;
-            double phi = ((double)rand() / RAND_MAX) * M_PI;
+            thread_local std::mt19937 rng{std::random_device{}()};
+            std::uniform_real_distribution<double> thetaDist(0.0, 2.0 * M_PI);
+            std::uniform_real_distribution<double> phiDist(0.0, M_PI);
+            double theta = thetaDist(rng);
+            double phi = phiDist(rng);
             split_axis = cv::Point3f(sin(phi) * cos(theta), sin(phi) * sin(theta), cos(phi));
         }
 
@@ -590,13 +519,18 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
                   << " eigenvalues=(" << lambda1 << ", " << lambda2 << ", " << lambda3 << ")"
                   << " num_bright_pixels=" << rawPoints.size()
                   << " normR=" << normR
-                  << std::endl;
+                  << " threshold=" << pixelThreshold
+                  << " mean=" << meanBrightness << " stddev=" << stddevBrightness
+                  << '\n';
     } else {
         std::cout << "[PCA Split] " << _name
                   << " only " << rawPoints.size() << " bright pixels found. Using random split axis."
-                  << std::endl;
-        double theta = ((double)rand() / RAND_MAX) * 2 * M_PI;
-        double phi = ((double)rand() / RAND_MAX) * M_PI;
+                  << '\n';
+        thread_local std::mt19937 rng{std::random_device{}()};
+        std::uniform_real_distribution<double> thetaDist(0.0, 2.0 * M_PI);
+        std::uniform_real_distribution<double> phiDist(0.0, M_PI);
+        double theta = thetaDist(rng);
+        double phi = phiDist(rng);
         split_axis = cv::Point3f(sin(phi) * cos(theta), sin(phi) * sin(theta), cos(phi));
     }
 
@@ -614,8 +548,8 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
     // image, making current-radius daughters too small for meaningful cost
     // improvement. Pre-opt radii reflect the cell size before collapse.
     // (Previously this was blocked by daughter-daughter overlap gates, now removed.)
-    double effMajorR = (preOptMajorR > 0.0f) ? std::max(_major_radius, (double)preOptMajorR) : _major_radius;
-    double effMinorR = (preOptMinorR > 0.0f) ? std::max(_minor_radius, (double)preOptMinorR) : _minor_radius;
+    double effMajorR = (preOptMajorR > 0.0f) ? std::max(_major_radius, static_cast<double>(preOptMajorR)) : _major_radius;
+    double effMinorR = (preOptMinorR > 0.0f) ? std::max(_minor_radius, static_cast<double>(preOptMinorR)) : _minor_radius;
     double volumeScale = std::cbrt(0.5);
     double daughterMajorRadius = effMajorR * volumeScale;
     double daughterMinorRadius = effMinorR * volumeScale;
@@ -661,67 +595,29 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
                   << " c2=(" << new_position2.x << "," << new_position2.y << "," << new_position2.z << ")"
                   << " sep=" << sep
                   << " daughterMajorR=" << daughterMajorRadius
-                  << " daughterMinorR=" << daughterMinorRadius << std::endl;
+                  << " daughterMinorR=" << daughterMinorRadius << '\n';
     } else {
         // All pixels on one side — fall back to small offset along split axis
         float offset = static_cast<float>(daughterMajorRadius * 0.5);
         new_position1 = pcaCenter + split_axis * offset;
         new_position2 = pcaCenter - split_axis * offset;
         std::cout << "[Split Placement] one-sided (" << count1 << "/" << count2
-                  << "), using fixed offset=" << offset << std::endl;
+                  << "), using fixed offset=" << offset << '\n';
     }
 
 
     //TODO use a batter way to represent the cell relationships
 
-    // Inherit parent rotation angles
+    // Inherit parent rotation angles and brightness
     Spheroid cell1(SpheroidParams(
         _name + "0", new_position1.x, new_position1.y, new_position1.z,
-        daughterMajorRadius, daughterMinorRadius, _theta_x, _theta_y, _theta_z));
+        daughterMajorRadius, daughterMinorRadius, _theta_x, _theta_y, _theta_z, _brightness));
     Spheroid cell2(SpheroidParams(
         _name + "1", new_position2.x, new_position2.y, new_position2.z,
-        daughterMajorRadius, daughterMinorRadius, _theta_x, _theta_y, _theta_z));
+        daughterMajorRadius, daughterMinorRadius, _theta_x, _theta_y, _theta_z, _brightness));
 
     bool constraints = cell1.checkConstraints() && cell2.checkConstraints();
     return std::make_tuple(Spheroid(cell1), Spheroid(cell2), constraints, elongationRatio);
-}
-
-std::vector<std::pair<float, cv::Vec3f>> Spheroid::performPCA(const std::vector<cv::Point3f> &points) const {
-    if (points.empty())
-    {
-        throw std::invalid_argument("No points provided for PCA.");
-    }
-
-    // Create a matrix from the points
-    cv::Mat data(points.size(), 3, CV_32F);
-    for (size_t i = 0; i < points.size(); ++i)
-    {
-        data.at<float>(i, 0) = points[i].x;
-        data.at<float>(i, 1) = points[i].y;
-        data.at<float>(i, 2) = points[i].z;
-    }
-
-    // Perform PCA
-    cv::PCA pca(data, cv::Mat(), cv::PCA::DATA_AS_ROW);
-
-    // Extract the eigenvalues and eigenvectors
-    cv::Mat eigenvalues = pca.eigenvalues;
-    cv::Mat eigenvectors = pca.eigenvectors;
-
-    // Prepare the result
-    std::vector<std::pair<float, cv::Vec3f>> eigenPairs;
-    for (int i = 0; i < std::min(3, eigenvalues.rows); ++i)
-    {
-        float eigenvalue = eigenvalues.at<float>(i);
-        cv::Vec3f eigenvector(
-            eigenvectors.at<float>(i, 0),
-            eigenvectors.at<float>(i, 1),
-            eigenvectors.at<float>(i, 2)
-        );
-        eigenPairs.emplace_back(eigenvalue, eigenvector);
-    }
-
-    return eigenPairs;
 }
 
 bool Spheroid::checkConstraints() const {
@@ -729,12 +625,12 @@ bool Spheroid::checkConstraints() const {
 }
 
 SpheroidParams Spheroid::getCellParams() const {
-    return SpheroidParams(_name, _position.x, _position.y, _position.z, _major_radius, _minor_radius, _theta_x, _theta_y, _theta_z);
+    return SpheroidParams(_name, _position.x, _position.y, _position.z, _major_radius, _minor_radius, _theta_x, _theta_y, _theta_z, _brightness);
 }
 
 [[nodiscard]] std::pair<std::vector<float>, std::vector<float>> Spheroid::calculateCorners() const {
     // Use max radius as conservative bound for rotated spheroid
-    float maxR = std::max({(float)a, (float)b, (float)c});
+    float maxR = std::max({static_cast<float>(a), static_cast<float>(b), static_cast<float>(c)});
 
     std::vector<float> min_corner = {static_cast<float>(_position.x) - maxR,
                                      static_cast<float>(_position.y) - maxR,
@@ -760,60 +656,3 @@ std::pair<std::vector<float>, std::vector<float>> Spheroid::calculateMinimumBox(
     return std::make_pair(min_corner, max_corner);
 }
 
-bool Spheroid::checkIfCellsOverlap(const std::vector<Spheroid> &spheroids) {
-    std::vector<std::vector<float>> positions;
-    std::vector<std::pair<float, float>> radii;
-
-    for (const auto &cell : spheroids)
-    {
-        positions.push_back({cell._position.x, cell._position.y, cell._position.z});
-        radii.push_back({cell._major_radius * 0.95, cell._minor_radius * 0.95});
-    }
-
-    std::vector<std::vector<float>> distances;
-    for (const auto &position1 : positions)
-    {
-        std::vector<float> distance_row;
-        for (const auto &position2 : positions)
-        {
-            float distance = 0.0f;
-            for (int i = 0; i < 3; ++i)
-            {
-                distance += pow(position1[i] - position2[i], 2);
-            }
-            distance = sqrt(distance);
-            distance_row.push_back(distance);
-        }
-        distances.push_back(distance_row);
-    }
-
-    std::vector<std::vector<std::pair<float, float>>> radii_sums;
-    for (const auto &radius1 : radii)
-    {
-        std::vector<std::pair<float, float>> radii_row;
-        for (const auto &radius2 : radii)
-        {
-            radii_row.push_back({radius1.first + radius2.first, radius1.second + radius2.second});
-        }
-        radii_sums.push_back(radii_row);
-    }
-
-    bool overlap = false;
-    for (std::size_t i = 0; i < spheroids.size(); ++i)
-    {
-        for (std::size_t j = 0; j < spheroids.size(); ++j)
-        {
-            if (i != j && (distances[i][j] < radii_sums[i][j].first) && (distances[i][j] < radii_sums[i][j].second))
-            {
-                overlap = true;
-                break;
-            }
-        }
-        if (overlap)
-        {
-            break;
-        }
-    }
-
-    return overlap;
-}

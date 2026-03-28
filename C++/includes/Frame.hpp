@@ -23,7 +23,6 @@ public:
     Frame(const std::vector<cv::Mat> &realFrame, const SimulationConfig &simulationConfig, const std::vector<Spheroid> &cells, const Path &outputPath, const std::string &imageName);
 
     // Method declarations
-    void padRealFrame();
     std::vector<cv::Mat> generateSynthFrame();
     std::vector<cv::Mat> generateSynthFrameFast(Spheroid &oldCell, Spheroid &newCell);
     Cost calculateCost(const std::vector<cv::Mat> &synthFrame);
@@ -31,13 +30,18 @@ public:
     std::vector<cv::Mat> generateOutputSynthFrame();
     // DataFrame getCellsAsParams();
     size_t length() const;
-    CostCallbackPair perturb();
-    CostCallbackPair split();
+    CostCallbackPair perturbCell(size_t index, float overlapWeight = 1000.0f);
+    double computeOverlapPenalty(float weight) const;
+    double computeOverlapForCell(size_t cellIdx, float weight) const;
+
+    std::map<std::string, float> computeElongationRatios() const;
+    float computeElongationForCell(size_t cellIdx) const;
     CostCallbackPair trySplitCell(size_t cellIndex, float preOptMajorR = 0.0f, float preOptMinorR = 0.0f,
                                   float preOptX = 0.0f, float preOptY = 0.0f, float preOptZ = 0.0f,
-                                  float splitElongationThreshold = 1.3f);
+                                  float splitElongationThreshold = 1.3f,
+                                  float overlapWeight = 1000.0f);
     std::vector<cv::Mat> getSynthFrame();
-    void regenerateSynthFrame() { _synthFrame = generateSynthFrame(); }
+    void regenerateSynthFrame() { _synthFrame = generateSynthFrame(); _currentCost = calculateCost(_synthFrame); }
     std::string getImageName() const { return imageName; }
     std::vector<Spheroid> cells;
 
@@ -47,10 +51,8 @@ private:
     std::string outputPath;
     std::string imageName;
     std::vector<cv::Mat> _realFrame;
-    std::vector<cv::Mat> _realFrameCopy; // copy of realFrame
     std::vector<cv::Mat> _synthFrame;
+    double _currentCost = -1.0; // cached L2 image cost of _synthFrame
     cv::Size getImageShape();
-    Cost costOfPerturb(const std::string &perturbParam, float perturbVal, size_t index);
-    ParamImageMap getSynthPerturbedCells(size_t index, const ParamValMap &params, float perturbLength);
 };
 #endif // FRAME_H

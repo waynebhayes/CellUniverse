@@ -12,7 +12,6 @@
 #include <unordered_map>
 #include <filesystem>
 #include <map>
-//#include "Sphere.hpp"
 
 enum argKeywords {
     ff = 1,
@@ -23,18 +22,16 @@ enum argKeywords {
     initial
 };
 
-typedef std::string Path;
-typedef cv::Mat Image;
-typedef std::vector<cv::Mat> ImageStack;
-typedef std::pair<double, std::function<void(bool)>> CostCallbackPair;
-typedef std::function<void(bool)> CallBackFunc;
-typedef std::unordered_map<std::string, ImageStack> ParamImageMap;
-typedef std::unordered_map<std::string, float> ParamValMap;
-//typedef std::map<Path, std::vector<Sphere>> CellMap;
-typedef double Cost;
-typedef std::vector<float> Corner;
-typedef std::pair<Corner, Corner> MinBox;
+using Path = std::string;
+using Image = cv::Mat;
+using ImageStack = std::vector<cv::Mat>;
+using CostCallbackPair = std::pair<double, std::function<void(bool)>>;
+using CallBackFunc = std::function<void(bool)>;
+// using CellMap = std::map<Path, std::vector<Sphere>>;
+using Cost = double;
+using Corner = std::vector<float>;
+using MinBox = std::pair<Corner, Corner>;
 namespace fs = std::filesystem;
-typedef std::vector<fs::path> PathVec;
+using PathVec = std::vector<fs::path>;
 
 #endif //CELLUNIVERSE_TYPES_HPP

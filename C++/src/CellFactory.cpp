@@ -3,19 +3,16 @@
 CellFactory::CellFactory(const BaseConfig &config) {
     std::string cellType = config.cellType;
     // TODO: add more else if branches for more cell Types
-    if (cellType == "sphere") {
-        // Sphere::cellConfig = *config.cell; // this is ideal, but entire code base must be changed to run it this way
+    if (cellType == "spheroid") {
         Spheroid::cellConfig = *config.cell;
-    } if (cellType == "spheroid") {
-        Spheroid::cellConfig = *config.cell;
-    }
-    else {
+    } else {
         throw std::invalid_argument("Invalid cell type: " + config.cellType);
     }
 }
 
 // TODO: use abstract base class in the future to handle different cell types
-std::map<Path, std::vector<Spheroid>> CellFactory::createCells(const Path &init_params_path, int z_offset, float z_scaling) {
+std::map<Path, std::vector<Spheroid>> CellFactory::createCells(const Path &init_params_path, int z_offset, float z_scaling,
+                                                               const std::string& firstFrameFile) {
     std::ifstream file(init_params_path);
     std::string line;
     std::string firstLine;
@@ -55,10 +52,17 @@ while (std::getline(file, line)) {
         float majorRadius = std::stof(tokens[5]);
         float minorRadius = std::stof(tokens[6]);
 
+        // Optional brightness in column 8 (measured from real image)
+        float brightness = 0.5f;
+        if (tokens.size() >= 8 && tokens[7] != "None" && !tokens[7].empty()) {
+            brightness = std::stof(tokens[7]);
+        }
+
         z *= z_scaling;
 
         initialCells[filePath].push_back(
-            Spheroid(SpheroidParams(cellName, x, y, z, majorRadius, minorRadius))
+            Spheroid(SpheroidParams(cellName, x, y, z, majorRadius, minorRadius,
+                                   0.0f, 0.0f, 0.0f, brightness))
         );
 
         ++line_cnt;
@@ -69,11 +73,10 @@ while (std::getline(file, line)) {
     // Case B: 4-column Napari format:
     // cell_type, z, y, x
     // We must attach cells to a frame key, e.g., "t000.tif".
-    // main.cpp sets it via env var: CELLUNIVERSE_INITIAL_FRAME_FILE
+    // main.cpp passes firstFrameFile as a parameter.
     // ----------------------------
     if (tokens.size() == 4) {
-        const char* envFrame = std::getenv("CELLUNIVERSE_INITIAL_FRAME_FILE");
-        std::string filePath = (envFrame && std::string(envFrame).size() > 0) ? std::string(envFrame) : std::string("t000.tif");
+        std::string filePath = !firstFrameFile.empty() ? firstFrameFile : std::string("t000.tif");
 
         const std::string cellType = tokens[0];
 
@@ -101,14 +104,14 @@ while (std::getline(file, line)) {
     }
 
     // Unknown/invalid line
-    std::cerr << "[WARN] Skipping invalid initial CSV row (expected 7 or 4 columns): " << line << std::endl;
+    std::cerr << "[WARN] Skipping invalid initial CSV row (expected 7 or 4 columns): " << line << '\n';
 }
 
-    std::cout << "Input Line Count : " << line_cnt << std::endl;
-    std::cout << "Initial frame keys loaded : " << initialCells.size() << std::endl;
+    std::cout << "Input Line Count : " << line_cnt << '\n';
+    std::cout << "Initial frame keys loaded : " << initialCells.size() << '\n';
     if (!initialCells.empty()) {
         const auto& firstKey = initialCells.begin()->first;
-        std::cout << "Example key : " << firstKey << "  cell count : " << initialCells.begin()->second.size() << std::endl;
+        std::cout << "Example key : " << firstKey << "  cell count : " << initialCells.begin()->second.size() << '\n';
     }
     return initialCells;
 }

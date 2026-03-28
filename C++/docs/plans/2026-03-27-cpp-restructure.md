@@ -748,6 +748,316 @@ git commit -m "docs: add changelog for C++ directory restructuring"
 
 ---
 
+## Task 8: Remove dead code from Spheroid
+
+**Files:**
+- Modify: `C++/includes/Spheroid.hpp`
+- Modify: `C++/src/Spheroid.cpp`
+
+- [ ] **Step 1: Remove dead member variables from Spheroid class**
+
+Remove from `Spheroid.hpp` private section:
+
+```cpp
+// REMOVE — always false, never set to true
+bool dormant;
+
+// REMOVE — always 0, never read; rotation uses _theta_x/y/z
+double _rotation;
+
+// REMOVE — never populated in main constructor; segfaults if accessed
+std::vector<double> _x_vec;
+std::vector<double> _y_vec;
+std::vector<double> _z_vec;
+```
+
+Update both constructors to remove `_rotation(0)` and `dormant(false)` from initializer lists.
+
+- [ ] **Step 2: Remove dead static member**
+
+Remove from `Spheroid.hpp`:
+
+```cpp
+static SpheroidParams paramClass;  // never referenced anywhere
+```
+
+Remove from `Spheroid.cpp`:
+
+```cpp
+SpheroidParams Spheroid::paramClass = SpheroidParams();
+```
+
+- [ ] **Step 3: Remove dead methods**
+
+Remove declarations from `Spheroid.hpp`:
+
+```cpp
+float major_magnitude() const;   // never called; crashes on _x_vec access
+float minor_magnitude() const;   // never called; crashes on _z_vec access
+int get_matrix_size();            // never called
+std::vector<double> getShapeAt(double z) const;  // never called
+bool checkIfCellsValid(const std::vector<Spheroid> &spheroids);  // only in dead perturb()
+static bool checkIfCellsOverlap(const std::vector<Spheroid> &spheroids);  // only via checkIfCellsValid
+```
+
+Remove implementations from `Spheroid.cpp`:
+
+```cpp
+float Spheroid::major_magnitude() const { ... }     // ~3 lines
+float Spheroid::minor_magnitude() const { ... }     // ~3 lines
+int Spheroid::get_matrix_size() { ... }              // ~3 lines
+std::vector<double> Spheroid::getShapeAt(double z) const { ... }  // ~5 lines
+bool Spheroid::checkIfCellsOverlap(const std::vector<Spheroid> &spheroids) { ... }  // ~25 lines
+```
+
+Also remove the `_get_magnitude()` free function if no longer needed.
+
+- [ ] **Step 4: Remove dormant checks from draw/drawOutline**
+
+In `Spheroid.cpp` `draw()`, remove:
+
+```cpp
+if (dormant) { return; }
+```
+
+In `Spheroid.cpp` `drawOutline()`, remove:
+
+```cpp
+if (dormant) return;
+```
+
+- [ ] **Step 5: Remove unused `cellMap` parameter from draw()**
+
+In `Spheroid.hpp`, change:
+
+```cpp
+void draw(cv::Mat &image, SimulationConfig simulationConfig, cv::Mat *cellMap = nullptr, float z = 0) const;
+```
+
+To:
+
+```cpp
+void draw(cv::Mat &image, const SimulationConfig &simulationConfig, float z = 0) const;
+```
+
+Update all call sites in `Frame.cpp` (`generateSynthFrame`, `generateSynthFrameFast`):
+
+```cpp
+// Before:
+cell.draw(synthImage, simulationConfig, nullptr, z);
+// After:
+cell.draw(synthImage, simulationConfig, z);
+```
+
+Update implementation in `Spheroid.cpp` to remove `(void)cellMap;` line and match new signature.
+
+- [ ] **Step 6: Remove dead SpheroidParams vector constructor and parseParams**
+
+In `Spheroid.hpp`, the `SpheroidParams` constructor taking `_x_vec, _y_vec, _z_vec` (lines 43-53) and `parseParams()` (lines 55-65) are never used since cells are always created with scalar `(x, y, z, majorR, minorR)`. Remove both.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git commit -m "refactor: remove dead code from Spheroid
+
+Removed: dormant (always false), _rotation (unused), _x_vec/_y_vec/_z_vec
+(never populated), paramClass (never referenced), major/minor_magnitude
+(crash risk), get_matrix_size, getShapeAt, checkIfCellsValid/Overlap
+(only in dead perturb()), cellMap param from draw(), vector-based
+SpheroidParams constructor and parseParams."
+```
+
+---
+
+## Task 9: Remove dead code from Frame
+
+**Files:**
+- Modify: `C++/includes/Frame.hpp`
+- Modify: `C++/src/Frame.cpp`
+
+- [ ] **Step 1: Remove dead `perturb()` method**
+
+Remove from `Frame.hpp`:
+
+```cpp
+CostCallbackPair perturb();
+```
+
+Remove from `Frame.cpp` the entire `Frame::perturb()` implementation (~48 lines). This was superseded by `perturbCell()` and is never called.
+
+- [ ] **Step 2: Remove dead `padRealFrame()` method**
+
+Remove from `Frame.hpp`:
+
+```cpp
+void padRealFrame();
+```
+
+Remove from `Frame.cpp` the entire `Frame::padRealFrame()` implementation (~14 lines) and the commented-out call in the constructor:
+
+```cpp
+// TODO: Fix padding
+//    padRealImage();
+```
+
+- [ ] **Step 3: Remove dead `costOfPerturb()` and `getSynthPerturbedCells()`**
+
+Remove from `Frame.hpp`:
+
+```cpp
+Cost costOfPerturb(const std::string &perturbParam, float perturbVal, size_t index);
+ParamImageMap getSynthPerturbedCells(size_t index, const ParamValMap &params, float perturbLength);
+```
+
+Remove from `Frame.cpp` both implementations (~48 lines total). These are remnants of old gradient descent optimization, never called.
+
+- [ ] **Step 4: Remove dead `split()` method (if present)**
+
+`Frame::split()` just wraps `trySplitCell()` with a random index and is never called from the optimize loop (which uses `randomSplitCell()`). Remove if still present.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git commit -m "refactor: remove dead methods from Frame
+
+Removed: perturb() (superseded by perturbCell()), padRealFrame()
+(disabled in constructor), costOfPerturb(), getSynthPerturbedCells()
+(old gradient descent remnants), split() (never called)."
+```
+
+---
+
+## Task 10: Remove dead code from ConfigTypes, CellFactory, main
+
+**Files:**
+- Modify: `C++/includes/ConfigTypes.hpp`
+- Modify: `C++/src/CellFactory.cpp`
+- Modify: `C++/src/main.cpp`
+- Modify: `C++/includes/types.hpp`
+
+- [ ] **Step 1: Remove unused `z_values` from SimulationConfig**
+
+In `ConfigTypes.hpp`, remove:
+
+```cpp
+std::vector<int> z_values;
+```
+
+In `main.cpp`, remove:
+
+```cpp
+config.simulation.z_values.clear();
+for (int j = 0; j < slices; ++j)
+{
+    config.simulation.z_values.push_back(j - slices / 2);
+}
+```
+
+- [ ] **Step 2: Fix CellFactory sphere branch**
+
+In `CellFactory.cpp`, replace:
+
+```cpp
+if (cellType == "sphere") {
+    Spheroid::cellConfig = *config.cell;
+} if (cellType == "spheroid") {
+    Spheroid::cellConfig = *config.cell;
+}
+else {
+    throw std::invalid_argument("Invalid cell type: " + config.cellType);
+}
+```
+
+With:
+
+```cpp
+if (cellType == "spheroid") {
+    Spheroid::cellConfig = *config.cell;
+} else {
+    throw std::invalid_argument("Invalid cell type: " + config.cellType);
+}
+```
+
+Removes the dead "sphere" branch and fixes the `if`/`else if` logic error.
+
+- [ ] **Step 3: Remove dead LineageViewer usage and wait loop from main.cpp**
+
+Remove the viewer creation and dead wait loop:
+
+```cpp
+// REMOVE — viewer.update() is commented out, window is never created
+LineageViewer viewer;
+
+// REMOVE — the CellViz building block (it feeds the disabled viewer)
+std::vector<LineageViewer::CellViz> viz;
+const auto &cellsNow = lineage.getCells(frame);
+viz.reserve(cellsNow.size());
+for (const auto &cell : cellsNow) { ... }
+// viewer.update(args.firstFrame + frame, viz);
+
+// REMOVE — waits for a window that was never created (hangs forever)
+while (true)
+{
+    int key = cv::waitKey(30);
+    if (cv::getWindowProperty("Cell Lineage (Realtime)", cv::WND_PROP_VISIBLE) < 1)
+    {
+        break;
+    }
+}
+```
+
+Also remove `#include "LineageViewer.hpp"` from main.cpp.
+
+**Note:** Keep `LineageViewer.hpp` and `LineageViewer.cpp` in the codebase — they are incomplete but potentially useful for future integration (see Task 11). Just don't create or call the viewer in main.
+
+- [ ] **Step 4: Remove commented-out include from types.hpp**
+
+Remove:
+
+```cpp
+//#include "Sphere.hpp"
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
+git commit -m "refactor: remove dead code from ConfigTypes, CellFactory, main
+
+Removed: z_values (populated but never read), dead sphere branch in
+CellFactory (fixed if/else logic), disabled LineageViewer usage and
+infinite wait loop in main, commented Sphere.hpp include in types.hpp."
+```
+
+---
+
+## Task 11: Reconstruct — items for future work
+
+These items are not dead code but are incomplete or need redesign:
+
+### 11a. Cell lineage tracking (primary open feature)
+
+**Current:** Cell naming uses string concatenation (`name + "0"`, `name + "1"`) for parent-child relationships. `cells.csv` records per-frame state but does not explicitly encode parent-child relationships.
+
+**Needed:** Proper lineage data structure with explicit parent pointers, split frame tracking, and lineage tree output. This is the primary incomplete feature mentioned in CLAUDE.md.
+
+**Files affected:** `CellUniverse.cpp`, `Spheroid.hpp` (SpheroidParams needs parent field), output CSV format.
+
+### 11b. LineageViewer integration
+
+**Current:** `LineageViewer.hpp/.cpp` exist with a partially implemented 2D visualization. The `update()` call is commented out in main.cpp.
+
+**Options:**
+1. **Fully integrate** — uncomment `viewer.update()`, fix any issues, add proper window lifecycle
+2. **Remove entirely** — delete LineageViewer.hpp/.cpp from build if no plans to use it
+
+**Recommendation:** Keep the files but don't call from main until lineage tracking (11a) is implemented. The viewer depends on having meaningful lineage data.
+
+### 11c. SimulationConfig `cell_color` field
+
+**Current:** `cell_color: 0.6` is parsed and stored but never used — rendering now uses per-cell `_brightness`. Consider removing from config and SimulationConfig to avoid confusion.
+
+---
+
 ## Summary of All Changes
 
 | # | What | Files Affected | Risk |
@@ -759,10 +1069,18 @@ git commit -m "docs: add changelog for C++ directory restructuring"
 | 5 | Clean CMakeLists.txt | CMakeLists.txt | Low — removing stale include path |
 | 6 | Update documentation | 4 doc files | None — documentation only |
 | 7 | Write changelog | 1 new file | None — documentation only |
+| 8 | Remove dead code from Spheroid | Spheroid.hpp, Spheroid.cpp | **Medium** — removes 6 member vars, 6 methods, changes draw() signature; needs rebuild |
+| 9 | Remove dead code from Frame | Frame.hpp, Frame.cpp | Low — removes 4 methods never called |
+| 10 | Remove dead code from ConfigTypes, CellFactory, main | ConfigTypes.hpp, CellFactory.cpp, main.cpp, types.hpp | **Medium** — removes dead wait loop, fixes CellFactory logic; needs rebuild |
+| 11 | Reconstruct items (future) | — | — planning only, no code changes |
 
-**Total: 7 tasks, ~30 steps, 7 commits**
+**Total: 10 implementation tasks + 1 future planning task, ~45 steps**
 
-**Build verification required after Tasks 2, 3, and 5.** User must run `cmake -S .. -B . && cmake --build .` from `C++/build/` to confirm the restructured project compiles.
+Tasks 1-7 were the original restructure plan.
+Tasks 8-10 are new dead code removal (added 2026-03-27 evening).
+Task 11 documents reconstruction items for future sessions.
+
+**Build verification required after Tasks 2, 3, 5, 8, 9, and 10.** User must run `cmake -S .. -B . && cmake --build .` from `C++/build/` to confirm the project compiles.
 
 **Run verification required after Task 4.** User must test that `scripts/run_celluniverse.sh` correctly finds config files, data, and build output with updated paths.
 
@@ -780,3 +1098,11 @@ These findings were verified by reading actual source code, not relying on the U
 6. **Frame::getSynthPerturbedCells** takes `const Cell &oldCell` (Frame.hpp:59) but **never uses it** (Frame.cpp:460-488)
 7. **Frame::gradientDescent** is declared (Frame.hpp:41) but **entirely commented out** in Frame.cpp:491-571
 8. **Cell.hpp is included by**: Spheroid.hpp:17, Frame.hpp:5, CellFactory.hpp:14, Lineage.hpp:5 — all unnecessary
+9. **`dormant`** — always `false` in Spheroid, checked in draw()/drawOutline() but never set to `true`
+10. **`_rotation`** — always `0`, never read; actual rotation uses `_theta_x/y/z`
+11. **`_x_vec/_y_vec/_z_vec`** — empty in main constructor; `major_magnitude()`/`minor_magnitude()` would crash
+12. **`perturb()`** — superseded by `perturbCell()`, never called from optimize loop
+13. **`padRealFrame()`** — disabled in Frame constructor, never called
+14. **`z_values`** — populated in main.cpp but never read anywhere
+15. **LineageViewer** — created in main.cpp but `update()` is commented out; wait loop hangs forever
+16. **CellFactory** — `if (sphere)` branch is dead; `if`/`else if` logic error exists
