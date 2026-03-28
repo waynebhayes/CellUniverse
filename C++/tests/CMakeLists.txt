@@ -26,14 +26,13 @@ add_executable(core_unit_test
         spheroid_rotation_test.cc
         ${CMAKE_SOURCE_DIR}/src/Frame.cpp
         ${CMAKE_SOURCE_DIR}/src/Lineage.cpp
-        ${CMAKE_SOURCE_DIR}/src/Cells/Spheroid.cpp
+        ${CMAKE_SOURCE_DIR}/src/Spheroid.cpp
 )
 
 target_include_directories(core_unit_test PRIVATE
         ${OpenCV_INCLUDE_DIRS}
         ${CMAKE_SOURCE_DIR}/includes
         ${CMAKE_SOURCE_DIR}/src
-        ${CMAKE_SOURCE_DIR}/src/Cells
         ${CMAKE_SOURCE_DIR}/lib/yaml-cpp/include
 )
 
