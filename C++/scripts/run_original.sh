@@ -18,8 +18,8 @@ echo "[INFO] Logging to: $LOG_FILE"
 # -----------------------------------------
 INPUT_DIR="$CPP_ROOT/examples/input/original_data"
 INPUT_PATTERN="$INPUT_DIR/frame%03d.tif"   # NOTE: original_data uses frame%03d.tif
-CONFIG_FILE="$CPP_ROOT/examples/config.yaml"
-INITIAL_FILE="$SCRIPT_DIR/initial.csv"     # change if your initial file name differs
+CONFIG_FILE="$CPP_ROOT/config/config.yaml"
+INITIAL_FILE="$CPP_ROOT/config/initial.csv"     # change if your initial file name differs
 OUT_DIR="$CPP_ROOT/examples/output_original_data_$(date +%Y%m%d_%H%M%S)"
 
 BUILD_DIR="$CPP_ROOT/build"
