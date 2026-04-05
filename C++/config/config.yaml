@@ -42,9 +42,9 @@ cell:
   maxMajorRadius: 40
   minMinorRadius: 5
   maxMinorRadius: 35
-  minBrightness: 0.15
+  minBrightness: 0.1
   maxBrightness: 0.95
-  splitBrightestFraction: 0.550 
+  splitBrightestFraction: 0.5
 
 # Simulation settings
 simulation:
@@ -53,8 +53,10 @@ simulation:
   cell_color: 1.0        # post-sigmoid cells are near 1
   z_scaling: 7
   blur_sigma: 10.0  # heavy blur before sigmoid (matches working 0303 run)
-  sigmoid_k: 75.0
+  sigmoid_k: 85.0
   sigmoid_center: 0.445
+  sigmoid_center_percentile: 0.45
+  post_sigmoid_subtract_sigma: 20.0
   sigmoid_center_offset: 0.047
   calibration_x: 20
   calibration_y: 20

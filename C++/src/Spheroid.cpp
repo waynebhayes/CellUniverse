@@ -225,6 +225,7 @@ void Spheroid::drawOutline(cv::Mat &image, float color, float z) const {
     const double invC2 = 1.0 / (c * c);
 
     const int channels = image.channels();
+    const float outlineIntensity = 0.4f;
 
     if (channels == 1) {
         scanSpheroidSlice(
@@ -233,11 +234,11 @@ void Spheroid::drawOutline(cv::Mat &image, float color, float z) const {
             R_T, invA2, invB2, invC2,
             [&](int x, int y, double val) {
                 if (val >= 0.95 && val <= 1.05) {
-                    image.at<float>(y, x) = color;
+                    image.at<float>(y, x) = outlineIntensity;
                 }
             });
     } else if (channels == 3) {
-        const cv::Vec3f drawColor(0.0f, color, 0.0f);
+        const cv::Vec3f drawColor(outlineIntensity, outlineIntensity, outlineIntensity);
         scanSpheroidSlice(
             minX, maxX, minY, maxY,
             _position, static_cast<double>(z),

@@ -1,6 +1,7 @@
 #include "../includes/CellUniverse.hpp"
 #include <set>
 #include <cmath>
+#include <algorithm>
 
 namespace utils
 {
@@ -36,6 +37,36 @@ static void applySigmoid(cv::Mat &image, float k, float center)
     image.forEach<float>([k, center](float &pixel, const int *) {
         pixel = 1.0f / (1.0f + std::exp(-k * (pixel - center)));
     });
+}
+
+static float computePercentileFromRoi(const cv::Mat &roi, float percentile)
+{
+    CV_Assert(roi.type() == CV_32F);
+
+    if (roi.empty()) {
+        return 0.0f;
+    }
+
+    std::vector<float> values;
+    values.reserve(static_cast<size_t>(roi.total()));
+
+    for (int y = 0; y < roi.rows; ++y) {
+        const float *row = roi.ptr<float>(y);
+        values.insert(values.end(), row, row + roi.cols);
+    }
+
+    if (values.empty()) {
+        return 0.0f;
+    }
+
+    const float clampedPercentile = std::clamp(percentile, 0.0f, 1.0f);
+    const size_t index = static_cast<size_t>(
+        std::floor(clampedPercentile * static_cast<float>(values.size() - 1)));
+
+    std::nth_element(values.begin(),
+                     values.begin() + static_cast<std::ptrdiff_t>(index),
+                     values.end());
+    return values[index];
 }
 
 // Blur only across valid image content so zero-valued border padding does not
@@ -91,6 +122,7 @@ Image processImage(const Image &image, const BaseConfig &config)
 
 std::vector<cv::Mat> loadFrame(const std::string &imageFile, BaseConfig &config)
 {
+    std::vector<cv::Mat> originalZSlices;  // normalized grayscale before preprocessing
     std::vector<cv::Mat> processedZSlices; // vector of matrices, each matrix is a 2D image
     std::vector<cv::Mat> interpolatedZSlices;
 
@@ -119,12 +151,16 @@ std::vector<cv::Mat> loadFrame(const std::string &imageFile, BaseConfig &config)
         {
             cv::Mat slice = tiffImage[i].clone();
             cv::cvtColor(slice, slice, cv::COLOR_BGR2GRAY);
+            cv::Mat originalNormalized;
+            slice.convertTo(originalNormalized, CV_32F, 1.0 / 255.0);
+            originalZSlices.push_back(originalNormalized);
             cv::Mat processedImg = processImage(slice, config);
             processedZSlices.push_back(processedImg);
         }
 
         // --- Calibrate sigmoid center from background zone, then apply sigmoid ---
-        // Measure mean brightness in a cell-free zone to determine sigmoid center.
+        // Measure a configurable percentile in a cell-free zone to determine
+        // sigmoid center.
         // Sigmoid: output = 1 / (1 + exp(-k * (input - center)))
         // This amplifies contrast: cells → near 1.0, background → near 0.0.
         // The L2 cost function needs this contrast to correctly fit cell boundaries.
@@ -140,9 +176,12 @@ std::vector<cv::Mat> loadFrame(const std::string &imageFile, BaseConfig &config)
 
             if (calW > 0 && calH > 0) {
                 cv::Rect roi(calX, calY, calW, calH);
-                float bgMean = static_cast<float>(cv::mean(processedZSlices[calZ](roi))[0]);
-                sigmoidCenter = bgMean + config.simulation.sigmoid_center_offset;
-                std::cout << "[Calibration] bgMean=" << bgMean
+                float bgPercentile = computePercentileFromRoi(
+                    processedZSlices[calZ](roi),
+                    config.simulation.sigmoid_center_percentile);
+                sigmoidCenter = bgPercentile;
+                std::cout << "[Calibration] bg_percentile=" << bgPercentile
+                          << " percentile=" << config.simulation.sigmoid_center_percentile
                           << " sigmoidCenter=" << sigmoidCenter
                           << " sigmoid_k=" << config.simulation.sigmoid_k << std::endl;
             }
@@ -150,8 +189,18 @@ std::vector<cv::Mat> loadFrame(const std::string &imageFile, BaseConfig &config)
 
         // Apply sigmoid to all slices — amplifies cell/background contrast
         if (config.simulation.sigmoid_k > 0) {
-            for (auto &slice : processedZSlices) {
+            for (size_t i = 0; i < processedZSlices.size(); ++i) {
+                auto &slice = processedZSlices[i];
                 applySigmoid(slice, config.simulation.sigmoid_k, sigmoidCenter);
+
+                if (config.simulation.post_sigmoid_subtract_sigma > 0.0f && i < originalZSlices.size()) {
+                    cv::Mat blurredOriginal = originalZSlices[i].clone();
+                    applySafeGaussianBlur(blurredOriginal, config.simulation.post_sigmoid_subtract_sigma);
+                    const float blurredMean = static_cast<float>(cv::mean(blurredOriginal)[0]);
+                    cv::min(blurredOriginal, blurredMean, blurredOriginal);
+                    slice -= blurredOriginal;
+                    cv::max(slice, 0.0f, slice);
+                }
             }
         }
 
