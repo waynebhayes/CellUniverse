@@ -523,7 +523,7 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
             split_axis = cv::Point3f(sin(phi) * cos(theta), sin(phi) * sin(theta), cos(phi));
         }
 
-        elongationRatio = (lambda2 > 1e-6f) ? (lambda1 / lambda2) : 1.0f;
+        elongationRatio = (effC > 1e-6f) ? (effA / effC) : 1.0f;
         std::cout << "[PCA Split] " << _name
                   << " elongation_ratio=" << elongationRatio
                   << " split_axis=(" << split_axis.x << ", " << split_axis.y << ", " << split_axis.z << ")"

@@ -63,7 +63,7 @@ simulation:
   sigmoid_center: 0.445
   sigmoid_center_percentile: 0.35
   post_sigmoid_subtract_sigma: 30.0
-  post_sigmoid_dimmest_percentile: 0.01
+  post_sigmoid_dimmest_percentile: 0.1
   sigmoid_center_offset: 0.047
   calibration_x: 20
   calibration_y: 20
@@ -75,7 +75,7 @@ simulation:
 prob:
   split: 0.03
   split_cost: 20
-  split_elongation_threshold: 1.9
+  split_elongation_threshold: 1.35
   overlap_penalty_weight: 1000.0
   split_burn_in_iterations: 500
   max_split_probability: 0.5
