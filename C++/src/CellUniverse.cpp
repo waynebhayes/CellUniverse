@@ -69,6 +69,49 @@ static float computePercentileFromRoi(const cv::Mat &roi, float percentile)
     return values[index];
 }
 
+static float computeStackMean(const std::vector<cv::Mat> &stack)
+{
+    double sum = 0.0;
+    double count = 0.0;
+
+    for (const auto &slice : stack) {
+        if (slice.empty()) {
+            continue;
+        }
+        sum += cv::sum(slice)[0];
+        count += static_cast<double>(slice.total());
+    }
+
+    return (count > 0.0) ? static_cast<float>(sum / count) : 0.0f;
+}
+
+static float computeMeanOfTopFraction(std::vector<float> values, float topFraction)
+{
+    if (values.empty()) {
+        return 0.0f;
+    }
+
+    const float clampedFraction = std::clamp(topFraction, 0.0f, 1.0f);
+    if (clampedFraction <= 0.0f) {
+        return 0.0f;
+    }
+
+    const size_t selectedCount = std::max<size_t>(
+        1, static_cast<size_t>(std::ceil(clampedFraction * static_cast<float>(values.size()))));
+    const size_t thresholdIndex = values.size() - selectedCount;
+
+    std::nth_element(values.begin(),
+                     values.begin() + static_cast<std::ptrdiff_t>(thresholdIndex),
+                     values.end());
+
+    double sum = 0.0;
+    for (size_t i = thresholdIndex; i < values.size(); ++i) {
+        sum += values[i];
+    }
+
+    return static_cast<float>(sum / selectedCount);
+}
+
 // Blur only across valid image content so zero-valued border padding does not
 // bleed into the specimen near the edges.
 static void applySafeGaussianBlur(cv::Mat &image, double sigma)
@@ -114,6 +157,53 @@ static void applyPostSigmoidAdjustments(cv::Mat &slice, const cv::Mat &originalN
         config.simulation.post_sigmoid_dimmest_percentile);
     slice -= dimmestPercentileValue;
     cv::max(slice, 0.0f, slice);
+}
+
+static float estimateAdaptiveBackgroundFromFrame(const Frame &frame,
+                                                 const SimulationConfig &simulationConfig)
+{
+    const auto &realFrame = frame.getRealFrame();
+    if (realFrame.empty()) {
+        return simulationConfig.background_color;
+    }
+
+    const float expandFactor = std::max(1.0f, simulationConfig.adaptive_background_expand_factor);
+    std::vector<cv::Mat> exclusionMask;
+    exclusionMask.reserve(realFrame.size());
+    for (const auto &slice : realFrame) {
+        exclusionMask.emplace_back(cv::Mat::zeros(slice.size(), CV_32F));
+    }
+
+    for (const auto &cell : frame.cells) {
+        auto params = cell.getCellParams();
+        params.majorRadius *= expandFactor;
+        params.minorRadius *= expandFactor;
+        Spheroid expandedCell(params);
+        for (size_t z = 0; z < exclusionMask.size(); ++z) {
+            expandedCell.draw(exclusionMask[z], simulationConfig, static_cast<float>(z));
+        }
+    }
+
+    std::vector<float> backgroundCandidates;
+    for (size_t z = 0; z < realFrame.size(); ++z) {
+        const cv::Mat &slice = realFrame[z];
+        const cv::Mat &mask = exclusionMask[z];
+        for (int y = 0; y < slice.rows; ++y) {
+            const float *sliceRow = slice.ptr<float>(y);
+            const float *maskRow = mask.ptr<float>(y);
+            for (int x = 0; x < slice.cols; ++x) {
+                if (maskRow[x] <= 0.0f) {
+                    backgroundCandidates.push_back(sliceRow[x]);
+                }
+            }
+        }
+    }
+
+    if (backgroundCandidates.empty()) {
+        return simulationConfig.background_color;
+    }
+
+    return computeMeanOfTopFraction(backgroundCandidates, simulationConfig.adaptive_background_top_fraction);
 }
 
 Image processImage(const Image &image, const BaseConfig &config)
@@ -304,6 +394,23 @@ void CellUniverse::optimize(int frameIndex)
     }
 
     Frame &frame = frames[frameIndex];
+
+    if (frameIndex > 0) {
+        const Frame &previousFrame = frames[frameIndex - 1];
+        const float previousBackground = estimateAdaptiveBackgroundFromFrame(previousFrame, config.simulation);
+        const float previousMeanBrightness = computeStackMean(previousFrame.getRealFrame());
+        const float currentMeanBrightness = computeStackMean(frame.getRealFrame());
+        const float brightnessScale =
+            (previousMeanBrightness > 1e-6f) ? (currentMeanBrightness / previousMeanBrightness) : 1.0f;
+        const float updatedBackground = previousBackground * brightnessScale;
+
+        frame.setBackgroundColor(updatedBackground);
+        std::cout << "[Adaptive Background] frame " << (firstFrame + frameIndex)
+                  << " base=" << previousBackground
+                  << " ratio=" << brightnessScale
+                  << " background=" << updatedBackground << '\n';
+    }
+
     frame.regenerateSynthFrame();
 
     size_t totalIterations = frame.length() * config.simulation.iterations_per_cell;

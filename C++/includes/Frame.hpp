@@ -41,6 +41,8 @@ public:
                                   float splitElongationThreshold = 1.3f,
                                   float overlapWeight = 1000.0f);
     std::vector<cv::Mat> getSynthFrame();
+    const std::vector<cv::Mat>& getRealFrame() const { return _realFrame; }
+    void setBackgroundColor(float backgroundColor) { simulationConfig.background_color = backgroundColor; }
     void regenerateSynthFrame() { _synthFrame = generateSynthFrame(); _currentCost = calculateCost(_synthFrame); }
     std::string getImageName() const { return imageName; }
     std::vector<Spheroid> cells;

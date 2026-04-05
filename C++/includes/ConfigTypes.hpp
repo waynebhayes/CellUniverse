@@ -22,6 +22,8 @@ public:
     float sigmoid_center_offset = 0.047f;
     float post_sigmoid_subtract_sigma = 10.0f;
     float post_sigmoid_dimmest_percentile = 0.45f;
+    float adaptive_background_expand_factor = 1.1f;
+    float adaptive_background_top_fraction = 0.4f;
     int calibration_x = 20;
     int calibration_y = 20;
     int calibration_z = 0;
@@ -44,6 +46,8 @@ public:
         if (node["sigmoid_center_offset"]) sigmoid_center_offset = node["sigmoid_center_offset"].as<float>();
         if (node["post_sigmoid_subtract_sigma"]) post_sigmoid_subtract_sigma = node["post_sigmoid_subtract_sigma"].as<float>();
         if (node["post_sigmoid_dimmest_percentile"]) post_sigmoid_dimmest_percentile = node["post_sigmoid_dimmest_percentile"].as<float>();
+        if (node["adaptive_background_expand_factor"]) adaptive_background_expand_factor = node["adaptive_background_expand_factor"].as<float>();
+        if (node["adaptive_background_top_fraction"]) adaptive_background_top_fraction = node["adaptive_background_top_fraction"].as<float>();
         if (node["calibration_x"]) calibration_x = node["calibration_x"].as<int>();
         if (node["calibration_y"]) calibration_y = node["calibration_y"].as<int>();
         if (node["calibration_z"]) calibration_z = node["calibration_z"].as<int>();
@@ -59,6 +63,8 @@ public:
         std::cout << "sigmoid_center_percentile: " << sigmoid_center_percentile << '\n';
         std::cout << "post_sigmoid_subtract_sigma: " << post_sigmoid_subtract_sigma << '\n';
         std::cout << "post_sigmoid_dimmest_percentile: " << post_sigmoid_dimmest_percentile << '\n';
+        std::cout << "adaptive_background_expand_factor: " << adaptive_background_expand_factor << '\n';
+        std::cout << "adaptive_background_top_fraction: " << adaptive_background_top_fraction << '\n';
         std::cout << "z_slices: " << z_slices << std::endl;
     }
 };
