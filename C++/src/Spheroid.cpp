@@ -307,6 +307,29 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
     int minZ = std::max(0, static_cast<int>(std::floor(pcaCenter.z - splitSearchRadius)));
     int maxZ = std::min(static_cast<int>(image.size()) - 1, static_cast<int>(std::ceil(pcaCenter.z + splitSearchRadius)));
 
+    std::cout << "[Split Region] " << _name
+              << " box=(" << minX << ":" << maxX
+              << "," << minY << ":" << maxY
+              << "," << minZ << ":" << maxZ << ")"
+              << " dims=(" << (maxX - minX + 1)
+              << "," << (maxY - minY + 1)
+              << "," << (maxZ - minZ + 1) << ")"
+              << " searchRadius=" << splitSearchRadius
+              << " gateScale=2"
+              << " neighbors=" << neighborCenters.size()
+              << std::endl;
+
+    const float expandedGateScale = 2.0f;
+    const float gateA = std::max(1e-6f, expandedGateScale * effA);
+    const float gateB = std::max(1e-6f, expandedGateScale * effB);
+    const float gateC = std::max(1e-6f, expandedGateScale * effC);
+    auto insideExpandedGate = [&](const cv::Point3f &center, int x, int y, int z) {
+        const float dx = (static_cast<float>(x) - center.x) / gateA;
+        const float dy = (static_cast<float>(y) - center.y) / gateB;
+        const float dz = (static_cast<float>(z) - center.z) / gateC;
+        return (dx * dx + dy * dy + dz * dz) <= 1.0f;
+    };
+
     // Step 2: Collect bright pixels from the REAL IMAGE near this cell.
     // Previously we used the spheroid boundary (geometric shape), but for
     // oblate spheroids (a == b) PCA of a symmetric shape gives a random
@@ -327,12 +350,14 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
     double brightnessSum = 0.0;
     double brightnessSqSum = 0.0;
     int brightnessCount = 0;
+    int candidateVoxelCount = 0;
 
     scanSpheroidVolume(
         image, minX, maxX, minY, maxY, minZ, maxZ, _position,
         R_T, invA2, invB2, invC2,
         [&](int /*x*/, int /*y*/, int /*z*/, float pixel, double val) {
             if (val <= 1.0) {
+                candidateVoxelCount++;
                 brightnessSum += pixel;
                 brightnessSqSum += pixel * pixel;
                 brightnessCount++;
@@ -347,6 +372,13 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
     }
     float pixelThreshold = meanBrightness + 0.5f * stddevBrightness;
 
+    std::cout << "[Split Brightness] " << _name
+              << " inside_count=" << candidateVoxelCount
+              << " mean=" << meanBrightness
+              << " stddev=" << stddevBrightness
+              << " threshold=" << pixelThreshold
+              << std::endl;
+
 
 
     // Second pass: collect bright pixels within an expanded boundary (2.0x radius).
@@ -357,16 +389,17 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
     std::vector<cv::Point3f> rawPoints;
     rawPoints.reserve((maxX - minX + 1) * (maxY - minY + 1));
 
-    // No ellipsoidal boundary — the bounding box (3×maxR) and neighbor
-    // exclusion naturally limit the search area. Removing the ellipsoidal
-    // gate fixes the inconsistency where the bounding box used pre-opt
-    // radii but the ellipsoid check used current (possibly collapsed) radii.
+    // Collect bright pixels only inside an expanded ellipsoid centered at the
+    // PCA center. Use effective pre-opt radii here so the gate is large
+    // enough to include true daughter blobs, but still excludes far-field
+    // noise and bright structures from neighboring cells.
 
     scanSpheroidVolume(
         image, minX, maxX, minY, maxY, minZ, maxZ, _position,
         R_T, invA2, invB2, invC2,
         [&](double /*dx*/, double /*dy*/, double /*dz*/, int x, int y, int z, float pixel, double /*val*/) {
             if (pixel > pixelThreshold) {
+                if (!insideExpandedGate(pcaCenter, x, y, z)) return;
                 // Skip pixel if it's closer to any neighbor than to pcaCenter
                 // (use pcaCenter = pre-opt position so distance is measured from
                 // the original cell midpoint, not the Phase-1-shifted position)
@@ -401,6 +434,9 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
     // centroid of collected pixels; if it differs significantly from
     // pcaCenter, re-collect using the centroid as the new center. This
     // shifts the Voronoi boundary to capture both blobs more evenly.
+    float recenterDrift = 0.0f;
+    bool recentered = false;
+    std::size_t rawPointsBeforeRecenter = rawPoints.size();
     if (rawPoints.size() >= 10) {
         cv::Point3f centroid(0, 0, 0);
         for (const auto &pt : rawPoints) {
@@ -415,10 +451,13 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
                        + (centroid.z - pcaCenter.z) * (centroid.z - pcaCenter.z);
 
         if (driftSq > 25.0f) { // > 5 pixels drift
+            recentered = true;
+            recenterDrift = std::sqrt(driftSq);
             std::cout << "[PCA Recenter] " << _name
                       << " pcaCenter=(" << pcaCenter.x << "," << pcaCenter.y << "," << pcaCenter.z << ")"
                       << " centroid=(" << centroid.x << "," << centroid.y << "," << centroid.z << ")"
-                      << " drift=" << std::sqrt(driftSq) << '\n';
+                      << " drift=" << recenterDrift
+                      << " rawPointsBefore=" << rawPoints.size() << '\n';
             pcaCenter = centroid;
             rawPoints.clear();
 
@@ -427,6 +466,7 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
                 R_T, invA2, invB2, invC2,
                 [&](double /*dx*/, double /*dy*/, double /*dz*/, int x, int y, int z, float pixel, double /*val*/) {
                     if (pixel > pixelThreshold) {
+                        if (!insideExpandedGate(pcaCenter, x, y, z)) return;
                         float selfDx = static_cast<float>(x) - pcaCenter.x;
                         float selfDy = static_cast<float>(y) - pcaCenter.y;
                         float selfDz = static_cast<float>(z) - pcaCenter.z;
@@ -449,6 +489,9 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
                             static_cast<float>(z));
                     }
                 });
+            std::cout << "[PCA Recenter Result] " << _name
+                      << " rawPointsAfter=" << rawPoints.size()
+                      << std::endl;
         }
     }
 
@@ -616,6 +659,37 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
         _name + "1", new_position2.x, new_position2.y, new_position2.z,
         daughterMajorRadius, daughterMinorRadius, _theta_x, _theta_y, _theta_z, _brightness));
 
+    const int totalCount = count1 + count2;
+    const int dominantCount = std::max(count1, count2);
+    const int minorCount = std::min(count1, count2);
+    const float balance = (dominantCount > 0)
+        ? static_cast<float>(minorCount) / static_cast<float>(dominantCount)
+        : 0.0f;
+    const float separation = std::sqrt(
+        (new_position1.x - new_position2.x) * (new_position1.x - new_position2.x) +
+        (new_position1.y - new_position2.y) * (new_position1.y - new_position2.y) +
+        (new_position1.z - new_position2.z) * (new_position1.z - new_position2.z));
+    const float separationOverDaughterMajor = (daughterMajorRadius > 1e-6)
+        ? separation / static_cast<float>(daughterMajorRadius)
+        : 0.0f;
+    const float driftOverParentMajor = (effMajorR > 1e-6)
+        ? recenterDrift / static_cast<float>(effMajorR)
+        : 0.0f;
+
+    std::cout << "[Split ClusterStats] " << _name
+              << " total=" << totalCount
+              << " count1=" << count1
+              << " count2=" << count2
+              << " balance=" << balance
+              << " sep=" << separation
+              << " sepOverDaughterMajor=" << separationOverDaughterMajor
+              << " recentered=" << (recentered ? 1 : 0)
+              << " recenterDrift=" << recenterDrift
+              << " driftOverParentMajor=" << driftOverParentMajor
+              << " rawPointsBeforeRecenter=" << rawPointsBeforeRecenter
+              << " rawPointsFinal=" << rawPoints.size()
+              << std::endl;
+
     bool constraints = cell1.checkConstraints() && cell2.checkConstraints();
     return std::make_tuple(Spheroid(cell1), Spheroid(cell2), constraints, elongationRatio);
 }
@@ -655,4 +729,3 @@ std::pair<std::vector<float>, std::vector<float>> Spheroid::calculateMinimumBox(
     }
     return std::make_pair(min_corner, max_corner);
 }
-

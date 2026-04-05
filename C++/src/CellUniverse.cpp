@@ -1,6 +1,7 @@
 #include "../includes/CellUniverse.hpp"
 #include <set>
 #include <cmath>
+#include <limits>
 
 namespace utils
 {
@@ -36,6 +37,68 @@ static void applySigmoid(cv::Mat &image, float k, float center)
     image.forEach<float>([k, center](float &pixel, const int *) {
         pixel = 1.0f / (1.0f + std::exp(-k * (pixel - center)));
     });
+}
+
+struct StackStats
+{
+    double minValue = std::numeric_limits<double>::infinity();
+    double maxValue = -std::numeric_limits<double>::infinity();
+    double sum = 0.0;
+    double sumSq = 0.0;
+    std::size_t count = 0;
+};
+
+static StackStats computeStackStats(const std::vector<cv::Mat> &stack)
+{
+    StackStats stats;
+    for (const auto &slice : stack)
+    {
+        CV_Assert(slice.type() == CV_32F);
+        double sliceMin = 0.0;
+        double sliceMax = 0.0;
+        cv::minMaxLoc(slice, &sliceMin, &sliceMax);
+        stats.minValue = std::min(stats.minValue, sliceMin);
+        stats.maxValue = std::max(stats.maxValue, sliceMax);
+
+        for (int y = 0; y < slice.rows; ++y)
+        {
+            const float *row = slice.ptr<float>(y);
+            for (int x = 0; x < slice.cols; ++x)
+            {
+                const double v = row[x];
+                stats.sum += v;
+                stats.sumSq += v * v;
+                ++stats.count;
+            }
+        }
+    }
+
+    if (stats.count == 0)
+    {
+        stats.minValue = 0.0;
+        stats.maxValue = 0.0;
+    }
+    return stats;
+}
+
+static void printStackStats(const std::string &stage, const std::string &imageFile, const std::vector<cv::Mat> &stack)
+{
+    const StackStats stats = computeStackStats(stack);
+    const double mean = (stats.count > 0) ? stats.sum / static_cast<double>(stats.count) : 0.0;
+    const double variance = (stats.count > 0)
+        ? std::max(0.0, stats.sumSq / static_cast<double>(stats.count) - mean * mean)
+        : 0.0;
+    const double stddev = std::sqrt(variance);
+
+    std::cout << "[Preprocess] file=" << fs::path(imageFile).filename().string()
+              << " stage=" << stage
+              << " slices=" << stack.size()
+              << " voxels=" << stats.count
+              << " min=" << stats.minValue
+              << " max=" << stats.maxValue
+              << " mean=" << mean
+              << " stddev=" << stddev
+              << std::endl;
 }
 
 Image processImage(const Image &image, const BaseConfig &config)
@@ -86,6 +149,14 @@ std::vector<cv::Mat> loadFrame(const std::string &imageFile, BaseConfig &config)
             return processedZSlices;
         }
 
+        std::cout << "[LoadFrame] file=" << fs::path(imageFile).filename().string()
+                  << " rawSlices=" << numTiffSlices
+                  << " rawType=" << img.type()
+                  << " rawChannels=" << img.channels()
+                  << " rawRows=" << img.rows
+                  << " rawCols=" << img.cols
+                  << std::endl;
+
         // Iterate through tiffImage, begin coversion to black and white, blurring
         for (unsigned i = 0; i < numTiffSlices; ++i) // should we end at == slices?
         {
@@ -94,6 +165,8 @@ std::vector<cv::Mat> loadFrame(const std::string &imageFile, BaseConfig &config)
             cv::Mat processedImg = processImage(slice, config);
             processedZSlices.push_back(processedImg);
         }
+
+        printStackStats("post_blur_pre_sigmoid", imageFile, processedZSlices);
 
         // --- Calibrate sigmoid center from background zone, then apply sigmoid ---
         // Measure mean brightness in a cell-free zone to determine sigmoid center.
@@ -114,7 +187,10 @@ std::vector<cv::Mat> loadFrame(const std::string &imageFile, BaseConfig &config)
                 cv::Rect roi(calX, calY, calW, calH);
                 float bgMean = static_cast<float>(cv::mean(processedZSlices[calZ](roi))[0]);
                 sigmoidCenter = bgMean + config.simulation.sigmoid_center_offset;
-                std::cout << "[Calibration] bgMean=" << bgMean
+                std::cout << "[Calibration] file=" << fs::path(imageFile).filename().string()
+                          << " z=" << calZ
+                          << " roi=(" << calX << "," << calY << "," << calW << "," << calH << ")"
+                          << " bgMean=" << bgMean
                           << " sigmoidCenter=" << sigmoidCenter
                           << " sigmoid_k=" << config.simulation.sigmoid_k << std::endl;
             }
@@ -126,6 +202,8 @@ std::vector<cv::Mat> loadFrame(const std::string &imageFile, BaseConfig &config)
                 applySigmoid(slice, config.simulation.sigmoid_k, sigmoidCenter);
             }
         }
+
+        printStackStats("post_sigmoid", imageFile, processedZSlices);
 
         const int expandFactor = config.simulation.z_scaling;
         // there will be (expandFactor-1) interpolated slices between each "real" one.
@@ -153,6 +231,8 @@ std::vector<cv::Mat> loadFrame(const std::string &imageFile, BaseConfig &config)
                 " slices, but has " + std::to_string(interpolatedZSlices.size()) + " slices";
             throw std::runtime_error(errorMessage);
         }
+
+        printStackStats("post_interpolation", imageFile, interpolatedZSlices);
     }
     else
     {
@@ -221,6 +301,21 @@ void CellUniverse::optimize(int frameIndex)
 
     std::cout << "[Optimize] frame " << displayFrame
               << " (" << frame.cells.size() << " cells, " << totalIterations << " iterations)" << std::endl;
+
+    if (frame.cells.size() <= 24)
+    {
+        std::cout << "[FrameState Before] frame " << displayFrame << std::endl;
+        for (const auto &cell : frame.cells)
+        {
+            auto p = cell.getCellParams();
+            std::cout << "  " << p.name
+                      << " pos=(" << p.x << "," << p.y << "," << p.z << ")"
+                      << " R=(" << p.majorRadius << "," << p.minorRadius << ")"
+                      << " theta=(" << p.theta_x << "," << p.theta_y << "," << p.theta_z << ")"
+                      << " brightness=" << p.brightness
+                      << std::endl;
+        }
+    }
 
     std::random_device rd;
     std::mt19937 gen(rd());
@@ -305,6 +400,14 @@ void CellUniverse::optimize(int frameIndex)
                 preOptY = pit->second.y;
                 preOptZ = pit->second.z;
             }
+            std::cout << "[Split Attempt] " << params.name
+                      << " frame=" << displayFrame
+                      << " iter=" << i
+                      << " prevElong=" << prevElongation
+                      << " P(split)=" << pSplit
+                      << " preOptPos=(" << preOptX << "," << preOptY << "," << preOptZ << ")"
+                      << " preOptR=(" << preOptMajorR << "," << preOptMinorR << ")"
+                      << std::endl;
             auto result = frame.trySplitCell(cellIdx, preOptMajorR, preOptMinorR,
                                              preOptX, preOptY, preOptZ,
                                              config.prob.split_elongation_threshold,
@@ -328,6 +431,14 @@ void CellUniverse::optimize(int frameIndex)
                 // trySplitCell recomputes PCA internally (ignores cache),
                 // so cache reset alone doesn't prevent repeated burn-ins.
                 splitBlacklist.insert(params.name);
+                std::cout << "[Split RejectCost] " << params.name
+                          << " frame=" << displayFrame
+                          << " iter=" << i
+                          << " diff=" << costDiff
+                          << " threshold=" << -config.prob.split_cost
+                          << " prevElong=" << prevElongation
+                          << " P(split)=" << pSplit
+                          << std::endl;
             }
         } else {
             // --- Try perturbation ---

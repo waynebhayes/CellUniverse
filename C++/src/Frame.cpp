@@ -396,7 +396,12 @@ CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float pre
 
     std::cout << "[Split Burn-in] " << oldCell.getName()
               << " burn_in_accepted=" << accepted << "/" << BURN_IN_ITERATIONS
-              << " oldCost=" << oldTotalCost << " newCost=" << bestTotalCost
+              << " oldImageCost=" << _currentCost
+              << " oldOverlap=" << oldOverlap
+              << " newImageCost=" << bestImageCost
+              << " newOverlap=" << bestOverlap
+              << " oldCost=" << oldTotalCost
+              << " newCost=" << bestTotalCost
               << " diff=" << costDiff << std::endl;
 
     CallBackFunc callback = [this, bestSynthFrame, bestImageCost, oldCell, index](bool accept)
