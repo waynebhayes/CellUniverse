@@ -20,7 +20,6 @@ public:
     float sigmoid_center = 0.445f;
     float sigmoid_center_percentile = 0.4f;
     float sigmoid_center_offset = 0.047f;
-    float post_sigmoid_subtract_sigma = 10.0f;
     float post_sigmoid_dimmest_percentile = 0.45f;
     float adaptive_background_expand_factor = 1.1f;
     float adaptive_background_top_fraction = 0.4f;
@@ -44,7 +43,6 @@ public:
         if (node["sigmoid_center"]) sigmoid_center = node["sigmoid_center"].as<float>();
         if (node["sigmoid_center_percentile"]) sigmoid_center_percentile = node["sigmoid_center_percentile"].as<float>();
         if (node["sigmoid_center_offset"]) sigmoid_center_offset = node["sigmoid_center_offset"].as<float>();
-        if (node["post_sigmoid_subtract_sigma"]) post_sigmoid_subtract_sigma = node["post_sigmoid_subtract_sigma"].as<float>();
         if (node["post_sigmoid_dimmest_percentile"]) post_sigmoid_dimmest_percentile = node["post_sigmoid_dimmest_percentile"].as<float>();
         if (node["adaptive_background_expand_factor"]) adaptive_background_expand_factor = node["adaptive_background_expand_factor"].as<float>();
         if (node["adaptive_background_top_fraction"]) adaptive_background_top_fraction = node["adaptive_background_top_fraction"].as<float>();
@@ -61,7 +59,6 @@ public:
         std::cout << "z_scaling: " << z_scaling << '\n';
         std::cout << "blur_sigma: " << blur_sigma << '\n';
         std::cout << "sigmoid_center_percentile: " << sigmoid_center_percentile << '\n';
-        std::cout << "post_sigmoid_subtract_sigma: " << post_sigmoid_subtract_sigma << '\n';
         std::cout << "post_sigmoid_dimmest_percentile: " << post_sigmoid_dimmest_percentile << '\n';
         std::cout << "adaptive_background_expand_factor: " << adaptive_background_expand_factor << '\n';
         std::cout << "adaptive_background_top_fraction: " << adaptive_background_top_fraction << '\n';
@@ -75,10 +72,12 @@ public:
     float split_cost;
     float split_elongation_threshold;
     float overlap_penalty_weight;
+    float size_reduction_penalty_weight;
     int split_burn_in_iterations = 500;
     float max_split_probability = 0.5f;
     ProbabilityConfig() : split(0.0f), split_cost(0.0f),
-                          split_elongation_threshold(1.3f), overlap_penalty_weight(1000.0f) {
+                          split_elongation_threshold(1.3f), overlap_penalty_weight(1000.0f),
+                          size_reduction_penalty_weight(0.0f) {
     }
 
     void explodeConfig(const YAML::Node& node) {
@@ -94,6 +93,9 @@ public:
         if (node["overlap_penalty_weight"]) {
             overlap_penalty_weight = node["overlap_penalty_weight"].as<float>();
         }
+        if (node["size_reduction_penalty_weight"]) {
+            size_reduction_penalty_weight = node["size_reduction_penalty_weight"].as<float>();
+        }
         if (node["split_burn_in_iterations"]) {
             split_burn_in_iterations = node["split_burn_in_iterations"].as<int>();
         }
@@ -106,7 +108,8 @@ public:
         std::cout << "split: " << split << '\n';
         std::cout << "split_cost: " << split_cost << '\n';
         std::cout << "split_elongation_threshold: " << split_elongation_threshold << '\n';
-        std::cout << "overlap_penalty_weight: " << overlap_penalty_weight << std::endl;
+        std::cout << "overlap_penalty_weight: " << overlap_penalty_weight << '\n';
+        std::cout << "size_reduction_penalty_weight: " << size_reduction_penalty_weight << std::endl;
     }
 };
 
@@ -159,6 +162,7 @@ public:
     double minBrightness{0.1};
     double maxBrightness{1.0};
     float splitBrightestFraction{0.10f};
+    float brightnessUpdateBlend{0.2f};
     ~SpheroidConfig() = default;
 
     void explodeConfig(const YAML::Node& node)
@@ -180,6 +184,7 @@ public:
         if (node["minBrightness"]) minBrightness = node["minBrightness"].as<double>();
         if (node["maxBrightness"]) maxBrightness = node["maxBrightness"].as<double>();
         if (node["splitBrightestFraction"]) splitBrightestFraction = node["splitBrightestFraction"].as<float>();
+        if (node["brightnessUpdateBlend"]) brightnessUpdateBlend = node["brightnessUpdateBlend"].as<float>();
     }
 };
 

@@ -1,5 +1,25 @@
 #include "../includes/Frame.hpp"
 
+namespace {
+double computeSizeReductionPenalty(const Spheroid &oldCell, const Spheroid &newCell, float weight)
+{
+    if (weight <= 0.0f) {
+        return 0.0;
+    }
+
+    const auto accumulateReductionPenalty = [weight](float oldRadius, float newRadius) {
+        if (oldRadius <= 0.0f || newRadius >= oldRadius) {
+            return 0.0;
+        }
+        const double reductionRatio = static_cast<double>(oldRadius - newRadius) / oldRadius;
+        return static_cast<double>(weight) * reductionRatio * reductionRatio;
+    };
+
+    return accumulateReductionPenalty(oldCell.getMajorRadius(), newCell.getMajorRadius())
+         + accumulateReductionPenalty(oldCell.getMinorRadius(), newCell.getMinorRadius());
+}
+}
+
 // Function to interpolate between two slices
 void interpolateSlices(const cv::Mat& slice1, const cv::Mat& slice2, 
                        std::vector<cv::Mat>& processedSlices, int numInterpolations) {
@@ -175,7 +195,7 @@ size_t Frame::length() const
     return cells.size();
 }
 
-CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight)
+CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight, float sizeReductionWeight)
 {
     if (index >= cells.size()) {
         return {0.0, [](bool) {}};
@@ -190,13 +210,15 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight)
 
     // O(n) overlap for this cell after perturbation
     double newOverlapCell = computeOverlapForCell(index, overlapWeight);
+    double sizeReductionPenalty = computeSizeReductionPenalty(oldCell, cells[index], sizeReductionWeight);
 
     auto newSynthFrame = generateSynthFrameFast(oldCell, cells[index]);
     double newImageCost = calculateCost(newSynthFrame);
     // Use cached cost instead of recalculating L2 over all 225 slices
     double oldImageCost = _currentCost;
 
-    double costDiff = (newImageCost + newOverlapCell) - (oldImageCost + oldOverlapCell);
+    double costDiff = (newImageCost + newOverlapCell + sizeReductionPenalty)
+                    - (oldImageCost + oldOverlapCell);
 
     CallBackFunc callback = [this, newSynthFrame, oldCell, index, newImageCost](bool accept)
     {
@@ -268,7 +290,7 @@ std::map<std::string, float> Frame::computeElongationRatios() const
         }
         // getSplitCells returns (d1, d2, valid, elongationRatio)
         auto [d1, d2, valid, elongation] = cells[i].getSplitCells(
-            _realFrame, simulationConfig.z_scaling, neighbors);
+            _realFrame, simulationConfig.z_scaling, simulationConfig.background_color, neighbors);
         ratios[cells[i].getName()] = valid ? elongation : 1.0f;
     }
     return ratios;
@@ -284,7 +306,7 @@ float Frame::computeElongationForCell(size_t cellIdx) const
     }
 
     auto [d1, d2, valid, elongation] = cells[cellIdx].getSplitCells(
-        _realFrame, simulationConfig.z_scaling, neighbors);
+        _realFrame, simulationConfig.z_scaling, simulationConfig.background_color, neighbors);
 
     return valid ? elongation : 1.0f;
 }
@@ -308,7 +330,10 @@ CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float pre
         }
     }
 
-    auto [child1, child2, valid, elongationRatio] = oldCell.getSplitCells(_realFrame, simulationConfig.z_scaling, neighborCenters, preOptMajorR, preOptMinorR, preOptX, preOptY, preOptZ);
+    auto [child1, child2, valid, elongationRatio] = oldCell.getSplitCells(_realFrame, simulationConfig.z_scaling,
+                                                                          simulationConfig.background_color,
+                                                                          neighborCenters, preOptMajorR, preOptMinorR,
+                                                                          preOptX, preOptY, preOptZ);
     if (!valid)
     {
         std::cout << "[Split Skip] " << oldCell.getName()

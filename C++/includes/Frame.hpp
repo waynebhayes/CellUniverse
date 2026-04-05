@@ -30,7 +30,8 @@ public:
     std::vector<cv::Mat> generateOutputSynthFrame();
     // DataFrame getCellsAsParams();
     size_t length() const;
-    CostCallbackPair perturbCell(size_t index, float overlapWeight = 1000.0f);
+    CostCallbackPair perturbCell(size_t index, float overlapWeight = 1000.0f,
+                                 float sizeReductionWeight = 0.0f);
     double computeOverlapPenalty(float weight) const;
     double computeOverlapForCell(size_t cellIdx, float weight) const;
 

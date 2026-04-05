@@ -2,6 +2,7 @@
 
 CellFactory::CellFactory(const BaseConfig &config) {
     std::string cellType = config.cellType;
+    initialBrightness = config.simulation.cell_color;
     // TODO: add more else if branches for more cell Types
     if (cellType == "spheroid") {
         Spheroid::cellConfig = *config.cell;
@@ -52,11 +53,7 @@ while (std::getline(file, line)) {
         float majorRadius = std::stof(tokens[5]);
         float minorRadius = std::stof(tokens[6]);
 
-        // Optional brightness in column 8 (measured from real image)
-        float brightness = 0.5f;
-        if (tokens.size() >= 8 && tokens[7] != "None" && !tokens[7].empty()) {
-            brightness = std::stof(tokens[7]);
-        }
+        float brightness = initialBrightness;
 
         z *= z_scaling;
 
@@ -98,6 +95,7 @@ while (std::getline(file, line)) {
         initialCells[filePath].push_back(
             Spheroid(SpheroidParams(cellName, x, y, z, defaultMajorRadius, defaultMinorRadius))
         );
+        initialCells[filePath].back().setBrightness(initialBrightness);
 
         ++line_cnt;
         continue;

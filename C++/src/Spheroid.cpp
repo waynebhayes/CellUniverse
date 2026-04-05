@@ -186,6 +186,13 @@ void Spheroid::print() const {
               << '\n';
 }
 
+void Spheroid::setBrightness(float brightness)
+{
+    _brightness = std::clamp(brightness,
+                             static_cast<float>(cellConfig.minBrightness),
+                             static_cast<float>(cellConfig.maxBrightness));
+}
+
 // ---- ROTATION-AWARE draw() ----
 // Instead of checking a voxel matrix, we analytically test each pixel
 // against the rotated spheroid by inverse-transforming back to local coords.
@@ -206,9 +213,49 @@ void Spheroid::draw(cv::Mat &image, const SimulationConfig &simulationConfig, fl
         R_T, invA2, invB2, invC2,
         [&](int x, int y, double val) {
             if (val <= 1.0) {
-                image.at<float>(y, x) = simulationConfig.cell_color;
+                image.at<float>(y, x) = _brightness;
             }
         });
+}
+
+float Spheroid::measureMeanBrightness(const std::vector<cv::Mat> &image) const
+{
+    if (image.empty()) {
+        return _brightness;
+    }
+
+    std::array<double, 9> R_T;
+    generateInverseRotationMatrix(R_T);
+
+    const double invA2 = 1.0 / (a * a);
+    const double invB2 = 1.0 / (b * b);
+    const double invC2 = 1.0 / (c * c);
+    const int maxZIndex = static_cast<int>(image.size()) - 1;
+    const float maxR = std::max({static_cast<float>(a), static_cast<float>(b), static_cast<float>(c)});
+
+    const int minX = std::max(0, static_cast<int>(std::floor(_position.x - maxR)));
+    const int maxX = std::min(image[0].cols - 1, static_cast<int>(std::ceil(_position.x + maxR)));
+    const int minY = std::max(0, static_cast<int>(std::floor(_position.y - maxR)));
+    const int maxY = std::min(image[0].rows - 1, static_cast<int>(std::ceil(_position.y + maxR)));
+    const int minZ = std::max(0, static_cast<int>(std::floor(_position.z - maxR)));
+    const int maxZ = std::min(maxZIndex, static_cast<int>(std::ceil(_position.z + maxR)));
+
+    double sum = 0.0;
+    int count = 0;
+    scanSpheroidVolume(
+        image, minX, maxX, minY, maxY, minZ, maxZ, _position,
+        R_T, invA2, invB2, invC2,
+        [&](int /*x*/, int /*y*/, int /*z*/, float pixel, double val) {
+            if (val <= 1.0) {
+                sum += pixel;
+                count++;
+            }
+        });
+
+    if (count == 0) {
+        return _brightness;
+    }
+    return static_cast<float>(sum / count);
 }
 
 // ---- ROTATION-AWARE drawOutline() ----
@@ -267,6 +314,7 @@ void Spheroid::drawOutline(cv::Mat &image, float color, float z) const {
 }
 
 std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::vector<cv::Mat> &image, float z_scaling,
+    float backgroundColor,
     const std::vector<cv::Point3f> &neighborCenters,
     float preOptMajorR, float preOptMinorR,
     float preOptX, float preOptY, float preOptZ) const {
@@ -334,7 +382,7 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
         image, minX, maxX, minY, maxY, minZ, maxZ, _position,
         R_T, invA2, invB2, invC2,
         [&](int /*x*/, int /*y*/, int /*z*/, float pixel, double val) {
-            if (val <= 1.0) {
+            if (val <= 1.0 && pixel >= backgroundColor) {
                 insideBrightnessValues.push_back(pixel);
             }
         });
@@ -377,7 +425,7 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
         image, minX, maxX, minY, maxY, minZ, maxZ, _position,
         R_T, invA2, invB2, invC2,
         [&](double /*dx*/, double /*dy*/, double /*dz*/, int x, int y, int z, float pixel, double /*val*/) {
-            if (pixel >= pixelThreshold) {
+            if (pixel >= pixelThreshold && pixel >= backgroundColor) {
                 // Skip pixel if it's closer to any neighbor than to pcaCenter
                 // (use pcaCenter = pre-opt position so distance is measured from
                 // the original cell midpoint, not the Phase-1-shifted position)
@@ -437,7 +485,7 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
                 image, minX, maxX, minY, maxY, minZ, maxZ, _position,
                 R_T, invA2, invB2, invC2,
                 [&](double /*dx*/, double /*dy*/, double /*dz*/, int x, int y, int z, float pixel, double /*val*/) {
-                    if (pixel >= pixelThreshold) {
+                    if (pixel >= pixelThreshold && pixel >= backgroundColor) {
                         float selfDx = static_cast<float>(x) - pcaCenter.x;
                         float selfDy = static_cast<float>(y) - pcaCenter.y;
                         float selfDz = static_cast<float>(z) - pcaCenter.z;

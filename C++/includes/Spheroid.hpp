@@ -75,6 +75,8 @@ class Spheroid
         float getMajorRadius() const { return static_cast<float>(_major_radius); }
         float getMinorRadius() const { return static_cast<float>(_minor_radius); }
         float getBrightness() const { return _brightness; }
+        void setBrightness(float brightness);
+        float measureMeanBrightness(const std::vector<cv::Mat> &image) const;
 
         void printCellInfo() const {
             std::cout << "Spheroid name: " << _name << " x: " << _position.x << " y: " << _position.y << " z: " << _position.z << " majorRadius: " << _major_radius << " minorRadius: " << _minor_radius << " theta_x: " << _theta_x << " theta_y: " << _theta_y << " theta_z: " << _theta_z << " brightness: " << _brightness << '\n';
@@ -87,6 +89,7 @@ class Spheroid
         [[nodiscard]] Spheroid getPerturbedCell() const;
 
         std::tuple<Spheroid, Spheroid, bool, float> getSplitCells(const std::vector<cv::Mat> &image, float z_scaling,
+            float backgroundColor,
             const std::vector<cv::Point3f> &neighborCenters = {},
             float preOptMajorR = 0.0f, float preOptMinorR = 0.0f,
             float preOptX = 0.0f, float preOptY = 0.0f, float preOptZ = 0.0f) const;

@@ -140,18 +140,8 @@ static void applySafeGaussianBlur(cv::Mat &image, double sigma)
     image.setTo(0.0f, blurredWeights <= 1e-6f);
 }
 
-static void applyPostSigmoidAdjustments(cv::Mat &slice, const cv::Mat &originalNormalized,
-                                        const BaseConfig &config)
+static void applyPostSigmoidAdjustments(cv::Mat &slice, const BaseConfig &config)
 {
-    if (config.simulation.post_sigmoid_subtract_sigma > 0.0f && !originalNormalized.empty()) {
-        cv::Mat blurredOriginal = originalNormalized.clone();
-        applySafeGaussianBlur(blurredOriginal, config.simulation.post_sigmoid_subtract_sigma);
-        const float blurredMean = static_cast<float>(cv::mean(blurredOriginal)[0]);
-        cv::min(blurredOriginal, blurredMean, blurredOriginal);
-        slice -= blurredOriginal;
-        cv::max(slice, 0.0f, slice);
-    }
-
     const float dimmestPercentileValue = computePercentileFromRoi(
         slice,
         config.simulation.post_sigmoid_dimmest_percentile);
@@ -231,7 +221,6 @@ Image processImage(const Image &image, const BaseConfig &config)
 
 std::vector<cv::Mat> loadFrame(const std::string &imageFile, BaseConfig &config)
 {
-    std::vector<cv::Mat> originalZSlices;  // normalized grayscale before preprocessing
     std::vector<cv::Mat> processedZSlices; // vector of matrices, each matrix is a 2D image
     std::vector<cv::Mat> interpolatedZSlices;
 
@@ -260,9 +249,6 @@ std::vector<cv::Mat> loadFrame(const std::string &imageFile, BaseConfig &config)
         {
             cv::Mat slice = tiffImage[i].clone();
             cv::cvtColor(slice, slice, cv::COLOR_BGR2GRAY);
-            cv::Mat originalNormalized;
-            slice.convertTo(originalNormalized, CV_32F, 1.0 / 255.0);
-            originalZSlices.push_back(originalNormalized);
             cv::Mat processedImg = processImage(slice, config);
             processedZSlices.push_back(processedImg);
         }
@@ -301,9 +287,7 @@ std::vector<cv::Mat> loadFrame(const std::string &imageFile, BaseConfig &config)
             for (size_t i = 0; i < processedZSlices.size(); ++i) {
                 auto &slice = processedZSlices[i];
                 applySigmoid(slice, config.simulation.sigmoid_k, sigmoidCenter);
-                if (i < originalZSlices.size()) {
-                    applyPostSigmoidAdjustments(slice, originalZSlices[i], config);
-                }
+                applyPostSigmoidAdjustments(slice, config);
             }
         }
 
@@ -378,6 +362,12 @@ CellUniverse::CellUniverse(std::map<std::string, std::vector<Spheroid>> initialC
         if ((continueFrom == -1 || i < continueFrom) && initialCells.find(file_name) != initialCells.end())
         {
             const std::vector<Spheroid> &cells = initialCells.at(file_name);
+            if (i == 0) {
+                for (const auto &cell : cells) {
+                    auto params = cell.getCellParams();
+                    initialGroundTruthCells[params.name] = params;
+                }
+            }
             frames.emplace_back(real_frame, config.simulation, cells, outputPath, file_name);
         }
         else
@@ -424,6 +414,7 @@ void CellUniverse::optimize(int frameIndex)
     std::uniform_real_distribution<float> uniform01(0.0f, 1.0f);
 
     const float overlapWeight = config.prob.overlap_penalty_weight;
+    const float sizeReductionWeight = config.prob.size_reduction_penalty_weight;
     const float baseSplitProb = config.prob.split; // base probability (e.g., 0.03)
 
     // No splits on the first frame — cells can't divide before any time has passed
@@ -446,6 +437,29 @@ void CellUniverse::optimize(int frameIndex)
     // If a cell looked elongated last frame, it's likely dividing now → higher P(split).
     // Frame 1 has no previous data → all cells use base rate.
     // The current frame's PCA (via trySplitCell→getSplitCells) is used for the split AXIS.
+    std::map<std::string, float> rawSplitProbabilities;
+    std::map<std::string, float> splitProbabilities;
+    float maxRawSplitProbability = 0.0f;
+
+    for (const auto &cell : frame.cells) {
+        auto p = cell.getCellParams();
+        float prevElong = 1.0f;
+        auto it = previousElongations.find(p.name);
+        if (it != previousElongations.end()) {
+            prevElong = it->second;
+        }
+        const float rawProbability = allowSplits
+            ? (baseSplitProb + std::max(0.0f, 1.0f - 1.0f / prevElong))
+            : 0.0f;
+        rawSplitProbabilities[p.name] = rawProbability;
+        maxRawSplitProbability = std::max(maxRawSplitProbability, rawProbability);
+    }
+
+    const float probabilityScale =
+        (allowSplits && maxRawSplitProbability > 1e-6f)
+            ? (config.prob.max_split_probability / maxRawSplitProbability)
+            : 0.0f;
+
     std::cout << "[P(split)] frame " << displayFrame
               << (allowSplits ? " (from previous frame PCA)" : " (splits disabled)") << std::endl;
     for (const auto &cell : frame.cells) {
@@ -455,9 +469,8 @@ void CellUniverse::optimize(int frameIndex)
         if (it != previousElongations.end()) {
             prevElong = it->second;
         }
-        float ps = allowSplits
-            ? std::min(config.prob.max_split_probability, baseSplitProb + std::max(0.0f, 1.0f - 1.0f / prevElong))
-            : 0.0f;
+        const float ps = allowSplits ? (rawSplitProbabilities[p.name] * probabilityScale) : 0.0f;
+        splitProbabilities[p.name] = ps;
         std::cout << "  " << p.name << " prevElong=" << prevElong << " P(split)=" << ps << std::endl;
     }
 
@@ -485,9 +498,7 @@ void CellUniverse::optimize(int frameIndex)
                 prevElongation = it->second;
             }
         }
-        float pSplit = allowSplits
-            ? std::min(config.prob.max_split_probability, baseSplitProb + std::max(0.0f, 1.0f - 1.0f / prevElongation))
-            : 0.0f;
+        float pSplit = allowSplits ? splitProbabilities[params.name] : 0.0f;
 
         if (pSplit > 0.0f && uniform01(gen) < pSplit
             && splitBlacklist.find(params.name) == splitBlacklist.end()) {
@@ -529,7 +540,7 @@ void CellUniverse::optimize(int frameIndex)
             }
         } else {
             // --- Try perturbation ---
-            auto result = frame.perturbCell(cellIdx, overlapWeight);
+            auto result = frame.perturbCell(cellIdx, overlapWeight, sizeReductionWeight);
             double costDiff = result.first;
             auto callback = result.second;
 
@@ -561,6 +572,37 @@ void CellUniverse::optimize(int frameIndex)
         }
     }
 
+    if (frameIndex == 0 && !initialGroundTruthCells.empty()) {
+        const auto &realFrame = frame.getRealFrame();
+        bool correctedAnyCell = false;
+        for (auto &cell : frame.cells) {
+            auto currentParams = cell.getCellParams();
+            auto it = initialGroundTruthCells.find(currentParams.name);
+            if (it == initialGroundTruthCells.end()) {
+                continue;
+            }
+
+            const auto &gtParams = it->second;
+            const bool radiusChanged =
+                std::abs(currentParams.majorRadius - gtParams.majorRadius) > 1e-6f ||
+                std::abs(currentParams.minorRadius - gtParams.minorRadius) > 1e-6f;
+            if (!radiusChanged) {
+                continue;
+            }
+
+            currentParams.majorRadius = gtParams.majorRadius;
+            currentParams.minorRadius = gtParams.minorRadius;
+            Spheroid correctedCell(currentParams);
+            correctedCell.setBrightness(correctedCell.measureMeanBrightness(realFrame));
+            cell = correctedCell;
+            correctedAnyCell = true;
+        }
+
+        if (correctedAnyCell) {
+            frame.regenerateSynthFrame();
+        }
+    }
+
     // End of frame: compute PCA elongation for each cell on THIS frame's image.
     // Store in previousElongations for the NEXT frame's P(split) computation.
     previousElongations.clear();
@@ -570,6 +612,18 @@ void CellUniverse::optimize(int frameIndex)
         float elong = frame.computeElongationForCell(ci);
         previousElongations[p.name] = elong;
         std::cout << "  " << p.name << " elongation=" << elong << std::endl;
+    }
+
+    const float brightnessBlend = std::clamp(config.cell ? config.cell->brightnessUpdateBlend : 0.0f, 0.0f, 1.0f);
+    if (brightnessBlend > 0.0f && config.cell) {
+        const auto &realFrame = frame.getRealFrame();
+        for (auto &cell : frame.cells) {
+            const float observedBrightness = cell.measureMeanBrightness(realFrame);
+            const float updatedBrightness =
+                cell.getBrightness() * (1.0f - brightnessBlend) + observedBrightness * brightnessBlend;
+            cell.setBrightness(updatedBrightness);
+        }
+        frame.regenerateSynthFrame();
     }
 
     std::cout << "[Optimize Done] frame " << displayFrame
