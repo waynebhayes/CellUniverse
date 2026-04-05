@@ -8,13 +8,15 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # C++ repo root: .../C++ (parent of examples)
 CPP_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+OUTPUT_ROOT="$CPP_ROOT/output"
+mkdir -p "$OUTPUT_ROOT"
 
 BUILD_DIR="$CPP_ROOT/build"
 #INPUT_DIR="$CPP_ROOT/examples/input/C.elegans_developing embryo_Fluo-N3DH-CE_Training/01"
 INPUT_DIR=$CPP_ROOT/examples/
 CONFIG_FILE="$CPP_ROOT/examples/config.yaml"
 INITIAL_FILE="$CPP_ROOT/examples/initial_auto.csv"
-OUT_DIR="$CPP_ROOT/examples/output_comprehensive_$(date +%Y%m%d_%H%M%S)"
+OUT_DIR="$OUTPUT_ROOT/output_comprehensive_$(date +%Y%m%d_%H%M%S)"
 
 echo "*******************************************************************************************************"
 echo "Cell Universe Auto Run"

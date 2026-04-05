@@ -35,5 +35,22 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 target_link_libraries(${PROJECT_NAME} ${OpenCV_LIBS})
 target_link_libraries(${PROJECT_NAME} yaml-cpp)
 target_include_directories(${PROJECT_NAME} PRIVATE lib/yaml-cpp/include)
+
+add_executable(brightness_volume_analyzer
+        ${cwd}/src/BrightnessVolumeAnalyzer.cpp
+        ${cwd}/src/EmbryoBrightTracker.cpp
+        ${cwd}/src/LineageViewer.cpp
+)
+
+target_include_directories(brightness_volume_analyzer PRIVATE
+        ${OpenCV_INCLUDE_DIRS}
+        ${cwd}/includes
+        ${cwd}/src
+        lib/yaml-cpp/include
+)
+
+target_link_libraries(brightness_volume_analyzer ${OpenCV_LIBS})
+target_link_libraries(brightness_volume_analyzer yaml-cpp)
+
 add_subdirectory(tests)
 add_subdirectory(lib/yaml-cpp)

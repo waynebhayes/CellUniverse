@@ -5,11 +5,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # C++ repo root: .../C++ (parent of examples)
 CPP_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+OUTPUT_ROOT="$CPP_ROOT/output"
+LOG_DIR="$OUTPUT_ROOT/logs"
+mkdir -p "$OUTPUT_ROOT" "$LOG_DIR"
 
 # -----------------------------------------
 # Create run log file (stdout + stderr)
 # -----------------------------------------
-LOG_FILE="$SCRIPT_DIR/original_data_runLog_$(date +%Y%m%d_%H%M%S).txt"
+LOG_FILE="$LOG_DIR/original_data_runLog_$(date +%Y%m%d_%H%M%S).txt"
 exec > >(tee -a "$LOG_FILE") 2>&1
 echo "[INFO] Logging to: $LOG_FILE"
 
@@ -20,10 +23,11 @@ INPUT_DIR="$CPP_ROOT/examples/input/original_data"
 INPUT_PATTERN="$INPUT_DIR/frame%03d.tif"   # NOTE: original_data uses frame%03d.tif
 CONFIG_FILE="$CPP_ROOT/config/config.yaml"
 INITIAL_FILE="$CPP_ROOT/config/initial.csv"     # change if your initial file name differs
-OUT_DIR="$CPP_ROOT/examples/output_original_data_$(date +%Y%m%d_%H%M%S)"
+OUT_DIR="$OUTPUT_ROOT/output_original_data_$(date +%Y%m%d_%H%M%S)"
 
 BUILD_DIR="$CPP_ROOT/build"
 FALLBACK_BUILD_DIR="$CPP_ROOT/cmake-build-debug"
+SKIP_CLEAN="${CELLUNIVERSE_SKIP_CLEAN:-0}"
 
 echo "======================================================================================================="
 echo "Cell Universe Original Data Run (clean + rebuild + run)"
@@ -34,6 +38,7 @@ echo "Input Pattern   : $INPUT_PATTERN"
 echo "Initial CSV     : $INITIAL_FILE"
 echo "Config YAML     : $CONFIG_FILE"
 echo "Output Dir      : $OUT_DIR"
+echo "Skip Clean      : $SKIP_CLEAN"
 echo "======================================================================================================="
 
 # -----------------------------------------
@@ -49,15 +54,20 @@ echo "==========================================================================
 # Clean previous build artifacts
 # -----------------------------------------
 echo "[STEP] Cleaning previous build artifacts..."
-if [ -d "$BUILD_DIR" ]; then
-  echo "  - Removing: $BUILD_DIR"
-  rm -rf "$BUILD_DIR"
+if [ "$SKIP_CLEAN" = "1" ]; then
+  echo "  - Skipping clean build removal (CELLUNIVERSE_SKIP_CLEAN=1)"
+  mkdir -p "$BUILD_DIR"
+else
+  if [ -d "$BUILD_DIR" ]; then
+    echo "  - Removing: $BUILD_DIR"
+    rm -rf "$BUILD_DIR"
+  fi
+  if [ -d "$FALLBACK_BUILD_DIR" ]; then
+    echo "  - Removing: $FALLBACK_BUILD_DIR"
+    rm -rf "$FALLBACK_BUILD_DIR"
+  fi
+  mkdir -p "$BUILD_DIR"
 fi
-if [ -d "$FALLBACK_BUILD_DIR" ]; then
-  echo "  - Removing: $FALLBACK_BUILD_DIR"
-  rm -rf "$FALLBACK_BUILD_DIR"
-fi
-mkdir -p "$BUILD_DIR"
 
 # -----------------------------------------
 # Reconfigure + Rebuild

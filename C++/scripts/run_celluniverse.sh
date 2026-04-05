@@ -1,6 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CPP_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+OUTPUT_ROOT="$CPP_ROOT/output"
+mkdir -p "$OUTPUT_ROOT" "$OUTPUT_ROOT/logs"
+
 # run_celluniverse.sh -i
 # run_celluniverse.sh <preset_config.ini> [preset_name]
 #
@@ -420,7 +425,7 @@ LAST_FRAME="$(ini_get "$INI_FILE" "$PRESET" "last_frame")"
 
 BUILD_DIR="$(resolve_path "$BUILD_DIR_RAW" "$INI_DIR")"
 INPUT_PATH="$(resolve_path "$INPUT_PATH_RAW" "$INI_DIR")"
-OUTPUT_BASE_DIR="$(resolve_path "$OUTPUT_BASE_RAW" "$INI_DIR")"
+OUTPUT_BASE_DIR="$OUTPUT_ROOT"
 CELL_CONFIG_FILE="$(resolve_path "$CELL_CONFIG_RAW" "$INI_DIR")"
 INITIAL_FILE="$(resolve_path "$INITIAL_RAW" "$INI_DIR")"
 

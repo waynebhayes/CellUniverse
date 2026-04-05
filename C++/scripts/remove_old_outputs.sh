@@ -1,6 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CPP_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+OUTPUT_ROOT="$CPP_ROOT/output"
+
 # remove_old_outputs.sh <config.ini> <preset>
 # Removes all output directories for the given preset, based on:
 #   output_base_dir + output_name_rule
@@ -88,7 +92,7 @@ OUTPUT_RULE="$(ini_get "$INI_FILE" "$PRESET" "output_name_rule")"
 [ -n "$OUTPUT_BASE_RAW" ] || { echo "[FATAL] missing output_base_dir in preset: $PRESET"; exit 1; }
 [ -n "$OUTPUT_RULE" ] || { echo "[FATAL] missing output_name_rule in preset: $PRESET"; exit 1; }
 
-OUTPUT_BASE_DIR="$(resolve_path "$OUTPUT_BASE_RAW" "$INI_DIR")"
+OUTPUT_BASE_DIR="$OUTPUT_ROOT"
 [ -d "$OUTPUT_BASE_DIR" ] || { echo "[FATAL] output base dir not found: $OUTPUT_BASE_DIR"; exit 1; }
 
 GLOB_RULE="$OUTPUT_RULE"
