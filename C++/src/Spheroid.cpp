@@ -264,7 +264,7 @@ void Spheroid::drawOutline(cv::Mat &image, float color, float z) const {
     return Spheroid(spheroidParams);
 }
 
-std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::vector<cv::Mat> &image, float z_scaling,
+std::tuple<Spheroid, Spheroid, bool, float, SplitDiagnostics> Spheroid::getSplitCells(const std::vector<cv::Mat> &image, float z_scaling,
     const std::vector<cv::Point3f> &neighborCenters,
     float preOptMajorR, float preOptMinorR,
     float preOptX, float preOptY, float preOptZ) const {
@@ -690,8 +690,23 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
               << " rawPointsFinal=" << rawPoints.size()
               << std::endl;
 
+    SplitDiagnostics diagnostics;
+    diagnostics.elongationRatio = elongationRatio;
+    diagnostics.totalCount = totalCount;
+    diagnostics.count1 = count1;
+    diagnostics.count2 = count2;
+    diagnostics.balance = balance;
+    diagnostics.separation = separation;
+    diagnostics.separationOverDaughterMajor = separationOverDaughterMajor;
+    diagnostics.recentered = recentered;
+    diagnostics.recenterDrift = recenterDrift;
+    diagnostics.driftOverParentMajor = driftOverParentMajor;
+    diagnostics.daughterMajorRadius = static_cast<float>(daughterMajorRadius);
+    diagnostics.daughterMinorRadius = static_cast<float>(daughterMinorRadius);
+    diagnostics.axisAbsZ = std::abs(split_axis.z);
+
     bool constraints = cell1.checkConstraints() && cell2.checkConstraints();
-    return std::make_tuple(Spheroid(cell1), Spheroid(cell2), constraints, elongationRatio);
+    return std::make_tuple(Spheroid(cell1), Spheroid(cell2), constraints, elongationRatio, diagnostics);
 }
 
 bool Spheroid::checkConstraints() const {
