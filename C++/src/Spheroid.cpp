@@ -1,4 +1,5 @@
 #include "../includes/Spheroid.hpp"
+#include <limits>
 #include <random>
 #include <type_traits>
 // #include <iostream>
@@ -315,7 +316,8 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
     // mass is. If the cell has split, there are two clusters of bright
     // pixels and PCA finds the axis between them.
 
-    // First pass: compute mean brightness inside the spheroid boundary
+    // First pass: collect brightness values inside the spheroid boundary.
+    // We use these to derive a percentile threshold for the brightest pixels.
     // Precompute constants for fast evaluation
     std::array<double, 9> R_T;
     generateInverseRotationMatrix(R_T);
@@ -324,34 +326,42 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
     const double invB2 = 1.0 / (b * b);
     const double invC2 = 1.0 / (c * c);
 
-    double brightnessSum = 0.0;
-    double brightnessSqSum = 0.0;
-    int brightnessCount = 0;
+    std::vector<float> insideBrightnessValues;
+    insideBrightnessValues.reserve((maxX - minX + 1) * (maxY - minY + 1));
 
     scanSpheroidVolume(
         image, minX, maxX, minY, maxY, minZ, maxZ, _position,
         R_T, invA2, invB2, invC2,
         [&](int /*x*/, int /*y*/, int /*z*/, float pixel, double val) {
             if (val <= 1.0) {
-                brightnessSum += pixel;
-                brightnessSqSum += pixel * pixel;
-                brightnessCount++;
+                insideBrightnessValues.push_back(pixel);
             }
         });
 
-    float meanBrightness = (brightnessCount > 0) ? static_cast<float>(brightnessSum / brightnessCount) : 0.4f;
-    float stddevBrightness = 0.0f;
-    if (brightnessCount > 1) {
-        double variance = (brightnessSqSum / brightnessCount) - (meanBrightness * meanBrightness);
-        stddevBrightness = (variance > 0) ? static_cast<float>(std::sqrt(variance)) : 0.0f;
+    const float brightestFraction =
+        std::clamp(cellConfig.splitBrightestFraction, 0.0f, 1.0f);
+    float pixelThreshold = 0.4f;
+    if (!insideBrightnessValues.empty()) {
+        if (brightestFraction <= 0.0f) {
+            pixelThreshold = std::numeric_limits<float>::infinity();
+        } else if (brightestFraction >= 1.0f) {
+            pixelThreshold = *std::min_element(insideBrightnessValues.begin(), insideBrightnessValues.end());
+        } else {
+            const size_t total = insideBrightnessValues.size();
+            const size_t selectedCount = std::max<size_t>(
+                1, static_cast<size_t>(std::ceil(brightestFraction * static_cast<float>(total))));
+            const size_t thresholdIndex = total - selectedCount;
+            std::nth_element(
+                insideBrightnessValues.begin(),
+                insideBrightnessValues.begin() + static_cast<std::ptrdiff_t>(thresholdIndex),
+                insideBrightnessValues.end());
+            pixelThreshold = insideBrightnessValues[thresholdIndex];
+        }
     }
-    float pixelThreshold = meanBrightness + 0.5f * stddevBrightness;
-
-
 
     // Second pass: collect bright pixels within an expanded boundary (2.0x radius).
     // The expansion captures daughter blobs that may extend beyond the parent's boundary.
-    // Only pixels brighter than the mean are included (cell tissue, not background).
+    // Only the top configurable fraction of brightest pixels are included.
     // Skip pixels closer to a neighbor cell than to this cell (prevents PCA contamination).
     // Store raw image-space coordinates for centroid-based daughter placement.
     std::vector<cv::Point3f> rawPoints;
@@ -366,7 +376,7 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
         image, minX, maxX, minY, maxY, minZ, maxZ, _position,
         R_T, invA2, invB2, invC2,
         [&](double /*dx*/, double /*dy*/, double /*dz*/, int x, int y, int z, float pixel, double /*val*/) {
-            if (pixel > pixelThreshold) {
+            if (pixel >= pixelThreshold) {
                 // Skip pixel if it's closer to any neighbor than to pcaCenter
                 // (use pcaCenter = pre-opt position so distance is measured from
                 // the original cell midpoint, not the Phase-1-shifted position)
@@ -426,7 +436,7 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
                 image, minX, maxX, minY, maxY, minZ, maxZ, _position,
                 R_T, invA2, invB2, invC2,
                 [&](double /*dx*/, double /*dy*/, double /*dz*/, int x, int y, int z, float pixel, double /*val*/) {
-                    if (pixel > pixelThreshold) {
+                    if (pixel >= pixelThreshold) {
                         float selfDx = static_cast<float>(x) - pcaCenter.x;
                         float selfDy = static_cast<float>(y) - pcaCenter.y;
                         float selfDz = static_cast<float>(z) - pcaCenter.z;
@@ -520,7 +530,8 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
                   << " num_bright_pixels=" << rawPoints.size()
                   << " normR=" << normR
                   << " threshold=" << pixelThreshold
-                  << " mean=" << meanBrightness << " stddev=" << stddevBrightness
+                  << " selected_fraction=" << brightestFraction
+                  << " inside_count=" << insideBrightnessValues.size()
                   << '\n';
     } else {
         std::cout << "[PCA Split] " << _name
@@ -655,4 +666,3 @@ std::pair<std::vector<float>, std::vector<float>> Spheroid::calculateMinimumBox(
     }
     return std::make_pair(min_corner, max_corner);
 }
-

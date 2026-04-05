@@ -38,6 +38,34 @@ static void applySigmoid(cv::Mat &image, float k, float center)
     });
 }
 
+// Blur only across valid image content so zero-valued border padding does not
+// bleed into the specimen near the edges.
+static void applySafeGaussianBlur(cv::Mat &image, double sigma)
+{
+    CV_Assert(image.type() == CV_32F);
+
+    cv::Mat validMask;
+    cv::compare(image, 0.0f, validMask, cv::CMP_GT);
+
+    if (cv::countNonZero(validMask) == 0) {
+        return;
+    }
+
+    cv::Mat validMaskFloat;
+    validMask.convertTo(validMaskFloat, CV_32F, 1.0 / 255.0);
+
+    cv::Mat weightedImage = image.mul(validMaskFloat);
+    cv::Mat blurredWeighted;
+    cv::Mat blurredWeights;
+
+    cv::GaussianBlur(weightedImage, blurredWeighted, cv::Size(0, 0), sigma, sigma, cv::BORDER_CONSTANT);
+    cv::GaussianBlur(validMaskFloat, blurredWeights, cv::Size(0, 0), sigma, sigma, cv::BORDER_CONSTANT);
+
+    image.setTo(0.0f);
+    cv::divide(blurredWeighted, blurredWeights, image, 1.0, CV_32F);
+    image.setTo(0.0f, blurredWeights <= 1e-6f);
+}
+
 Image processImage(const Image &image, const BaseConfig &config)
 {
     Image processedImage;
@@ -55,7 +83,7 @@ Image processImage(const Image &image, const BaseConfig &config)
 
     // Gaussian blur for noise reduction
     if (config.simulation.blur_sigma > 0) {
-        cv::GaussianBlur(processedImage, processedImage, cv::Size(0, 0), config.simulation.blur_sigma);
+        applySafeGaussianBlur(processedImage, config.simulation.blur_sigma);
     }
 
     return processedImage;

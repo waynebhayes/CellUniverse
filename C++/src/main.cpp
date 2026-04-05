@@ -26,9 +26,15 @@ public:
     int continueFrom = -1;
 };
 
+static bool shouldIgnoreImagePath(const fs::path &file)
+{
+    const std::string name = file.filename().string();
+    return name.empty() || name[0] == '.' || name.rfind("._", 0) == 0;
+}
+
 static void updateTiffConfigIfNeeded(const fs::path &file, BaseConfig &config)
 {
-    if (!(file.extension() == ".tif" || file.extension() == ".tiff"))
+    if (shouldIgnoreImagePath(file) || !(file.extension() == ".tif" || file.extension() == ".tiff"))
     {
         return;
     }
@@ -74,6 +80,10 @@ PathVec getImageFilePaths(const std::string &input, int firstFrame, int lastFram
                 continue;
             }
             const fs::path &p = entry.path();
+            if (shouldIgnoreImagePath(p))
+            {
+                continue;
+            }
             if (p.extension() == ".tif" || p.extension() == ".tiff")
             {
                 allFiles.push_back(p);

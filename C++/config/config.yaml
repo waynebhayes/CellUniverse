@@ -44,6 +44,7 @@ cell:
   maxMinorRadius: 35
   minBrightness: 0.15
   maxBrightness: 0.95
+  splitBrightestFraction: 0.550 
 
 # Simulation settings
 simulation:

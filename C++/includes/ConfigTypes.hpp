@@ -143,6 +143,7 @@ public:
     double maxMinorRadius{};
     double minBrightness{0.1};
     double maxBrightness{1.0};
+    float splitBrightestFraction{0.10f};
     ~SpheroidConfig() = default;
 
     void explodeConfig(const YAML::Node& node)
@@ -163,6 +164,7 @@ public:
         maxMinorRadius = node["maxMinorRadius"].as<double>();
         if (node["minBrightness"]) minBrightness = node["minBrightness"].as<double>();
         if (node["maxBrightness"]) maxBrightness = node["maxBrightness"].as<double>();
+        if (node["splitBrightestFraction"]) splitBrightestFraction = node["splitBrightestFraction"].as<float>();
     }
 };
 
