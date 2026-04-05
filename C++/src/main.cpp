@@ -4,6 +4,7 @@
 #include <vector>
 #include <string>
 #include <opencv2/opencv.hpp>
+#include <opencv2/core/utils/logger.hpp>
 #include "ConfigTypes.hpp"
 #include "CellFactory.hpp"
 #include "yaml-cpp/yaml.h"

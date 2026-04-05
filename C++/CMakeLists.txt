@@ -13,7 +13,18 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-find_package(OpenCV REQUIRED)
+find_package(OpenCV QUIET)
+if(NOT OpenCV_FOUND)
+    message(FATAL_ERROR
+        "OpenCV was not found.\n"
+        "Install the development package first:\n"
+        "  Ubuntu/Debian: sudo apt install libopencv-dev\n"
+        "  macOS (Homebrew): brew install opencv\n"
+        "If OpenCV is already installed in a non-standard location, re-run CMake with:\n"
+        "  -DOpenCV_DIR=/path/to/OpenCVConfig.cmake directory\n"
+        "or add its prefix to CMAKE_PREFIX_PATH."
+    )
+endif()
 
 set(cwd ${CMAKE_CURRENT_SOURCE_DIR})
 
