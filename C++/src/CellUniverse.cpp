@@ -97,6 +97,25 @@ static void applySafeGaussianBlur(cv::Mat &image, double sigma)
     image.setTo(0.0f, blurredWeights <= 1e-6f);
 }
 
+static void applyPostSigmoidAdjustments(cv::Mat &slice, const cv::Mat &originalNormalized,
+                                        const BaseConfig &config)
+{
+    if (config.simulation.post_sigmoid_subtract_sigma > 0.0f && !originalNormalized.empty()) {
+        cv::Mat blurredOriginal = originalNormalized.clone();
+        applySafeGaussianBlur(blurredOriginal, config.simulation.post_sigmoid_subtract_sigma);
+        const float blurredMean = static_cast<float>(cv::mean(blurredOriginal)[0]);
+        cv::min(blurredOriginal, blurredMean, blurredOriginal);
+        slice -= blurredOriginal;
+        cv::max(slice, 0.0f, slice);
+    }
+
+    const float dimmestPercentileValue = computePercentileFromRoi(
+        slice,
+        config.simulation.post_sigmoid_dimmest_percentile);
+    slice -= dimmestPercentileValue;
+    cv::max(slice, 0.0f, slice);
+}
+
 Image processImage(const Image &image, const BaseConfig &config)
 {
     Image processedImage;
@@ -192,14 +211,8 @@ std::vector<cv::Mat> loadFrame(const std::string &imageFile, BaseConfig &config)
             for (size_t i = 0; i < processedZSlices.size(); ++i) {
                 auto &slice = processedZSlices[i];
                 applySigmoid(slice, config.simulation.sigmoid_k, sigmoidCenter);
-
-                if (config.simulation.post_sigmoid_subtract_sigma > 0.0f && i < originalZSlices.size()) {
-                    cv::Mat blurredOriginal = originalZSlices[i].clone();
-                    applySafeGaussianBlur(blurredOriginal, config.simulation.post_sigmoid_subtract_sigma);
-                    const float blurredMean = static_cast<float>(cv::mean(blurredOriginal)[0]);
-                    cv::min(blurredOriginal, blurredMean, blurredOriginal);
-                    slice -= blurredOriginal;
-                    cv::max(slice, 0.0f, slice);
+                if (i < originalZSlices.size()) {
+                    applyPostSigmoidAdjustments(slice, originalZSlices[i], config);
                 }
             }
         }
@@ -342,6 +355,7 @@ void CellUniverse::optimize(int frameIndex)
     }
 
     double residSum = 0;
+    double absResidSum = 0;
     double residCount = 0;
     int splitAccepted = 0;
     int splitAttempted = 0;
@@ -416,6 +430,7 @@ void CellUniverse::optimize(int frameIndex)
                 callback(true);
                 perturbAccepted++;
                 residSum += costDiff;
+                absResidSum += std::abs(costDiff);
                 residCount++;
             } else {
                 callback(false);
@@ -425,13 +440,16 @@ void CellUniverse::optimize(int frameIndex)
         // Progress logging
         if (i % 500 == 0 && i > 0) {
             double avgResid = residCount > 0 ? residSum / residCount : 0.0;
+            double avgAbsResid = residCount > 0 ? absResidSum / residCount : 0.0;
             std::cout << "Frame " << displayFrame << " iter=" << i
                       << " perturb_accepted=" << perturbAccepted
                       << " split_attempts=" << splitAttempted
                       << " split_accepted=" << splitAccepted
-                      << " avg_resid=" << avgResid
+                    //   << " avg_resid=" << avgResid
+                      << " avg_abs_resid=" << avgAbsResid
                       << " cells=" << frame.cells.size() << std::endl;
             residSum = 0;
+            absResidSum = 0;
             residCount = 0;
         }
     }
