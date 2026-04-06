@@ -85,6 +85,8 @@ public:
     float split_fake_radius_ratio_threshold;
     float split_minor_axis_alignment_tolerance_degrees;
     float split_minor_axis_alignment_flatness_ratio_threshold;
+    float split_minor_axis_alignment_min_radius_disable_threshold;
+    float split_search_radius_multiplier;
     float split_fake_bridge_brightness_similarity_threshold;
     int split_burn_in_iterations = 500;
     float max_split_probability = 0.5f;
@@ -95,6 +97,8 @@ public:
                           split_fake_radius_ratio_threshold(2.0f),
                           split_minor_axis_alignment_tolerance_degrees(20.0f),
                           split_minor_axis_alignment_flatness_ratio_threshold(0.5f),
+                          split_minor_axis_alignment_min_radius_disable_threshold(0.0f),
+                          split_search_radius_multiplier(3.0f),
                           split_fake_bridge_brightness_similarity_threshold(0.9f) {
     }
 
@@ -130,6 +134,13 @@ public:
             split_minor_axis_alignment_flatness_ratio_threshold =
                 node["split_minor_axis_alignment_flatness_ratio_threshold"].as<float>();
         }
+        if (node["split_minor_axis_alignment_min_radius_disable_threshold"]) {
+            split_minor_axis_alignment_min_radius_disable_threshold =
+                node["split_minor_axis_alignment_min_radius_disable_threshold"].as<float>();
+        }
+        if (node["split_search_radius_multiplier"]) {
+            split_search_radius_multiplier = node["split_search_radius_multiplier"].as<float>();
+        }
         if (node["split_fake_bridge_brightness_similarity_threshold"]) {
             split_fake_bridge_brightness_similarity_threshold =
                 node["split_fake_bridge_brightness_similarity_threshold"].as<float>();
@@ -156,6 +167,10 @@ public:
                   << split_minor_axis_alignment_tolerance_degrees << '\n';
         std::cout << "split_minor_axis_alignment_flatness_ratio_threshold: "
                   << split_minor_axis_alignment_flatness_ratio_threshold << '\n';
+        std::cout << "split_minor_axis_alignment_min_radius_disable_threshold: "
+                  << split_minor_axis_alignment_min_radius_disable_threshold << '\n';
+        std::cout << "split_search_radius_multiplier: "
+                  << split_search_radius_multiplier << '\n';
         std::cout << "split_fake_bridge_brightness_similarity_threshold: "
                   << split_fake_bridge_brightness_similarity_threshold << std::endl;
     }
@@ -234,6 +249,8 @@ public:
     float splitBrightestFraction{0.10f};
     float brightnessUpdateBlend{0.2f};
     float brightnessMeanAmplification{1.0f};
+    float volumeRecoveryLossFractionThreshold{0.4f};
+    float volumeRecoveryMaxScaleIncreaseFraction{0.3f};
     ~SpheroidConfig() = default;
 
     void explodeConfig(const YAML::Node& node)
@@ -257,6 +274,13 @@ public:
         if (node["splitBrightestFraction"]) splitBrightestFraction = node["splitBrightestFraction"].as<float>();
         if (node["brightnessUpdateBlend"]) brightnessUpdateBlend = node["brightnessUpdateBlend"].as<float>();
         if (node["brightnessMeanAmplification"]) brightnessMeanAmplification = node["brightnessMeanAmplification"].as<float>();
+        if (node["volumeRecoveryLossFractionThreshold"]) {
+            volumeRecoveryLossFractionThreshold = node["volumeRecoveryLossFractionThreshold"].as<float>();
+        }
+        if (node["volumeRecoveryMaxScaleIncreaseFraction"]) {
+            volumeRecoveryMaxScaleIncreaseFraction =
+                node["volumeRecoveryMaxScaleIncreaseFraction"].as<float>();
+        }
     }
 };
 

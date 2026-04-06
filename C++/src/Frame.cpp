@@ -474,8 +474,10 @@ CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float pre
                                      float overlapWeight,
                                      float fakeSplitOverlapVolumeFractionThreshold,
                                      float fakeSplitRadiusRatioThreshold,
+                                     float splitSearchRadiusMultiplier,
                                      float splitMinorAxisAlignmentToleranceDegrees,
                                      float splitMinorAxisAlignmentFlatnessRatioThreshold,
+                                     float splitMinorAxisAlignmentMinRadiusDisableThreshold,
                                      float splitFakeBridgeBrightnessSimilarityThreshold)
 {
     if (index >= cells.size()) {
@@ -496,8 +498,10 @@ CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float pre
                                                                           simulationConfig.background_color,
                                                                           neighborCenters, preOptMajorR, preOptMinorR,
                                                                           preOptX, preOptY, preOptZ,
+                                                                          splitSearchRadiusMultiplier,
                                                                           splitMinorAxisAlignmentToleranceDegrees,
-                                                                          splitMinorAxisAlignmentFlatnessRatioThreshold);
+                                                                          splitMinorAxisAlignmentFlatnessRatioThreshold,
+                                                                          splitMinorAxisAlignmentMinRadiusDisableThreshold);
     if (!valid)
     {
         std::cout << "[Split Skip] " << oldCell.getName()

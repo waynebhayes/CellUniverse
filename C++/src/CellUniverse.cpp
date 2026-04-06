@@ -484,15 +484,13 @@ void CellUniverse::optimize(int frameIndex)
         const float currentMeanBrightness = computeStackMean(frame.getRealFrame());
         const float brightnessScale =
             (previousMeanBrightness > 1e-6f) ? (currentMeanBrightness / previousMeanBrightness) : 1.0f;
-        frame.setBackgroundColor(previousBackground);
-        for (auto &cell : frame.cells) {
-            cell.setBrightness(cell.getBrightness() * brightnessScale);
-        }
-        std::cout << "[Adaptive Brightness] frame " << (firstFrame + frameIndex)
+        const float updatedBackground = previousBackground * brightnessScale;
+
+        frame.setBackgroundColor(updatedBackground);
+        std::cout << "[Adaptive Background] frame " << (firstFrame + frameIndex)
                   << " base=" << previousBackground
                   << " ratio=" << brightnessScale
-                  << " background=" << previousBackground
-                  << '\n';
+                  << " background=" << updatedBackground << '\n';
     }
 
     frame.regenerateSynthFrame();
@@ -614,8 +612,10 @@ void CellUniverse::optimize(int frameIndex)
                                              overlapWeight,
                                              config.prob.split_fake_overlap_volume_fraction_threshold,
                                              config.prob.split_fake_radius_ratio_threshold,
+                                             config.prob.split_search_radius_multiplier,
                                              config.prob.split_minor_axis_alignment_tolerance_degrees,
                                              config.prob.split_minor_axis_alignment_flatness_ratio_threshold,
+                                             config.prob.split_minor_axis_alignment_min_radius_disable_threshold,
                                              config.prob.split_fake_bridge_brightness_similarity_threshold);
             double costDiff = result.first;
             auto callback = result.second;
@@ -694,6 +694,95 @@ void CellUniverse::optimize(int frameIndex)
             cell.setBrightness(updatedBrightness);
         }
         frame.regenerateSynthFrame();
+    }
+
+    if (frameIndex > 0 && config.cell) {
+        const float lossThreshold = std::clamp(config.cell->volumeRecoveryLossFractionThreshold, 0.0f, 0.99f);
+        const float maxScaleIncreaseFraction =
+            std::max(0.0f, config.cell->volumeRecoveryMaxScaleIncreaseFraction);
+        if (lossThreshold > 0.0f) {
+            const Frame &previousFrame = frames[frameIndex - 1];
+            std::map<std::string, Spheroid> previousCellsByName;
+            for (const auto &previousCell : previousFrame.cells) {
+                previousCellsByName.emplace(previousCell.getName(), previousCell);
+            }
+
+            const auto &realFrame = frame.getRealFrame();
+            const auto computeVolume = [](const Spheroid &cell) {
+                return static_cast<double>(cell.getMajorRadius()) *
+                       static_cast<double>(cell.getMajorRadius()) *
+                       static_cast<double>(cell.getMinorRadius());
+            };
+
+            bool recoveredAnyVolume = false;
+            for (auto &cell : frame.cells) {
+                const auto previousIt = previousCellsByName.find(cell.getName());
+                if (previousIt == previousCellsByName.end()) {
+                    continue;
+                }
+
+                const double previousVolume = computeVolume(previousIt->second);
+                const double currentVolume = computeVolume(cell);
+                if (previousVolume <= 1e-6) {
+                    continue;
+                }
+
+                const double minimumAllowedVolume = previousVolume * (1.0 - lossThreshold);
+                if (currentVolume >= minimumAllowedVolume) {
+                    continue;
+                }
+
+                const float baseMajorRadius = cell.getMajorRadius();
+                const float baseMinorRadius = cell.getMinorRadius();
+                const float baseBrightness = cell.getBrightness();
+                const float baseMeanBrightness = cell.measureMeanBrightness(realFrame);
+                Spheroid bestCell = cell;
+                float bestMeanBrightness = baseMeanBrightness;
+
+                for (float scale = 1.02f; scale <= 1.0f + maxScaleIncreaseFraction + 1e-6f; scale += 0.02f) {
+                    const SpheroidParams candidateParams(
+                        cell.getName(),
+                        cell.getX(),
+                        cell.getY(),
+                        cell.getZ(),
+                        baseMajorRadius * scale,
+                        baseMinorRadius * scale,
+                        cell.getCellParams().theta_x,
+                        cell.getCellParams().theta_y,
+                        cell.getCellParams().theta_z,
+                        baseBrightness);
+                    Spheroid candidate(candidateParams);
+                    const float candidateMeanBrightness = candidate.measureMeanBrightness(realFrame);
+                    if (candidateMeanBrightness + 1e-6f < bestMeanBrightness) {
+                        break;
+                    }
+                    if (candidateMeanBrightness > bestMeanBrightness + 1e-6f) {
+                        bestMeanBrightness = candidateMeanBrightness;
+                        bestCell = candidate;
+                    }
+                }
+
+                if (bestCell.getMajorRadius() > cell.getMajorRadius() + 1e-6f ||
+                    bestCell.getMinorRadius() > cell.getMinorRadius() + 1e-6f) {
+                    std::cout << "[Volume Recovery] frame " << displayFrame
+                              << " cell=" << cell.getName()
+                              << " prev_volume=" << previousVolume
+                              << " current_volume=" << currentVolume
+                              << " threshold_volume=" << minimumAllowedVolume
+                              << " mean_brightness=" << baseMeanBrightness
+                              << " recovered_mean_brightness=" << bestMeanBrightness
+                              << " majorRadius=" << cell.getMajorRadius() << "->" << bestCell.getMajorRadius()
+                              << " minorRadius=" << cell.getMinorRadius() << "->" << bestCell.getMinorRadius()
+                              << '\n';
+                    cell = bestCell;
+                    recoveredAnyVolume = true;
+                }
+            }
+
+            if (recoveredAnyVolume) {
+                frame.regenerateSynthFrame();
+            }
+        }
     }
 
     std::cout << "[Optimize Done] frame " << displayFrame

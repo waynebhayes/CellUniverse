@@ -43,8 +43,10 @@ public:
                                   float overlapWeight = 1000.0f,
                                   float fakeSplitOverlapVolumeFractionThreshold = 0.30f,
                                   float fakeSplitRadiusRatioThreshold = 2.0f,
+                                  float splitSearchRadiusMultiplier = 3.0f,
                                   float splitMinorAxisAlignmentToleranceDegrees = 20.0f,
                                   float splitMinorAxisAlignmentFlatnessRatioThreshold = 0.5f,
+                                  float splitMinorAxisAlignmentMinRadiusDisableThreshold = 0.0f,
                                   float splitFakeBridgeBrightnessSimilarityThreshold = 0.9f);
     std::vector<cv::Mat> getSynthFrame();
     const std::vector<cv::Mat>& getRealFrame() const { return _realFrame; }

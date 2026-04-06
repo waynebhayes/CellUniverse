@@ -93,8 +93,10 @@ class Spheroid
             const std::vector<cv::Point3f> &neighborCenters = {},
             float preOptMajorR = 0.0f, float preOptMinorR = 0.0f,
             float preOptX = 0.0f, float preOptY = 0.0f, float preOptZ = 0.0f,
+            float splitSearchRadiusMultiplier = 3.0f,
             float splitMinorAxisAlignmentToleranceDegrees = 180.0f,
-            float splitMinorAxisAlignmentFlatnessRatioThreshold = 0.5f) const;
+            float splitMinorAxisAlignmentFlatnessRatioThreshold = 0.5f,
+            float splitMinorAxisAlignmentMinRadiusDisableThreshold = 0.0f) const;
 
         bool checkConstraints() const;
 

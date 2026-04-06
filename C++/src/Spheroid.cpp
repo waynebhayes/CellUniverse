@@ -318,8 +318,10 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
     const std::vector<cv::Point3f> &neighborCenters,
     float preOptMajorR, float preOptMinorR,
     float preOptX, float preOptY, float preOptZ,
+    float splitSearchRadiusMultiplier,
     float splitMinorAxisAlignmentToleranceDegrees,
-    float splitMinorAxisAlignmentFlatnessRatioThreshold) const {
+    float splitMinorAxisAlignmentFlatnessRatioThreshold,
+    float splitMinorAxisAlignmentMinRadiusDisableThreshold) const {
     // Step 1: Get the bounding box, expanded for split detection.
     // Use pre-optimization radii if available (Phase 1 may collapse the cell).
     // Use pre-optimization position if available (Phase 1 may shift the cell
@@ -330,7 +332,8 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
     float effC = (preOptMinorR > 0.0f) ? std::max(static_cast<float>(c), preOptMinorR) : static_cast<float>(c);
     float maxR = std::max({effA, effB, effC});
 
-    float splitSearchRadius = maxR * 3.0f;
+    const float clampedSplitSearchRadiusMultiplier = std::max(0.1f, splitSearchRadiusMultiplier);
+    float splitSearchRadius = maxR * clampedSplitSearchRadiusMultiplier;
 
     // PCA center: use pre-opt position when available so PCA sees both blobs
     // from the original midpoint, not the Phase-1-shifted position.
@@ -606,7 +609,11 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
         static_cast<float>(sz * sy * cx - cz * sx),
         static_cast<float>(cy * cx));
     const float flatnessRatio = (effMajorR > 1e-6) ? static_cast<float>(effMinorR / effMajorR) : 1.0f;
+    const bool disableMinorAxisAlignmentForSmallCell =
+        effMajorR < splitMinorAxisAlignmentMinRadiusDisableThreshold &&
+        effMinorR < splitMinorAxisAlignmentMinRadiusDisableThreshold;
     const bool enforceMinorAxisAlignment =
+        !disableMinorAxisAlignmentForSmallCell &&
         flatnessRatio <= splitMinorAxisAlignmentFlatnessRatioThreshold;
     if (enforceMinorAxisAlignment) {
         const float alignmentDot = std::clamp(std::abs(split_axis.dot(localZAxis)), 0.0f, 1.0f);
@@ -624,6 +631,12 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
                       << split_axis.y << ", " << split_axis.z << ")"
                       << '\n';
         }
+    } else if (disableMinorAxisAlignmentForSmallCell) {
+        std::cout << "[Split Align Skip] " << _name
+                  << " major_radius=" << effMajorR
+                  << " minor_radius=" << effMinorR
+                  << " disable_threshold=" << splitMinorAxisAlignmentMinRadiusDisableThreshold
+                  << '\n';
     }
 
     // Step 4: Centroid-based daughter placement.
