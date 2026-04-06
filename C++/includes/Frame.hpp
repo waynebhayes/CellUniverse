@@ -42,7 +42,7 @@ public:
                                   float splitElongationThreshold = 1.3f,
                                   float overlapWeight = 1000.0f,
                                   float fakeSplitOverlapVolumeFractionThreshold = 0.30f,
-                                  float fakeSplitRadiusRatioThreshold = 2.0f,
+                                  float fakeSplitVolumeRatioThreshold = 2.0f,
                                   float splitSearchRadiusMultiplier = 3.0f,
                                   float splitMinorAxisAlignmentToleranceDegrees = 20.0f,
                                   float splitMinorAxisAlignmentFlatnessRatioThreshold = 0.5f,

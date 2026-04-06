@@ -18,7 +18,7 @@ cell:
     mu: 0
     sigma: 8
   majorRadius:
-    increase_prob: 0.1
+    increase_prob: 0.6
     decrease_prob: 0.4
     mu: 0
     sigma: 2
@@ -95,9 +95,9 @@ prob:
   overlap_penalty_weight: 500.0
   size_reduction_penalty_weight: 0.0
   split_fake_overlap_volume_fraction_threshold: 0.15
-  split_fake_radius_ratio_threshold: 3.0
+  split_fake_volume_ratio_threshold: 125.0
   split_search_radius_multiplier: 3.0
-  split_minor_axis_alignment_tolerance_degrees: 120.0
+  split_minor_axis_alignment_tolerance_degrees: 150.0
   split_minor_axis_alignment_flatness_ratio_threshold: 0.85
   split_minor_axis_alignment_min_radius_disable_threshold: 15.0
   split_fake_bridge_brightness_similarity_threshold: 0.99

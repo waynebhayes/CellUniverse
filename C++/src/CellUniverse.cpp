@@ -611,7 +611,7 @@ void CellUniverse::optimize(int frameIndex)
                                              config.prob.split_elongation_threshold,
                                              overlapWeight,
                                              config.prob.split_fake_overlap_volume_fraction_threshold,
-                                             config.prob.split_fake_radius_ratio_threshold,
+                                             config.prob.split_fake_volume_ratio_threshold,
                                              config.prob.split_search_radius_multiplier,
                                              config.prob.split_minor_axis_alignment_tolerance_degrees,
                                              config.prob.split_minor_axis_alignment_flatness_ratio_threshold,

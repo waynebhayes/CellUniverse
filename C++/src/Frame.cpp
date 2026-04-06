@@ -66,25 +66,6 @@ double computeOverlapVolumeFractionApprox(const Spheroid &cell1, const Spheroid 
     return overlapVolume / minVolume;
 }
 
-double computeMaxDaughterRadiusRatio(const Spheroid &cell1, const Spheroid &cell2)
-{
-    const double major1 = static_cast<double>(cell1.getMajorRadius());
-    const double major2 = static_cast<double>(cell2.getMajorRadius());
-    const double minor1 = static_cast<double>(cell1.getMinorRadius());
-    const double minor2 = static_cast<double>(cell2.getMinorRadius());
-
-    const auto safeRatio = [](double a, double b) {
-        const double minValue = std::min(a, b);
-        const double maxValue = std::max(a, b);
-        if (minValue <= 1e-9) {
-            return std::numeric_limits<double>::infinity();
-        }
-        return maxValue / minValue;
-    };
-
-    return std::max(safeRatio(major1, major2), safeRatio(minor1, minor2));
-}
-
 double computeSpheroidVolume(const Spheroid &cell)
 {
     const double a = static_cast<double>(cell.getMajorRadius());
@@ -93,6 +74,18 @@ double computeSpheroidVolume(const Spheroid &cell)
         return 0.0;
     }
     return (4.0 / 3.0) * M_PI * a * a * c;
+}
+
+double computeDaughterVolumeRatio(const Spheroid &cell1, const Spheroid &cell2)
+{
+    const double volume1 = computeSpheroidVolume(cell1);
+    const double volume2 = computeSpheroidVolume(cell2);
+    const double minVolume = std::min(volume1, volume2);
+    const double maxVolume = std::max(volume1, volume2);
+    if (minVolume <= 1e-9) {
+        return std::numeric_limits<double>::infinity();
+    }
+    return maxVolume / minVolume;
 }
 
 double computeCylinderMeanBrightnessAlongSegment(const std::vector<cv::Mat> &frame,
@@ -473,7 +466,7 @@ CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float pre
                                      float splitElongationThreshold,
                                      float overlapWeight,
                                      float fakeSplitOverlapVolumeFractionThreshold,
-                                     float fakeSplitRadiusRatioThreshold,
+                                     float fakeSplitVolumeRatioThreshold,
                                      float splitSearchRadiusMultiplier,
                                      float splitMinorAxisAlignmentToleranceDegrees,
                                      float splitMinorAxisAlignmentFlatnessRatioThreshold,
@@ -584,8 +577,8 @@ CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float pre
 
     const double daughterOverlapFraction =
         computeOverlapVolumeFractionApprox(cells[d1Idx], cells[d2Idx]);
-    const double daughterRadiusRatio =
-        computeMaxDaughterRadiusRatio(cells[d1Idx], cells[d2Idx]);
+    const double daughterVolumeRatio =
+        computeDaughterVolumeRatio(cells[d1Idx], cells[d2Idx]);
     const double daughter1MeanBrightness = cells[d1Idx].measureMeanBrightness(_realFrame);
     const double daughter2MeanBrightness = cells[d2Idx].measureMeanBrightness(_realFrame);
     const cv::Point3f daughterCenter1 = cells[d1Idx].get_center();
@@ -624,7 +617,7 @@ CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float pre
     const bool bridgeLooksContinuous =
         averageBridgeSimilarity >= splitFakeBridgeBrightnessSimilarityThreshold;
     if (daughterOverlapFraction > fakeSplitOverlapVolumeFractionThreshold ||
-        daughterRadiusRatio > fakeSplitRadiusRatioThreshold ||
+        daughterVolumeRatio > fakeSplitVolumeRatioThreshold ||
         bridgeLooksContinuous) {
         cells.pop_back();
         cells.pop_back();
@@ -633,8 +626,8 @@ CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float pre
         std::cout << "[Split Rejected Fake] " << oldCell.getName()
                   << " daughter_overlap_fraction=" << daughterOverlapFraction
                   << " threshold=" << fakeSplitOverlapVolumeFractionThreshold
-                  << " daughter_radius_ratio=" << daughterRadiusRatio
-                  << " ratio_threshold=" << fakeSplitRadiusRatioThreshold
+                  << " daughter_volume_ratio=" << daughterVolumeRatio
+                  << " volume_ratio_threshold=" << fakeSplitVolumeRatioThreshold
                   << " bridge_similarity=(" << bridgeSimilarity1 << "," << bridgeSimilarity2 << ")"
                   << " bridge_similarity_avg=" << averageBridgeSimilarity
                   << " bridge_threshold=" << splitFakeBridgeBrightnessSimilarityThreshold

@@ -82,7 +82,7 @@ public:
     float overlap_penalty_weight;
     float size_reduction_penalty_weight;
     float split_fake_overlap_volume_fraction_threshold;
-    float split_fake_radius_ratio_threshold;
+    float split_fake_volume_ratio_threshold;
     float split_minor_axis_alignment_tolerance_degrees;
     float split_minor_axis_alignment_flatness_ratio_threshold;
     float split_minor_axis_alignment_min_radius_disable_threshold;
@@ -94,7 +94,7 @@ public:
                           split_elongation_threshold(1.3f), overlap_penalty_weight(1000.0f),
                           size_reduction_penalty_weight(0.0f),
                           split_fake_overlap_volume_fraction_threshold(0.30f),
-                          split_fake_radius_ratio_threshold(2.0f),
+                          split_fake_volume_ratio_threshold(2.0f),
                           split_minor_axis_alignment_tolerance_degrees(20.0f),
                           split_minor_axis_alignment_flatness_ratio_threshold(0.5f),
                           split_minor_axis_alignment_min_radius_disable_threshold(0.0f),
@@ -122,8 +122,11 @@ public:
             split_fake_overlap_volume_fraction_threshold =
                 node["split_fake_overlap_volume_fraction_threshold"].as<float>();
         }
-        if (node["split_fake_radius_ratio_threshold"]) {
-            split_fake_radius_ratio_threshold =
+        if (node["split_fake_volume_ratio_threshold"]) {
+            split_fake_volume_ratio_threshold =
+                node["split_fake_volume_ratio_threshold"].as<float>();
+        } else if (node["split_fake_radius_ratio_threshold"]) {
+            split_fake_volume_ratio_threshold =
                 node["split_fake_radius_ratio_threshold"].as<float>();
         }
         if (node["split_minor_axis_alignment_tolerance_degrees"]) {
@@ -161,8 +164,8 @@ public:
         std::cout << "size_reduction_penalty_weight: " << size_reduction_penalty_weight << '\n';
         std::cout << "split_fake_overlap_volume_fraction_threshold: "
                   << split_fake_overlap_volume_fraction_threshold << '\n';
-        std::cout << "split_fake_radius_ratio_threshold: "
-                  << split_fake_radius_ratio_threshold << '\n';
+        std::cout << "split_fake_volume_ratio_threshold: "
+                  << split_fake_volume_ratio_threshold << '\n';
         std::cout << "split_minor_axis_alignment_tolerance_degrees: "
                   << split_minor_axis_alignment_tolerance_degrees << '\n';
         std::cout << "split_minor_axis_alignment_flatness_ratio_threshold: "
