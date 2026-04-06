@@ -69,6 +69,79 @@ static float computePercentileFromRoi(const cv::Mat &roi, float percentile)
     return values[index];
 }
 
+static float computePercentileFromStack(const std::vector<cv::Mat> &stack, float percentile)
+{
+    std::vector<float> values;
+    size_t totalValues = 0;
+    for (const auto &slice : stack) {
+        if (slice.type() != CV_32F || slice.empty()) {
+            continue;
+        }
+        totalValues += static_cast<size_t>(slice.total());
+    }
+
+    if (totalValues == 0) {
+        return 0.0f;
+    }
+
+    values.reserve(totalValues);
+    for (const auto &slice : stack) {
+        if (slice.type() != CV_32F || slice.empty()) {
+            continue;
+        }
+        for (int y = 0; y < slice.rows; ++y) {
+            const float *row = slice.ptr<float>(y);
+            values.insert(values.end(), row, row + slice.cols);
+        }
+    }
+
+    const float clampedPercentile = std::clamp(percentile, 0.0f, 1.0f);
+    const size_t index = static_cast<size_t>(
+        std::floor(clampedPercentile * static_cast<float>(values.size() - 1)));
+
+    std::nth_element(values.begin(),
+                     values.begin() + static_cast<std::ptrdiff_t>(index),
+                     values.end());
+    return values[index];
+}
+
+static float computePercentileFromStackRoi(const std::vector<cv::Mat> &stack, const cv::Rect &roi, float percentile)
+{
+    std::vector<float> values;
+    size_t totalValues = 0;
+    for (const auto &slice : stack) {
+        if (slice.type() != CV_32F || slice.empty()) {
+            continue;
+        }
+        totalValues += static_cast<size_t>(roi.area());
+    }
+
+    if (totalValues == 0 || roi.width <= 0 || roi.height <= 0) {
+        return 0.0f;
+    }
+
+    values.reserve(totalValues);
+    for (const auto &slice : stack) {
+        if (slice.type() != CV_32F || slice.empty()) {
+            continue;
+        }
+        const cv::Mat roiView = slice(roi);
+        for (int y = 0; y < roiView.rows; ++y) {
+            const float *row = roiView.ptr<float>(y);
+            values.insert(values.end(), row, row + roiView.cols);
+        }
+    }
+
+    const float clampedPercentile = std::clamp(percentile, 0.0f, 1.0f);
+    const size_t index = static_cast<size_t>(
+        std::floor(clampedPercentile * static_cast<float>(values.size() - 1)));
+
+    std::nth_element(values.begin(),
+                     values.begin() + static_cast<std::ptrdiff_t>(index),
+                     values.end());
+    return values[index];
+}
+
 static float computeStackMean(const std::vector<cv::Mat> &stack)
 {
     double sum = 0.0;
@@ -140,13 +213,28 @@ static void applySafeGaussianBlur(cv::Mat &image, double sigma)
     image.setTo(0.0f, blurredWeights <= 1e-6f);
 }
 
-static void applyPostSigmoidAdjustments(cv::Mat &slice, const BaseConfig &config)
+static void applyPostSigmoidAdjustments(cv::Mat &slice, float stackDimmestPercentileValue,
+                                        float transitionWidth, float transitionGradient)
 {
-    const float dimmestPercentileValue = computePercentileFromRoi(
-        slice,
-        config.simulation.post_sigmoid_dimmest_percentile);
-    slice -= dimmestPercentileValue;
-    cv::max(slice, 0.0f, slice);
+    const float safeTransitionWidth = std::max(0.0f, transitionWidth);
+    const float lowerTransitionBound = std::max(0.0f, stackDimmestPercentileValue - safeTransitionWidth);
+    const float safeGradient = std::max(1.0f, transitionGradient);
+
+    slice.forEach<float>([stackDimmestPercentileValue, safeTransitionWidth, lowerTransitionBound, safeGradient](float &pixel, const int *) {
+        if (pixel > stackDimmestPercentileValue) {
+            return;
+        }
+
+        float subtractionScale = 1.0f;
+        if (safeTransitionWidth > 0.0f && pixel >= lowerTransitionBound) {
+            const float normalizedDistance =
+                (stackDimmestPercentileValue - pixel) / safeTransitionWidth;
+            subtractionScale = std::pow(std::clamp(normalizedDistance, 0.0f, 1.0f), safeGradient);
+        }
+
+        pixel -= stackDimmestPercentileValue * subtractionScale;
+        pixel = std::max(0.0f, pixel);
+    });
 }
 
 static float estimateAdaptiveBackgroundFromFrame(const Frame &frame,
@@ -261,21 +349,21 @@ std::vector<cv::Mat> loadFrame(const std::string &imageFile, BaseConfig &config)
         // The L2 cost function needs this contrast to correctly fit cell boundaries.
         float sigmoidCenter = config.simulation.sigmoid_center; // default from config
         if (!processedZSlices.empty()) {
-            int calZ = std::clamp(config.simulation.calibration_z, 0, static_cast<int>(numTiffSlices) - 1);
             int calX = config.simulation.calibration_x;
             int calY = config.simulation.calibration_y;
             int calW = std::min(config.simulation.calibration_width,
-                               processedZSlices[calZ].cols - calX);
+                               processedZSlices[0].cols - calX);
             int calH = std::min(config.simulation.calibration_height,
-                               processedZSlices[calZ].rows - calY);
+                               processedZSlices[0].rows - calY);
 
             if (calW > 0 && calH > 0) {
                 cv::Rect roi(calX, calY, calW, calH);
-                float bgPercentile = computePercentileFromRoi(
-                    processedZSlices[calZ](roi),
+                float bgPercentile = computePercentileFromStackRoi(
+                    processedZSlices,
+                    roi,
                     config.simulation.sigmoid_center_percentile);
                 sigmoidCenter = bgPercentile;
-                std::cout << "[Calibration] bg_percentile=" << bgPercentile
+                std::cout << "[Calibration] stack_bg_percentile=" << bgPercentile
                           << " percentile=" << config.simulation.sigmoid_center_percentile
                           << " sigmoidCenter=" << sigmoidCenter
                           << " sigmoid_k=" << config.simulation.sigmoid_k << std::endl;
@@ -284,10 +372,20 @@ std::vector<cv::Mat> loadFrame(const std::string &imageFile, BaseConfig &config)
 
         // Apply sigmoid to all slices — amplifies cell/background contrast
         if (config.simulation.sigmoid_k > 0) {
+            for (auto &slice : processedZSlices) {
+                applySigmoid(slice, config.simulation.sigmoid_k, sigmoidCenter);
+            }
+
+            const float stackDimmestPercentileValue = computePercentileFromStack(
+                processedZSlices,
+                config.simulation.post_sigmoid_dimmest_percentile);
+
             for (size_t i = 0; i < processedZSlices.size(); ++i) {
                 auto &slice = processedZSlices[i];
-                applySigmoid(slice, config.simulation.sigmoid_k, sigmoidCenter);
-                applyPostSigmoidAdjustments(slice, config);
+                applyPostSigmoidAdjustments(slice,
+                                            stackDimmestPercentileValue,
+                                            config.simulation.post_sigmoid_dimmest_transition_width,
+                                            config.simulation.post_sigmoid_dimmest_transition_gradient);
             }
         }
 
@@ -362,12 +460,6 @@ CellUniverse::CellUniverse(std::map<std::string, std::vector<Spheroid>> initialC
         if ((continueFrom == -1 || i < continueFrom) && initialCells.find(file_name) != initialCells.end())
         {
             const std::vector<Spheroid> &cells = initialCells.at(file_name);
-            if (i == 0) {
-                for (const auto &cell : cells) {
-                    auto params = cell.getCellParams();
-                    initialGroundTruthCells[params.name] = params;
-                }
-            }
             frames.emplace_back(real_frame, config.simulation, cells, outputPath, file_name);
         }
         else
@@ -517,7 +609,9 @@ void CellUniverse::optimize(int frameIndex)
             auto result = frame.trySplitCell(cellIdx, preOptMajorR, preOptMinorR,
                                              preOptX, preOptY, preOptZ,
                                              config.prob.split_elongation_threshold,
-                                             overlapWeight);
+                                             overlapWeight,
+                                             config.prob.split_fake_overlap_volume_fraction_threshold,
+                                             config.prob.split_fake_radius_ratio_threshold);
             double costDiff = result.first;
             auto callback = result.second;
 
@@ -569,37 +663,6 @@ void CellUniverse::optimize(int frameIndex)
             residSum = 0;
             absResidSum = 0;
             residCount = 0;
-        }
-    }
-
-    if (frameIndex == 0 && !initialGroundTruthCells.empty()) {
-        const auto &realFrame = frame.getRealFrame();
-        bool correctedAnyCell = false;
-        for (auto &cell : frame.cells) {
-            auto currentParams = cell.getCellParams();
-            auto it = initialGroundTruthCells.find(currentParams.name);
-            if (it == initialGroundTruthCells.end()) {
-                continue;
-            }
-
-            const auto &gtParams = it->second;
-            const bool radiusChanged =
-                std::abs(currentParams.majorRadius - gtParams.majorRadius) > 1e-6f ||
-                std::abs(currentParams.minorRadius - gtParams.minorRadius) > 1e-6f;
-            if (!radiusChanged) {
-                continue;
-            }
-
-            currentParams.majorRadius = gtParams.majorRadius;
-            currentParams.minorRadius = gtParams.minorRadius;
-            Spheroid correctedCell(currentParams);
-            correctedCell.setBrightness(correctedCell.measureMeanBrightness(realFrame));
-            cell = correctedCell;
-            correctedAnyCell = true;
-        }
-
-        if (correctedAnyCell) {
-            frame.regenerateSynthFrame();
         }
     }
 

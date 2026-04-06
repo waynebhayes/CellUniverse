@@ -272,7 +272,7 @@ void Spheroid::drawOutline(cv::Mat &image, float color, float z) const {
     const double invC2 = 1.0 / (c * c);
 
     const int channels = image.channels();
-    const float outlineIntensity = 0.4f;
+    const float outlineIntensity = 0.25f;
 
     if (channels == 1) {
         scanSpheroidSlice(

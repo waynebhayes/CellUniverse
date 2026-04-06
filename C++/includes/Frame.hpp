@@ -40,7 +40,9 @@ public:
     CostCallbackPair trySplitCell(size_t cellIndex, float preOptMajorR = 0.0f, float preOptMinorR = 0.0f,
                                   float preOptX = 0.0f, float preOptY = 0.0f, float preOptZ = 0.0f,
                                   float splitElongationThreshold = 1.3f,
-                                  float overlapWeight = 1000.0f);
+                                  float overlapWeight = 1000.0f,
+                                  float fakeSplitOverlapVolumeFractionThreshold = 0.30f,
+                                  float fakeSplitRadiusRatioThreshold = 2.0f);
     std::vector<cv::Mat> getSynthFrame();
     const std::vector<cv::Mat>& getRealFrame() const { return _realFrame; }
     void setBackgroundColor(float backgroundColor) { simulationConfig.background_color = backgroundColor; }

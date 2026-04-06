@@ -18,6 +18,72 @@ double computeSizeReductionPenalty(const Spheroid &oldCell, const Spheroid &newC
     return accumulateReductionPenalty(oldCell.getMajorRadius(), newCell.getMajorRadius())
          + accumulateReductionPenalty(oldCell.getMinorRadius(), newCell.getMinorRadius());
 }
+
+double computeEquivalentSphereRadius(const Spheroid &cell)
+{
+    const double a = static_cast<double>(cell.getMajorRadius());
+    const double c = static_cast<double>(cell.getMinorRadius());
+    if (a <= 0.0 || c <= 0.0) {
+        return 0.0;
+    }
+    return std::cbrt(a * a * c);
+}
+
+double computeSphereIntersectionVolume(double r1, double r2, double dist)
+{
+    if (r1 <= 0.0 || r2 <= 0.0) {
+        return 0.0;
+    }
+    if (dist >= r1 + r2) {
+        return 0.0;
+    }
+    if (dist <= std::abs(r1 - r2)) {
+        const double rMin = std::min(r1, r2);
+        return (4.0 / 3.0) * M_PI * rMin * rMin * rMin;
+    }
+
+    const double term1 = r1 + r2 - dist;
+    const double term2 = dist * dist + 2.0 * dist * (r1 + r2) - 3.0 * (r1 - r2) * (r1 - r2);
+    return M_PI * term1 * term1 * term2 / (12.0 * dist);
+}
+
+double computeOverlapVolumeFractionApprox(const Spheroid &cell1, const Spheroid &cell2)
+{
+    const double r1 = computeEquivalentSphereRadius(cell1);
+    const double r2 = computeEquivalentSphereRadius(cell2);
+    const double v1 = (4.0 / 3.0) * M_PI * r1 * r1 * r1;
+    const double v2 = (4.0 / 3.0) * M_PI * r2 * r2 * r2;
+    const double minVolume = std::min(v1, v2);
+    if (minVolume <= 0.0) {
+        return 0.0;
+    }
+
+    const double dx = static_cast<double>(cell1.getX()) - static_cast<double>(cell2.getX());
+    const double dy = static_cast<double>(cell1.getY()) - static_cast<double>(cell2.getY());
+    const double dz = static_cast<double>(cell1.getZ()) - static_cast<double>(cell2.getZ());
+    const double dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+    const double overlapVolume = computeSphereIntersectionVolume(r1, r2, dist);
+    return overlapVolume / minVolume;
+}
+
+double computeMaxDaughterRadiusRatio(const Spheroid &cell1, const Spheroid &cell2)
+{
+    const double major1 = static_cast<double>(cell1.getMajorRadius());
+    const double major2 = static_cast<double>(cell2.getMajorRadius());
+    const double minor1 = static_cast<double>(cell1.getMinorRadius());
+    const double minor2 = static_cast<double>(cell2.getMinorRadius());
+
+    const auto safeRatio = [](double a, double b) {
+        const double minValue = std::min(a, b);
+        const double maxValue = std::max(a, b);
+        if (minValue <= 1e-9) {
+            return std::numeric_limits<double>::infinity();
+        }
+        return maxValue / minValue;
+    };
+
+    return std::max(safeRatio(major1, major2), safeRatio(minor1, minor2));
+}
 }
 
 // Function to interpolate between two slices
@@ -314,7 +380,9 @@ float Frame::computeElongationForCell(size_t cellIdx) const
 CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float preOptMinorR,
                                      float preOptX, float preOptY, float preOptZ,
                                      float splitElongationThreshold,
-                                     float overlapWeight)
+                                     float overlapWeight,
+                                     float fakeSplitOverlapVolumeFractionThreshold,
+                                     float fakeSplitRadiusRatioThreshold)
 {
     if (index >= cells.size()) {
         return {0.0, [](bool accept) {}};
@@ -413,6 +481,25 @@ CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float pre
     }
 
     _synthFrame = savedSynthFrame;
+
+    const double daughterOverlapFraction =
+        computeOverlapVolumeFractionApprox(cells[d1Idx], cells[d2Idx]);
+    const double daughterRadiusRatio =
+        computeMaxDaughterRadiusRatio(cells[d1Idx], cells[d2Idx]);
+    if (daughterOverlapFraction > fakeSplitOverlapVolumeFractionThreshold ||
+        daughterRadiusRatio > fakeSplitRadiusRatioThreshold) {
+        cells.pop_back();
+        cells.pop_back();
+        cells.insert(cells.begin() + index, oldCell);
+
+        std::cout << "[Split Rejected Fake] " << oldCell.getName()
+                  << " daughter_overlap_fraction=" << daughterOverlapFraction
+                  << " threshold=" << fakeSplitOverlapVolumeFractionThreshold
+                  << " daughter_radius_ratio=" << daughterRadiusRatio
+                  << " ratio_threshold=" << fakeSplitRadiusRatioThreshold
+                  << std::endl;
+        return {0.0, [](bool accept) {}};
+    }
 
     // Recompute final total cost after burn-in
     bestOverlap = computeOverlapPenalty(overlapWeight);

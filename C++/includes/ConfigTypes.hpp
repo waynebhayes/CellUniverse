@@ -5,6 +5,8 @@
 #include <random>
 #include <string>
 #include <memory>
+#include <algorithm>
+#include <cmath>
 #include "yaml-cpp/yaml.h"
 #include <iostream>
 
@@ -21,6 +23,8 @@ public:
     float sigmoid_center_percentile = 0.4f;
     float sigmoid_center_offset = 0.047f;
     float post_sigmoid_dimmest_percentile = 0.45f;
+    float post_sigmoid_dimmest_transition_width = 0.02f;
+    float post_sigmoid_dimmest_transition_gradient = 4.0f;
     float adaptive_background_expand_factor = 1.1f;
     float adaptive_background_top_fraction = 0.4f;
     int calibration_x = 20;
@@ -44,6 +48,8 @@ public:
         if (node["sigmoid_center_percentile"]) sigmoid_center_percentile = node["sigmoid_center_percentile"].as<float>();
         if (node["sigmoid_center_offset"]) sigmoid_center_offset = node["sigmoid_center_offset"].as<float>();
         if (node["post_sigmoid_dimmest_percentile"]) post_sigmoid_dimmest_percentile = node["post_sigmoid_dimmest_percentile"].as<float>();
+        if (node["post_sigmoid_dimmest_transition_width"]) post_sigmoid_dimmest_transition_width = node["post_sigmoid_dimmest_transition_width"].as<float>();
+        if (node["post_sigmoid_dimmest_transition_gradient"]) post_sigmoid_dimmest_transition_gradient = node["post_sigmoid_dimmest_transition_gradient"].as<float>();
         if (node["adaptive_background_expand_factor"]) adaptive_background_expand_factor = node["adaptive_background_expand_factor"].as<float>();
         if (node["adaptive_background_top_fraction"]) adaptive_background_top_fraction = node["adaptive_background_top_fraction"].as<float>();
         if (node["calibration_x"]) calibration_x = node["calibration_x"].as<int>();
@@ -60,6 +66,8 @@ public:
         std::cout << "blur_sigma: " << blur_sigma << '\n';
         std::cout << "sigmoid_center_percentile: " << sigmoid_center_percentile << '\n';
         std::cout << "post_sigmoid_dimmest_percentile: " << post_sigmoid_dimmest_percentile << '\n';
+        std::cout << "post_sigmoid_dimmest_transition_width: " << post_sigmoid_dimmest_transition_width << '\n';
+        std::cout << "post_sigmoid_dimmest_transition_gradient: " << post_sigmoid_dimmest_transition_gradient << '\n';
         std::cout << "adaptive_background_expand_factor: " << adaptive_background_expand_factor << '\n';
         std::cout << "adaptive_background_top_fraction: " << adaptive_background_top_fraction << '\n';
         std::cout << "z_slices: " << z_slices << std::endl;
@@ -73,11 +81,15 @@ public:
     float split_elongation_threshold;
     float overlap_penalty_weight;
     float size_reduction_penalty_weight;
+    float split_fake_overlap_volume_fraction_threshold;
+    float split_fake_radius_ratio_threshold;
     int split_burn_in_iterations = 500;
     float max_split_probability = 0.5f;
     ProbabilityConfig() : split(0.0f), split_cost(0.0f),
                           split_elongation_threshold(1.3f), overlap_penalty_weight(1000.0f),
-                          size_reduction_penalty_weight(0.0f) {
+                          size_reduction_penalty_weight(0.0f),
+                          split_fake_overlap_volume_fraction_threshold(0.30f),
+                          split_fake_radius_ratio_threshold(2.0f) {
     }
 
     void explodeConfig(const YAML::Node& node) {
@@ -96,6 +108,14 @@ public:
         if (node["size_reduction_penalty_weight"]) {
             size_reduction_penalty_weight = node["size_reduction_penalty_weight"].as<float>();
         }
+        if (node["split_fake_overlap_volume_fraction_threshold"]) {
+            split_fake_overlap_volume_fraction_threshold =
+                node["split_fake_overlap_volume_fraction_threshold"].as<float>();
+        }
+        if (node["split_fake_radius_ratio_threshold"]) {
+            split_fake_radius_ratio_threshold =
+                node["split_fake_radius_ratio_threshold"].as<float>();
+        }
         if (node["split_burn_in_iterations"]) {
             split_burn_in_iterations = node["split_burn_in_iterations"].as<int>();
         }
@@ -109,7 +129,11 @@ public:
         std::cout << "split_cost: " << split_cost << '\n';
         std::cout << "split_elongation_threshold: " << split_elongation_threshold << '\n';
         std::cout << "overlap_penalty_weight: " << overlap_penalty_weight << '\n';
-        std::cout << "size_reduction_penalty_weight: " << size_reduction_penalty_weight << std::endl;
+        std::cout << "size_reduction_penalty_weight: " << size_reduction_penalty_weight << '\n';
+        std::cout << "split_fake_overlap_volume_fraction_threshold: "
+                  << split_fake_overlap_volume_fraction_threshold << '\n';
+        std::cout << "split_fake_radius_ratio_threshold: "
+                  << split_fake_radius_ratio_threshold << std::endl;
     }
 };
 
@@ -126,21 +150,43 @@ class PerturbParams {
     //Used with a cell config to add perturb parameters.
 public:
     float prob  = 0.0f;
+    float increase_prob = -1.0f;
+    float decrease_prob = -1.0f;
     float mu    = 0.0f;
     float sigma = 0.0f;
     void explodeParams(const YAML::Node& node) {
-        prob = node["prob"].as<float>();
+        if (node["prob"]) prob = node["prob"].as<float>();
+        if (node["increase_prob"]) increase_prob = node["increase_prob"].as<float>();
+        if (node["decrease_prob"]) decrease_prob = node["decrease_prob"].as<float>();
         mu = node["mu"].as<float>();
         sigma = node["sigma"].as<float>();
     }
     [[nodiscard]] float getPerturbOffset() const {
         thread_local std::mt19937 gen{std::random_device{}()};
         std::uniform_real_distribution<float> dis(0.0f, 1.0f);
-        if (dis(gen) < prob) {
-            std::normal_distribution<float> d(mu, sigma);
-            return d(gen);
+        const bool hasSeparateSignProbabilities = increase_prob >= 0.0f || decrease_prob >= 0.0f;
+        if (!hasSeparateSignProbabilities) {
+            if (dis(gen) < prob) {
+                std::normal_distribution<float> d(mu, sigma);
+                return d(gen);
+            }
+            return mu;
         }
-        return mu;
+
+        const float incProb = std::clamp(increase_prob >= 0.0f ? increase_prob : 0.0f, 0.0f, 1.0f);
+        const float decProb = std::clamp(decrease_prob >= 0.0f ? decrease_prob : 0.0f, 0.0f, 1.0f);
+        const float roll = dis(gen);
+        const float magnitude = (sigma > 0.0f)
+            ? std::abs(std::normal_distribution<float>(mu, sigma)(gen))
+            : std::abs(mu);
+
+        if (roll < incProb) {
+            return magnitude;
+        }
+        if (roll < incProb + decProb) {
+            return -magnitude;
+        }
+        return 0.0f;
     }
 };
 

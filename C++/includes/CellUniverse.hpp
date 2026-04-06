@@ -47,7 +47,6 @@ private:
    std::string outputPath;
    int firstFrame;
    std::map<std::string, float> previousElongations;  // PCA elongation from previous frame, drives P(split)
-   std::map<std::string, SpheroidParams> initialGroundTruthCells;
 };
 
 #endif

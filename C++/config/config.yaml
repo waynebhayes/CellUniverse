@@ -3,39 +3,48 @@ cellType: spheroid
 # Cell settings — perturbation parameters for each dimension
 cell:
   x:
-    prob: 0.45
+    increase_prob: 0.45
+    decrease_prob: 0.45
     mu: 0
     sigma: 5
   y:
-    prob: 0.45
+    increase_prob: 0.45
+    decrease_prob: 0.45
     mu: 0
     sigma: 5
   z:
-    prob: 0.35
+    increase_prob: 0.35
+    decrease_prob: 0.35
     mu: 0
     sigma: 8
   majorRadius:
-    prob: 0.2
+    increase_prob: 0.1
+    decrease_prob: 0.15
     mu: 0
     sigma: 2
   minorRadius:
-    prob: 0.2
+    increase_prob: 0.2
+    decrease_prob: 0.8
     mu: 0
     sigma: 2
   thetaX:
-    prob: 0.3
+    increase_prob: 0.8
+    decrease_prob: 0.8
     mu: 0
     sigma: 0.1
   thetaY:
-    prob: 0.3
+    increase_prob: 0.8
+    decrease_prob: 0.8
     mu: 0
     sigma: 0.1
   thetaZ:
-    prob: 0.3
+    increase_prob: 0.6
+    decrease_prob: 0.6
     mu: 0
     sigma: 0.1
   brightness:
-    prob: 0  # not perturbed — fixed from initial measurement
+    increase_prob: 0  # not perturbed — fixed from initial measurement
+    decrease_prob: 0
     mu: 0
     sigma: 0
   minMajorRadius: 10
@@ -46,24 +55,26 @@ cell:
 
   # not involved in calculation 
   minBrightness: 0.1
-  maxBrightness: 0.95
+  maxBrightness: 0.98
   brightnessUpdateBlend: 0.8
   # end  
 
 
-  splitBrightestFraction: 0.4
+  splitBrightestFraction: 0.05
 
 # Simulation settings
 simulation:
   iterations_per_cell: 350
-  background_color: 0.25  # post-sigmoid background is near 0
-  cell_color: 0.5       # post-sigmoid cells are near 1
+  background_color: 0.23  # post-sigmoid background is near 0
+  cell_color: 0.995       # post-sigmoid cells are near 1
   z_scaling: 7
   blur_sigma: 10.0  # heavy blur before sigmoid (matches working 0303 run)
-  sigmoid_k: 85.0
+  sigmoid_k: 60.0
   sigmoid_center: 0.445
   sigmoid_center_percentile: 0.45
-  post_sigmoid_dimmest_percentile: 0.5
+  post_sigmoid_dimmest_percentile: 0.99
+  post_sigmoid_dimmest_transition_width: 0.2
+  post_sigmoid_dimmest_transition_gradient: 0.5
   adaptive_background_expand_factor: 1.1
   adaptive_background_top_fraction: 0.35
   sigmoid_center_offset: 0.047
@@ -78,7 +89,9 @@ prob:
   split: 0.03
   split_cost: 15
   split_elongation_threshold: 1.1
-  overlap_penalty_weight: 100.0
-  size_reduction_penalty_weight: 0.1
+  overlap_penalty_weight: 500.0
+  size_reduction_penalty_weight: 0.0
+  split_fake_overlap_volume_fraction_threshold: 0.15
+  split_fake_radius_ratio_threshold: 1.6
   split_burn_in_iterations: 500
-  max_split_probability: 0.45
+  max_split_probability: 0.2
