@@ -24,7 +24,7 @@ cell:
     sigma: 2
   minorRadius:
     increase_prob: 0.1
-    decrease_prob: 0.9
+    decrease_prob: 0.7
     mu: 0
     sigma: 2
   thetaX:
@@ -58,7 +58,7 @@ cell:
   maxBrightness: 0.98
   brightnessUpdateBlend: 0.8
   brightnessMeanAmplification: 1.2
-  volumeRecoveryLossFractionThreshold: 0.4
+  volumeRecoveryLossFractionThreshold: 0.2
   volumeRecoveryMaxScaleIncreaseFraction: 0.6
 
 
@@ -77,7 +77,7 @@ simulation:
   sigmoid_center_percentile: 0.45
   post_sigmoid_dimmest_percentile: 0.995
   post_sigmoid_dimmest_transition_width: 0.2
-  post_sigmoid_dimmest_transition_gradient: 0.5
+  post_sigmoid_dimmest_transition_gradient: 0.6
   adaptive_background_expand_factor: 1.1
   adaptive_background_top_fraction: 0.4
   sigmoid_center_offset: 0.047
