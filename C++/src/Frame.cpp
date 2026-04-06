@@ -84,6 +84,97 @@ double computeMaxDaughterRadiusRatio(const Spheroid &cell1, const Spheroid &cell
 
     return std::max(safeRatio(major1, major2), safeRatio(minor1, minor2));
 }
+
+double computeSpheroidVolume(const Spheroid &cell)
+{
+    const double a = static_cast<double>(cell.getMajorRadius());
+    const double c = static_cast<double>(cell.getMinorRadius());
+    if (a <= 0.0 || c <= 0.0) {
+        return 0.0;
+    }
+    return (4.0 / 3.0) * M_PI * a * a * c;
+}
+
+double computeCylinderMeanBrightnessAlongSegment(const std::vector<cv::Mat> &frame,
+                                                const cv::Point3f &center,
+                                                const cv::Point3f &axisUnit,
+                                                double cylinderLength,
+                                                double cylinderRadius)
+{
+    if (frame.empty() || cylinderLength <= 0.0 || cylinderRadius <= 0.0) {
+        return 0.0;
+    }
+
+    const double axisX = static_cast<double>(axisUnit.x);
+    const double axisY = static_cast<double>(axisUnit.y);
+    const double axisZ = static_cast<double>(axisUnit.z);
+    const double axisNorm = std::sqrt(axisX * axisX + axisY * axisY + axisZ * axisZ);
+    if (axisNorm <= 1e-6) {
+        return 0.0;
+    }
+
+    const double radiusSq = cylinderRadius * cylinderRadius;
+    const double halfLength = 0.5 * cylinderLength;
+    const double unitX = axisX / axisNorm;
+    const double unitY = axisY / axisNorm;
+    const double unitZ = axisZ / axisNorm;
+
+    const int rows = frame[0].rows;
+    const int cols = frame[0].cols;
+    const int slices = static_cast<int>(frame.size());
+
+    const double axisExtentX = std::abs(unitX) * halfLength;
+    const double axisExtentY = std::abs(unitY) * halfLength;
+    const double axisExtentZ = std::abs(unitZ) * halfLength;
+    const int minX = std::max(0, static_cast<int>(std::floor(center.x - axisExtentX - cylinderRadius)));
+    const int maxX = std::min(cols - 1, static_cast<int>(std::ceil(center.x + axisExtentX + cylinderRadius)));
+    const int minY = std::max(0, static_cast<int>(std::floor(center.y - axisExtentY - cylinderRadius)));
+    const int maxY = std::min(rows - 1, static_cast<int>(std::ceil(center.y + axisExtentY + cylinderRadius)));
+    const int minZ = std::max(0, static_cast<int>(std::floor(center.z - axisExtentZ - cylinderRadius)));
+    const int maxZ = std::min(slices - 1, static_cast<int>(std::ceil(center.z + axisExtentZ + cylinderRadius)));
+
+    double brightnessSum = 0.0;
+    double sampleCount = 0.0;
+    for (int z = minZ; z <= maxZ; ++z) {
+        for (int y = minY; y <= maxY; ++y) {
+            const float *row = frame[z].ptr<float>(y);
+            for (int x = minX; x <= maxX; ++x) {
+                const double relX = static_cast<double>(x) - center.x;
+                const double relY = static_cast<double>(y) - center.y;
+                const double relZ = static_cast<double>(z) - center.z;
+                const double axialDistance = relX * unitX + relY * unitY + relZ * unitZ;
+                if (std::abs(axialDistance) > halfLength) {
+                    continue;
+                }
+                const double radialX = relX - axialDistance * unitX;
+                const double radialY = relY - axialDistance * unitY;
+                const double radialZ = relZ - axialDistance * unitZ;
+                const double distX = radialX;
+                const double distY = radialY;
+                const double distZ = radialZ;
+                const double distSq = distX * distX + distY * distY + distZ * distZ;
+                if (distSq <= radiusSq) {
+                    brightnessSum += row[x];
+                    sampleCount += 1.0;
+                }
+            }
+        }
+    }
+
+    return (sampleCount > 0.0) ? (brightnessSum / sampleCount) : 0.0;
+}
+
+double computeBridgeCylinderRadius(const Spheroid &cell)
+{
+    const double major = static_cast<double>(cell.getMajorRadius());
+    const double minor = static_cast<double>(cell.getMinorRadius());
+    if (major <= 0.0 || minor <= 0.0) {
+        return 0.0;
+    }
+
+    // Use a cell-shaped effective cross-section radius; length then controls the probe volume.
+    return std::sqrt(major * minor);
+}
 }
 
 // Function to interpolate between two slices
@@ -382,7 +473,10 @@ CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float pre
                                      float splitElongationThreshold,
                                      float overlapWeight,
                                      float fakeSplitOverlapVolumeFractionThreshold,
-                                     float fakeSplitRadiusRatioThreshold)
+                                     float fakeSplitRadiusRatioThreshold,
+                                     float splitMinorAxisAlignmentToleranceDegrees,
+                                     float splitMinorAxisAlignmentFlatnessRatioThreshold,
+                                     float splitFakeBridgeBrightnessSimilarityThreshold)
 {
     if (index >= cells.size()) {
         return {0.0, [](bool accept) {}};
@@ -401,7 +495,9 @@ CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float pre
     auto [child1, child2, valid, elongationRatio] = oldCell.getSplitCells(_realFrame, simulationConfig.z_scaling,
                                                                           simulationConfig.background_color,
                                                                           neighborCenters, preOptMajorR, preOptMinorR,
-                                                                          preOptX, preOptY, preOptZ);
+                                                                          preOptX, preOptY, preOptZ,
+                                                                          splitMinorAxisAlignmentToleranceDegrees,
+                                                                          splitMinorAxisAlignmentFlatnessRatioThreshold);
     if (!valid)
     {
         std::cout << "[Split Skip] " << oldCell.getName()
@@ -486,8 +582,46 @@ CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float pre
         computeOverlapVolumeFractionApprox(cells[d1Idx], cells[d2Idx]);
     const double daughterRadiusRatio =
         computeMaxDaughterRadiusRatio(cells[d1Idx], cells[d2Idx]);
+    const double daughter1MeanBrightness = cells[d1Idx].measureMeanBrightness(_realFrame);
+    const double daughter2MeanBrightness = cells[d2Idx].measureMeanBrightness(_realFrame);
+    const cv::Point3f daughterCenter1 = cells[d1Idx].get_center();
+    const cv::Point3f daughterCenter2 = cells[d2Idx].get_center();
+    const cv::Point3f bridgeCenter(
+        0.5f * (daughterCenter1.x + daughterCenter2.x),
+        0.5f * (daughterCenter1.y + daughterCenter2.y),
+        0.5f * (daughterCenter1.z + daughterCenter2.z));
+    const cv::Point3f bridgeAxis(
+        daughterCenter2.x - daughterCenter1.x,
+        daughterCenter2.y - daughterCenter1.y,
+        daughterCenter2.z - daughterCenter1.z);
+    const double daughter1BridgeVolume = 0.5 * computeSpheroidVolume(cells[d1Idx]);
+    const double daughter2BridgeVolume = 0.5 * computeSpheroidVolume(cells[d2Idx]);
+    const double daughter1BridgeRadius = computeBridgeCylinderRadius(cells[d1Idx]);
+    const double daughter2BridgeRadius = computeBridgeCylinderRadius(cells[d2Idx]);
+    const double daughter1BridgeLength =
+        (daughter1BridgeRadius > 1e-6)
+            ? (daughter1BridgeVolume / (M_PI * daughter1BridgeRadius * daughter1BridgeRadius))
+            : 0.0;
+    const double daughter2BridgeLength =
+        (daughter2BridgeRadius > 1e-6)
+            ? (daughter2BridgeVolume / (M_PI * daughter2BridgeRadius * daughter2BridgeRadius))
+            : 0.0;
+    const double bridgeBrightness1 = computeCylinderMeanBrightnessAlongSegment(
+        _realFrame, bridgeCenter, bridgeAxis, daughter1BridgeLength, daughter1BridgeRadius);
+    const double bridgeBrightness2 = computeCylinderMeanBrightnessAlongSegment(
+        _realFrame, bridgeCenter, bridgeAxis, daughter2BridgeLength, daughter2BridgeRadius);
+    const double bridgeSimilarity1 = (daughter1MeanBrightness > 1e-6)
+        ? (bridgeBrightness1 / daughter1MeanBrightness)
+        : 0.0;
+    const double bridgeSimilarity2 = (daughter2MeanBrightness > 1e-6)
+        ? (bridgeBrightness2 / daughter2MeanBrightness)
+        : 0.0;
+    const double averageBridgeSimilarity = 0.5 * (bridgeSimilarity1 + bridgeSimilarity2);
+    const bool bridgeLooksContinuous =
+        averageBridgeSimilarity >= splitFakeBridgeBrightnessSimilarityThreshold;
     if (daughterOverlapFraction > fakeSplitOverlapVolumeFractionThreshold ||
-        daughterRadiusRatio > fakeSplitRadiusRatioThreshold) {
+        daughterRadiusRatio > fakeSplitRadiusRatioThreshold ||
+        bridgeLooksContinuous) {
         cells.pop_back();
         cells.pop_back();
         cells.insert(cells.begin() + index, oldCell);
@@ -497,6 +631,9 @@ CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float pre
                   << " threshold=" << fakeSplitOverlapVolumeFractionThreshold
                   << " daughter_radius_ratio=" << daughterRadiusRatio
                   << " ratio_threshold=" << fakeSplitRadiusRatioThreshold
+                  << " bridge_similarity=(" << bridgeSimilarity1 << "," << bridgeSimilarity2 << ")"
+                  << " bridge_similarity_avg=" << averageBridgeSimilarity
+                  << " bridge_threshold=" << splitFakeBridgeBrightnessSimilarityThreshold
                   << std::endl;
         return {0.0, [](bool accept) {}};
     }

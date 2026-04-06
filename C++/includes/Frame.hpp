@@ -42,7 +42,10 @@ public:
                                   float splitElongationThreshold = 1.3f,
                                   float overlapWeight = 1000.0f,
                                   float fakeSplitOverlapVolumeFractionThreshold = 0.30f,
-                                  float fakeSplitRadiusRatioThreshold = 2.0f);
+                                  float fakeSplitRadiusRatioThreshold = 2.0f,
+                                  float splitMinorAxisAlignmentToleranceDegrees = 20.0f,
+                                  float splitMinorAxisAlignmentFlatnessRatioThreshold = 0.5f,
+                                  float splitFakeBridgeBrightnessSimilarityThreshold = 0.9f);
     std::vector<cv::Mat> getSynthFrame();
     const std::vector<cv::Mat>& getRealFrame() const { return _realFrame; }
     void setBackgroundColor(float backgroundColor) { simulationConfig.background_color = backgroundColor; }

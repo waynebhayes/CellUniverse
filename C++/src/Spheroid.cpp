@@ -317,7 +317,9 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
     float backgroundColor,
     const std::vector<cv::Point3f> &neighborCenters,
     float preOptMajorR, float preOptMinorR,
-    float preOptX, float preOptY, float preOptZ) const {
+    float preOptX, float preOptY, float preOptZ,
+    float splitMinorAxisAlignmentToleranceDegrees,
+    float splitMinorAxisAlignmentFlatnessRatioThreshold) const {
     // Step 1: Get the bounding box, expanded for split detection.
     // Use pre-optimization radii if available (Phase 1 may collapse the cell).
     // Use pre-optimization position if available (Phase 1 may shift the cell
@@ -594,6 +596,36 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
         split_axis = cv::Point3f(sin(phi) * cos(theta), sin(phi) * sin(theta), cos(phi));
     }
 
+    double effMajorR = (preOptMajorR > 0.0f) ? std::max(_major_radius, static_cast<double>(preOptMajorR)) : _major_radius;
+    double effMinorR = (preOptMinorR > 0.0f) ? std::max(_minor_radius, static_cast<double>(preOptMinorR)) : _minor_radius;
+    const double cx = std::cos(_theta_x), sx = std::sin(_theta_x);
+    const double cy = std::cos(_theta_y), sy = std::sin(_theta_y);
+    const double cz = std::cos(_theta_z), sz = std::sin(_theta_z);
+    const cv::Point3f localZAxis(
+        static_cast<float>(cz * sy * cx + sz * sx),
+        static_cast<float>(sz * sy * cx - cz * sx),
+        static_cast<float>(cy * cx));
+    const float flatnessRatio = (effMajorR > 1e-6) ? static_cast<float>(effMinorR / effMajorR) : 1.0f;
+    const bool enforceMinorAxisAlignment =
+        flatnessRatio <= splitMinorAxisAlignmentFlatnessRatioThreshold;
+    if (enforceMinorAxisAlignment) {
+        const float alignmentDot = std::clamp(std::abs(split_axis.dot(localZAxis)), 0.0f, 1.0f);
+        const float alignmentAngleDegrees =
+            static_cast<float>(std::acos(alignmentDot) * 180.0 / M_PI);
+        if (alignmentAngleDegrees > splitMinorAxisAlignmentToleranceDegrees) {
+            const float signedAlignment = split_axis.dot(localZAxis);
+            split_axis = (signedAlignment >= 0.0f) ? localZAxis : (localZAxis * -1.0f);
+            std::cout << "[Split Align] " << _name
+                      << " flatness_ratio=" << flatnessRatio
+                      << " threshold=" << splitMinorAxisAlignmentFlatnessRatioThreshold
+                      << " minor-axis alignment angle=" << alignmentAngleDegrees
+                      << " > tolerance=" << splitMinorAxisAlignmentToleranceDegrees
+                      << " forcing split_axis to local_z=(" << split_axis.x << ", "
+                      << split_axis.y << ", " << split_axis.z << ")"
+                      << '\n';
+        }
+    }
+
     // Step 4: Centroid-based daughter placement.
     // Project each bright pixel onto the split axis through the cell center.
     // Split into positive/negative groups and compute 3D centroids.
@@ -608,8 +640,6 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
     // image, making current-radius daughters too small for meaningful cost
     // improvement. Pre-opt radii reflect the cell size before collapse.
     // (Previously this was blocked by daughter-daughter overlap gates, now removed.)
-    double effMajorR = (preOptMajorR > 0.0f) ? std::max(_major_radius, static_cast<double>(preOptMajorR)) : _major_radius;
-    double effMinorR = (preOptMinorR > 0.0f) ? std::max(_minor_radius, static_cast<double>(preOptMinorR)) : _minor_radius;
     double volumeScale = std::cbrt(0.5);
     double daughterMajorRadius = effMajorR * volumeScale;
     double daughterMinorRadius = effMinorR * volumeScale;
@@ -642,8 +672,17 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
         // and burn-in handles separation.
         centroid1 *= (1.0f / count1);
         centroid2 *= (1.0f / count2);
-        new_position1 = centroid1;
-        new_position2 = centroid2;
+        const cv::Point3f centroidOffset1 = centroid1 - pcaCenter;
+        const cv::Point3f centroidOffset2 = centroid2 - pcaCenter;
+        float projection1 = centroidOffset1.dot(split_axis);
+        float projection2 = centroidOffset2.dot(split_axis);
+
+        if (projection1 < projection2) {
+            std::swap(projection1, projection2);
+        }
+
+        new_position1 = pcaCenter + split_axis * projection1;
+        new_position2 = pcaCenter + split_axis * projection2;
 
         float sep = std::sqrt(
             (new_position1.x - new_position2.x) * (new_position1.x - new_position2.x) +
@@ -654,6 +693,7 @@ std::tuple<Spheroid, Spheroid, bool, float> Spheroid::getSplitCells(const std::v
                   << " c1=(" << new_position1.x << "," << new_position1.y << "," << new_position1.z << ")"
                   << " c2=(" << new_position2.x << "," << new_position2.y << "," << new_position2.z << ")"
                   << " sep=" << sep
+                  << " line_axis=(" << split_axis.x << "," << split_axis.y << "," << split_axis.z << ")"
                   << " daughterMajorR=" << daughterMajorRadius
                   << " daughterMinorR=" << daughterMinorRadius << '\n';
     } else {

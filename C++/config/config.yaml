@@ -19,22 +19,22 @@ cell:
     sigma: 8
   majorRadius:
     increase_prob: 0.1
-    decrease_prob: 0.15
+    decrease_prob: 0.4
     mu: 0
     sigma: 2
   minorRadius:
-    increase_prob: 0.2
+    increase_prob: 0.1
     decrease_prob: 0.9
     mu: 0
     sigma: 2
   thetaX:
-    increase_prob: 0.8
-    decrease_prob: 0.8
+    increase_prob: 0.9
+    decrease_prob: 0.9
     mu: 0
     sigma: 0.1
   thetaY:
-    increase_prob: 0.8
-    decrease_prob: 0.8
+    increase_prob: 0.9
+    decrease_prob: 0.9
     mu: 0
     sigma: 0.1
   thetaZ:
@@ -43,10 +43,10 @@ cell:
     mu: 0
     sigma: 0.1
   brightness:
-    increase_prob: 0  # not perturbed — fixed from initial measurement
-    decrease_prob: 0
+    increase_prob: 0.0  # not perturbed — fixed from initial measurement
+    decrease_prob: 0.0
     mu: 0
-    sigma: 0
+    sigma: 0.0
   minMajorRadius: 10
   maxMajorRadius: 40
   minMinorRadius: 5
@@ -61,7 +61,7 @@ cell:
   # end  
 
 
-  splitBrightestFraction: 0.05
+  splitBrightestFraction: 0.065
 
 # Simulation settings
 simulation:
@@ -73,11 +73,11 @@ simulation:
   sigmoid_k: 60.0
   sigmoid_center: 0.445
   sigmoid_center_percentile: 0.45
-  post_sigmoid_dimmest_percentile: 0.99
+  post_sigmoid_dimmest_percentile: 0.995
   post_sigmoid_dimmest_transition_width: 0.2
   post_sigmoid_dimmest_transition_gradient: 0.5
   adaptive_background_expand_factor: 1.1
-  adaptive_background_top_fraction: 0.35
+  adaptive_background_top_fraction: 0.4
   sigmoid_center_offset: 0.047
   calibration_x: 20
   calibration_y: 20
@@ -94,5 +94,8 @@ prob:
   size_reduction_penalty_weight: 0.0
   split_fake_overlap_volume_fraction_threshold: 0.15
   split_fake_radius_ratio_threshold: 1.6
-  split_burn_in_iterations: 500
+  split_minor_axis_alignment_tolerance_degrees: 120.0
+  split_minor_axis_alignment_flatness_ratio_threshold: 0.85
+  split_fake_bridge_brightness_similarity_threshold: 0.99
+  split_burn_in_iterations: 1000
   max_split_probability: 0.2

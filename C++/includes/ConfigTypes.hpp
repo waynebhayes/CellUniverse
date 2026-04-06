@@ -83,13 +83,19 @@ public:
     float size_reduction_penalty_weight;
     float split_fake_overlap_volume_fraction_threshold;
     float split_fake_radius_ratio_threshold;
+    float split_minor_axis_alignment_tolerance_degrees;
+    float split_minor_axis_alignment_flatness_ratio_threshold;
+    float split_fake_bridge_brightness_similarity_threshold;
     int split_burn_in_iterations = 500;
     float max_split_probability = 0.5f;
     ProbabilityConfig() : split(0.0f), split_cost(0.0f),
                           split_elongation_threshold(1.3f), overlap_penalty_weight(1000.0f),
                           size_reduction_penalty_weight(0.0f),
                           split_fake_overlap_volume_fraction_threshold(0.30f),
-                          split_fake_radius_ratio_threshold(2.0f) {
+                          split_fake_radius_ratio_threshold(2.0f),
+                          split_minor_axis_alignment_tolerance_degrees(20.0f),
+                          split_minor_axis_alignment_flatness_ratio_threshold(0.5f),
+                          split_fake_bridge_brightness_similarity_threshold(0.9f) {
     }
 
     void explodeConfig(const YAML::Node& node) {
@@ -116,6 +122,18 @@ public:
             split_fake_radius_ratio_threshold =
                 node["split_fake_radius_ratio_threshold"].as<float>();
         }
+        if (node["split_minor_axis_alignment_tolerance_degrees"]) {
+            split_minor_axis_alignment_tolerance_degrees =
+                node["split_minor_axis_alignment_tolerance_degrees"].as<float>();
+        }
+        if (node["split_minor_axis_alignment_flatness_ratio_threshold"]) {
+            split_minor_axis_alignment_flatness_ratio_threshold =
+                node["split_minor_axis_alignment_flatness_ratio_threshold"].as<float>();
+        }
+        if (node["split_fake_bridge_brightness_similarity_threshold"]) {
+            split_fake_bridge_brightness_similarity_threshold =
+                node["split_fake_bridge_brightness_similarity_threshold"].as<float>();
+        }
         if (node["split_burn_in_iterations"]) {
             split_burn_in_iterations = node["split_burn_in_iterations"].as<int>();
         }
@@ -133,7 +151,13 @@ public:
         std::cout << "split_fake_overlap_volume_fraction_threshold: "
                   << split_fake_overlap_volume_fraction_threshold << '\n';
         std::cout << "split_fake_radius_ratio_threshold: "
-                  << split_fake_radius_ratio_threshold << std::endl;
+                  << split_fake_radius_ratio_threshold << '\n';
+        std::cout << "split_minor_axis_alignment_tolerance_degrees: "
+                  << split_minor_axis_alignment_tolerance_degrees << '\n';
+        std::cout << "split_minor_axis_alignment_flatness_ratio_threshold: "
+                  << split_minor_axis_alignment_flatness_ratio_threshold << '\n';
+        std::cout << "split_fake_bridge_brightness_similarity_threshold: "
+                  << split_fake_bridge_brightness_similarity_threshold << std::endl;
     }
 };
 

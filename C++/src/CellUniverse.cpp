@@ -484,13 +484,15 @@ void CellUniverse::optimize(int frameIndex)
         const float currentMeanBrightness = computeStackMean(frame.getRealFrame());
         const float brightnessScale =
             (previousMeanBrightness > 1e-6f) ? (currentMeanBrightness / previousMeanBrightness) : 1.0f;
-        const float updatedBackground = previousBackground * brightnessScale;
-
-        frame.setBackgroundColor(updatedBackground);
-        std::cout << "[Adaptive Background] frame " << (firstFrame + frameIndex)
+        frame.setBackgroundColor(previousBackground);
+        for (auto &cell : frame.cells) {
+            cell.setBrightness(cell.getBrightness() * brightnessScale);
+        }
+        std::cout << "[Adaptive Brightness] frame " << (firstFrame + frameIndex)
                   << " base=" << previousBackground
                   << " ratio=" << brightnessScale
-                  << " background=" << updatedBackground << '\n';
+                  << " background=" << previousBackground
+                  << '\n';
     }
 
     frame.regenerateSynthFrame();
@@ -611,7 +613,10 @@ void CellUniverse::optimize(int frameIndex)
                                              config.prob.split_elongation_threshold,
                                              overlapWeight,
                                              config.prob.split_fake_overlap_volume_fraction_threshold,
-                                             config.prob.split_fake_radius_ratio_threshold);
+                                             config.prob.split_fake_radius_ratio_threshold,
+                                             config.prob.split_minor_axis_alignment_tolerance_degrees,
+                                             config.prob.split_minor_axis_alignment_flatness_ratio_threshold,
+                                             config.prob.split_fake_bridge_brightness_similarity_threshold);
             double costDiff = result.first;
             auto callback = result.second;
 
