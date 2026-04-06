@@ -680,10 +680,12 @@ void CellUniverse::optimize(int frameIndex)
     const float brightnessBlend = std::clamp(config.cell ? config.cell->brightnessUpdateBlend : 0.0f, 0.0f, 1.0f);
     if (brightnessBlend > 0.0f && config.cell) {
         const auto &realFrame = frame.getRealFrame();
+        const float brightnessAmplification = std::max(0.0f, config.cell->brightnessMeanAmplification);
         for (auto &cell : frame.cells) {
             const float observedBrightness = cell.measureMeanBrightness(realFrame);
+            const float amplifiedObservedBrightness = observedBrightness * brightnessAmplification;
             const float updatedBrightness =
-                cell.getBrightness() * (1.0f - brightnessBlend) + observedBrightness * brightnessBlend;
+                cell.getBrightness() * (1.0f - brightnessBlend) + amplifiedObservedBrightness * brightnessBlend;
             cell.setBrightness(updatedBrightness);
         }
         frame.regenerateSynthFrame();

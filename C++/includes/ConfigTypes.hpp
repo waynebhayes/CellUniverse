@@ -209,6 +209,7 @@ public:
     double maxBrightness{1.0};
     float splitBrightestFraction{0.10f};
     float brightnessUpdateBlend{0.2f};
+    float brightnessMeanAmplification{1.0f};
     ~SpheroidConfig() = default;
 
     void explodeConfig(const YAML::Node& node)
@@ -231,6 +232,7 @@ public:
         if (node["maxBrightness"]) maxBrightness = node["maxBrightness"].as<double>();
         if (node["splitBrightestFraction"]) splitBrightestFraction = node["splitBrightestFraction"].as<float>();
         if (node["brightnessUpdateBlend"]) brightnessUpdateBlend = node["brightnessUpdateBlend"].as<float>();
+        if (node["brightnessMeanAmplification"]) brightnessMeanAmplification = node["brightnessMeanAmplification"].as<float>();
     }
 };
 

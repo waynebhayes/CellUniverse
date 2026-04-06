@@ -24,7 +24,7 @@ cell:
     sigma: 2
   minorRadius:
     increase_prob: 0.2
-    decrease_prob: 0.8
+    decrease_prob: 0.9
     mu: 0
     sigma: 2
   thetaX:
@@ -38,8 +38,8 @@ cell:
     mu: 0
     sigma: 0.1
   thetaZ:
-    increase_prob: 0.6
-    decrease_prob: 0.6
+    increase_prob: 0.8
+    decrease_prob: 0.8
     mu: 0
     sigma: 0.1
   brightness:
@@ -57,6 +57,7 @@ cell:
   minBrightness: 0.1
   maxBrightness: 0.98
   brightnessUpdateBlend: 0.8
+  brightnessMeanAmplification: 1.2
   # end  
 
 
