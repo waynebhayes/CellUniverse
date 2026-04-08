@@ -425,7 +425,7 @@ LAST_FRAME="$(ini_get "$INI_FILE" "$PRESET" "last_frame")"
 
 BUILD_DIR="$(resolve_path "$BUILD_DIR_RAW" "$INI_DIR")"
 INPUT_PATH="$(resolve_path "$INPUT_PATH_RAW" "$INI_DIR")"
-OUTPUT_BASE_DIR="$OUTPUT_ROOT"
+OUTPUT_BASE_DIR="$(resolve_path "$OUTPUT_BASE_RAW" "$INI_DIR")"
 CELL_CONFIG_FILE="$(resolve_path "$CELL_CONFIG_RAW" "$INI_DIR")"
 INITIAL_FILE="$(resolve_path "$INITIAL_RAW" "$INI_DIR")"
 

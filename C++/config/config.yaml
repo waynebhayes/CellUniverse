@@ -67,13 +67,13 @@ cell:
 
 
 
-  splitBrightestFraction: 0.065
+  splitBrightestFraction: 0.055
 
 # Simulation settings
 simulation:
   iterations_per_cell: 350
-  background_color: 0.23  # post-sigmoid background is near 0
-  cell_color: 0.995       # post-sigmoid cells are near 1
+  background_color: 0.0  # post-sigmoid background is near 0
+  cell_color: 1.0       # post-sigmoid cells are near 1
   z_scaling: 7
   blur_sigma: 10.0  # heavy blur before sigmoid (matches working 0303 run)
   sigmoid_k: 75.0
