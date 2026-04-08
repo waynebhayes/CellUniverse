@@ -77,6 +77,7 @@ class Spheroid
         float getBrightness() const { return _brightness; }
         void setBrightness(float brightness);
         float measureMeanBrightness(const std::vector<cv::Mat> &image) const;
+        std::pair<float, float> measureBrightnessStats(const std::vector<cv::Mat> &image) const;
 
         void printCellInfo() const {
             std::cout << "Spheroid name: " << _name << " x: " << _position.x << " y: " << _position.y << " z: " << _position.z << " majorRadius: " << _major_radius << " minorRadius: " << _minor_radius << " theta_x: " << _theta_x << " theta_y: " << _theta_y << " theta_z: " << _theta_z << " brightness: " << _brightness << '\n';

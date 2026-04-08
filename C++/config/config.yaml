@@ -23,8 +23,8 @@ cell:
     mu: 0
     sigma: 2
   minorRadius:
-    increase_prob: 0.1
-    decrease_prob: 0.7
+    increase_prob: 0.7
+    decrease_prob: 0.85
     mu: 0
     sigma: 2
   thetaX:
@@ -60,6 +60,10 @@ cell:
   brightnessMeanAmplification: 1.2
   volumeRecoveryLossFractionThreshold: 0.2
   volumeRecoveryMaxScaleIncreaseFraction: 0.6
+  flatCellRotationRefineFlatnessThreshold: 0.8
+  flatCellRotationRefineAngleStep: 0.15
+  flatCellRotationRefineMaxOffsetDegrees: 15.0
+  flatCellRotationRefinePasses: 2
 
 
 
@@ -72,7 +76,7 @@ simulation:
   cell_color: 0.995       # post-sigmoid cells are near 1
   z_scaling: 7
   blur_sigma: 10.0  # heavy blur before sigmoid (matches working 0303 run)
-  sigmoid_k: 60.0
+  sigmoid_k: 75.0
   sigmoid_center: 0.445
   sigmoid_center_percentile: 0.45
   post_sigmoid_dimmest_percentile: 0.995
@@ -90,16 +94,16 @@ simulation:
 # Probability of changes
 prob:
   split: 0.03
-  split_cost: 15
+  split_cost: 20
   split_elongation_threshold: 1.1
   overlap_penalty_weight: 500.0
   size_reduction_penalty_weight: 0.0
   split_fake_overlap_volume_fraction_threshold: 0.15
-  split_fake_volume_ratio_threshold: 125.0
+  split_fake_volume_ratio_threshold: 6.0
   split_search_radius_multiplier: 3.0
   split_minor_axis_alignment_tolerance_degrees: 150.0
-  split_minor_axis_alignment_flatness_ratio_threshold: 0.85
-  split_minor_axis_alignment_min_radius_disable_threshold: 15.0
+  split_minor_axis_alignment_flatness_ratio_threshold: 0.5
+  split_minor_axis_alignment_min_radius_disable_threshold: 5.0
   split_fake_bridge_brightness_similarity_threshold: 0.99
   split_burn_in_iterations: 1000
   max_split_probability: 0.2

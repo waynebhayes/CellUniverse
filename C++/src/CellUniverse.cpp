@@ -785,6 +785,108 @@ void CellUniverse::optimize(int frameIndex)
         }
     }
 
+    if (config.cell) {
+        const float flatnessThreshold =
+            std::clamp(config.cell->flatCellRotationRefineFlatnessThreshold, 0.0f, 1.0f);
+        const float configuredAngleStep = std::max(0.0f, config.cell->flatCellRotationRefineAngleStep);
+        const float maxOffsetRadians = std::max(
+            0.0f,
+            config.cell->flatCellRotationRefineMaxOffsetDegrees * static_cast<float>(M_PI / 180.0));
+        const int refinePasses = std::max(0, config.cell->flatCellRotationRefinePasses);
+        if (configuredAngleStep > 0.0f && refinePasses > 0 && maxOffsetRadians > 0.0f) {
+            const auto &realFrame = frame.getRealFrame();
+            bool refinedAnyRotation = false;
+            for (auto &cell : frame.cells) {
+                if (cell.getMajorRadius() <= 1e-6f) {
+                    continue;
+                }
+                const float flatnessRatio = cell.getMinorRadius() / cell.getMajorRadius();
+                if (flatnessRatio > flatnessThreshold) {
+                    continue;
+                }
+
+                const auto originalParams = cell.getCellParams();
+                const auto [originalMeanBrightness, originalStdBrightness] =
+                    cell.measureBrightnessStats(realFrame);
+                Spheroid bestCell = cell;
+                float bestMeanBrightness = originalMeanBrightness;
+                float bestStdBrightness = originalStdBrightness;
+                for (int pass = 0; pass < refinePasses; ++pass) {
+                    const auto passCenter = bestCell.getCellParams();
+                    Spheroid passBestCell = bestCell;
+                    float passBestMeanBrightness = bestMeanBrightness;
+                    float passBestStdBrightness = bestStdBrightness;
+
+                    for (float deltaX = -maxOffsetRadians; deltaX <= maxOffsetRadians + 1e-6f; deltaX += configuredAngleStep) {
+                        for (float deltaY = -maxOffsetRadians; deltaY <= maxOffsetRadians + 1e-6f; deltaY += configuredAngleStep) {
+                            for (float deltaZ = -maxOffsetRadians; deltaZ <= maxOffsetRadians + 1e-6f; deltaZ += configuredAngleStep) {
+                                if (std::abs(deltaX) < 1e-6f &&
+                                    std::abs(deltaY) < 1e-6f &&
+                                    std::abs(deltaZ) < 1e-6f) {
+                                    continue;
+                                }
+
+                                const Spheroid candidate(SpheroidParams(
+                                    passCenter.name,
+                                    passCenter.x,
+                                    passCenter.y,
+                                    passCenter.z,
+                                    passCenter.majorRadius,
+                                    passCenter.minorRadius,
+                                    passCenter.theta_x + deltaX,
+                                    passCenter.theta_y + deltaY,
+                                    passCenter.theta_z + deltaZ,
+                                    passCenter.brightness));
+                                const auto [candidateMeanBrightness, candidateStdBrightness] =
+                                    candidate.measureBrightnessStats(realFrame);
+                                const bool betterMean = candidateMeanBrightness > passBestMeanBrightness + 1e-6f;
+                                const bool lowerStd = candidateStdBrightness < passBestStdBrightness - 1e-6f;
+                                const bool nonWorseMean = candidateMeanBrightness >= passBestMeanBrightness - 1e-6f;
+                                const bool nonWorseStd = candidateStdBrightness <= passBestStdBrightness + 1e-6f;
+                                if ((betterMean && nonWorseStd) || (lowerStd && nonWorseMean)) {
+                                    passBestCell = candidate;
+                                    passBestMeanBrightness = candidateMeanBrightness;
+                                    passBestStdBrightness = candidateStdBrightness;
+                                }
+                            }
+                        }
+                    }
+
+                    if (passBestCell.getCellParams().theta_x == bestCell.getCellParams().theta_x &&
+                        passBestCell.getCellParams().theta_y == bestCell.getCellParams().theta_y &&
+                        passBestCell.getCellParams().theta_z == bestCell.getCellParams().theta_z) {
+                        break;
+                    }
+
+                    bestCell = passBestCell;
+                    bestMeanBrightness = passBestMeanBrightness;
+                    bestStdBrightness = passBestStdBrightness;
+                    refinedAnyRotation = true;
+                }
+
+                if (bestCell.getCellParams().theta_x != cell.getCellParams().theta_x ||
+                    bestCell.getCellParams().theta_y != cell.getCellParams().theta_y ||
+                    bestCell.getCellParams().theta_z != cell.getCellParams().theta_z) {
+                    const auto paramsBefore = cell.getCellParams();
+                    const auto paramsAfter = bestCell.getCellParams();
+                    std::cout << "[Flat Rotation Refine] frame " << displayFrame
+                              << " cell=" << cell.getName()
+                              << " flatness_ratio=" << flatnessRatio
+                              << " mean=" << originalMeanBrightness << "->" << bestMeanBrightness
+                              << " std=" << originalStdBrightness << "->" << bestStdBrightness
+                              << " theta=(" << paramsBefore.theta_x << "," << paramsBefore.theta_y << "," << paramsBefore.theta_z
+                              << ")->(" << paramsAfter.theta_x << "," << paramsAfter.theta_y << "," << paramsAfter.theta_z << ")"
+                              << '\n';
+                    cell = bestCell;
+                }
+            }
+
+            if (refinedAnyRotation) {
+                frame.regenerateSynthFrame();
+            }
+        }
+    }
+
     std::cout << "[Optimize Done] frame " << displayFrame
               << " perturb_accepted=" << perturbAccepted
               << " split_attempts=" << splitAttempted

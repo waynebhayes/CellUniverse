@@ -254,6 +254,10 @@ public:
     float brightnessMeanAmplification{1.0f};
     float volumeRecoveryLossFractionThreshold{0.4f};
     float volumeRecoveryMaxScaleIncreaseFraction{0.3f};
+    float flatCellRotationRefineFlatnessThreshold{0.8f};
+    float flatCellRotationRefineAngleStep{0.15f};
+    float flatCellRotationRefineMaxOffsetDegrees{15.0f};
+    int flatCellRotationRefinePasses{2};
     ~SpheroidConfig() = default;
 
     void explodeConfig(const YAML::Node& node)
@@ -283,6 +287,20 @@ public:
         if (node["volumeRecoveryMaxScaleIncreaseFraction"]) {
             volumeRecoveryMaxScaleIncreaseFraction =
                 node["volumeRecoveryMaxScaleIncreaseFraction"].as<float>();
+        }
+        if (node["flatCellRotationRefineFlatnessThreshold"]) {
+            flatCellRotationRefineFlatnessThreshold =
+                node["flatCellRotationRefineFlatnessThreshold"].as<float>();
+        }
+        if (node["flatCellRotationRefineAngleStep"]) {
+            flatCellRotationRefineAngleStep = node["flatCellRotationRefineAngleStep"].as<float>();
+        }
+        if (node["flatCellRotationRefineMaxOffsetDegrees"]) {
+            flatCellRotationRefineMaxOffsetDegrees =
+                node["flatCellRotationRefineMaxOffsetDegrees"].as<float>();
+        }
+        if (node["flatCellRotationRefinePasses"]) {
+            flatCellRotationRefinePasses = node["flatCellRotationRefinePasses"].as<int>();
         }
     }
 };

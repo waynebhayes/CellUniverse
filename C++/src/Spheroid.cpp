@@ -220,8 +220,13 @@ void Spheroid::draw(cv::Mat &image, const SimulationConfig &simulationConfig, fl
 
 float Spheroid::measureMeanBrightness(const std::vector<cv::Mat> &image) const
 {
+    return measureBrightnessStats(image).first;
+}
+
+std::pair<float, float> Spheroid::measureBrightnessStats(const std::vector<cv::Mat> &image) const
+{
     if (image.empty()) {
-        return _brightness;
+        return {_brightness, 0.0f};
     }
 
     std::array<double, 9> R_T;
@@ -241,6 +246,7 @@ float Spheroid::measureMeanBrightness(const std::vector<cv::Mat> &image) const
     const int maxZ = std::min(maxZIndex, static_cast<int>(std::ceil(_position.z + maxR)));
 
     double sum = 0.0;
+    double sumSquares = 0.0;
     int count = 0;
     scanSpheroidVolume(
         image, minX, maxX, minY, maxY, minZ, maxZ, _position,
@@ -248,14 +254,17 @@ float Spheroid::measureMeanBrightness(const std::vector<cv::Mat> &image) const
         [&](int /*x*/, int /*y*/, int /*z*/, float pixel, double val) {
             if (val <= 1.0) {
                 sum += pixel;
+                sumSquares += static_cast<double>(pixel) * pixel;
                 count++;
             }
         });
 
     if (count == 0) {
-        return _brightness;
+        return {_brightness, 0.0f};
     }
-    return static_cast<float>(sum / count);
+    const double mean = sum / count;
+    const double variance = std::max(0.0, (sumSquares / count) - mean * mean);
+    return {static_cast<float>(mean), static_cast<float>(std::sqrt(variance))};
 }
 
 // ---- ROTATION-AWARE drawOutline() ----
