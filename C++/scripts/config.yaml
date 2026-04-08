@@ -57,6 +57,7 @@ cell:
   brightnessMeanAmplification: 1.2
   volumeRecoveryLossFractionThreshold: 0.2
   volumeRecoveryMaxScaleIncreaseFraction: 0.6
+  flatCellRotationRefineEnabled: true
   flatCellRotationRefineFlatnessThreshold: 0.8
   flatCellRotationRefineAngleStep: 0.15
   flatCellRotationRefineMaxOffsetDegrees: 15.0

@@ -899,7 +899,7 @@ void CellUniverse::optimize(int frameIndex)
         }
     }
 
-    if (config.cell) {
+    if (config.cell && config.cell->flatCellRotationRefineEnabled) {
         const float flatnessThreshold =
             std::clamp(config.cell->flatCellRotationRefineFlatnessThreshold, 0.0f, 1.0f);
         const float configuredAngleStep = std::max(0.0f, config.cell->flatCellRotationRefineAngleStep);

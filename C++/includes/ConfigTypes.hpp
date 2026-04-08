@@ -296,6 +296,7 @@ public:
     float brightnessMeanAmplification{1.0f};
     float volumeRecoveryLossFractionThreshold{0.4f};
     float volumeRecoveryMaxScaleIncreaseFraction{0.3f};
+    bool flatCellRotationRefineEnabled{true};
     float flatCellRotationRefineFlatnessThreshold{0.8f};
     float flatCellRotationRefineAngleStep{0.15f};
     float flatCellRotationRefineMaxOffsetDegrees{15.0f};
@@ -329,6 +330,10 @@ public:
         if (node["volumeRecoveryMaxScaleIncreaseFraction"]) {
             volumeRecoveryMaxScaleIncreaseFraction =
                 node["volumeRecoveryMaxScaleIncreaseFraction"].as<float>();
+        }
+        if (node["flatCellRotationRefineEnabled"]) {
+            flatCellRotationRefineEnabled =
+                node["flatCellRotationRefineEnabled"].as<bool>();
         }
         if (node["flatCellRotationRefineFlatnessThreshold"]) {
             flatCellRotationRefineFlatnessThreshold =

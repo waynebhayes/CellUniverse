@@ -18,6 +18,7 @@ set(CMAKE_WARN_DEPRECATED ${_OLD_CMAKE_WARN_DEPRECATED})
 
 add_executable(core_unit_test
         hello_test.cc
+        config_types_test.cc
         interpolate_test.cc
         frame_test.cc
         process_image_test.cc
