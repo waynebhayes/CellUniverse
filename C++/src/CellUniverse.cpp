@@ -715,7 +715,14 @@ void CellUniverse::optimize(int frameIndex)
                                              config.prob.split_minor_axis_alignment_tolerance_degrees,
                                              config.prob.split_minor_axis_alignment_flatness_ratio_threshold,
                                              config.prob.split_minor_axis_alignment_min_radius_disable_threshold,
-                                             config.prob.split_fake_bridge_brightness_similarity_threshold);
+                                             config.prob.split_fake_bridge_brightness_similarity_threshold,
+                                             config.prob.split_pre_burn_in_min_separation_over_major,
+                                             config.prob.split_pre_burn_in_z_axis_max_abs,
+                                             config.prob.split_pre_burn_in_z_axis_max_separation_over_major,
+                                             config.prob.split_pre_burn_in_z_axis_min_drift_over_major,
+                                             config.prob.split_post_burn_in_large_recenter_min_drift_over_major,
+                                             config.prob.split_post_burn_in_large_recenter_max_cost_diff,
+                                             config.prob.split_burn_in_iterations);
             double costDiff = result.first;
             auto callback = result.second;
 

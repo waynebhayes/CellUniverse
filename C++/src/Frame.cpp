@@ -171,42 +171,37 @@ double computeBridgeCylinderRadius(const Spheroid &cell)
 
 bool shouldRejectSplitPreBurnIn(const std::string &cellName,
                                 const SplitDiagnostics &diag,
-                                float splitElongationThreshold)
+                                float minSeparationOverMajor,
+                                float zAxisMaxAbs,
+                                float zAxisMaxSeparationOverMajor,
+                                float zAxisMinDriftOverMajor)
 {
-    const float weakElongationCutoff = splitElongationThreshold + 0.20f;
-    if (diag.separationOverDaughterMajor < 1.0f) {
+    // PCA proposals often start partially overlapped and rely on burn-in to separate.
+    // Keep only clearly collapsed proposals out of burn-in.
+    if (diag.separationOverDaughterMajor < minSeparationOverMajor) {
         std::cout << "[Split HeuristicReject] " << cellName
                   << " reason=overlapping_daughters"
                   << " elongation_ratio=" << diag.elongationRatio
                   << " sepOverDaughterMajor=" << diag.separationOverDaughterMajor
+                  << " threshold=" << minSeparationOverMajor
                   << " driftOverParentMajor=" << diag.driftOverParentMajor
                   << " axisAbsZ=" << diag.axisAbsZ
                   << std::endl;
         return true;
     }
 
-    if (diag.elongationRatio < weakElongationCutoff &&
-        diag.separationOverDaughterMajor < 1.10f) {
-        std::cout << "[Split HeuristicReject] " << cellName
-                  << " reason=weak_geometry"
-                  << " elongation_ratio=" << diag.elongationRatio
-                  << " weak_cutoff=" << weakElongationCutoff
-                  << " sepOverDaughterMajor=" << diag.separationOverDaughterMajor
-                  << " driftOverParentMajor=" << diag.driftOverParentMajor
-                  << " axisAbsZ=" << diag.axisAbsZ
-                  << std::endl;
-        return true;
-    }
-
-    if (diag.axisAbsZ > 0.92f &&
-        diag.separationOverDaughterMajor < 1.30f &&
-        diag.driftOverParentMajor > 0.40f) {
+    if (diag.axisAbsZ > zAxisMaxAbs &&
+        diag.separationOverDaughterMajor < zAxisMaxSeparationOverMajor &&
+        diag.driftOverParentMajor > zAxisMinDriftOverMajor) {
         std::cout << "[Split HeuristicReject] " << cellName
                   << " reason=z_axis_internal_structure"
                   << " elongation_ratio=" << diag.elongationRatio
                   << " sepOverDaughterMajor=" << diag.separationOverDaughterMajor
+                  << " sep_threshold=" << zAxisMaxSeparationOverMajor
                   << " driftOverParentMajor=" << diag.driftOverParentMajor
+                  << " drift_threshold=" << zAxisMinDriftOverMajor
                   << " axisAbsZ=" << diag.axisAbsZ
+                  << " axis_threshold=" << zAxisMaxAbs
                   << std::endl;
         return true;
     }
@@ -216,13 +211,18 @@ bool shouldRejectSplitPreBurnIn(const std::string &cellName,
 
 bool shouldRejectSplitPostBurnIn(const std::string &cellName,
                                  const SplitDiagnostics &diag,
-                                 double costDiff)
+                                 double costDiff,
+                                 float largeRecenterMinDriftOverMajor,
+                                 float largeRecenterMaxCostDiff)
 {
-    if (diag.driftOverParentMajor > 0.85f && costDiff > -40.0) {
+    if (diag.driftOverParentMajor > largeRecenterMinDriftOverMajor &&
+        costDiff > largeRecenterMaxCostDiff) {
         std::cout << "[Split HeuristicReject] " << cellName
                   << " reason=large_recenter_marginal_gain"
                   << " costDiff=" << costDiff
+                  << " cost_threshold=" << largeRecenterMaxCostDiff
                   << " driftOverParentMajor=" << diag.driftOverParentMajor
+                  << " drift_threshold=" << largeRecenterMinDriftOverMajor
                   << " sepOverDaughterMajor=" << diag.separationOverDaughterMajor
                   << " elongation_ratio=" << diag.elongationRatio
                   << " axisAbsZ=" << diag.axisAbsZ
@@ -536,7 +536,14 @@ CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float pre
                                      float splitMinorAxisAlignmentToleranceDegrees,
                                      float splitMinorAxisAlignmentFlatnessRatioThreshold,
                                      float splitMinorAxisAlignmentMinRadiusDisableThreshold,
-                                     float splitFakeBridgeBrightnessSimilarityThreshold)
+                                     float splitFakeBridgeBrightnessSimilarityThreshold,
+                                     float splitPreBurnInMinSeparationOverMajor,
+                                     float splitPreBurnInZAxisMaxAbs,
+                                     float splitPreBurnInZAxisMaxSeparationOverMajor,
+                                     float splitPreBurnInZAxisMinDriftOverMajor,
+                                     float splitPostBurnInLargeRecenterMinDriftOverMajor,
+                                     float splitPostBurnInLargeRecenterMaxCostDiff,
+                                     int splitBurnInIterations)
 {
     if (index >= cells.size()) {
         return {0.0, [](bool accept) {}};
@@ -568,14 +575,11 @@ CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float pre
         return {0.0, [](bool accept) {}};
     }
 
-    if (splitElongationThreshold > 0.0f && elongationRatio < splitElongationThreshold) {
-        std::cout << "[Split Skip] " << oldCell.getName()
-                  << " elongation_ratio=" << elongationRatio
-                  << " < threshold=" << splitElongationThreshold << std::endl;
-        return {0.0, [](bool accept) {}};
-    }
-
-    if (shouldRejectSplitPreBurnIn(oldCell.getName(), splitDiagnostics, splitElongationThreshold)) {
+    if (shouldRejectSplitPreBurnIn(oldCell.getName(), splitDiagnostics,
+                                   splitPreBurnInMinSeparationOverMajor,
+                                   splitPreBurnInZAxisMaxAbs,
+                                   splitPreBurnInZAxisMaxSeparationOverMajor,
+                                   splitPreBurnInZAxisMinDriftOverMajor)) {
         return {0.0, [](bool accept) {}};
     }
 
@@ -610,7 +614,7 @@ CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float pre
     auto savedSynthFrame = _synthFrame;
     _synthFrame = bestSynthFrame;
 
-    const int BURN_IN_ITERATIONS = 500;
+    const int BURN_IN_ITERATIONS = std::max(1, splitBurnInIterations);
     int accepted = 0;
     for (int iter = 0; iter < BURN_IN_ITERATIONS; ++iter) {
         size_t dIdx = (iter % 2 == 0) ? d1Idx : d2Idx;
@@ -720,7 +724,9 @@ CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float pre
               << " newCost=" << bestTotalCost
               << " diff=" << costDiff << std::endl;
 
-    if (shouldRejectSplitPostBurnIn(oldCell.getName(), splitDiagnostics, costDiff)) {
+    if (shouldRejectSplitPostBurnIn(oldCell.getName(), splitDiagnostics, costDiff,
+                                    splitPostBurnInLargeRecenterMinDriftOverMajor,
+                                    splitPostBurnInLargeRecenterMaxCostDiff)) {
         _synthFrame = savedSynthFrame;
         cells.pop_back();
         cells.pop_back();

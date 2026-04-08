@@ -47,7 +47,14 @@ public:
                                   float splitMinorAxisAlignmentToleranceDegrees = 20.0f,
                                   float splitMinorAxisAlignmentFlatnessRatioThreshold = 0.5f,
                                   float splitMinorAxisAlignmentMinRadiusDisableThreshold = 0.0f,
-                                  float splitFakeBridgeBrightnessSimilarityThreshold = 0.9f);
+                                  float splitFakeBridgeBrightnessSimilarityThreshold = 0.9f,
+                                  float splitPreBurnInMinSeparationOverMajor = 0.35f,
+                                  float splitPreBurnInZAxisMaxAbs = 0.92f,
+                                  float splitPreBurnInZAxisMaxSeparationOverMajor = 1.30f,
+                                  float splitPreBurnInZAxisMinDriftOverMajor = 0.40f,
+                                  float splitPostBurnInLargeRecenterMinDriftOverMajor = 0.85f,
+                                  float splitPostBurnInLargeRecenterMaxCostDiff = -40.0f,
+                                  int splitBurnInIterations = 500);
     std::vector<cv::Mat> getSynthFrame();
     const std::vector<cv::Mat>& getRealFrame() const { return _realFrame; }
     void setBackgroundColor(float backgroundColor) { simulationConfig.background_color = backgroundColor; }

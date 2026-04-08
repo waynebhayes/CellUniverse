@@ -90,6 +90,12 @@ public:
     float split_fake_bridge_brightness_similarity_threshold;
     int split_burn_in_iterations = 500;
     float max_split_probability = 0.5f;
+    float split_pre_burn_in_min_separation_over_major = 0.35f;
+    float split_pre_burn_in_z_axis_max_abs = 0.92f;
+    float split_pre_burn_in_z_axis_max_separation_over_major = 1.30f;
+    float split_pre_burn_in_z_axis_min_drift_over_major = 0.40f;
+    float split_post_burn_in_large_recenter_min_drift_over_major = 0.85f;
+    float split_post_burn_in_large_recenter_max_cost_diff = -40.0f;
     ProbabilityConfig() : split(0.0f), split_cost(0.0f),
                           split_elongation_threshold(1.3f), overlap_penalty_weight(1000.0f),
                           size_reduction_penalty_weight(0.0f),
@@ -154,6 +160,30 @@ public:
         if (node["max_split_probability"]) {
             max_split_probability = node["max_split_probability"].as<float>();
         }
+        if (node["split_pre_burn_in_min_separation_over_major"]) {
+            split_pre_burn_in_min_separation_over_major =
+                node["split_pre_burn_in_min_separation_over_major"].as<float>();
+        }
+        if (node["split_pre_burn_in_z_axis_max_abs"]) {
+            split_pre_burn_in_z_axis_max_abs =
+                node["split_pre_burn_in_z_axis_max_abs"].as<float>();
+        }
+        if (node["split_pre_burn_in_z_axis_max_separation_over_major"]) {
+            split_pre_burn_in_z_axis_max_separation_over_major =
+                node["split_pre_burn_in_z_axis_max_separation_over_major"].as<float>();
+        }
+        if (node["split_pre_burn_in_z_axis_min_drift_over_major"]) {
+            split_pre_burn_in_z_axis_min_drift_over_major =
+                node["split_pre_burn_in_z_axis_min_drift_over_major"].as<float>();
+        }
+        if (node["split_post_burn_in_large_recenter_min_drift_over_major"]) {
+            split_post_burn_in_large_recenter_min_drift_over_major =
+                node["split_post_burn_in_large_recenter_min_drift_over_major"].as<float>();
+        }
+        if (node["split_post_burn_in_large_recenter_max_cost_diff"]) {
+            split_post_burn_in_large_recenter_max_cost_diff =
+                node["split_post_burn_in_large_recenter_max_cost_diff"].as<float>();
+        }
     }
     void printConfig() const {
         std::cout << "Probability Config\n";
@@ -175,7 +205,19 @@ public:
         std::cout << "split_search_radius_multiplier: "
                   << split_search_radius_multiplier << '\n';
         std::cout << "split_fake_bridge_brightness_similarity_threshold: "
-                  << split_fake_bridge_brightness_similarity_threshold << std::endl;
+                  << split_fake_bridge_brightness_similarity_threshold << '\n';
+        std::cout << "split_pre_burn_in_min_separation_over_major: "
+                  << split_pre_burn_in_min_separation_over_major << '\n';
+        std::cout << "split_pre_burn_in_z_axis_max_abs: "
+                  << split_pre_burn_in_z_axis_max_abs << '\n';
+        std::cout << "split_pre_burn_in_z_axis_max_separation_over_major: "
+                  << split_pre_burn_in_z_axis_max_separation_over_major << '\n';
+        std::cout << "split_pre_burn_in_z_axis_min_drift_over_major: "
+                  << split_pre_burn_in_z_axis_min_drift_over_major << '\n';
+        std::cout << "split_post_burn_in_large_recenter_min_drift_over_major: "
+                  << split_post_burn_in_large_recenter_min_drift_over_major << '\n';
+        std::cout << "split_post_burn_in_large_recenter_max_cost_diff: "
+                  << split_post_burn_in_large_recenter_max_cost_diff << std::endl;
     }
 };
 
