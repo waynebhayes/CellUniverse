@@ -38,6 +38,23 @@ public:
         : CellParams(name), x(x), y(y), z(z), majorRadius(majorRadius), minorRadius(minorRadius), theta_x(theta_x), theta_y(theta_y), theta_z(theta_z), brightness(brightness) {}
 };
 
+struct SplitDiagnostics
+{
+    float elongationRatio = 1.0f;
+    int totalCount = 0;
+    int count1 = 0;
+    int count2 = 0;
+    float balance = 0.0f;
+    float separation = 0.0f;
+    float separationOverDaughterMajor = 0.0f;
+    bool recentered = false;
+    float recenterDrift = 0.0f;
+    float driftOverParentMajor = 0.0f;
+    float daughterMajorRadius = 0.0f;
+    float daughterMinorRadius = 0.0f;
+    float axisAbsZ = 0.0f;
+};
+
 class Spheroid 
 {
     private:
@@ -89,7 +106,7 @@ class Spheroid
 
         [[nodiscard]] Spheroid getPerturbedCell() const;
 
-        std::tuple<Spheroid, Spheroid, bool, float> getSplitCells(const std::vector<cv::Mat> &image, float z_scaling,
+        std::tuple<Spheroid, Spheroid, bool, float, SplitDiagnostics> getSplitCells(const std::vector<cv::Mat> &image, float z_scaling,
             float backgroundColor,
             const std::vector<cv::Point3f> &neighborCenters = {},
             float preOptMajorR = 0.0f, float preOptMinorR = 0.0f,

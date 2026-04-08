@@ -5,11 +5,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # C++ repo root: .../C++ (parent of examples)
 CPP_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+OUTPUT_ROOT="$CPP_ROOT/output"
+LOG_DIR="$OUTPUT_ROOT/logs"
+mkdir -p "$OUTPUT_ROOT" "$LOG_DIR"
 
 # -----------------------------------------
 # Create run log file (stdout + stderr)
 # -----------------------------------------
-LOG_FILE="$SCRIPT_DIR/embryo_runLog_$(date +%Y%m%d_%H%M%S).txt"
+LOG_FILE="$LOG_DIR/embryo_runLog_$(date +%Y%m%d_%H%M%S).txt"
 
 # Redirect all output (stdout + stderr) to both console and log file
 exec > >(tee -a "$LOG_FILE") 2>&1
@@ -26,7 +29,7 @@ echo "[INFO] Logging to: $LOG_FILE"
 INPUT_DIR="$CPP_ROOT/examples/input/C.elegans_developing embryo_Fluo-N3DH-CE_Training/01"
 CONFIG_FILE="$CPP_ROOT/examples/config.yaml"
 INITIAL_FILE="$SCRIPT_DIR/initial_embryo.csv"
-OUT_DIR="$CPP_ROOT/examples/output_embryo_$(date +%Y%m%d_%H%M%S)"
+OUT_DIR="$OUTPUT_ROOT/output_embryo_$(date +%Y%m%d_%H%M%S)"
 
 # Choose build directory preference
 BUILD_DIR="$CPP_ROOT/build"

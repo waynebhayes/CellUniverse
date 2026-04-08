@@ -168,7 +168,72 @@ double computeBridgeCylinderRadius(const Spheroid &cell)
     // Use a cell-shaped effective cross-section radius; length then controls the probe volume.
     return std::sqrt(major * minor);
 }
+
+bool shouldRejectSplitPreBurnIn(const std::string &cellName,
+                                const SplitDiagnostics &diag,
+                                float splitElongationThreshold)
+{
+    const float weakElongationCutoff = splitElongationThreshold + 0.20f;
+    if (diag.separationOverDaughterMajor < 1.0f) {
+        std::cout << "[Split HeuristicReject] " << cellName
+                  << " reason=overlapping_daughters"
+                  << " elongation_ratio=" << diag.elongationRatio
+                  << " sepOverDaughterMajor=" << diag.separationOverDaughterMajor
+                  << " driftOverParentMajor=" << diag.driftOverParentMajor
+                  << " axisAbsZ=" << diag.axisAbsZ
+                  << std::endl;
+        return true;
+    }
+
+    if (diag.elongationRatio < weakElongationCutoff &&
+        diag.separationOverDaughterMajor < 1.10f) {
+        std::cout << "[Split HeuristicReject] " << cellName
+                  << " reason=weak_geometry"
+                  << " elongation_ratio=" << diag.elongationRatio
+                  << " weak_cutoff=" << weakElongationCutoff
+                  << " sepOverDaughterMajor=" << diag.separationOverDaughterMajor
+                  << " driftOverParentMajor=" << diag.driftOverParentMajor
+                  << " axisAbsZ=" << diag.axisAbsZ
+                  << std::endl;
+        return true;
+    }
+
+    if (diag.axisAbsZ > 0.92f &&
+        diag.separationOverDaughterMajor < 1.30f &&
+        diag.driftOverParentMajor > 0.40f) {
+        std::cout << "[Split HeuristicReject] " << cellName
+                  << " reason=z_axis_internal_structure"
+                  << " elongation_ratio=" << diag.elongationRatio
+                  << " sepOverDaughterMajor=" << diag.separationOverDaughterMajor
+                  << " driftOverParentMajor=" << diag.driftOverParentMajor
+                  << " axisAbsZ=" << diag.axisAbsZ
+                  << std::endl;
+        return true;
+    }
+
+    return false;
 }
+
+bool shouldRejectSplitPostBurnIn(const std::string &cellName,
+                                 const SplitDiagnostics &diag,
+                                 double costDiff)
+{
+    if (diag.driftOverParentMajor > 0.85f && costDiff > -40.0) {
+        std::cout << "[Split HeuristicReject] " << cellName
+                  << " reason=large_recenter_marginal_gain"
+                  << " costDiff=" << costDiff
+                  << " driftOverParentMajor=" << diag.driftOverParentMajor
+                  << " sepOverDaughterMajor=" << diag.separationOverDaughterMajor
+                  << " elongation_ratio=" << diag.elongationRatio
+                  << " axisAbsZ=" << diag.axisAbsZ
+                  << std::endl;
+        return true;
+    }
+
+    return false;
+}
+
+} // namespace
 
 // Function to interpolate between two slices
 void interpolateSlices(const cv::Mat& slice1, const cv::Mat& slice2, 
@@ -439,7 +504,7 @@ std::map<std::string, float> Frame::computeElongationRatios() const
             if (j != i) neighbors.push_back(cells[j].get_center());
         }
         // getSplitCells returns (d1, d2, valid, elongationRatio)
-        auto [d1, d2, valid, elongation] = cells[i].getSplitCells(
+        auto [d1, d2, valid, elongation, splitDiagnostics] = cells[i].getSplitCells(
             _realFrame, simulationConfig.z_scaling, simulationConfig.background_color, neighbors);
         ratios[cells[i].getName()] = valid ? elongation : 1.0f;
     }
@@ -455,7 +520,7 @@ float Frame::computeElongationForCell(size_t cellIdx) const
         if (j != cellIdx) neighbors.push_back(cells[j].get_center());
     }
 
-    auto [d1, d2, valid, elongation] = cells[cellIdx].getSplitCells(
+    auto [d1, d2, valid, elongation, splitDiagnostics] = cells[cellIdx].getSplitCells(
         _realFrame, simulationConfig.z_scaling, simulationConfig.background_color, neighbors);
 
     return valid ? elongation : 1.0f;
@@ -487,14 +552,15 @@ CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float pre
         }
     }
 
-    auto [child1, child2, valid, elongationRatio] = oldCell.getSplitCells(_realFrame, simulationConfig.z_scaling,
-                                                                          simulationConfig.background_color,
-                                                                          neighborCenters, preOptMajorR, preOptMinorR,
-                                                                          preOptX, preOptY, preOptZ,
-                                                                          splitSearchRadiusMultiplier,
-                                                                          splitMinorAxisAlignmentToleranceDegrees,
-                                                                          splitMinorAxisAlignmentFlatnessRatioThreshold,
-                                                                          splitMinorAxisAlignmentMinRadiusDisableThreshold);
+    auto [child1, child2, valid, elongationRatio, splitDiagnostics] =
+        oldCell.getSplitCells(_realFrame, simulationConfig.z_scaling,
+                              simulationConfig.background_color,
+                              neighborCenters, preOptMajorR, preOptMinorR,
+                              preOptX, preOptY, preOptZ,
+                              splitSearchRadiusMultiplier,
+                              splitMinorAxisAlignmentToleranceDegrees,
+                              splitMinorAxisAlignmentFlatnessRatioThreshold,
+                              splitMinorAxisAlignmentMinRadiusDisableThreshold);
     if (!valid)
     {
         std::cout << "[Split Skip] " << oldCell.getName()
@@ -506,6 +572,10 @@ CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float pre
         std::cout << "[Split Skip] " << oldCell.getName()
                   << " elongation_ratio=" << elongationRatio
                   << " < threshold=" << splitElongationThreshold << std::endl;
+        return {0.0, [](bool accept) {}};
+    }
+
+    if (shouldRejectSplitPreBurnIn(oldCell.getName(), splitDiagnostics, splitElongationThreshold)) {
         return {0.0, [](bool accept) {}};
     }
 
@@ -642,8 +712,21 @@ CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float pre
 
     std::cout << "[Split Burn-in] " << oldCell.getName()
               << " burn_in_accepted=" << accepted << "/" << BURN_IN_ITERATIONS
-              << " oldCost=" << oldTotalCost << " newCost=" << bestTotalCost
+              << " oldImageCost=" << _currentCost
+              << " oldOverlap=" << oldOverlap
+              << " newImageCost=" << bestImageCost
+              << " newOverlap=" << bestOverlap
+              << " oldCost=" << oldTotalCost
+              << " newCost=" << bestTotalCost
               << " diff=" << costDiff << std::endl;
+
+    if (shouldRejectSplitPostBurnIn(oldCell.getName(), splitDiagnostics, costDiff)) {
+        _synthFrame = savedSynthFrame;
+        cells.pop_back();
+        cells.pop_back();
+        cells.insert(cells.begin() + index, oldCell);
+        return {0.0, [](bool accept) {}};
+    }
 
     CallBackFunc callback = [this, bestSynthFrame, bestImageCost, oldCell, index](bool accept)
     {
