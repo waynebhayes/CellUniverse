@@ -11,3 +11,4 @@ output/
 output_*/
 build/
 cmake-build-*/
+.vscode/
