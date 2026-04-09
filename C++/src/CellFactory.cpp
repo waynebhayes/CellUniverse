@@ -2,7 +2,10 @@
 
 CellFactory::CellFactory(const BaseConfig &config) {
     std::string cellType = config.cellType;
-    initialBrightness = config.simulation.cell_color;
+    // Frame-1 seed for per-cell _brightness. Post-sigmoid cells are ~1.0.
+    // After frame 1, the per-cell EMA update (measureMeanBrightness *
+    // brightnessMeanAmplification blended via brightnessUpdateBlend) takes over.
+    initialBrightness = 1.0f;
     // TODO: add more else if branches for more cell Types
     if (cellType == "spheroid") {
         Spheroid::cellConfig = *config.cell;

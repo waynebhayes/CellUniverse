@@ -1005,3 +1005,321 @@ for (size_t i = 0; i < _realFrame.size(); ++i) {
 **Threshold:** Uses `simulationConfig.background_color` which is auto-calibrated from the real image's cell-free calibration zone. Pixels above this = cell tissue, below = background.
 
 **Note:** `split_cost` needs re-tuning for binary cost scale. Binary cost counts mismatched pixels — total will be in the tens of thousands range.
+
+---
+
+# Part D: Sigmoid-Pipeline Invariants Cleanup (2026-04-08)
+
+**Branch:** `yp_yd_merge_04072026`
+
+Scope: 5 former `SimulationConfig` fields that were dead or sigmoid-pipeline invariants masquerading as config have been removed from YAML and the struct. See `docs/plans/2026-04-07-yp-yd-merge-review-and-next-steps.md` for the original review, and `docs/conversation_archive_2026-04-05.md` / `2026-04-06.md` for the history of the brightness + sigmoid rework these fields outlived.
+
+## D1. Delete `sigmoid_center_offset` (already dead) — **ACTIVE**
+
+**Problem:** Field was parsed in `ConfigTypes.hpp:24,49` and exposed in `config.yaml:87`, but had **zero reads** anywhere in `C++/src/`. The active sigmoid calibration uses `sigmoid_center_percentile` instead. Users reading YAML would falsely assume tuning this field would change behavior.
+
+**Files:** `C++/includes/ConfigTypes.hpp`, `C++/config/config.yaml`, `C++/scripts/config.yaml`
+
+**Before** (`ConfigTypes.hpp`):
+```cpp
+float sigmoid_center = 0.445f;
+float sigmoid_center_percentile = 0.4f;
+float sigmoid_center_offset = 0.047f;
+```
+...plus a matching `if (node["sigmoid_center_offset"]) ...` parse line and YAML entry.
+
+**After:** All three locations removed. YAML no longer lists the field.
+
+**Effect:** Removes a confusing inert knob. No behavior change.
+
+## D2. Delete `cell_color` — **ACTIVE**
+
+**Problem:** As of 2026-04-05, `draw()` uses per-cell `_brightness` rather than `simulationConfig.cell_color`. The only remaining read was `CellFactory.cpp:5` which used it as the frame-1 seed for `initialBrightness`. This is a sigmoid-pipeline invariant (post-sigmoid cells ≈ 1.0), not a tunable knob.
+
+**Files:** `C++/includes/ConfigTypes.hpp`, `C++/src/CellFactory.cpp`, `C++/config/config.yaml`, `C++/scripts/config.yaml`
+
+**Before** (`CellFactory.cpp:5`):
+```cpp
+initialBrightness = config.simulation.cell_color;
+```
+
+**After:**
+```cpp
+// Frame-1 seed for per-cell _brightness. Post-sigmoid cells are ~1.0.
+// After frame 1, the per-cell EMA update (measureMeanBrightness *
+// brightnessMeanAmplification blended via brightnessUpdateBlend) takes over.
+initialBrightness = 1.0f;
+```
+
+`SimulationConfig::cell_color` declaration, constructor initializer, and `explodeConfig` parse line removed. YAML entry removed.
+
+**Effect:** No behavior change. Removes the illusion that tuning `cell_color` affects rendering after frame 1 — it doesn't, and hasn't since 2026-04-05.
+
+## D3. Move `background_color` from `SimulationConfig` to `Frame::_backgroundValue` — **ACTIVE**
+
+**Problem:** `background_color` was not truly config — it was runtime state. The adaptive-background path at `CellUniverse.cpp:565` mutates it per-frame via `frame.setBackgroundColor(updatedBackground)`, and the value is then passed to `Spheroid::getSplitCells` as the PCA noise floor. Storing it inside `SimulationConfig` as if it were a fixed tunable obscured the runtime mutation.
+
+**Files:** `C++/includes/Frame.hpp`, `C++/src/Frame.cpp`, `C++/src/CellUniverse.cpp`, `C++/includes/ConfigTypes.hpp`, `C++/config/config.yaml`, `C++/scripts/config.yaml`
+
+**Before** (`Frame.hpp:60`):
+```cpp
+void setBackgroundColor(float backgroundColor) { simulationConfig.background_color = backgroundColor; }
+```
+
+**After** (`Frame.hpp`):
+```cpp
+void setBackgroundColor(float backgroundColor) { _backgroundValue = backgroundColor; }
+float getBackgroundValue() const { return _backgroundValue; }
+...
+private:
+    ...
+    // Runtime-mutable synth frame background and PCA noise floor. Starts at 0.0 (post-sigmoid
+    // background invariant). Updated per-frame by the adaptive background path in
+    // CellUniverse::optimize via setBackgroundColor().
+    float _backgroundValue = 0.0f;
+```
+
+All read sites (`Frame.cpp:279, 341, 508, 524, 564`) updated from `simulationConfig.background_color` to `_backgroundValue`. The `CellUniverse.cpp:246, 282` fallbacks (inside `estimateAdaptiveBackgroundFromFrame`) updated to return literal `0.0f` with a comment.
+
+`SimulationConfig::background_color` declaration, constructor initializer, `explodeConfig` parse line, and `printConfig` line all removed. YAML entry removed.
+
+**Effect:** No behavior change. Preserves the PCA noise floor ↔ adaptive-bg coupling (the parameter on `Spheroid::getSplitCells` stays). Makes the runtime-mutable nature of the value explicit in its location (Frame, not config).
+
+## D4. Delete `sigmoid_center` (defensive default, always overwritten) — **ACTIVE**
+
+**Problem:** `sigmoid_center` was read exactly once at `CellUniverse.cpp:422` as `float sigmoidCenter = config.simulation.sigmoid_center; // default from config`, then immediately overwritten at line 437 by the percentile calibration in every realistic code path (unless `processedZSlices.empty()` or `calW<=0||calH<=0`, both defensive-programming guards).
+
+**Files:** `C++/includes/ConfigTypes.hpp`, `C++/src/CellUniverse.cpp`, `C++/config/config.yaml`, `C++/scripts/config.yaml`
+
+**Before** (`CellUniverse.cpp:422`):
+```cpp
+float sigmoidCenter = config.simulation.sigmoid_center; // default from config
+```
+
+**After:**
+```cpp
+// Defensive fallback; overwritten in every realistic path by the percentile calibration below.
+float sigmoidCenter = 0.445f;
+```
+
+`SimulationConfig::sigmoid_center` declaration and parse line removed. YAML entry removed.
+
+**Effect:** No behavior change. The defensive guard still works — it just uses a literal instead of reading an inert config field.
+
+## D5. Delete `calibration_z` (zero reads) — **ACTIVE**
+
+**Problem:** Field was declared at `ConfigTypes.hpp:31`, parsed at line 55, exposed in both YAML files, but had **zero reads** anywhere in source. The sigmoid calibration uses only `calibration_x/y/width/height`.
+
+**Files:** `C++/includes/ConfigTypes.hpp`, `C++/config/config.yaml`, `C++/scripts/config.yaml`
+
+**Before** (`ConfigTypes.hpp`):
+```cpp
+int calibration_z = 0;
+...
+if (node["calibration_z"]) calibration_z = node["calibration_z"].as<int>();
+```
+
+**After:** Both lines removed. YAML entry removed.
+
+**Effect:** Removes a pure dead field. No behavior change.
+
+## Summary
+
+5 fields removed. Net diff across the pass:
+- `ConfigTypes.hpp`: shrinks `SimulationConfig` by 5 declarations, 5 parse lines, 1 printConfig line, 2 constructor initializers
+- `Frame.hpp`: gains `_backgroundValue` private member + `getBackgroundValue()` accessor; `setBackgroundColor()` retargeted
+- `Frame.cpp`: 5 read sites swapped from `simulationConfig.background_color` to `_backgroundValue`
+- `CellUniverse.cpp`: 2 fallbacks use `0.0f` literal, 1 `sigmoidCenter` default uses `0.445f` literal
+- `CellFactory.cpp`: `initialBrightness = 1.0f` literal with a comment explaining the frame-1 seed semantics
+- `config/config.yaml` + `scripts/config.yaml`: 4 entries deleted per file, header comment added explaining why
+- Rules docs (`config.md`, `gotchas.md`) + `details.md` updated to reflect the new state
+
+**No behavior change at runtime.** This is a pure "stop pretending runtime state is config and stop parsing dead fields" refactor.
+
+---
+
+# Part E: Z-Clamp + Tighter Split Gates (2026-04-08)
+
+**Branch:** `yp_yd_merge_04072026`
+**Motivation:** Run `output_jihang_20260408_161444` exposed two failure modes:
+1. A cell drifted to `z=266.777` (42 units past the top of the z-stack, which has max valid z=224). The cost function has no z-boundary penalty, so cells escaping the image volume reduce L2 cost (they stop contributing any pixels) and get rewarded by the optimizer. Verified at `[FrameState Before] frame 4` line 492 with `inside_count=0` at split attempt time.
+2. A false split was accepted in frame 3 on `8cbdf86d308d4599936e7fdbc23375f5`: `prevElong=1.05` (essentially spherical), at `z=221` (near edge), cost diff = -26.99 (just past the -20 threshold), `burn_in_accepted=15/1000`, daughters stacked 8.59 px apart at the same z. The split was invisible in the output images because both daughters rendered on top of each other at the same slice.
+
+## E1. Z-clamp in `Spheroid` constructor — **ACTIVE**
+
+**Problem:** `perturbCell` can propose `z` offsets of ~8 per iteration. With no boundary check, a cell can drift off the z-stack. Outside `[0, z_slices-1]`, the cell's volume doesn't intersect any real image slice → zero pixel contribution → lower L2 cost → optimizer rewards the drift.
+
+**Files:** `C++/includes/ConfigTypes.hpp`, `C++/src/Spheroid.cpp`, `C++/src/CellUniverse.cpp`
+
+**Change 1** — add `maxZ` to `SpheroidConfig` (static default, runtime-updated):
+
+```cpp
+// ConfigTypes.hpp (SpheroidConfig)
+// Maximum valid z position (interpolated z-space). Used to clamp Spheroid
+// center z in the constructor, preventing cells from drifting off the z-stack.
+// Default 224 = (z_slices=225) - 1. Runtime-updated by CellUniverse::loadFrame
+// to the actual interpolated slice count - 1. Not parsed from YAML.
+float maxZ{224.0f};
+```
+
+**Change 2** — add z clamp to `Spheroid::Spheroid` constructor alongside the existing radius clamps (matching the pattern):
+
+```cpp
+// Spheroid.cpp — after the major/minor radius clamps
+_position.z = std::fmax(_position.z, 0.0f);
+_position.z = std::fmin(_position.z, cellConfig.maxZ);
+```
+
+**Change 3** — update `Spheroid::cellConfig.maxZ` in `CellUniverse::CellUniverse` after `loadFrame` finishes interpolation (which is when we know the actual slice count):
+
+```cpp
+// CellUniverse.cpp — in the constructor loop over imagePaths
+config.simulation.z_slices = real_frame.size();
+Spheroid::cellConfig.maxZ = static_cast<float>(real_frame.size()) - 1.0f;
+```
+
+**Effect:** Cells can no longer exist outside `[0, z_slices-1]` in interpolated z-space. Any perturbation that would push the center past the boundary is silently clamped at construction. This fixes the `z=266` escape seen in the 16:14 run. Also makes `getPerturbedCell()` behave correctly — it constructs a new `Spheroid` via `SpheroidParams`, which passes through the constructor clamp.
+
+## E2. Raise `split_cost` from 20 → 80 — **ACTIVE**
+
+**Problem:** Legit splits in the 16:14 run had `diff = -305` and `diff = -609`. The false split had `diff = -26.99`. Any threshold between -50 and -100 cleanly separates them.
+
+**Files:** `C++/config/config.yaml`, `C++/scripts/config.yaml`
+
+```yaml
+prob:
+  split_cost: 80   # was 20
+```
+
+**Effect:** Marginal cost improvements no longer qualify as splits. Legit splits are unaffected (they clear this threshold by 3-7x).
+
+## E3. Raise `split_elongation_threshold` from 1.1 → 1.3 — **ACTIVE**
+
+**Problem:** The false-split cell had `prevElong=1.05022` — essentially spherical. At `threshold=1.1`, even 1.05 would still reach burn-in if the base split probability fired. At `threshold=1.3`, cells must have a real shape signal to attempt splits.
+
+**Files:** `C++/config/config.yaml`, `C++/scripts/config.yaml`
+
+```yaml
+prob:
+  split_elongation_threshold: 1.3   # was 1.1
+```
+
+**Effect:** Cells with aspect ratio < 1.3 no longer attempt splits. Combined with E2, marginal borderline-spherical cells are filtered at two stages.
+
+## E4. New `split_min_inside_count` gate — **ACTIVE**
+
+**Problem:** The false-split cell had `inside_count=32134` (total bright voxels inside its ellipsoid volume). Legit splits had `inside_count` from 113k to 226k. Small cells — either naturally tiny or with clipped bounding boxes at the z-boundary — don't give reliable PCA and produce degenerate daughters.
+
+**Files:** `C++/includes/Spheroid.hpp`, `C++/src/Spheroid.cpp`, `C++/includes/ConfigTypes.hpp`, `C++/includes/Frame.hpp`, `C++/src/Frame.cpp`, `C++/src/CellUniverse.cpp`, both YAML files.
+
+**Change 1** — Add `insideCount` to `SplitDiagnostics`:
+
+```cpp
+// Spheroid.hpp
+struct SplitDiagnostics
+{
+    // ... existing fields ...
+    // Total bright voxels inside the cell's ellipsoid volume used for split PCA.
+    int insideCount = 0;
+};
+```
+
+**Change 2** — populate it in `Spheroid::getSplitCells`:
+
+```cpp
+// Spheroid.cpp — after the existing diagnostics field assignments
+diagnostics.insideCount = candidateVoxelCount;
+```
+
+**Change 3** — new `ProbabilityConfig` field:
+
+```cpp
+// ConfigTypes.hpp
+int split_min_inside_count = 50000;
+// + explodeConfig parse line
+```
+
+**Change 4** — new `Frame::trySplitCell` parameter:
+
+```cpp
+// Frame.hpp signature (last param)
+int splitMinInsideCount = 50000
+```
+
+**Change 5** — gate in `Frame::trySplitCell`, immediately after the `valid == false` check:
+
+```cpp
+if (splitMinInsideCount > 0 && splitDiagnostics.insideCount < splitMinInsideCount)
+{
+    std::cout << "[Split Skip] " << oldCell.getName()
+              << " reason=too_small_for_split"
+              << " inside_count=" << splitDiagnostics.insideCount
+              << " threshold=" << splitMinInsideCount
+              << std::endl;
+    return {0.0, [](bool accept) {}};
+}
+```
+
+**Change 6** — `CellUniverse::optimize` passes the config field through:
+
+```cpp
+// last arg to the trySplitCell call
+config.prob.split_min_inside_count
+```
+
+**Change 7** — YAML:
+
+```yaml
+prob:
+  split_min_inside_count: 50000
+```
+
+**Effect:** Cells below the threshold are rejected pre-burn-in with a `reason=too_small_for_split` log line, before any expensive daughter optimization. Catches boundary cells and natural-small cells.
+
+## Summary
+
+| Change | Type | Immediate effect |
+|---|---|---|
+| E1 (z-clamp) | Source + runtime state | Cells physically cannot exist outside `[0, z_slices-1]`. Fixes the `z=266` escape. |
+| E2 (`split_cost: 20→80`) | Config only | Marginal splits rejected. Legit splits unaffected. |
+| E3 (`split_elongation_threshold: 1.1→1.3`) | Config only | Near-spherical cells don't attempt splits. |
+| E4 (`split_min_inside_count: 50000`) | Source + config | Tiny/boundary cells rejected pre-burn-in with a clear log line. |
+
+**Expected runtime change:** the frame-3 `8cbdf86d` false split and the frame-4 daughter re-split should both be filtered. Legit splits (`12345679...`, `e9077677...`) should still land. The `z=266` escape on the `...f50` daughter is prevented by construction.
+
+**Tuning knobs exposed:** `split_cost`, `split_elongation_threshold`, `split_min_inside_count` are all live config fields — no code changes needed for future adjustment.
+
+## E5. Master switch for flat-cell rotation refine grid search — **ACTIVE**
+
+**Problem:** `CellUniverse::optimize` runs a nested 3D rotation grid search (x/y/z offsets, multiple passes) over every flat cell every frame at lines 908-1008. For each candidate rotation it calls `Spheroid::measureBrightnessStats`, which scans the entire cell volume. With multiple passes and a fine angle step, this can be hundreds of brightness scans per flat cell per frame — a significant runtime cost. The per-cell brightness EMA update already handles brightness tracking, so the rotation refine is arguably redundant.
+
+**Files:** `C++/includes/ConfigTypes.hpp`, `C++/src/CellUniverse.cpp`, `C++/config/config.yaml`, `C++/scripts/config.yaml`
+
+**Change 1** — new `SpheroidConfig` field with YAML parsing:
+
+```cpp
+// ConfigTypes.hpp
+bool flatCellRotationRefineEnabled{true};  // default true for backward compat
+
+// explodeConfig
+if (node["flatCellRotationRefineEnabled"]) {
+    flatCellRotationRefineEnabled = node["flatCellRotationRefineEnabled"].as<bool>();
+}
+```
+
+**Change 2** — gate the entire block in `CellUniverse::optimize`:
+
+```cpp
+// CellUniverse.cpp
+if (config.cell && config.cell->flatCellRotationRefineEnabled) {
+    // ... existing 100-line block unchanged ...
+}
+```
+
+**Change 3** — both YAML files default the switch to `false`:
+
+```yaml
+flatCellRotationRefineEnabled: false
+```
+
+**Effect:** When disabled (the new default), the entire rotation grid search is skipped — no brightness scans, no candidate Spheroid constructions, no `[Flat Rotation Refine]` log lines. The other `flatCellRotationRefine*` knobs are preserved but ignored. When re-enabled via YAML, old behavior is restored with no code change.

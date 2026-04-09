@@ -3,8 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CPP_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-OUTPUT_ROOT="$CPP_ROOT/output"
-mkdir -p "$OUTPUT_ROOT" "$OUTPUT_ROOT/logs"
+OUTPUT_ROOT="$CPP_ROOT/outputs"
 
 # run_celluniverse.sh -i
 # run_celluniverse.sh <preset_config.ini> [preset_name]

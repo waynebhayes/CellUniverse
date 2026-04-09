@@ -54,10 +54,12 @@ public:
                                   float splitPreBurnInZAxisMinDriftOverMajor = 0.40f,
                                   float splitPostBurnInLargeRecenterMinDriftOverMajor = 0.85f,
                                   float splitPostBurnInLargeRecenterMaxCostDiff = -40.0f,
-                                  int splitBurnInIterations = 500);
+                                  int splitBurnInIterations = 500,
+                                  int splitMinInsideCount = 50000);
     std::vector<cv::Mat> getSynthFrame();
     const std::vector<cv::Mat>& getRealFrame() const { return _realFrame; }
-    void setBackgroundColor(float backgroundColor) { simulationConfig.background_color = backgroundColor; }
+    void setBackgroundColor(float backgroundColor) { _backgroundValue = backgroundColor; }
+    float getBackgroundValue() const { return _backgroundValue; }
     void regenerateSynthFrame() { _synthFrame = generateSynthFrame(); _currentCost = calculateCost(_synthFrame); }
     std::string getImageName() const { return imageName; }
     std::vector<Spheroid> cells;
@@ -70,6 +72,10 @@ private:
     std::vector<cv::Mat> _realFrame;
     std::vector<cv::Mat> _synthFrame;
     double _currentCost = -1.0; // cached L2 image cost of _synthFrame
+    // Runtime-mutable synth frame background and PCA noise floor. Starts at 0.0 (post-sigmoid
+    // background invariant). Updated per-frame by the adaptive background path in
+    // CellUniverse::optimize via setBackgroundColor().
+    float _backgroundValue = 0.0f;
     cv::Size getImageShape();
 };
 #endif // FRAME_H

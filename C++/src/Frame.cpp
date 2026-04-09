@@ -276,7 +276,7 @@ std::vector<cv::Mat> Frame::generateSynthFrame()
 
     for (double z : z_slices)
     {
-        Image synthImage = cv::Mat(shape, CV_32F, cv::Scalar(simulationConfig.background_color));
+        Image synthImage = cv::Mat(shape, CV_32F, cv::Scalar(_backgroundValue));
         for (const auto &cell : cells)
         {
             cell.draw(synthImage, simulationConfig, z);
@@ -338,7 +338,7 @@ std::vector<cv::Mat> Frame::generateSynthFrameFast(Spheroid &oldCell, Spheroid &
             continue;
         }
 
-        cv::Mat synthImage = cv::Mat(shape, CV_32F, cv::Scalar(simulationConfig.background_color));
+        cv::Mat synthImage = cv::Mat(shape, CV_32F, cv::Scalar(_backgroundValue));
 
         for (const auto &cell : cells)
         {
@@ -505,7 +505,7 @@ std::map<std::string, float> Frame::computeElongationRatios() const
         }
         // getSplitCells returns (d1, d2, valid, elongationRatio)
         auto [d1, d2, valid, elongation, splitDiagnostics] = cells[i].getSplitCells(
-            _realFrame, simulationConfig.z_scaling, simulationConfig.background_color, neighbors);
+            _realFrame, simulationConfig.z_scaling, _backgroundValue, neighbors);
         ratios[cells[i].getName()] = valid ? elongation : 1.0f;
     }
     return ratios;
@@ -521,7 +521,7 @@ float Frame::computeElongationForCell(size_t cellIdx) const
     }
 
     auto [d1, d2, valid, elongation, splitDiagnostics] = cells[cellIdx].getSplitCells(
-        _realFrame, simulationConfig.z_scaling, simulationConfig.background_color, neighbors);
+        _realFrame, simulationConfig.z_scaling, _backgroundValue, neighbors);
 
     return valid ? elongation : 1.0f;
 }
@@ -543,7 +543,8 @@ CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float pre
                                      float splitPreBurnInZAxisMinDriftOverMajor,
                                      float splitPostBurnInLargeRecenterMinDriftOverMajor,
                                      float splitPostBurnInLargeRecenterMaxCostDiff,
-                                     int splitBurnInIterations)
+                                     int splitBurnInIterations,
+                                     int splitMinInsideCount)
 {
     if (index >= cells.size()) {
         return {0.0, [](bool accept) {}};
@@ -561,7 +562,7 @@ CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float pre
 
     auto [child1, child2, valid, elongationRatio, splitDiagnostics] =
         oldCell.getSplitCells(_realFrame, simulationConfig.z_scaling,
-                              simulationConfig.background_color,
+                              _backgroundValue,
                               neighborCenters, preOptMajorR, preOptMinorR,
                               preOptX, preOptY, preOptZ,
                               splitSearchRadiusMultiplier,
@@ -572,6 +573,22 @@ CostCallbackPair Frame::trySplitCell(size_t index, float preOptMajorR, float pre
     {
         std::cout << "[Split Skip] " << oldCell.getName()
                   << " getSplitCells returned invalid" << std::endl;
+        return {0.0, [](bool accept) {}};
+    }
+
+    // Minimum-cell-size gate: reject split attempts on cells with too few bright voxels
+    // inside their volume. Small cells (boundary cells whose bbox is clipped, or cells
+    // whose shape has collapsed) give unreliable PCA and produce degenerate daughters.
+    // The 2026-04-08 run output_jihang_20260408_161444 had a false split on a boundary
+    // cell at z=221 with inside_count=32134 (vs ~113-226k for legit splits). See
+    // docs/plans/2026-04-07-yp-yd-merge-review-and-next-steps.md for context.
+    if (splitMinInsideCount > 0 && splitDiagnostics.insideCount < splitMinInsideCount)
+    {
+        std::cout << "[Split Skip] " << oldCell.getName()
+                  << " reason=too_small_for_split"
+                  << " inside_count=" << splitDiagnostics.insideCount
+                  << " threshold=" << splitMinInsideCount
+                  << std::endl;
         return {0.0, [](bool accept) {}};
     }
 
