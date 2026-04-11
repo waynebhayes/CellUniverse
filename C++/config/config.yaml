@@ -22,6 +22,11 @@ cell:
     decrease_prob: 0.4
     mu: 0
     sigma: 2
+  abRatio:
+    increase_prob: 0.35
+    decrease_prob: 0.35
+    mu: 0
+    sigma: 0.08
   minorRadius:
     increase_prob: 0.3
     decrease_prob: 0.85
@@ -44,7 +49,7 @@ cell:
     sigma: 0.1
   brightness:
     increase_prob: 0.8  # not perturbed — fixed from initial measurement
-    decrease_prob: 0.8
+    decrease_prob: 0.2
     mu: 0
     sigma: 0.0
 
@@ -56,6 +61,8 @@ cell:
 
   
   initialBrightness: 0.2
+  initialABRatio: 1.0
+  maxABRatio: 1.6
   backgroundColor: 0.05
 
   minBrightness: 0.1

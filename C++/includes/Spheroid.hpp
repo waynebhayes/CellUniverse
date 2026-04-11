@@ -26,16 +26,17 @@ public:
     float z;
     float majorRadius;
     float minorRadius;
+    float equatorialAspectRatio;
     float theta_x; // rotation about x-axis (radians)
     float theta_y; // rotation about y-axis (radians)
     float theta_z; // rotation about z-axis (radians)
     float brightness; // per-cell rendering brightness [0,1]
 
-    SpheroidParams() : CellParams(""), x(0), y(0), z(0), majorRadius(0), minorRadius(0), theta_x(0), theta_y(0), theta_z(0), brightness(0.5f) {}
+    SpheroidParams() : CellParams(""), x(0), y(0), z(0), majorRadius(0), minorRadius(0), equatorialAspectRatio(1.0f), theta_x(0), theta_y(0), theta_z(0), brightness(0.5f) {}
     SpheroidParams(const std::string &name, float x, float y, float z, float majorRadius, float minorRadius)
-        : CellParams(name), x(x), y(y), z(z), majorRadius(majorRadius), minorRadius(minorRadius), theta_x(0), theta_y(0), theta_z(0), brightness(0.5f) {}
-    SpheroidParams(const std::string &name, float x, float y, float z, float majorRadius, float minorRadius, float theta_x, float theta_y, float theta_z, float brightness = 0.5f)
-        : CellParams(name), x(x), y(y), z(z), majorRadius(majorRadius), minorRadius(minorRadius), theta_x(theta_x), theta_y(theta_y), theta_z(theta_z), brightness(brightness) {}
+        : CellParams(name), x(x), y(y), z(z), majorRadius(majorRadius), minorRadius(minorRadius), equatorialAspectRatio(1.0f), theta_x(0), theta_y(0), theta_z(0), brightness(0.5f) {}
+    SpheroidParams(const std::string &name, float x, float y, float z, float majorRadius, float minorRadius, float theta_x, float theta_y, float theta_z, float brightness = 0.5f, float equatorialAspectRatio = 1.0f)
+        : CellParams(name), x(x), y(y), z(z), majorRadius(majorRadius), minorRadius(minorRadius), equatorialAspectRatio(equatorialAspectRatio), theta_x(theta_x), theta_y(theta_y), theta_z(theta_z), brightness(brightness) {}
 };
 
 struct SplitDiagnostics
@@ -66,6 +67,7 @@ class Spheroid
         cv::Point3f _position;
         double _major_radius;
         double _minor_radius;
+        double _equatorial_aspect_ratio;
         double a, b, c;
         double _theta_x;  // rotation angle about x-axis (radians)
         double _theta_y;  // rotation angle about y-axis (radians)
@@ -94,14 +96,16 @@ class Spheroid
         float getY() const { return _position.y; }
         float getZ() const { return _position.z; }
         float getMajorRadius() const { return static_cast<float>(_major_radius); }
+        float getBRadius() const { return static_cast<float>(b); }
         float getMinorRadius() const { return static_cast<float>(_minor_radius); }
+        float getEquatorialAspectRatio() const { return static_cast<float>(_equatorial_aspect_ratio); }
         float getBrightness() const { return _brightness; }
         void setBrightness(float brightness);
         float measureMeanBrightness(const std::vector<cv::Mat> &image) const;
         std::pair<float, float> measureBrightnessStats(const std::vector<cv::Mat> &image) const;
 
         void printCellInfo() const {
-            std::cout << "Spheroid name: " << _name << " x: " << _position.x << " y: " << _position.y << " z: " << _position.z << " majorRadius: " << _major_radius << " minorRadius: " << _minor_radius << " theta_x: " << _theta_x << " theta_y: " << _theta_y << " theta_z: " << _theta_z << " brightness: " << _brightness << '\n';
+            std::cout << "Spheroid name: " << _name << " x: " << _position.x << " y: " << _position.y << " z: " << _position.z << " majorRadius: " << _major_radius << " bRadius: " << b << " minorRadius: " << _minor_radius << " abRatio: " << _equatorial_aspect_ratio << " theta_x: " << _theta_x << " theta_y: " << _theta_y << " theta_z: " << _theta_z << " brightness: " << _brightness << '\n';
         }
 
         void draw(cv::Mat &image, const SimulationConfig &simulationConfig, float z = 0) const;

@@ -523,7 +523,7 @@ void CellUniverse::optimize(int frameIndex)
             const auto &realFrame = frame.getRealFrame();
             const auto computeVolume = [](const Spheroid &cell) {
                 return static_cast<double>(cell.getMajorRadius()) *
-                       static_cast<double>(cell.getMajorRadius()) *
+                       static_cast<double>(cell.getBRadius()) *
                        static_cast<double>(cell.getMinorRadius());
             };
 
@@ -651,7 +651,8 @@ void CellUniverse::optimize(int frameIndex)
                                     passCenter.theta_x + deltaX,
                                     passCenter.theta_y + deltaY,
                                     passCenter.theta_z + deltaZ,
-                                    passCenter.brightness));
+                                    passCenter.brightness,
+                                    passCenter.equatorialAspectRatio));
                                 const auto [candidateMeanBrightness, candidateStdBrightness] =
                                     candidate.measureBrightnessStats(realFrame);
                                 const bool betterMean = candidateMeanBrightness > passBestMeanBrightness + 1e-6f;
@@ -767,7 +768,7 @@ void CellUniverse::saveCells(int frameIndex)
             file.close();
             file.open(cellsPath, std::ios::trunc);
         }
-        file << "file,name,x,y,z,majorRadius,minorRadius,theta_x,theta_y,theta_z" << '\n';
+        file << "file,name,x,y,z,majorRadius,minorRadius,equatorialAspectRatio,theta_x,theta_y,theta_z" << '\n';
     }
 
     Frame &frame = frames[frameIndex];
@@ -783,6 +784,7 @@ void CellUniverse::saveCells(int frameIndex)
              << params.z << ","
              << params.majorRadius << ","
              << params.minorRadius << ","
+             << params.equatorialAspectRatio << ","
              << params.theta_x << ","
              << params.theta_y << ","
              << params.theta_z

@@ -22,6 +22,7 @@ public:
 
 private:
     float initialBrightness = 0.5f;
+    float initialABRatio = 1.0f;
 };
 
 

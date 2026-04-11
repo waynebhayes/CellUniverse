@@ -149,6 +149,7 @@ bool Spheroid::computeSliceBounds(const cv::Mat &image, float z,
 Spheroid::Spheroid(const SpheroidParams &init_props)
 : _name(init_props.name), _position{init_props.x, init_props.y, init_props.z},
           _major_radius(init_props.majorRadius), _minor_radius(init_props.minorRadius),
+          _equatorial_aspect_ratio(init_props.equatorialAspectRatio),
           _theta_x(init_props.theta_x), _theta_y(init_props.theta_y), _theta_z(init_props.theta_z),
           _brightness(init_props.brightness)
 {
@@ -167,11 +168,15 @@ Spheroid::Spheroid(const SpheroidParams &init_props)
     if (_minor_radius > _major_radius) {
         _minor_radius = _major_radius;
     }
+    _equatorial_aspect_ratio = std::clamp(
+        _equatorial_aspect_ratio,
+        1.0,
+        static_cast<double>(std::max(1.0f, cellConfig.maxABRatio)));
     _brightness = std::fmax(_brightness, static_cast<float>(cellConfig.minBrightness));
     _brightness = std::fmin(_brightness, static_cast<float>(cellConfig.maxBrightness));
 
     this->a = this->_major_radius;
-    this->b = this->a; // oblate: a == b
+    this->b = this->a / _equatorial_aspect_ratio;
     this->c = this->_minor_radius;
 
     if (a <= 0 || b <= 0 || c <= 0) {
@@ -325,7 +330,8 @@ void Spheroid::drawOutline(cv::Mat &image, float color, float z) const {
         _theta_x + cellConfig.thetaX.getPerturbOffset(),
         _theta_y + cellConfig.thetaY.getPerturbOffset(),
         _theta_z + cellConfig.thetaZ.getPerturbOffset(),
-        _brightness + cellConfig.brightness.getPerturbOffset());
+        _brightness + cellConfig.brightness.getPerturbOffset(),
+        static_cast<float>(_equatorial_aspect_ratio) + cellConfig.abRatio.getPerturbOffset());
     return Spheroid(spheroidParams);
 }
 
@@ -808,10 +814,12 @@ std::tuple<Spheroid, Spheroid, bool, float, SplitDiagnostics> Spheroid::getSplit
     // Inherit parent rotation angles and brightness
     Spheroid cell1(SpheroidParams(
         _name + "0", new_position1.x, new_position1.y, new_position1.z,
-        daughterMajorRadius, daughterMinorRadius, _theta_x, _theta_y, _theta_z, _brightness));
+        daughterMajorRadius, daughterMinorRadius, _theta_x, _theta_y, _theta_z, _brightness,
+        static_cast<float>(_equatorial_aspect_ratio)));
     Spheroid cell2(SpheroidParams(
         _name + "1", new_position2.x, new_position2.y, new_position2.z,
-        daughterMajorRadius, daughterMinorRadius, _theta_x, _theta_y, _theta_z, _brightness));
+        daughterMajorRadius, daughterMinorRadius, _theta_x, _theta_y, _theta_z, _brightness,
+        static_cast<float>(_equatorial_aspect_ratio)));
 
     const int totalCount = count1 + count2;
     const int dominantCount = std::max(count1, count2);
@@ -865,11 +873,16 @@ std::tuple<Spheroid, Spheroid, bool, float, SplitDiagnostics> Spheroid::getSplit
 }
 
 bool Spheroid::checkConstraints() const {
-    return (cellConfig.minMajorRadius <= _major_radius) && (_major_radius <= cellConfig.maxMajorRadius) && (cellConfig.minMinorRadius <= _minor_radius) && (_minor_radius <= cellConfig.maxMinorRadius);
+    return (cellConfig.minMajorRadius <= _major_radius) &&
+           (_major_radius <= cellConfig.maxMajorRadius) &&
+           (cellConfig.minMinorRadius <= _minor_radius) &&
+           (_minor_radius <= cellConfig.maxMinorRadius) &&
+           (1.0 <= _equatorial_aspect_ratio) &&
+           (_equatorial_aspect_ratio <= std::max(1.0f, cellConfig.maxABRatio));
 }
 
 SpheroidParams Spheroid::getCellParams() const {
-    return SpheroidParams(_name, _position.x, _position.y, _position.z, _major_radius, _minor_radius, _theta_x, _theta_y, _theta_z, _brightness);
+    return SpheroidParams(_name, _position.x, _position.y, _position.z, _major_radius, _minor_radius, _theta_x, _theta_y, _theta_z, _brightness, static_cast<float>(_equatorial_aspect_ratio));
 }
 
 [[nodiscard]] std::pair<std::vector<float>, std::vector<float>> Spheroid::calculateCorners() const {

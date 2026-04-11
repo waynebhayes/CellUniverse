@@ -6,6 +6,7 @@ CellFactory::CellFactory(const BaseConfig &config) {
     // update (measureMeanBrightness * brightnessMeanAmplification blended via
     // brightnessUpdateBlend) takes over.
     initialBrightness = config.cell ? config.cell->initialBrightness : 0.2f;
+    initialABRatio = config.cell ? config.cell->initialABRatio : 1.2f;
     // TODO: add more else if branches for more cell Types
     if (cellType == "spheroid") {
         Spheroid::cellConfig = *config.cell;
@@ -62,7 +63,7 @@ while (std::getline(file, line)) {
 
         initialCells[filePath].push_back(
             Spheroid(SpheroidParams(cellName, x, y, z, majorRadius, minorRadius,
-                                   0.0f, 0.0f, 0.0f, brightness))
+                                   0.0f, 0.0f, 0.0f, brightness, initialABRatio))
         );
 
         ++line_cnt;
@@ -96,7 +97,8 @@ while (std::getline(file, line)) {
         const std::string cellName = cellType + "_" + std::to_string(line_cnt + 1);
 
         initialCells[filePath].push_back(
-            Spheroid(SpheroidParams(cellName, x, y, z, defaultMajorRadius, defaultMinorRadius))
+            Spheroid(SpheroidParams(cellName, x, y, z, defaultMajorRadius, defaultMinorRadius,
+                                    0.0f, 0.0f, 0.0f, 0.5f, initialABRatio))
         );
         initialCells[filePath].back().setBrightness(initialBrightness);
 

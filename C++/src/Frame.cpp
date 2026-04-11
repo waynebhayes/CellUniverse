@@ -22,11 +22,12 @@ double computeSizeReductionPenalty(const Spheroid &oldCell, const Spheroid &newC
 double computeEquivalentSphereRadius(const Spheroid &cell)
 {
     const double a = static_cast<double>(cell.getMajorRadius());
+    const double b = static_cast<double>(cell.getBRadius());
     const double c = static_cast<double>(cell.getMinorRadius());
-    if (a <= 0.0 || c <= 0.0) {
+    if (a <= 0.0 || b <= 0.0 || c <= 0.0) {
         return 0.0;
     }
-    return std::cbrt(a * a * c);
+    return std::cbrt(a * b * c);
 }
 
 double computeSphereIntersectionVolume(double r1, double r2, double dist)
@@ -69,11 +70,12 @@ double computeOverlapVolumeFractionApprox(const Spheroid &cell1, const Spheroid 
 double computeSpheroidVolume(const Spheroid &cell)
 {
     const double a = static_cast<double>(cell.getMajorRadius());
+    const double b = static_cast<double>(cell.getBRadius());
     const double c = static_cast<double>(cell.getMinorRadius());
-    if (a <= 0.0 || c <= 0.0) {
+    if (a <= 0.0 || b <= 0.0 || c <= 0.0) {
         return 0.0;
     }
-    return (4.0 / 3.0) * M_PI * a * a * c;
+    return (4.0 / 3.0) * M_PI * a * b * c;
 }
 
 double computeDaughterVolumeRatio(const Spheroid &cell1, const Spheroid &cell2)
@@ -359,15 +361,14 @@ std::vector<cv::Mat> Frame::generateOutputFrame()
     {
         const cv::Mat &realImage = _realFrame[i];
         double z = z_slices[i];
+        const float outlineIntensity = std::min(1.0f, _backgroundValue * 1.1f);
 
-        // Convert grayscale to RGB
-        cv::Mat outputFrame;
-        cv::cvtColor(realImage, outputFrame, cv::COLOR_GRAY2BGR);
+        cv::Mat outputFrame = realImage.clone();
 
         // Draw outlines for each cell
         for (const auto &cell : cells)
         {
-            cell.drawOutline(outputFrame, 1.0, z); // Assuming drawOutline takes a cv::Scalar for color
+            cell.drawOutline(outputFrame, outlineIntensity, z);
         }
 
         // Convert to 8-bit image if necessary

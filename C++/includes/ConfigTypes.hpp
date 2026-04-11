@@ -375,6 +375,7 @@ public:
     PerturbParams z{};
     PerturbParams majorRadius{};
     PerturbParams minorRadius{};
+    PerturbParams abRatio{};
     PerturbParams thetaX{};
     PerturbParams thetaY{};
     PerturbParams thetaZ{};
@@ -384,6 +385,8 @@ public:
     double minMinorRadius{};
     double maxMinorRadius{};
     float initialBrightness{0.2f};
+    float initialABRatio{1.2f};
+    float maxABRatio{1.6f};
     float backgroundColor{0.0f};
     double minBrightness{0.1};
     double maxBrightness{1.0};
@@ -417,6 +420,7 @@ public:
         z.explodeParams(node["z"]);
         majorRadius.explodeParams(node["majorRadius"]);
         minorRadius.explodeParams(node["minorRadius"]);
+        if (node["abRatio"]) abRatio.explodeParams(node["abRatio"]);
         thetaX.explodeParams(node["thetaX"]);
         thetaY.explodeParams(node["thetaY"]);
         thetaZ.explodeParams(node["thetaZ"]);
@@ -427,6 +431,8 @@ public:
         minMinorRadius = node["minMinorRadius"].as<double>();
         maxMinorRadius = node["maxMinorRadius"].as<double>();
         if (node["initialBrightness"]) initialBrightness = node["initialBrightness"].as<float>();
+        if (node["initialABRatio"]) initialABRatio = node["initialABRatio"].as<float>();
+        if (node["maxABRatio"]) maxABRatio = node["maxABRatio"].as<float>();
         if (node["backgroundColor"]) backgroundColor = node["backgroundColor"].as<float>();
         if (node["minBrightness"]) minBrightness = node["minBrightness"].as<double>();
         if (node["maxBrightness"]) maxBrightness = node["maxBrightness"].as<double>();
