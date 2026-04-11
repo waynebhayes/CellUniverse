@@ -13,15 +13,11 @@
 class SimulationConfig {
 public:
     int iterations_per_cell;
-    float background_color;
-    float cell_color;
     float z_scaling;
     float blur_sigma;
     int z_slices;
     float sigmoid_k = 75.0f;
-    float sigmoid_center = 0.445f;
     float sigmoid_center_percentile = 0.4f;
-    float sigmoid_center_offset = 0.047f;
     float post_sigmoid_dimmest_percentile = 0.45f;
     float post_sigmoid_dimmest_transition_width = 0.02f;
     float post_sigmoid_dimmest_transition_gradient = 4.0f;
@@ -29,24 +25,19 @@ public:
     float adaptive_background_top_fraction = 0.4f;
     int calibration_x = 20;
     int calibration_y = 20;
-    int calibration_z = 0;
     int calibration_width = 50;
     int calibration_height = 31;
 
     // Constructor with default values
-    SimulationConfig() : iterations_per_cell(0), background_color(0.0f),
-                         cell_color(0.6f), z_scaling(1.0), blur_sigma(0.0f), z_slices(-1) {
+    SimulationConfig() : iterations_per_cell(0),
+                         z_scaling(1.0), blur_sigma(0.0f), z_slices(-1) {
     }
     void explodeConfig(const YAML::Node& node) {
         iterations_per_cell = node["iterations_per_cell"].as<int>();
-        background_color = node["background_color"].as<float>();
-        if (node["cell_color"]) cell_color = node["cell_color"].as<float>();
         z_scaling = node["z_scaling"].as<float>();
         blur_sigma = node["blur_sigma"].as<float>();
         if (node["sigmoid_k"]) sigmoid_k = node["sigmoid_k"].as<float>();
-        if (node["sigmoid_center"]) sigmoid_center = node["sigmoid_center"].as<float>();
         if (node["sigmoid_center_percentile"]) sigmoid_center_percentile = node["sigmoid_center_percentile"].as<float>();
-        if (node["sigmoid_center_offset"]) sigmoid_center_offset = node["sigmoid_center_offset"].as<float>();
         if (node["post_sigmoid_dimmest_percentile"]) post_sigmoid_dimmest_percentile = node["post_sigmoid_dimmest_percentile"].as<float>();
         if (node["post_sigmoid_dimmest_transition_width"]) post_sigmoid_dimmest_transition_width = node["post_sigmoid_dimmest_transition_width"].as<float>();
         if (node["post_sigmoid_dimmest_transition_gradient"]) post_sigmoid_dimmest_transition_gradient = node["post_sigmoid_dimmest_transition_gradient"].as<float>();
@@ -54,14 +45,12 @@ public:
         if (node["adaptive_background_top_fraction"]) adaptive_background_top_fraction = node["adaptive_background_top_fraction"].as<float>();
         if (node["calibration_x"]) calibration_x = node["calibration_x"].as<int>();
         if (node["calibration_y"]) calibration_y = node["calibration_y"].as<int>();
-        if (node["calibration_z"]) calibration_z = node["calibration_z"].as<int>();
         if (node["calibration_width"]) calibration_width = node["calibration_width"].as<int>();
         if (node["calibration_height"]) calibration_height = node["calibration_height"].as<int>();
     }
     void printConfig() const {
         std::cout << "Simulation Config\n";
         std::cout << "iterations_per_cell: " << iterations_per_cell << '\n';
-        std::cout << "background_color: " << background_color << '\n';
         std::cout << "z_scaling: " << z_scaling << '\n';
         std::cout << "blur_sigma: " << blur_sigma << '\n';
         std::cout << "sigmoid_center_percentile: " << sigmoid_center_percentile << '\n';
@@ -96,6 +85,11 @@ public:
     float split_pre_burn_in_z_axis_min_drift_over_major = 0.40f;
     float split_post_burn_in_large_recenter_min_drift_over_major = 0.85f;
     float split_post_burn_in_large_recenter_max_cost_diff = -40.0f;
+    // Minimum bright-voxel count inside a cell's volume for it to attempt a split.
+    // Cells below this are too small for reliable PCA / burn-in (e.g. edge cells
+    // whose bounding box is clipped by the z-stack). Measured as the log's
+    // inside_count from [Split Brightness].
+    int split_min_inside_count = 50000;
     ProbabilityConfig() : split(0.0f), split_cost(0.0f),
                           split_elongation_threshold(1.3f), overlap_penalty_weight(1000.0f),
                           size_reduction_penalty_weight(0.0f),
@@ -183,6 +177,9 @@ public:
         if (node["split_post_burn_in_large_recenter_max_cost_diff"]) {
             split_post_burn_in_large_recenter_max_cost_diff =
                 node["split_post_burn_in_large_recenter_max_cost_diff"].as<float>();
+        }
+        if (node["split_min_inside_count"]) {
+            split_min_inside_count = node["split_min_inside_count"].as<int>();
         }
     }
     void printConfig() const {
@@ -296,11 +293,21 @@ public:
     float brightnessMeanAmplification{1.0f};
     float volumeRecoveryLossFractionThreshold{0.4f};
     float volumeRecoveryMaxScaleIncreaseFraction{0.3f};
+    // Enable/disable the per-frame flat-cell rotation refine grid search in
+    // CellUniverse::optimize. When disabled, the entire 3D rotation grid search
+    // is skipped regardless of the other flatCellRotationRefine* knobs.
+    // Default true for backward compat; current YAML sets it to false because
+    // the grid search is expensive and the benefit is questionable.
     bool flatCellRotationRefineEnabled{true};
     float flatCellRotationRefineFlatnessThreshold{0.8f};
     float flatCellRotationRefineAngleStep{0.15f};
     float flatCellRotationRefineMaxOffsetDegrees{15.0f};
     int flatCellRotationRefinePasses{2};
+    // Maximum valid z position (interpolated z-space). Used to clamp Spheroid
+    // center z in the constructor, preventing cells from drifting off the z-stack.
+    // Default 224 = (z_slices=225) - 1. Runtime-updated by CellUniverse::loadFrame
+    // to the actual interpolated slice count - 1. Not parsed from YAML.
+    float maxZ{224.0f};
     ~SpheroidConfig() = default;
 
     void explodeConfig(const YAML::Node& node)
@@ -332,8 +339,7 @@ public:
                 node["volumeRecoveryMaxScaleIncreaseFraction"].as<float>();
         }
         if (node["flatCellRotationRefineEnabled"]) {
-            flatCellRotationRefineEnabled =
-                node["flatCellRotationRefineEnabled"].as<bool>();
+            flatCellRotationRefineEnabled = node["flatCellRotationRefineEnabled"].as<bool>();
         }
         if (node["flatCellRotationRefineFlatnessThreshold"]) {
             flatCellRotationRefineFlatnessThreshold =

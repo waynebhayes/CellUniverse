@@ -2,7 +2,38 @@
 
 ## Overview
 
-CellUniverse tracks 3D cells across time-lapse microscopy frames. For each frame, it fits 3D spheroid models to real image data using Monte Carlo perturbation, then detects cell divisions (splits) using PCA on bright pixels. The pipeline runs frame-by-frame: optimize cell positions → detect splits → copy cells forward → save results.
+CellUniverse tracks 3D cells across time-lapse microscopy frames. For each frame, it fits 3D spheroid models to real image data using Monte Carlo perturbation, then detects cell divisions (splits) using PCA on bright pixels + a stack of soft fake-guards. The pipeline runs frame-by-frame: load + preprocess → update per-cell brightness → optimize cell positions → copy cells forward → save results.
+
+---
+
+## 0. 2026-04-07 Update Pointer (read this first)
+
+This document's lower sections predate the **2026-04-05 / 2026-04-06 brightness + split-guard rework** and the **2026-04-07 merge** (`yp_yd_merge_04072026`). Sections 1–3 below have been updated. **Sections 6 (Split Detection) and below still describe the older, simpler burn-in logic** and are missing most of the new guards.
+
+For the authoritative current state, read in this order:
+
+1. `docs/conversation_archive_2026-04-05.md` — percentile-based sigmoid, per-cell brightness EMA, safe blur, post-sigmoid dim subtraction, P(split) proportional rescale, adaptive synthetic background
+2. `docs/conversation_archive_2026-04-06.md` — split fake-guards (overlap-volume, radius-ratio, bridge-brightness), flatness-gated minor-axis steering, size-reduction perturbation penalty, sign-split perturb probabilities
+3. `docs/plans/2026-04-07-yp-yd-merge-review-and-next-steps.md` — merge review (goods/bads, dead code, risks) + phased implementation plan for cleanup / brightness-unification / lineage / tests
+4. `.claude/rules/algorithms.md` — updated 2026-04-07 with the full preprocessing pipeline and layered split guards
+5. `.claude/rules/gotchas.md` — updated 2026-04-07 — brightness is now LIVE, not disabled; sigmoid center is auto-calibrated (not background_color); split fake-guards enumerated
+6. `.claude/rules/config.md` — updated 2026-04-07 with the full config field inventory including 04-05/06 additions
+
+### Known stale sections in THIS file
+
+- **Section 6 (Split Detection)** describes only the original burn-in with overlap penalty. It is **missing** all post-burn-in fake-guards (overlap-volume, radius-ratio, bridge-brightness, large-recenter), pre-burn-in PCA gates (separation, z-axis collapse), and the flatness-gated minor-axis steering. See `algorithms.md` for the current layered guard stack (~11 steps).
+- **Section 7 (PCA Split Detection)** is mostly still correct but missing the flatness-gated minor-axis steering added on 2026-04-06 (forces split axis onto local z when `minorR/majorR ≤ flatness_threshold` AND PCA axis disagrees with z by more than `tolerance_degrees`).
+- Any reference to **"brightness perturbation disabled"** or **"draw() uses cell_color"** in lower sections is OUTDATED — see 3.2 above for the corrected per-cell brightness EMA path.
+- Any reference to `sigmoid_center_offset` as an active parameter is OUTDATED — it is parsed but unread. Use `sigmoid_center_percentile` instead.
+- The `P(split) = min(max_split_probability, ...)` formula mentioned in the algorithms/config sections is OUTDATED — the current formula computes raw P(split) per cell and then proportionally rescales all cells so max = `max_split_probability`.
+
+### Config field inventory added 2026-04-05/06 (see rules/config.md for full table)
+
+**Cell-level:** `brightnessUpdateBlend`, `brightnessMeanAmplification`, `splitBrightestFraction`, `increase_prob`/`decrease_prob` per-parameter split.
+
+**Simulation-level:** `sigmoid_center_percentile` (replaces `sigmoid_center_offset`), `post_sigmoid_dimmest_percentile`, `post_sigmoid_dimmest_transition_width`, `post_sigmoid_dimmest_transition_gradient`, `adaptive_background_expand_factor`, `adaptive_background_top_fraction`.
+
+**Prob-level (split guards):** `split_fake_overlap_volume_fraction_threshold`, `split_fake_radius_ratio_threshold`, `split_fake_bridge_brightness_similarity_threshold`, `split_minor_axis_alignment_tolerance_degrees` (DEGREES, not radians), `split_minor_axis_alignment_flatness_ratio_threshold`, `split_pre_burn_in_min_separation_over_major`, `split_pre_burn_in_z_axis_*`, `split_post_burn_in_large_recenter_*`, `size_reduction_penalty_weight`.
 
 ---
 
@@ -79,9 +110,11 @@ Each TIFF frame is a multi-page file where each page is one z-slice (e.g., 33 sl
    - Convert BGR → Grayscale (line 93)
    - Apply Gaussian blur with configurable sigma (line 57–59 via `processImage`)
    - Convert to CV_32F normalized to [0, 1] (line 54)
-3. **Sigmoid contrast enhancement** (lines 98–128):
-   - **Calibration** (lines 103–121): Measure mean brightness in a background zone (cell-free region defined by `calibration_x/y/z/width/height` in config). Compute sigmoid center = `bgMean + sigmoid_center_offset` (default offset 0.047).
-   - **Apply sigmoid** (lines 124–128): `output = 1 / (1 + exp(-k * (input - center)))` with k=75 (default).
+3. **Sigmoid contrast enhancement** (CellUniverse.cpp:422–448, updated 2026-04-05):
+   - **Calibration (percentile-based, active path)**: Compute a percentile of brightness values in the calibration ROI *over the full stack* (not per-slice). Sigmoid center = `simulation.sigmoid_center_percentile` percentile of those values. This REPLACED the earlier `bgMean + sigmoid_center_offset` logic — the `sigmoid_center_offset` field is now parsed but **unread** (scheduled for deletion per `docs/plans/2026-04-07-yp-yd-merge-review-and-next-steps.md`).
+   - **Safe/masked blur** is applied before the sigmoid (avoids bleeding zero-valued borders into valid content).
+   - **Apply sigmoid**: `output = 1 / (1 + exp(-k * (input - center)))` with `simulation.sigmoid_k` (was 75, commonly tuned to ~60).
+   - **Post-sigmoid dim-region subtraction** (added 2026-04-06): compute a stack-wide dimmest percentile (`post_sigmoid_dimmest_percentile`, ~0.99). Pixels above cutoff are kept unchanged; pixels below are reduced; a transition band (`post_sigmoid_dimmest_transition_width`, `post_sigmoid_dimmest_transition_gradient`) smoothly tapers the subtraction. Clamp negatives to zero.
    - **Result**: Cells → ~1.0, background → ~0.0. This gives the L2 cost function clear gradient signal at cell boundaries.
 4. **Z-interpolation** (lines 130–147): Expand 33 slices to 225 using linear interpolation:
    - Original slices placed at indices: `0, z_scaling, 2×z_scaling, ...` (where z_scaling=7)
@@ -109,7 +142,13 @@ For each z-slice (0 to 224):
 
 Renders one spheroid into one z-slice. This is a **per-pixel analytical test** — no voxel matrix is stored.
 
-`draw()` uses `simulationConfig.cell_color` (1.0) for all cells, NOT per-cell `_brightness`. Combined with `background_color=0.0`, this matches the post-sigmoid real image where cells are ~1.0 and background is ~0.0.
+`draw()` uses **per-cell `_brightness`** (updated 2026-04-05). It does NOT use `simulationConfig.cell_color` except as the frame-1 seed for each cell's `_brightness`. After frame 1, `_brightness` is updated every frame via EMA blend from the real image mean inside the cell volume, multiplied by `cell.brightnessMeanAmplification`. Combined with `background_color=0.0`, this matches the post-sigmoid real image where background is ~0.0 and cells track their measured brightness.
+
+**Per-frame brightness update** (see `CellUniverse::updateCellBrightnessFromReal()` or equivalent):
+1. Measure mean real-image brightness inside cell volume via `Spheroid::measureMeanBrightness()`
+2. `observed *= cell.brightnessMeanAmplification` (default 1.0)
+3. EMA blend: `_brightness = _brightness * (1 - blend) + observed * blend` where `blend = cell.brightnessUpdateBlend`
+4. Clamp to `[minBrightness, maxBrightness]`
 
 **Steps:**
 1. **Early exit**: Skip if z-slice is beyond `maxR = max(majorR, majorR, minorR)` from cell center
@@ -565,16 +604,25 @@ file, name, x, y, z, majorRadius, minorRadius, theta_x, theta_y, theta_z
 
 | Constant | Value | Location | Purpose |
 |----------|-------|----------|---------|
-| `BURN_IN_ITERATIONS` | 500 | Frame.cpp:357 | Perturbations per daughter after split placement |
+| `split_burn_in_iterations` | 1000 (config) / 500 (code default) | config.yaml / ConfigTypes.hpp | Perturbations per daughter after split placement — **default mismatch noted in 2026-04-07 review** |
 | `z_scaling` | 7 | config/config.yaml | Z-interpolation factor (33 -> 225 slices) |
-| `sigmoid_k` | 75 | config/config.yaml | Sigmoid steepness for contrast enhancement |
-| `sigmoid_center_offset` | 0.047 | config/config.yaml | Offset added to calibrated sigmoid center |
-| `background_color` | 0.0 | config/config.yaml | Synthetic image background (matches post-sigmoid) |
-| `cell_color` | 1.0 | config/config.yaml | draw() pixel value (matches post-sigmoid cells) |
+| `sigmoid_k` | 75 (commonly tuned to ~60) | config/config.yaml | Sigmoid steepness for contrast enhancement |
+| `sigmoid_center_percentile` | tuned | config/config.yaml | **Active**: percentile of calibration ROI used as sigmoid center |
+| `background_color` | 0.0 | `Frame::_backgroundValue` | **NO LONGER CONFIG** — runtime-mutable Frame member, updated by adaptive-bg path |
+| `cell_color` | 1.0 | `CellFactory::CellFactory()` literal | **NO LONGER CONFIG** — frame-1 seed for per-cell `_brightness` only |
+| `brightnessUpdateBlend` | tuned | config/config.yaml | EMA factor for per-frame per-cell brightness update |
+| `brightnessMeanAmplification` | 1.0 | config/config.yaml | Multiplier applied to measured mean brightness before EMA blend |
+| `splitBrightestFraction` | 0.055 | config/config.yaml | Top fraction of bright in-cell pixels kept for split PCA |
 | Daughter volume scale | cbrt(0.5) ~ 0.794 | Spheroid.cpp | Each daughter has ~half the parent volume |
+| Bridge cylinder volume factor | 0.5 (hardcoded) | Frame.cpp:668-669 | **Stray hardcoded value — scheduled for configurization** |
 | Overlap penalty | continuous | Frame.cpp:213-258 | Proportional penalty replaces hard overlap gate |
+| `size_reduction_penalty_weight` | 2.0 | config/config.yaml | Soft quadratic penalty on radius shrinkage during perturbation. No growth penalty. |
 | Split search radius | 3*maxR (effective) | Spheroid.cpp | PCA pixel collection bounding box (uses pre-opt radii) |
-| Split elongation threshold | configurable | config/config.yaml | PCA elongation ratio below which burn-in is skipped |
+| Split elongation threshold | 1.5 (often tuned to 1.1) | config/config.yaml | PCA elongation ratio below which burn-in is skipped |
+| Split fake-guard thresholds | configurable | config/config.yaml | `split_fake_overlap_volume_fraction_threshold` (~0.15), `split_fake_radius_ratio_threshold` (~1.6), `split_fake_bridge_brightness_similarity_threshold` (~0.9) |
+| Minor-axis steering | DEGREES | config/config.yaml | `split_minor_axis_alignment_tolerance_degrees` — note degree units, not radians |
+| Post-burn-in large-recenter gate | 0.85 / -40.0 | config/config.yaml | `split_post_burn_in_large_recenter_min_drift_over_major` × majorR drift threshold + `split_post_burn_in_large_recenter_max_cost_diff` |
+| Surface outline intensity | 0.25 (all RGB) | Spheroid.cpp | Outline now drawn on all channels at 0.25 (was 0.4 earlier) |
 | Surface outline band | 0.95-1.05 | Spheroid.cpp:234 | Pixels drawn as cell outline |
 
 ---

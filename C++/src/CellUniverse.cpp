@@ -243,7 +243,7 @@ static float estimateAdaptiveBackgroundFromFrame(const Frame &frame,
 {
     const auto &realFrame = frame.getRealFrame();
     if (realFrame.empty()) {
-        return simulationConfig.background_color;
+        return 0.0f;  // post-sigmoid background invariant
     }
 
     const float expandFactor = std::max(1.0f, simulationConfig.adaptive_background_expand_factor);
@@ -279,7 +279,7 @@ static float estimateAdaptiveBackgroundFromFrame(const Frame &frame,
     }
 
     if (backgroundCandidates.empty()) {
-        return simulationConfig.background_color;
+        return 0.0f;  // post-sigmoid background invariant
     }
 
     return computeMeanOfTopFraction(backgroundCandidates, simulationConfig.adaptive_background_top_fraction);
@@ -419,7 +419,8 @@ std::vector<cv::Mat> loadFrame(const std::string &imageFile, BaseConfig &config)
         // Sigmoid: output = 1 / (1 + exp(-k * (input - center)))
         // This amplifies contrast: cells → near 1.0, background → near 0.0.
         // The L2 cost function needs this contrast to correctly fit cell boundaries.
-        float sigmoidCenter = config.simulation.sigmoid_center; // default from config
+        // Defensive fallback; overwritten in every realistic path by the percentile calibration below.
+        float sigmoidCenter = 0.445f;
         if (!processedZSlices.empty()) {
             int calX = config.simulation.calibration_x;
             int calY = config.simulation.calibration_y;
@@ -529,6 +530,10 @@ CellUniverse::CellUniverse(std::map<std::string, std::vector<Spheroid>> initialC
         real_frame = loadFrame(imagePaths[i], config);
         // loadFrame interpolate frames, update to config is needed
         config.simulation.z_slices = real_frame.size();
+        // Propagate the interpolated-z upper bound into Spheroid::cellConfig so
+        // the Spheroid constructor's z clamp uses the actual stack height.
+        // Without this, cells could drift off the top/bottom of the z-stack.
+        Spheroid::cellConfig.maxZ = static_cast<float>(real_frame.size()) - 1.0f;
 
         fs::path path(imagePaths[i]);
         std::string file_name = path.filename();
@@ -722,7 +727,8 @@ void CellUniverse::optimize(int frameIndex)
                                              config.prob.split_pre_burn_in_z_axis_min_drift_over_major,
                                              config.prob.split_post_burn_in_large_recenter_min_drift_over_major,
                                              config.prob.split_post_burn_in_large_recenter_max_cost_diff,
-                                             config.prob.split_burn_in_iterations);
+                                             config.prob.split_burn_in_iterations,
+                                             config.prob.split_min_inside_count);
             double costDiff = result.first;
             auto callback = result.second;
 

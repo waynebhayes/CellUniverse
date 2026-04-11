@@ -53,6 +53,10 @@ struct SplitDiagnostics
     float daughterMajorRadius = 0.0f;
     float daughterMinorRadius = 0.0f;
     float axisAbsZ = 0.0f;
+    // Total bright voxels inside the cell's ellipsoid volume used for split PCA.
+    // Used by Frame::trySplitCell's min-size gate to reject boundary cells /
+    // clipped cells whose PCA would be unreliable.
+    int insideCount = 0;
 };
 
 class Spheroid 

@@ -157,6 +157,13 @@ Spheroid::Spheroid(const SpheroidParams &init_props)
     _minor_radius = std::fmax(_minor_radius, cellConfig.minMinorRadius);
     _minor_radius = std::fmin(_minor_radius, cellConfig.maxMinorRadius);
 
+    // Clamp z to the valid interpolated-z range. Without this, perturbation can
+    // push cells off the z-stack (where they contribute zero pixels and reduce
+    // L2 cost, which the optimizer happily rewards). See run output_jihang_20260408_161444
+    // for a concrete example: a daughter drifted to z=266 with inside_count=0.
+    _position.z = std::fmax(_position.z, 0.0f);
+    _position.z = std::fmin(_position.z, cellConfig.maxZ);
+
     if (_minor_radius > _major_radius) {
         _minor_radius = _major_radius;
     }
@@ -851,6 +858,7 @@ std::tuple<Spheroid, Spheroid, bool, float, SplitDiagnostics> Spheroid::getSplit
     diagnostics.daughterMajorRadius = static_cast<float>(daughterMajorRadius);
     diagnostics.daughterMinorRadius = static_cast<float>(daughterMinorRadius);
     diagnostics.axisAbsZ = std::abs(split_axis.z);
+    diagnostics.insideCount = candidateVoxelCount;
 
     bool constraints = cell1.checkConstraints() && cell2.checkConstraints();
     return std::make_tuple(Spheroid(cell1), Spheroid(cell2), constraints, elongationRatio, diagnostics);
