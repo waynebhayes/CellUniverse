@@ -98,6 +98,12 @@ int main(int argc, char *argv[])
         std::cerr << "[WARN] imageFilePaths is empty; cannot determine initial frame filename." << '\n';
     }
 
+    if (config.simulation.quit_after_preprocessing) {
+        CellUniverse preprocessOnlyLineage({}, imageFilePaths, config, args.output, args.firstFrame, args.continueFrom);
+        std::cout << "[DEBUG] quit_after_preprocessing=true; exiting after preprocessing/load phase." << std::endl;
+        return 0;
+    }
+
     // load cells here
     CellFactory cellFactory(config);
     std::map<Path, std::vector<Spheroid>> cells = cellFactory.createCells(args.initial, config.simulation.z_slices / 2,

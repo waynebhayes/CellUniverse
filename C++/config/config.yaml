@@ -43,10 +43,11 @@ cell:
     mu: 0
     sigma: 0.1
   brightness:
-    increase_prob: 0.0  # not perturbed — fixed from initial measurement
-    decrease_prob: 0.0
+    increase_prob: 0.8  # not perturbed — fixed from initial measurement
+    decrease_prob: 0.8
     mu: 0
     sigma: 0.0
+
   minMajorRadius: 10
   maxMajorRadius: 40
   minMinorRadius: 5
@@ -54,12 +55,20 @@ cell:
 
 
   
+  initialBrightness: 0.2
+  backgroundColor: 0.05
+
   minBrightness: 0.1
   maxBrightness: 0.98
+
+  firstFrameBrightnessPerturbationOnly: true
+
   brightnessUpdateBlend: 0.8
   brightnessMeanAmplification: 1.2
+
   volumeRecoveryLossFractionThreshold: 0.2
   volumeRecoveryMaxScaleIncreaseFraction: 0.6
+
   # 2026-04-08: master switch for the per-frame flat-cell rotation grid search
   # in CellUniverse::optimize. When false, the entire nested 3D rotation search
   # is skipped and the flatCellRotationRefine* knobs below are ignored. Disabled
@@ -77,26 +86,60 @@ cell:
   splitBrightestFraction: 0.055
 
 # Simulation settings
-# Note: background_color (0.0) and cell_color (1.0) are no longer config fields —
-# they are sigmoid-pipeline invariants hardcoded in Frame (_backgroundValue) and
-# CellFactory (initialBrightness = 1.0). Do not re-add them here.
-# sigmoid_center and calibration_z were also removed: the former was an inert default
-# always overwritten by sigmoid_center_percentile, the latter was never read anywhere.
+# Note: background_color (0.0) and cell_color (1.0) are no longer config fields.
+# The active preprocessing path now follows the iterative pipeline ported from
+# scripts/image_processor_clean.py. The `iterative_*`,
+# `contrast_structure_threshold`, `contrast_eps`, `post_process_*`,
+# `michelson_*`, and `weber_*` knobs below are the ones that drive image
+# enhancement and evaluation.
 simulation:
   iterations_per_cell: 350
   z_scaling: 7
-  blur_sigma: 10.0  # heavy blur before sigmoid (matches working 0303 run)
-  sigmoid_k: 75.0
-  sigmoid_center_percentile: 0.45
-  post_sigmoid_dimmest_percentile: 0.995
-  post_sigmoid_dimmest_transition_width: 0.2
-  post_sigmoid_dimmest_transition_gradient: 0.6
+  blur_sigma: 0.0
+
+  iterative_penalty: 0.1
+  iterative_min_penalty: 0.005
+  iterative_collapse_backoff: 0.99
+  iterative_penalty_range: 0.9
+  iterative_reward_gate: 1.0
+  iterative_reward_gate_decrement: 0.008
+  iterative_reward_gate_min: 0.025
+  iterative_reward: 0.1
+
+  iterative_score_max: 0.5
+
+  iterative_max_count: 300
+
+  iterative_no_improvement_patience: 10
+  iterative_improvement_tolerance: 0.01
+
+  iterative_score_drop_stop_threshold: 0.1
+  iterative_score_percentile: 0.05
+  iterative_score_percentile_max: 0.90
+  iterative_score_percentile_increment: 0.025
+
+  contrast_structure_threshold: 0.02
+  contrast_eps: 0.000001
+
+  post_process_blur_sigma: 2.5
+  post_process_amplification: 2.5
+  post_process_black_percentile: 0.1
+  post_process_white_percentile: 0.5
+
+  michelson_low_percentile: 0.10
+  michelson_high_percentile: 0.90
+  michelson_eps: 0.000001
+
+  weber_background_percentile: 0.10
+  weber_signal_percentile: 0.90
+  weber_background_floor: 0.0039215686
+  weber_eps: 0.000001
+
+  export_preprocessed_images: false
+  quit_after_preprocessing: false
+
   adaptive_background_expand_factor: 1.1
   adaptive_background_top_fraction: 0.4
-  calibration_x: 20
-  calibration_y: 20
-  calibration_width: 50
-  calibration_height: 31
 
 # Probability of changes
 prob:
@@ -106,18 +149,25 @@ prob:
   split_min_inside_count: 50000       # 2026-04-08: new gate. Reject splits on cells with <50k bright voxels (boundary / tiny cells have unreliable PCA).
   overlap_penalty_weight: 500.0
   size_reduction_penalty_weight: 0.0
+
   split_fake_overlap_volume_fraction_threshold: 0.15
   split_fake_volume_ratio_threshold: 6.0
+  split_fake_bridge_brightness_similarity_threshold: 0.99
+
   split_search_radius_multiplier: 3.0
+
   split_minor_axis_alignment_tolerance_degrees: 150.0
   split_minor_axis_alignment_flatness_ratio_threshold: 0.5
   split_minor_axis_alignment_min_radius_disable_threshold: 5.0
-  split_fake_bridge_brightness_similarity_threshold: 0.99
+
   split_pre_burn_in_min_separation_over_major: 0.35
   split_pre_burn_in_z_axis_max_abs: 0.92
   split_pre_burn_in_z_axis_max_separation_over_major: 1.3
   split_pre_burn_in_z_axis_min_drift_over_major: 0.4
+
   split_post_burn_in_large_recenter_min_drift_over_major: 0.85
   split_post_burn_in_large_recenter_max_cost_diff: -40.0
+
   split_burn_in_iterations: 1000
+
   max_split_probability: 0.2

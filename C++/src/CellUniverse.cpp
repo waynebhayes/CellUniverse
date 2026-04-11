@@ -4,6 +4,7 @@
 #include <cmath>
 #include <algorithm>
 #include <limits>
+#include <numeric>
 
 namespace utils
 {
@@ -74,6 +75,46 @@ static float computeMeanOfTopFraction(std::vector<float> values, float topFracti
     return static_cast<float>(sum / selectedCount);
 }
 
+static void scaleStackBrightness(std::vector<cv::Mat> &stack, float scale)
+{
+    if (std::abs(scale - 1.0f) <= 1e-6f) {
+        return;
+    }
+
+    for (auto &slice : stack) {
+        if (slice.empty()) {
+            continue;
+        }
+        slice *= scale;
+        cv::min(slice, 1.0f, slice);
+        cv::max(slice, 0.0f, slice);
+    }
+}
+
+static void exportPreprocessedStack(const std::vector<cv::Mat> &stack,
+                                    const fs::path &baseOutputDir,
+                                    const fs::path &framePath)
+{
+    const fs::path frameOutputDir = baseOutputDir / "preprocessed" / framePath.stem();
+    fs::create_directories(frameOutputDir);
+
+    for (size_t i = 0; i < stack.size(); ++i) {
+        if (stack[i].empty()) {
+            continue;
+        }
+
+        cv::Mat outputImage;
+        if (stack[i].depth() != CV_8U) {
+            stack[i].convertTo(outputImage, CV_8U, 255.0);
+        } else {
+            outputImage = stack[i].clone();
+        }
+
+        const fs::path outputFile = frameOutputDir / (std::to_string(i) + ".png");
+        cv::imwrite(outputFile.string(), outputImage);
+    }
+}
+
 static float estimateAdaptiveBackgroundFromFrame(const Frame &frame,
                                                  const SimulationConfig &simulationConfig)
 {
@@ -129,10 +170,45 @@ CellUniverse::CellUniverse(std::map<std::string, std::vector<Spheroid>> initialC
                            int continueFrom)
 : config(config), outputPath(outputPath), firstFrame(firstFrame)
 {
+    std::vector<std::vector<Image>> loadedFrames;
+    std::vector<float> frameMeanBrightness;
+    loadedFrames.reserve(imagePaths.size());
+    frameMeanBrightness.reserve(imagePaths.size());
+
     for (size_t i = 0; i < imagePaths.size(); ++i)
     {
         std::vector<Image> real_frame;
         real_frame = ImageHandler::loadFrame(imagePaths[i].string(), config);
+        frameMeanBrightness.push_back(computeStackMean(real_frame));
+        loadedFrames.push_back(std::move(real_frame));
+    }
+
+    const float globalMeanBrightness = frameMeanBrightness.empty()
+        ? 0.0f
+        : std::accumulate(frameMeanBrightness.begin(), frameMeanBrightness.end(), 0.0f)
+            / static_cast<float>(frameMeanBrightness.size());
+
+    for (size_t i = 0; i < imagePaths.size(); ++i)
+    {
+        std::vector<Image> &real_frame = loadedFrames[i];
+        const float currentMeanBrightness = frameMeanBrightness[i];
+        const float brightnessScale =
+            (currentMeanBrightness > 1e-6f) ? (globalMeanBrightness / currentMeanBrightness) : 1.0f;
+        scaleStackBrightness(real_frame, brightnessScale);
+
+        std::cout << "[Brightness Align] frame=" << imagePaths[i].filename().string()
+                  << " frame_mean=" << currentMeanBrightness
+                  << " global_mean=" << globalMeanBrightness
+                  << " scale=" << brightnessScale << '\n';
+
+        if (config.simulation.export_preprocessed_images) {
+            exportPreprocessedStack(real_frame, fs::path(outputPath), imagePaths[i]);
+        }
+
+        if (config.simulation.quit_after_preprocessing) {
+            continue;
+        }
+
         // loadFrame interpolate frames, update to config is needed
         config.simulation.z_slices = real_frame.size();
         // Propagate the interpolated-z upper bound into Spheroid::cellConfig so
@@ -152,6 +228,11 @@ CellUniverse::CellUniverse(std::map<std::string, std::vector<Spheroid>> initialC
         {
             frames.emplace_back(real_frame, config.simulation, std::vector<Spheroid>(), outputPath, file_name);
         }
+
+        if (config.cell) {
+            frames.back().setBackgroundColor(config.cell->backgroundColor);
+            frames.back().regenerateSynthFrame();
+        }
     }
 }
 void CellUniverse::optimize(int frameIndex)
@@ -162,6 +243,13 @@ void CellUniverse::optimize(int frameIndex)
     }
 
     Frame &frame = frames[frameIndex];
+    const bool brightnessPerturbFirstFrameOnly =
+        config.cell && config.cell->firstFrameBrightnessPerturbationOnly;
+    const PerturbParams originalBrightnessPerturb = Spheroid::cellConfig.brightness;
+    if (brightnessPerturbFirstFrameOnly && frameIndex > 0)
+    {
+        Spheroid::cellConfig.brightness = PerturbParams{};
+    }
 
     if (frameIndex > 0) {
         const Frame &previousFrame = frames[frameIndex - 1];
@@ -506,9 +594,11 @@ void CellUniverse::optimize(int frameIndex)
 
             if (recoveredAnyVolume) {
                 frame.regenerateSynthFrame();
-            }
         }
     }
+
+    Spheroid::cellConfig.brightness = originalBrightnessPerturb;
+}
 
     if (config.cell && config.cell->flatCellRotationRefineEnabled) {
         const float flatnessThreshold =
