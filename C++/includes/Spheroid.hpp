@@ -60,6 +60,14 @@ struct SplitDiagnostics
     int insideCount = 0;
 };
 
+struct PerturbDirections
+{
+    int brightness = 0;
+    int majorRadius = 0;
+    int minorRadius = 0;
+    int abRatio = 0;
+};
+
 class Spheroid 
 {
     private:
@@ -73,6 +81,9 @@ class Spheroid
         double _theta_y;  // rotation angle about y-axis (radians)
         double _theta_z;  // rotation angle about z-axis (radians)
         float _brightness; // per-cell rendering brightness [0,1]
+        PerturbParams _majorRadiusPerturbParams;
+        PerturbParams _minorRadiusPerturbParams;
+        PerturbParams _abRatioPerturbParams;
         PerturbParams _brightnessPerturbParams;
 
         // Inverse rotation: transforms world-space displacement back to local (upright) frame
@@ -101,11 +112,27 @@ class Spheroid
         float getMinorRadius() const { return static_cast<float>(_minor_radius); }
         float getEquatorialAspectRatio() const { return static_cast<float>(_equatorial_aspect_ratio); }
         float getBrightness() const { return _brightness; }
+        float getMajorRadiusIncreaseProbability() const { return _majorRadiusPerturbParams.increase_prob; }
+        float getMajorRadiusDecreaseProbability() const { return _majorRadiusPerturbParams.decrease_prob; }
+        float getMinorRadiusIncreaseProbability() const { return _minorRadiusPerturbParams.increase_prob; }
+        float getMinorRadiusDecreaseProbability() const { return _minorRadiusPerturbParams.decrease_prob; }
+        float getABRatioIncreaseProbability() const { return _abRatioPerturbParams.increase_prob; }
+        float getABRatioDecreaseProbability() const { return _abRatioPerturbParams.decrease_prob; }
         float getBrightnessIncreaseProbability() const { return _brightnessPerturbParams.increase_prob; }
         float getBrightnessDecreaseProbability() const { return _brightnessPerturbParams.decrease_prob; }
         void setBrightness(float brightness);
+        void setMajorRadiusPerturbProbabilities(float increaseProbability, float decreaseProbability);
+        void setMinorRadiusPerturbProbabilities(float increaseProbability, float decreaseProbability);
+        void setABRatioPerturbProbabilities(float increaseProbability, float decreaseProbability);
         void setBrightnessPerturbProbabilities(float increaseProbability, float decreaseProbability);
+        void blendAdaptivePerturbProbabilitiesWithConfig(float brightnessTrust,
+                                                         float majorRadiusTrust,
+                                                         float minorRadiusTrust,
+                                                         float abRatioTrust);
         void blendBrightnessPerturbProbabilitiesWithConfig(float trust);
+        void adjustMajorRadiusPerturbProbability(int direction, float delta);
+        void adjustMinorRadiusPerturbProbability(int direction, float delta);
+        void adjustABRatioPerturbProbability(int direction, float delta);
         void adjustBrightnessPerturbProbability(int direction, float delta);
         float measureMeanBrightness(const std::vector<cv::Mat> &image) const;
         std::pair<float, float> measureBrightnessStats(const std::vector<cv::Mat> &image) const;
@@ -118,7 +145,7 @@ class Spheroid
 
         void drawOutline(cv::Mat &image, float color, float z = 0) const;
 
-        [[nodiscard]] Spheroid getPerturbedCell(int *brightnessPerturbDirection = nullptr) const;
+        [[nodiscard]] Spheroid getPerturbedCell(PerturbDirections *directions = nullptr) const;
 
         std::tuple<Spheroid, Spheroid, bool, float, SplitDiagnostics> getSplitCells(const std::vector<cv::Mat> &image, float z_scaling,
             float backgroundColor,

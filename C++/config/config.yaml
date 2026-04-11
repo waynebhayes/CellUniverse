@@ -49,7 +49,7 @@ cell:
     sigma: 0.1
   brightness:
     increase_prob: 0.7  # not perturbed — fixed from initial measurement
-    decrease_prob: 0.7
+    decrease_prob: 0.8
     mu: 0
     sigma: 0.0
 
@@ -60,8 +60,8 @@ cell:
 
 
   
-  initialBrightness: 0.21
-  initialABRatio: 1.0
+  initialBrightness: 0.22
+  initialABRatio: 1.05
   maxABRatio: 1.2
   backgroundColor: 0.05
 
@@ -69,8 +69,18 @@ cell:
   maxBrightness: 0.98
 
   firstFrameBrightnessPerturbationOnly: false
+
   brightnessProbabilityStep: 0.02
   brightnessProbabilityTrust: 0.3
+
+  majorRadiusProbabilityStep: 0.01
+  majorRadiusProbabilityTrust: 0.1
+
+  minorRadiusProbabilityStep: 0.01
+  minorRadiusProbabilityTrust: 0.1
+
+  abRatioProbabilityStep: 0.02
+  abRatioProbabilityTrust: 0.1
 
   brightnessUpdateBlend: 0.9
   brightnessMeanAmplification: 1.1

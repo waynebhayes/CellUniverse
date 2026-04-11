@@ -152,6 +152,9 @@ Spheroid::Spheroid(const SpheroidParams &init_props)
           _equatorial_aspect_ratio(init_props.equatorialAspectRatio),
           _theta_x(init_props.theta_x), _theta_y(init_props.theta_y), _theta_z(init_props.theta_z),
           _brightness(init_props.brightness),
+          _majorRadiusPerturbParams(cellConfig.majorRadius),
+          _minorRadiusPerturbParams(cellConfig.minorRadius),
+          _abRatioPerturbParams(cellConfig.abRatio),
           _brightnessPerturbParams(cellConfig.brightness)
 {
     _major_radius = std::fmax(_major_radius, cellConfig.minMajorRadius);
@@ -206,6 +209,30 @@ void Spheroid::setBrightness(float brightness)
                              static_cast<float>(cellConfig.maxBrightness));
 }
 
+void Spheroid::setMajorRadiusPerturbProbabilities(float increaseProbability, float decreaseProbability)
+{
+    const float clampedIncrease = std::clamp(increaseProbability, 0.0f, 1.0f);
+    _majorRadiusPerturbParams.increase_prob = clampedIncrease;
+    _majorRadiusPerturbParams.decrease_prob =
+        std::clamp(decreaseProbability, 0.0f, std::max(0.0f, 1.0f - clampedIncrease));
+}
+
+void Spheroid::setMinorRadiusPerturbProbabilities(float increaseProbability, float decreaseProbability)
+{
+    const float clampedIncrease = std::clamp(increaseProbability, 0.0f, 1.0f);
+    _minorRadiusPerturbParams.increase_prob = clampedIncrease;
+    _minorRadiusPerturbParams.decrease_prob =
+        std::clamp(decreaseProbability, 0.0f, std::max(0.0f, 1.0f - clampedIncrease));
+}
+
+void Spheroid::setABRatioPerturbProbabilities(float increaseProbability, float decreaseProbability)
+{
+    const float clampedIncrease = std::clamp(increaseProbability, 0.0f, 1.0f);
+    _abRatioPerturbParams.increase_prob = clampedIncrease;
+    _abRatioPerturbParams.decrease_prob =
+        std::clamp(decreaseProbability, 0.0f, std::max(0.0f, 1.0f - clampedIncrease));
+}
+
 void Spheroid::setBrightnessPerturbProbabilities(float increaseProbability, float decreaseProbability)
 {
     const float clampedIncrease = std::clamp(increaseProbability, 0.0f, 1.0f);
@@ -230,6 +257,63 @@ void Spheroid::blendBrightnessPerturbProbabilitiesWithConfig(float trust)
         baseDecrease * (1.0f - clampedTrust) + getBrightnessDecreaseProbability() * clampedTrust;
 
     setBrightnessPerturbProbabilities(blendedIncrease, blendedDecrease);
+}
+
+void Spheroid::blendAdaptivePerturbProbabilitiesWithConfig(float brightnessTrust,
+                                                           float majorRadiusTrust,
+                                                           float minorRadiusTrust,
+                                                           float abRatioTrust)
+{
+    const float clampedMajorTrust = std::clamp(majorRadiusTrust, 0.0f, 1.0f);
+    const float clampedMinorTrust = std::clamp(minorRadiusTrust, 0.0f, 1.0f);
+    const float clampedABTrust = std::clamp(abRatioTrust, 0.0f, 1.0f);
+
+    const float baseMajorIncrease =
+        std::clamp(cellConfig.majorRadius.increase_prob >= 0.0f ? cellConfig.majorRadius.increase_prob : 0.0f,
+                   0.0f, 1.0f);
+    const float baseMajorDecrease =
+        std::clamp(cellConfig.majorRadius.decrease_prob >= 0.0f ? cellConfig.majorRadius.decrease_prob : 0.0f,
+                   0.0f, 1.0f);
+    setMajorRadiusPerturbProbabilities(
+        baseMajorIncrease * (1.0f - clampedMajorTrust) + getMajorRadiusIncreaseProbability() * clampedMajorTrust,
+        baseMajorDecrease * (1.0f - clampedMajorTrust) + getMajorRadiusDecreaseProbability() * clampedMajorTrust);
+
+    const float baseMinorIncrease =
+        std::clamp(cellConfig.minorRadius.increase_prob >= 0.0f ? cellConfig.minorRadius.increase_prob : 0.0f,
+                   0.0f, 1.0f);
+    const float baseMinorDecrease =
+        std::clamp(cellConfig.minorRadius.decrease_prob >= 0.0f ? cellConfig.minorRadius.decrease_prob : 0.0f,
+                   0.0f, 1.0f);
+    setMinorRadiusPerturbProbabilities(
+        baseMinorIncrease * (1.0f - clampedMinorTrust) + getMinorRadiusIncreaseProbability() * clampedMinorTrust,
+        baseMinorDecrease * (1.0f - clampedMinorTrust) + getMinorRadiusDecreaseProbability() * clampedMinorTrust);
+
+    const float baseABIncrease =
+        std::clamp(cellConfig.abRatio.increase_prob >= 0.0f ? cellConfig.abRatio.increase_prob : 0.0f,
+                   0.0f, 1.0f);
+    const float baseABDecrease =
+        std::clamp(cellConfig.abRatio.decrease_prob >= 0.0f ? cellConfig.abRatio.decrease_prob : 0.0f,
+                   0.0f, 1.0f);
+    setABRatioPerturbProbabilities(
+        baseABIncrease * (1.0f - clampedABTrust) + getABRatioIncreaseProbability() * clampedABTrust,
+        baseABDecrease * (1.0f - clampedABTrust) + getABRatioDecreaseProbability() * clampedABTrust);
+
+    blendBrightnessPerturbProbabilitiesWithConfig(brightnessTrust);
+}
+
+void Spheroid::adjustMajorRadiusPerturbProbability(int direction, float delta)
+{
+    _majorRadiusPerturbParams.adjustSignedProbability(direction, delta);
+}
+
+void Spheroid::adjustMinorRadiusPerturbProbability(int direction, float delta)
+{
+    _minorRadiusPerturbParams.adjustSignedProbability(direction, delta);
+}
+
+void Spheroid::adjustABRatioPerturbProbability(int direction, float delta)
+{
+    _abRatioPerturbParams.adjustSignedProbability(direction, delta);
 }
 
 void Spheroid::adjustBrightnessPerturbProbability(int direction, float delta)
@@ -351,24 +435,33 @@ void Spheroid::drawOutline(cv::Mat &image, float color, float z) const {
     }
 }
 
-[[nodiscard]] Spheroid Spheroid::getPerturbedCell(int *brightnessPerturbDirection) const {
+[[nodiscard]] Spheroid Spheroid::getPerturbedCell(PerturbDirections *directions) const {
+    const PerturbParams::Sample majorRadiusSample = _majorRadiusPerturbParams.samplePerturb();
+    const PerturbParams::Sample minorRadiusSample = _minorRadiusPerturbParams.samplePerturb();
+    const PerturbParams::Sample abRatioSample = _abRatioPerturbParams.samplePerturb();
     const PerturbParams::Sample brightnessSample = _brightnessPerturbParams.samplePerturb();
-    if (brightnessPerturbDirection != nullptr) {
-        *brightnessPerturbDirection = brightnessSample.direction;
+    if (directions != nullptr) {
+        directions->brightness = brightnessSample.direction;
+        directions->majorRadius = majorRadiusSample.direction;
+        directions->minorRadius = minorRadiusSample.direction;
+        directions->abRatio = abRatioSample.direction;
     }
     SpheroidParams spheroidParams(
         _name,
         _position.x + cellConfig.x.getPerturbOffset(),
         _position.y + cellConfig.y.getPerturbOffset(),
         _position.z + cellConfig.z.getPerturbOffset(),
-        _major_radius + cellConfig.majorRadius.getPerturbOffset(),
-        _minor_radius + cellConfig.minorRadius.getPerturbOffset(),
+        _major_radius + majorRadiusSample.offset,
+        _minor_radius + minorRadiusSample.offset,
         _theta_x + cellConfig.thetaX.getPerturbOffset(),
         _theta_y + cellConfig.thetaY.getPerturbOffset(),
         _theta_z + cellConfig.thetaZ.getPerturbOffset(),
         _brightness + brightnessSample.offset,
-        static_cast<float>(_equatorial_aspect_ratio) + cellConfig.abRatio.getPerturbOffset());
+        static_cast<float>(_equatorial_aspect_ratio) + abRatioSample.offset);
     Spheroid perturbedCell(spheroidParams);
+    perturbedCell._majorRadiusPerturbParams = _majorRadiusPerturbParams;
+    perturbedCell._minorRadiusPerturbParams = _minorRadiusPerturbParams;
+    perturbedCell._abRatioPerturbParams = _abRatioPerturbParams;
     perturbedCell._brightnessPerturbParams = _brightnessPerturbParams;
     return perturbedCell;
 }
@@ -858,7 +951,13 @@ std::tuple<Spheroid, Spheroid, bool, float, SplitDiagnostics> Spheroid::getSplit
         _name + "1", new_position2.x, new_position2.y, new_position2.z,
         daughterMajorRadius, daughterMinorRadius, _theta_x, _theta_y, _theta_z, _brightness,
         static_cast<float>(_equatorial_aspect_ratio)));
+    cell1._majorRadiusPerturbParams = _majorRadiusPerturbParams;
+    cell1._minorRadiusPerturbParams = _minorRadiusPerturbParams;
+    cell1._abRatioPerturbParams = _abRatioPerturbParams;
     cell1._brightnessPerturbParams = _brightnessPerturbParams;
+    cell2._majorRadiusPerturbParams = _majorRadiusPerturbParams;
+    cell2._minorRadiusPerturbParams = _minorRadiusPerturbParams;
+    cell2._abRatioPerturbParams = _abRatioPerturbParams;
     cell2._brightnessPerturbParams = _brightnessPerturbParams;
 
     const int totalCount = count1 + count2;

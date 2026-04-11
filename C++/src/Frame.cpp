@@ -361,7 +361,7 @@ std::vector<cv::Mat> Frame::generateOutputFrame()
     {
         const cv::Mat &realImage = _realFrame[i];
         double z = z_slices[i];
-        const float outlineIntensity = std::min(1.0f, _backgroundValue * 1.4f);
+        const float outlineIntensity = std::min(1.0f, _backgroundValue * 1.6f);
 
         cv::Mat outputFrame = realImage.clone();
 
@@ -418,12 +418,12 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight, float siz
     }
 
     Spheroid oldCell = cells[index];
-    int brightnessPerturbDirection = 0;
+    PerturbDirections perturbDirections;
 
     // O(n) overlap for just this cell before perturbation
     double oldOverlapCell = computeOverlapForCell(index, overlapWeight);
 
-    cells[index] = cells[index].getPerturbedCell(&brightnessPerturbDirection);
+    cells[index] = cells[index].getPerturbedCell(&perturbDirections);
 
     // O(n) overlap for this cell after perturbation
     double newOverlapCell = computeOverlapForCell(index, overlapWeight);
@@ -437,20 +437,25 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight, float siz
     double costDiff = (newImageCost + newOverlapCell + sizeReductionPenalty)
                     - (oldImageCost + oldOverlapCell);
 
-    CallBackFunc callback = [this, newSynthFrame, oldCell, index, newImageCost, brightnessPerturbDirection](bool accept)
+    CallBackFunc callback = [this, newSynthFrame, oldCell, index, newImageCost, perturbDirections](bool accept)
     {
-        const float step = std::max(0.0f, Spheroid::cellConfig.brightnessProbabilityStep);
+        const float brightnessStep = std::max(0.0f, Spheroid::cellConfig.brightnessProbabilityStep);
+        const float majorRadiusStep = std::max(0.0f, Spheroid::cellConfig.majorRadiusProbabilityStep);
+        const float minorRadiusStep = std::max(0.0f, Spheroid::cellConfig.minorRadiusProbabilityStep);
+        const float abRatioStep = std::max(0.0f, Spheroid::cellConfig.abRatioProbabilityStep);
         if (accept) {
-            if (brightnessPerturbDirection != 0) {
-                this->cells[index].adjustBrightnessPerturbProbability(brightnessPerturbDirection, step);
-            }
+            if (perturbDirections.brightness != 0) this->cells[index].adjustBrightnessPerturbProbability(perturbDirections.brightness, brightnessStep);
+            if (perturbDirections.majorRadius != 0) this->cells[index].adjustMajorRadiusPerturbProbability(perturbDirections.majorRadius, majorRadiusStep);
+            if (perturbDirections.minorRadius != 0) this->cells[index].adjustMinorRadiusPerturbProbability(perturbDirections.minorRadius, minorRadiusStep);
+            if (perturbDirections.abRatio != 0) this->cells[index].adjustABRatioPerturbProbability(perturbDirections.abRatio, abRatioStep);
             this->_synthFrame = newSynthFrame;
             this->_currentCost = newImageCost;
         } else {
             Spheroid revertedCell = oldCell;
-            if (brightnessPerturbDirection != 0) {
-                revertedCell.adjustBrightnessPerturbProbability(brightnessPerturbDirection, -step);
-            }
+            if (perturbDirections.brightness != 0) revertedCell.adjustBrightnessPerturbProbability(perturbDirections.brightness, -brightnessStep);
+            if (perturbDirections.majorRadius != 0) revertedCell.adjustMajorRadiusPerturbProbability(perturbDirections.majorRadius, -majorRadiusStep);
+            if (perturbDirections.minorRadius != 0) revertedCell.adjustMinorRadiusPerturbProbability(perturbDirections.minorRadius, -minorRadiusStep);
+            if (perturbDirections.abRatio != 0) revertedCell.adjustABRatioPerturbProbability(perturbDirections.abRatio, -abRatioStep);
             this->cells[index] = revertedCell;
         }
     };

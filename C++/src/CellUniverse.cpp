@@ -804,9 +804,12 @@ void CellUniverse::copyCellsForward(size_t to)
     // assumes cells have deepcopy copy constructors
     frames[to].cells = frames[to - 1].cells;
     if (config.cell) {
-        const float trust = std::clamp(config.cell->brightnessProbabilityTrust, 0.0f, 1.0f);
         for (auto &cell : frames[to].cells) {
-            cell.blendBrightnessPerturbProbabilitiesWithConfig(trust);
+            cell.blendAdaptivePerturbProbabilitiesWithConfig(
+                config.cell->brightnessProbabilityTrust,
+                config.cell->majorRadiusProbabilityTrust,
+                config.cell->minorRadiusProbabilityTrust,
+                config.cell->abRatioProbabilityTrust);
         }
     }
 }

@@ -421,6 +421,12 @@ public:
     bool firstFrameBrightnessPerturbationOnly{false};
     float brightnessProbabilityStep{0.02f};
     float brightnessProbabilityTrust{1.0f};
+    float majorRadiusProbabilityStep{0.02f};
+    float majorRadiusProbabilityTrust{1.0f};
+    float minorRadiusProbabilityStep{0.02f};
+    float minorRadiusProbabilityTrust{1.0f};
+    float abRatioProbabilityStep{0.02f};
+    float abRatioProbabilityTrust{1.0f};
     float brightnessUpdateBlend{0.2f};
     float brightnessMeanAmplification{1.0f};
     float volumeRecoveryLossFractionThreshold{0.4f};
@@ -471,6 +477,18 @@ public:
         }
         if (node["brightnessProbabilityStep"]) brightnessProbabilityStep = node["brightnessProbabilityStep"].as<float>();
         if (node["brightnessProbabilityTrust"]) brightnessProbabilityTrust = node["brightnessProbabilityTrust"].as<float>();
+        majorRadiusProbabilityStep = brightnessProbabilityStep;
+        majorRadiusProbabilityTrust = brightnessProbabilityTrust;
+        minorRadiusProbabilityStep = brightnessProbabilityStep;
+        minorRadiusProbabilityTrust = brightnessProbabilityTrust;
+        abRatioProbabilityStep = brightnessProbabilityStep;
+        abRatioProbabilityTrust = brightnessProbabilityTrust;
+        if (node["majorRadiusProbabilityStep"]) majorRadiusProbabilityStep = node["majorRadiusProbabilityStep"].as<float>();
+        if (node["majorRadiusProbabilityTrust"]) majorRadiusProbabilityTrust = node["majorRadiusProbabilityTrust"].as<float>();
+        if (node["minorRadiusProbabilityStep"]) minorRadiusProbabilityStep = node["minorRadiusProbabilityStep"].as<float>();
+        if (node["minorRadiusProbabilityTrust"]) minorRadiusProbabilityTrust = node["minorRadiusProbabilityTrust"].as<float>();
+        if (node["abRatioProbabilityStep"]) abRatioProbabilityStep = node["abRatioProbabilityStep"].as<float>();
+        if (node["abRatioProbabilityTrust"]) abRatioProbabilityTrust = node["abRatioProbabilityTrust"].as<float>();
         if (node["brightnessUpdateBlend"]) brightnessUpdateBlend = node["brightnessUpdateBlend"].as<float>();
         if (node["brightnessMeanAmplification"]) brightnessMeanAmplification = node["brightnessMeanAmplification"].as<float>();
         if (node["volumeRecoveryLossFractionThreshold"]) {
