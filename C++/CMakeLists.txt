@@ -33,6 +33,7 @@ add_executable(${PROJECT_NAME}
         ${cwd}/src/CellFactory.cpp
         ${cwd}/src/CellUniverse.cpp
         ${cwd}/src/Frame.cpp
+        ${cwd}/src/ImageHandler.cpp
         ${cwd}/src/LineageViewer.cpp
         ${cwd}/src/Spheroid.cpp
 )

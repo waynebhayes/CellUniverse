@@ -18,9 +18,6 @@
 
 namespace fs = std::filesystem;
 
-Image processImage(const Image &image, const BaseConfig &config);
-std::vector<cv::Mat> loadFrame(const std::string &imageFile, BaseConfig &config);
-
 class CellUniverse
 {
 public:
