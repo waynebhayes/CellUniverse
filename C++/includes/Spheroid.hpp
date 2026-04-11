@@ -73,6 +73,7 @@ class Spheroid
         double _theta_y;  // rotation angle about y-axis (radians)
         double _theta_z;  // rotation angle about z-axis (radians)
         float _brightness; // per-cell rendering brightness [0,1]
+        PerturbParams _brightnessPerturbParams;
 
         // Inverse rotation: transforms world-space displacement back to local (upright) frame
         void inverseRotatePoint(double dx, double dy, double dz,
@@ -100,7 +101,12 @@ class Spheroid
         float getMinorRadius() const { return static_cast<float>(_minor_radius); }
         float getEquatorialAspectRatio() const { return static_cast<float>(_equatorial_aspect_ratio); }
         float getBrightness() const { return _brightness; }
+        float getBrightnessIncreaseProbability() const { return _brightnessPerturbParams.increase_prob; }
+        float getBrightnessDecreaseProbability() const { return _brightnessPerturbParams.decrease_prob; }
         void setBrightness(float brightness);
+        void setBrightnessPerturbProbabilities(float increaseProbability, float decreaseProbability);
+        void blendBrightnessPerturbProbabilitiesWithConfig(float trust);
+        void adjustBrightnessPerturbProbability(int direction, float delta);
         float measureMeanBrightness(const std::vector<cv::Mat> &image) const;
         std::pair<float, float> measureBrightnessStats(const std::vector<cv::Mat> &image) const;
 
@@ -112,7 +118,7 @@ class Spheroid
 
         void drawOutline(cv::Mat &image, float color, float z = 0) const;
 
-        [[nodiscard]] Spheroid getPerturbedCell() const;
+        [[nodiscard]] Spheroid getPerturbedCell(int *brightnessPerturbDirection = nullptr) const;
 
         std::tuple<Spheroid, Spheroid, bool, float, SplitDiagnostics> getSplitCells(const std::vector<cv::Mat> &image, float z_scaling,
             float backgroundColor,

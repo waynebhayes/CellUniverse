@@ -218,6 +218,54 @@ When enabled, the program exports the exact post-preprocessing, post-brightness-
 
 - `<output>/preprocessed/<frame_stem>/`
 
+## 8. Per-Cell Brightness Perturbation Probabilities
+
+### Problem identified
+
+The brightness perturbation adaptation logic had been wired through `Spheroid::cellConfig.brightness`, which is shared globally by all cells. That meant:
+
+- one cell's accepted or rejected brightness move changed the probabilities for every cell
+- frame-to-frame brightness perturbation behavior was not truly cell-specific
+- the intended learning signal from one cell could leak into unrelated cells
+
+### Requested behavior
+
+The requested model was:
+
+- each cell must maintain its own brightness increase and decrease probabilities
+- on the very first frame, initialize every cell from the existing YAML brightness perturbation values
+- before each later frame, initialize each cell with:
+  - `yaml_value * (1 - trust) + previous_frame_final_value * trust`
+- make `trust` configurable in `config/config.yaml`
+
+### Implementation
+
+The following changes were made:
+
+- added per-cell runtime storage of brightness perturb probabilities to `Spheroid`
+- changed brightness perturb sampling to use the cell's own local probabilities instead of the shared static config
+- changed perturbation accept/reject updates so only the perturbed cell's probability pair is adjusted
+- preserved split consistency by copying the parent's brightness probability state into both daughter cells during `getSplitCells(...)`
+- updated `CellUniverse::copyCellsForward(...)` so newly propagated cells blend their carried-forward probability state with the YAML base using a new trust parameter
+
+### New YAML knob
+
+Under `cell:`:
+
+- `brightnessProbabilityTrust: 0.9`
+
+### Formula used
+
+For each cell and for each of the brightness increase/decrease probabilities on frames after the first:
+
+- `blended = yaml_base * (1 - trust) + previous_frame_probability * trust`
+
+### Compatibility note
+
+The existing `firstFrameBrightnessPerturbationOnly` switch originally disabled later-frame brightness perturbation by zeroing the shared global brightness perturb config. After moving brightness probabilities into each `Spheroid`, that global toggle no longer affected the active sampling path.
+
+To preserve prior semantics, the optimization step now explicitly zeros each cell's local brightness increase/decrease probabilities on frames after the first whenever `firstFrameBrightnessPerturbationOnly: true`.
+
 Each z-slice is saved as a `.png`.
 
 ## 8. Preprocess-Only Debug Exit

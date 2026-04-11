@@ -327,6 +327,11 @@ public:
 class PerturbParams {
     //Used with a cell config to add perturb parameters.
 public:
+    struct Sample {
+        float offset = 0.0f;
+        int direction = 0; // -1 decrease, +1 increase, 0 no signed move
+    };
+
     float prob  = 0.0f;
     float increase_prob = -1.0f;
     float decrease_prob = -1.0f;
@@ -339,32 +344,54 @@ public:
         mu = node["mu"].as<float>();
         sigma = node["sigma"].as<float>();
     }
-    [[nodiscard]] float getPerturbOffset() const {
+    [[nodiscard]] Sample samplePerturb() const {
         thread_local std::mt19937 gen{std::random_device{}()};
         std::uniform_real_distribution<float> dis(0.0f, 1.0f);
         const bool hasSeparateSignProbabilities = increase_prob >= 0.0f || decrease_prob >= 0.0f;
         if (!hasSeparateSignProbabilities) {
             if (dis(gen) < prob) {
                 std::normal_distribution<float> d(mu, sigma);
-                return d(gen);
+                return {d(gen), 0};
             }
-            return mu;
+            return {mu, 0};
         }
 
         const float incProb = std::clamp(increase_prob >= 0.0f ? increase_prob : 0.0f, 0.0f, 1.0f);
-        const float decProb = std::clamp(decrease_prob >= 0.0f ? decrease_prob : 0.0f, 0.0f, 1.0f);
+        const float decProbRaw = std::clamp(decrease_prob >= 0.0f ? decrease_prob : 0.0f, 0.0f, 1.0f);
+        const float decProb = std::min(decProbRaw, 1.0f - incProb);
         const float roll = dis(gen);
         const float magnitude = (sigma > 0.0f)
             ? std::abs(std::normal_distribution<float>(mu, sigma)(gen))
             : std::abs(mu);
 
         if (roll < incProb) {
-            return magnitude;
+            return {magnitude, 1};
         }
         if (roll < incProb + decProb) {
-            return -magnitude;
+            return {-magnitude, -1};
         }
-        return 0.0f;
+        return {0.0f, 0};
+    }
+    [[nodiscard]] float getPerturbOffset() const {
+        return samplePerturb().offset;
+    }
+    void adjustSignedProbability(int direction, float delta) {
+        if (direction == 0 || std::abs(delta) <= 1e-9f) {
+            return;
+        }
+        const bool hasSeparateSignProbabilities = increase_prob >= 0.0f || decrease_prob >= 0.0f;
+        if (!hasSeparateSignProbabilities) {
+            return;
+        }
+
+        if (direction > 0) {
+            const float other = std::clamp(decrease_prob >= 0.0f ? decrease_prob : 0.0f, 0.0f, 1.0f);
+            increase_prob = std::clamp((increase_prob >= 0.0f ? increase_prob : 0.0f) + delta, 0.0f, 1.0f - other);
+            return;
+        }
+
+        const float other = std::clamp(increase_prob >= 0.0f ? increase_prob : 0.0f, 0.0f, 1.0f);
+        decrease_prob = std::clamp((decrease_prob >= 0.0f ? decrease_prob : 0.0f) + delta, 0.0f, 1.0f - other);
     }
 };
 
@@ -392,6 +419,8 @@ public:
     double maxBrightness{1.0};
     float splitBrightestFraction{0.10f};
     bool firstFrameBrightnessPerturbationOnly{false};
+    float brightnessProbabilityStep{0.02f};
+    float brightnessProbabilityTrust{1.0f};
     float brightnessUpdateBlend{0.2f};
     float brightnessMeanAmplification{1.0f};
     float volumeRecoveryLossFractionThreshold{0.4f};
@@ -440,6 +469,8 @@ public:
         if (node["firstFrameBrightnessPerturbationOnly"]) {
             firstFrameBrightnessPerturbationOnly = node["firstFrameBrightnessPerturbationOnly"].as<bool>();
         }
+        if (node["brightnessProbabilityStep"]) brightnessProbabilityStep = node["brightnessProbabilityStep"].as<float>();
+        if (node["brightnessProbabilityTrust"]) brightnessProbabilityTrust = node["brightnessProbabilityTrust"].as<float>();
         if (node["brightnessUpdateBlend"]) brightnessUpdateBlend = node["brightnessUpdateBlend"].as<float>();
         if (node["brightnessMeanAmplification"]) brightnessMeanAmplification = node["brightnessMeanAmplification"].as<float>();
         if (node["volumeRecoveryLossFractionThreshold"]) {

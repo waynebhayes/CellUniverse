@@ -69,9 +69,11 @@ cell:
   maxBrightness: 0.98
 
   firstFrameBrightnessPerturbationOnly: false
+  brightnessProbabilityStep: 0.02
+  brightnessProbabilityTrust: 0.3
 
   brightnessUpdateBlend: 0.9
-  brightnessMeanAmplification: 1.0
+  brightnessMeanAmplification: 1.1
 
   volumeRecoveryLossFractionThreshold: 0.2
   volumeRecoveryMaxScaleIncreaseFraction: 0.6

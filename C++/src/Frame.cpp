@@ -361,7 +361,7 @@ std::vector<cv::Mat> Frame::generateOutputFrame()
     {
         const cv::Mat &realImage = _realFrame[i];
         double z = z_slices[i];
-        const float outlineIntensity = std::min(1.0f, _backgroundValue * 1.1f);
+        const float outlineIntensity = std::min(1.0f, _backgroundValue * 1.4f);
 
         cv::Mat outputFrame = realImage.clone();
 
@@ -418,11 +418,12 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight, float siz
     }
 
     Spheroid oldCell = cells[index];
+    int brightnessPerturbDirection = 0;
 
     // O(n) overlap for just this cell before perturbation
     double oldOverlapCell = computeOverlapForCell(index, overlapWeight);
 
-    cells[index] = cells[index].getPerturbedCell();
+    cells[index] = cells[index].getPerturbedCell(&brightnessPerturbDirection);
 
     // O(n) overlap for this cell after perturbation
     double newOverlapCell = computeOverlapForCell(index, overlapWeight);
@@ -436,13 +437,21 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight, float siz
     double costDiff = (newImageCost + newOverlapCell + sizeReductionPenalty)
                     - (oldImageCost + oldOverlapCell);
 
-    CallBackFunc callback = [this, newSynthFrame, oldCell, index, newImageCost](bool accept)
+    CallBackFunc callback = [this, newSynthFrame, oldCell, index, newImageCost, brightnessPerturbDirection](bool accept)
     {
+        const float step = std::max(0.0f, Spheroid::cellConfig.brightnessProbabilityStep);
         if (accept) {
+            if (brightnessPerturbDirection != 0) {
+                this->cells[index].adjustBrightnessPerturbProbability(brightnessPerturbDirection, step);
+            }
             this->_synthFrame = newSynthFrame;
             this->_currentCost = newImageCost;
         } else {
-            this->cells[index] = oldCell;
+            Spheroid revertedCell = oldCell;
+            if (brightnessPerturbDirection != 0) {
+                revertedCell.adjustBrightnessPerturbProbability(brightnessPerturbDirection, -step);
+            }
+            this->cells[index] = revertedCell;
         }
     };
     return {costDiff, callback};

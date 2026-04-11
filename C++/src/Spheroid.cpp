@@ -151,7 +151,8 @@ Spheroid::Spheroid(const SpheroidParams &init_props)
           _major_radius(init_props.majorRadius), _minor_radius(init_props.minorRadius),
           _equatorial_aspect_ratio(init_props.equatorialAspectRatio),
           _theta_x(init_props.theta_x), _theta_y(init_props.theta_y), _theta_z(init_props.theta_z),
-          _brightness(init_props.brightness)
+          _brightness(init_props.brightness),
+          _brightnessPerturbParams(cellConfig.brightness)
 {
     _major_radius = std::fmax(_major_radius, cellConfig.minMajorRadius);
     _major_radius = std::fmin(_major_radius, cellConfig.maxMajorRadius);
@@ -203,6 +204,37 @@ void Spheroid::setBrightness(float brightness)
     _brightness = std::clamp(brightness,
                              static_cast<float>(cellConfig.minBrightness),
                              static_cast<float>(cellConfig.maxBrightness));
+}
+
+void Spheroid::setBrightnessPerturbProbabilities(float increaseProbability, float decreaseProbability)
+{
+    const float clampedIncrease = std::clamp(increaseProbability, 0.0f, 1.0f);
+    _brightnessPerturbParams.increase_prob = clampedIncrease;
+    _brightnessPerturbParams.decrease_prob =
+        std::clamp(decreaseProbability, 0.0f, std::max(0.0f, 1.0f - clampedIncrease));
+}
+
+void Spheroid::blendBrightnessPerturbProbabilitiesWithConfig(float trust)
+{
+    const float clampedTrust = std::clamp(trust, 0.0f, 1.0f);
+    const float baseIncrease =
+        std::clamp(cellConfig.brightness.increase_prob >= 0.0f ? cellConfig.brightness.increase_prob : 0.0f,
+                   0.0f, 1.0f);
+    const float baseDecrease =
+        std::clamp(cellConfig.brightness.decrease_prob >= 0.0f ? cellConfig.brightness.decrease_prob : 0.0f,
+                   0.0f, 1.0f);
+
+    const float blendedIncrease =
+        baseIncrease * (1.0f - clampedTrust) + getBrightnessIncreaseProbability() * clampedTrust;
+    const float blendedDecrease =
+        baseDecrease * (1.0f - clampedTrust) + getBrightnessDecreaseProbability() * clampedTrust;
+
+    setBrightnessPerturbProbabilities(blendedIncrease, blendedDecrease);
+}
+
+void Spheroid::adjustBrightnessPerturbProbability(int direction, float delta)
+{
+    _brightnessPerturbParams.adjustSignedProbability(direction, delta);
 }
 
 // ---- ROTATION-AWARE draw() ----
@@ -293,7 +325,7 @@ void Spheroid::drawOutline(cv::Mat &image, float color, float z) const {
     const double invC2 = 1.0 / (c * c);
 
     const int channels = image.channels();
-    const float outlineIntensity = 0.25f;
+    const float outlineIntensity = std::clamp(color, 0.0f, 1.0f);
 
     if (channels == 1) {
         scanSpheroidSlice(
@@ -319,7 +351,11 @@ void Spheroid::drawOutline(cv::Mat &image, float color, float z) const {
     }
 }
 
-[[nodiscard]] Spheroid Spheroid::getPerturbedCell() const {
+[[nodiscard]] Spheroid Spheroid::getPerturbedCell(int *brightnessPerturbDirection) const {
+    const PerturbParams::Sample brightnessSample = _brightnessPerturbParams.samplePerturb();
+    if (brightnessPerturbDirection != nullptr) {
+        *brightnessPerturbDirection = brightnessSample.direction;
+    }
     SpheroidParams spheroidParams(
         _name,
         _position.x + cellConfig.x.getPerturbOffset(),
@@ -330,9 +366,11 @@ void Spheroid::drawOutline(cv::Mat &image, float color, float z) const {
         _theta_x + cellConfig.thetaX.getPerturbOffset(),
         _theta_y + cellConfig.thetaY.getPerturbOffset(),
         _theta_z + cellConfig.thetaZ.getPerturbOffset(),
-        _brightness + cellConfig.brightness.getPerturbOffset(),
+        _brightness + brightnessSample.offset,
         static_cast<float>(_equatorial_aspect_ratio) + cellConfig.abRatio.getPerturbOffset());
-    return Spheroid(spheroidParams);
+    Spheroid perturbedCell(spheroidParams);
+    perturbedCell._brightnessPerturbParams = _brightnessPerturbParams;
+    return perturbedCell;
 }
 
 std::tuple<Spheroid, Spheroid, bool, float, SplitDiagnostics> Spheroid::getSplitCells(
@@ -820,6 +858,8 @@ std::tuple<Spheroid, Spheroid, bool, float, SplitDiagnostics> Spheroid::getSplit
         _name + "1", new_position2.x, new_position2.y, new_position2.z,
         daughterMajorRadius, daughterMinorRadius, _theta_x, _theta_y, _theta_z, _brightness,
         static_cast<float>(_equatorial_aspect_ratio)));
+    cell1._brightnessPerturbParams = _brightnessPerturbParams;
+    cell2._brightnessPerturbParams = _brightnessPerturbParams;
 
     const int totalCount = count1 + count2;
     const int dominantCount = std::max(count1, count2);
