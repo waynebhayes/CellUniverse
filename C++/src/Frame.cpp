@@ -1667,31 +1667,11 @@ CostCallbackPair Frame::trySplitCellPhased(
     const Spheroid &bestD1 = bestCells[d1IdxBest];
     const Spheroid &bestD2 = bestCells[d2IdxBest];
 
-    // 5a. Drift-from-seed gate. Reject if either daughter center has
-    // wandered too far from its initial candidate placement during burn-in.
-    // The limit is max(parent_frac * srcMaxR, daughter_frac * daughterMaxR).
-    const float bestD1MaxR = std::max({bestD1.getMajorRadius(),
-                                         bestD1.getBRadius(),
-                                         bestD1.getMinorRadius()});
-    const float bestD2MaxR = std::max({bestD2.getMajorRadius(),
-                                         bestD2.getBRadius(),
-                                         bestD2.getMinorRadius()});
-    const float daughterMaxR = std::max(bestD1MaxR, bestD2MaxR);
-    const float driftLimit = std::max(
-        probConfig.bio_max_drift_parent_fraction * srcMaxR,
-        probConfig.bio_max_drift_daughter_fraction * daughterMaxR);
+    // Drift from seed (diagnostic only, no rejection gate).
     const float drift1 = static_cast<float>(cv::norm(
         cv::Point3f(bestD1.getX(), bestD1.getY(), bestD1.getZ()) - bestSeedD1));
     const float drift2 = static_cast<float>(cv::norm(
         cv::Point3f(bestD2.getX(), bestD2.getY(), bestD2.getZ()) - bestSeedD2));
-    if (drift1 > driftLimit || drift2 > driftLimit) {
-        std::cout << "[Split Reject bio] " << parentName
-                  << " reason=drift_from_seed d1=" << drift1
-                  << " d2=" << drift2
-                  << " limit=" << driftLimit << std::endl;
-        restoreLiveParent();
-        return {0.0, noop};
-    }
 
     // Daughter midpoint (shared by the bridge gate below for axis
     // projection and diagnostic logging). Previously also used by a
