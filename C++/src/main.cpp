@@ -10,6 +10,7 @@
 #include "yaml-cpp/yaml.h"
 #include "Spheroid.hpp"
 #include "CellUniverse.hpp"
+#include "ImageHandler.hpp"
 #include <chrono>
 #include <algorithm>
 
@@ -25,125 +26,6 @@ public:
     std::string output{};
     int continueFrom = -1;
 };
-
-static bool shouldIgnoreImagePath(const fs::path &file)
-{
-    const std::string name = file.filename().string();
-    return name.empty() || name[0] == '.' || name.rfind("._", 0) == 0;
-}
-
-static void updateTiffConfigIfNeeded(const fs::path &file, BaseConfig &config)
-{
-    if (shouldIgnoreImagePath(file) || !(file.extension() == ".tif" || file.extension() == ".tiff"))
-    {
-        return;
-    }
-
-    std::vector<cv::Mat> images;
-    cv::imreadmulti(file.string(), images, cv::IMREAD_UNCHANGED);
-    int slices = static_cast<int>(images.size());
-    config.simulation.z_slices = slices;
-}
-
-// helper function to get all image file paths
-PathVec getImageFilePaths(const std::string &input, int firstFrame, int lastFrame, BaseConfig &config)
-{
-    PathVec imagePaths;
-
-    // printf-style pattern input, e.g. frame%03d.tif
-    if (input.find('%') != std::string::npos)
-    {
-        for (int i = firstFrame; lastFrame == -1 || i <= lastFrame; ++i)
-        {
-            char buffer[1024];
-            std::snprintf(buffer, sizeof(buffer), input.c_str(), i);
-            fs::path file(buffer);
-
-            if (fs::exists(file) && fs::is_regular_file(file))
-            {
-                imagePaths.push_back(file);
-                continue;
-            }
-
-            std::cerr << "Input file not found \"" << file << "\"" << '\n';
-            throw std::runtime_error("Input file not found");
-        }
-    }
-    // Directory input, auto-detect image files
-    else if (fs::is_directory(input))
-    {
-        PathVec allFiles;
-        for (const auto &entry : fs::directory_iterator(input))
-        {
-            if (!entry.is_regular_file())
-            {
-                continue;
-            }
-            const fs::path &p = entry.path();
-            if (shouldIgnoreImagePath(p))
-            {
-                continue;
-            }
-            if (p.extension() == ".tif" || p.extension() == ".tiff")
-            {
-                allFiles.push_back(p);
-            }
-        }
-
-        if (allFiles.empty())
-        {
-            throw std::runtime_error("No .tif/.tiff files found in directory: " + input);
-        }
-
-        std::sort(allFiles.begin(), allFiles.end());
-
-        if (firstFrame < 0)
-        {
-            throw std::runtime_error("firstFrame must be >= 0 for directory input");
-        }
-
-        int start = firstFrame;
-        int end = (lastFrame < 0) ? static_cast<int>(allFiles.size()) - 1
-                                  : std::min(lastFrame, static_cast<int>(allFiles.size()) - 1);
-
-        if (start >= static_cast<int>(allFiles.size()))
-        {
-            throw std::runtime_error("firstFrame is out of range for directory input");
-        }
-        if (start > end)
-        {
-            throw std::runtime_error("Invalid frame range for directory input");
-        }
-
-        for (int i = start; i <= end; ++i)
-        {
-            imagePaths.push_back(allFiles[i]);
-        }
-    }
-
-    // Single file input
-    else if (fs::exists(input) && fs::is_regular_file(input))
-    {
-        imagePaths.push_back(input);
-    }
-    else
-    {
-        throw std::runtime_error("Input is neither a pattern, directory, nor file: " + input);
-    }
-
-    if (!imagePaths.empty())
-    {
-        updateTiffConfigIfNeeded(imagePaths.front(), config);
-    }
-
-    // Print paths for verification
-    for (const auto &path : imagePaths)
-    {
-        std::cout << path << '\n';
-    }
-
-    return imagePaths;
-}
 
 // helper function to load the config
 void loadConfig(const std::string &path, BaseConfig &config)
@@ -205,7 +87,7 @@ int main(int argc, char *argv[])
     config.printConfig();
 
     // load file paths
-    PathVec imageFilePaths = getImageFilePaths(args.input, args.firstFrame, args.lastFrame, config);
+    PathVec imageFilePaths = ImageHandler::getImageFilePaths(args.input, args.firstFrame, args.lastFrame, config);
 
     // load cells
     std::string firstFrameFile;
@@ -214,6 +96,12 @@ int main(int argc, char *argv[])
         std::cout << "[INFO] firstFrameFile=" << firstFrameFile << '\n';
     } else {
         std::cerr << "[WARN] imageFilePaths is empty; cannot determine initial frame filename." << '\n';
+    }
+
+    if (config.simulation.quit_after_preprocessing) {
+        CellUniverse preprocessOnlyLineage({}, imageFilePaths, config, args.output, args.firstFrame, args.continueFrom);
+        std::cout << "[DEBUG] quit_after_preprocessing=true; exiting after preprocessing/load phase." << std::endl;
+        return 0;
     }
 
     // load cells here

@@ -16,17 +16,41 @@ public:
     float z_scaling;
     float blur_sigma;
     int z_slices;
-    float sigmoid_k = 75.0f;
-    float sigmoid_center_percentile = 0.4f;
-    float post_sigmoid_dimmest_percentile = 0.45f;
-    float post_sigmoid_dimmest_transition_width = 0.02f;
-    float post_sigmoid_dimmest_transition_gradient = 4.0f;
+    float iterative_penalty = 0.1f;
+    float iterative_min_penalty = 0.005f;
+    float iterative_collapse_backoff = 0.99f;
+    float iterative_penalty_range = 0.9f;
+    float iterative_reward_gate = 1.0f;
+    float iterative_reward_gate_decrement = 0.008f;
+    float iterative_reward_gate_min = 0.025f;
+    float iterative_reward = 0.1f;
+    float iterative_score_max = 1.5f;
+    int iterative_max_count = 300;
+    int iterative_no_improvement_patience = 10;
+    float iterative_improvement_tolerance = 0.01f;
+    float iterative_score_drop_stop_threshold = 0.1f;
+    float iterative_score_percentile = 0.05f;
+    float iterative_score_percentile_max = 0.90f;
+    float iterative_score_percentile_increment = 0.025f;
+    int contrast_inner_window_size = 51;
+    int contrast_outer_window_size = 101;
+    float contrast_structure_threshold = 0.02f;
+    float contrast_eps = 1e-6f;
+    float post_process_blur_sigma = 2.5f;
+    float post_process_amplification = 15.0f;
+    float post_process_black_percentile = 0.005f;
+    float post_process_white_percentile = 0.3f;
+    float michelson_low_percentile = 0.10f;
+    float michelson_high_percentile = 0.90f;
+    float michelson_eps = 1e-6f;
+    float weber_background_percentile = 0.10f;
+    float weber_signal_percentile = 0.90f;
+    float weber_background_floor = 1.0f / 255.0f;
+    float weber_eps = 1e-6f;
+    bool export_preprocessed_images = false;
+    bool quit_after_preprocessing = false;
     float adaptive_background_expand_factor = 1.1f;
     float adaptive_background_top_fraction = 0.4f;
-    int calibration_x = 20;
-    int calibration_y = 20;
-    int calibration_width = 50;
-    int calibration_height = 31;
 
     // Constructor with default values
     SimulationConfig() : iterations_per_cell(0),
@@ -36,27 +60,47 @@ public:
         iterations_per_cell = node["iterations_per_cell"].as<int>();
         z_scaling = node["z_scaling"].as<float>();
         blur_sigma = node["blur_sigma"].as<float>();
-        if (node["sigmoid_k"]) sigmoid_k = node["sigmoid_k"].as<float>();
-        if (node["sigmoid_center_percentile"]) sigmoid_center_percentile = node["sigmoid_center_percentile"].as<float>();
-        if (node["post_sigmoid_dimmest_percentile"]) post_sigmoid_dimmest_percentile = node["post_sigmoid_dimmest_percentile"].as<float>();
-        if (node["post_sigmoid_dimmest_transition_width"]) post_sigmoid_dimmest_transition_width = node["post_sigmoid_dimmest_transition_width"].as<float>();
-        if (node["post_sigmoid_dimmest_transition_gradient"]) post_sigmoid_dimmest_transition_gradient = node["post_sigmoid_dimmest_transition_gradient"].as<float>();
+        if (node["iterative_penalty"]) iterative_penalty = node["iterative_penalty"].as<float>();
+        if (node["iterative_min_penalty"]) iterative_min_penalty = node["iterative_min_penalty"].as<float>();
+        if (node["iterative_collapse_backoff"]) iterative_collapse_backoff = node["iterative_collapse_backoff"].as<float>();
+        if (node["iterative_penalty_range"]) iterative_penalty_range = node["iterative_penalty_range"].as<float>();
+        if (node["iterative_reward_gate"]) iterative_reward_gate = node["iterative_reward_gate"].as<float>();
+        if (node["iterative_reward_gate_decrement"]) iterative_reward_gate_decrement = node["iterative_reward_gate_decrement"].as<float>();
+        if (node["iterative_reward_gate_min"]) iterative_reward_gate_min = node["iterative_reward_gate_min"].as<float>();
+        if (node["iterative_reward"]) iterative_reward = node["iterative_reward"].as<float>();
+        if (node["iterative_score_max"]) iterative_score_max = node["iterative_score_max"].as<float>();
+        if (node["iterative_max_count"]) iterative_max_count = node["iterative_max_count"].as<int>();
+        if (node["iterative_no_improvement_patience"]) iterative_no_improvement_patience = node["iterative_no_improvement_patience"].as<int>();
+        if (node["iterative_improvement_tolerance"]) iterative_improvement_tolerance = node["iterative_improvement_tolerance"].as<float>();
+        if (node["iterative_score_drop_stop_threshold"]) iterative_score_drop_stop_threshold = node["iterative_score_drop_stop_threshold"].as<float>();
+        if (node["iterative_score_percentile"]) iterative_score_percentile = node["iterative_score_percentile"].as<float>();
+        if (node["iterative_score_percentile_max"]) iterative_score_percentile_max = node["iterative_score_percentile_max"].as<float>();
+        if (node["iterative_score_percentile_increment"]) iterative_score_percentile_increment = node["iterative_score_percentile_increment"].as<float>();
+        if (node["contrast_inner_window_size"]) contrast_inner_window_size = node["contrast_inner_window_size"].as<int>();
+        if (node["contrast_outer_window_size"]) contrast_outer_window_size = node["contrast_outer_window_size"].as<int>();
+        if (node["contrast_structure_threshold"]) contrast_structure_threshold = node["contrast_structure_threshold"].as<float>();
+        if (node["contrast_eps"]) contrast_eps = node["contrast_eps"].as<float>();
+        if (node["post_process_blur_sigma"]) post_process_blur_sigma = node["post_process_blur_sigma"].as<float>();
+        if (node["post_process_amplification"]) post_process_amplification = node["post_process_amplification"].as<float>();
+        if (node["post_process_black_percentile"]) post_process_black_percentile = node["post_process_black_percentile"].as<float>();
+        if (node["post_process_white_percentile"]) post_process_white_percentile = node["post_process_white_percentile"].as<float>();
+        if (node["michelson_low_percentile"]) michelson_low_percentile = node["michelson_low_percentile"].as<float>();
+        if (node["michelson_high_percentile"]) michelson_high_percentile = node["michelson_high_percentile"].as<float>();
+        if (node["michelson_eps"]) michelson_eps = node["michelson_eps"].as<float>();
+        if (node["weber_background_percentile"]) weber_background_percentile = node["weber_background_percentile"].as<float>();
+        if (node["weber_signal_percentile"]) weber_signal_percentile = node["weber_signal_percentile"].as<float>();
+        if (node["weber_background_floor"]) weber_background_floor = node["weber_background_floor"].as<float>();
+        if (node["weber_eps"]) weber_eps = node["weber_eps"].as<float>();
+        if (node["export_preprocessed_images"]) export_preprocessed_images = node["export_preprocessed_images"].as<bool>();
+        if (node["quit_after_preprocessing"]) quit_after_preprocessing = node["quit_after_preprocessing"].as<bool>();
         if (node["adaptive_background_expand_factor"]) adaptive_background_expand_factor = node["adaptive_background_expand_factor"].as<float>();
         if (node["adaptive_background_top_fraction"]) adaptive_background_top_fraction = node["adaptive_background_top_fraction"].as<float>();
-        if (node["calibration_x"]) calibration_x = node["calibration_x"].as<int>();
-        if (node["calibration_y"]) calibration_y = node["calibration_y"].as<int>();
-        if (node["calibration_width"]) calibration_width = node["calibration_width"].as<int>();
-        if (node["calibration_height"]) calibration_height = node["calibration_height"].as<int>();
     }
     void printConfig() const {
         std::cout << "Simulation Config\n";
         std::cout << "iterations_per_cell: " << iterations_per_cell << '\n';
         std::cout << "z_scaling: " << z_scaling << '\n';
         std::cout << "blur_sigma: " << blur_sigma << '\n';
-        std::cout << "sigmoid_center_percentile: " << sigmoid_center_percentile << '\n';
-        std::cout << "post_sigmoid_dimmest_percentile: " << post_sigmoid_dimmest_percentile << '\n';
-        std::cout << "post_sigmoid_dimmest_transition_width: " << post_sigmoid_dimmest_transition_width << '\n';
-        std::cout << "post_sigmoid_dimmest_transition_gradient: " << post_sigmoid_dimmest_transition_gradient << '\n';
         std::cout << "adaptive_background_expand_factor: " << adaptive_background_expand_factor << '\n';
         std::cout << "adaptive_background_top_fraction: " << adaptive_background_top_fraction << '\n';
         std::cout << "z_slices: " << z_slices << std::endl;
@@ -65,156 +109,158 @@ public:
 
 class ProbabilityConfig {
 public:
-    float split;
-    float split_cost;
-    float split_elongation_threshold;
-    float overlap_penalty_weight;
-    float size_reduction_penalty_weight;
-    float split_fake_overlap_volume_fraction_threshold;
-    float split_fake_volume_ratio_threshold;
-    float split_minor_axis_alignment_tolerance_degrees;
-    float split_minor_axis_alignment_flatness_ratio_threshold;
-    float split_minor_axis_alignment_min_radius_disable_threshold;
-    float split_search_radius_multiplier;
-    float split_fake_bridge_brightness_similarity_threshold;
-    int split_burn_in_iterations = 500;
-    float max_split_probability = 0.5f;
-    float split_pre_burn_in_min_separation_over_major = 0.35f;
-    float split_pre_burn_in_z_axis_max_abs = 0.92f;
-    float split_pre_burn_in_z_axis_max_separation_over_major = 1.30f;
-    float split_pre_burn_in_z_axis_min_drift_over_major = 0.40f;
-    float split_post_burn_in_large_recenter_min_drift_over_major = 0.85f;
-    float split_post_burn_in_large_recenter_max_cost_diff = -40.0f;
-    // Minimum bright-voxel count inside a cell's volume for it to attempt a split.
-    // Cells below this are too small for reliable PCA / burn-in (e.g. edge cells
-    // whose bounding box is clipped by the z-stack). Measured as the log's
-    // inside_count from [Split Brightness].
-    int split_min_inside_count = 50000;
-    ProbabilityConfig() : split(0.0f), split_cost(0.0f),
-                          split_elongation_threshold(1.3f), overlap_penalty_weight(1000.0f),
-                          size_reduction_penalty_weight(0.0f),
-                          split_fake_overlap_volume_fraction_threshold(0.30f),
-                          split_fake_volume_ratio_threshold(2.0f),
-                          split_minor_axis_alignment_tolerance_degrees(20.0f),
-                          split_minor_axis_alignment_flatness_ratio_threshold(0.5f),
-                          split_minor_axis_alignment_min_radius_disable_threshold(0.0f),
-                          split_search_radius_multiplier(3.0f),
-                          split_fake_bridge_brightness_similarity_threshold(0.9f) {
-    }
+    // ---- Triaxial pipeline fields (2026-04-11 redesign) ----
+    float P_split_base = 0.03f;
+    float P_split_max = 0.5f;
+    float shape_elongation_classify_threshold = 1.20f;
+
+    float overlap_penalty_weight = 500.0f;
+    float size_reduction_penalty_weight = 30.0f;
+    float split_cost = 80.0f;
+
+    float split_direction_agreement_degrees = 20.0f;
+    int expected_daughter_pre_pass_iterations = 1;
+
+    // Number of candidate placements per split attempt. With two midpoint
+    // options (PCA and snapshot) each generating 5 variants (primary + 2
+    // rotation + 2 translation), the natural total is 10 per primary
+    // direction. Raised from 5 on 2026-04-11 when the dual-midpoint logic
+    // was added so both midpoints fit inside the cap.
+    int split_candidates_per_attempt = 10;
+    int split_candidate_burn_in_iterations = 20;
+    // After the K-candidate loop picks a winner, run this many extra
+    // perturb iterations on JUST the winning pair of daughters (under the
+    // same tight burn-in sigmas) before the bio/cost gates fire. Lets the
+    // chosen daughters settle to a refined local optimum without paying
+    // the K× cost of longer per-candidate burn-ins.
+    int split_final_refine_iterations = 30;
+    // Per-cell position calibration pass between the pre-pass and Phase A/B.
+    // Each cell gets this many perturbCell iterations with tight position
+    // sigmas and ALL radius sigmas forced to 0 so the parent refines its
+    // center without collapsing radii onto one incipient daughter.
+    // Addresses Phase A/B's tendency to park the parent on one daughter
+    // before split attempts fire.
+    int split_calibration_iterations_per_cell = 50;
+    float split_candidate_rotation_delta_degrees = 8.0f;
+    float split_candidate_translation_delta_fraction = 0.2f;
+
+    float bio_daughter_size_ratio_max = 1.5f;
+    float bio_combined_volume_min_fraction = 0.6f;
+    float bio_combined_volume_max_fraction = 1.3f;
+
+    // Post-burn-in drift gate. The best candidate's final daughter centers
+    // must not have drifted more than `max(bio_max_drift_parent_fraction *
+    // parent_maxR, bio_max_drift_daughter_fraction * daughter_maxR)` from
+    // their initial seed positions. Catches daughters escaping the parent
+    // footprint during burn-in (the f4/f5 false-split pathology where one
+    // daughter wanders to absorb a neighbor cell).
+    float bio_max_drift_parent_fraction = 0.4f;
+    float bio_max_drift_daughter_fraction = 0.8f;
+
+    // Midpoint-near-parent gate. Reject when the daughter midpoint lies
+    // further than `bio_max_midpoint_parent_fraction * srcMaxR` from the
+    // snapshot parent center. Uses SNAPSHOT (last-frame) position, not
+    // live — live drifts during Phase A and can park on one daughter
+    // rather than between them. A real division happens at the cell's
+    // previous-frame location; if PCA finds a bright region 1+ parent-
+    // diameters away, it's parent drift (e3d03 run 072416 f5: midpoint
+    // 1.36 x parent maxR) or inflation (1f2ed f4: 1.04), not a real split.
+    float bio_max_midpoint_parent_fraction = 0.95f;
+
+    // Single-daughter volume gate. Reject when either daughter's volume
+    // exceeds `bio_max_single_daughter_volume_fraction * refParentVolume`.
+    // For a real division each daughter is ~0.5 * parent volume. One
+    // daughter >0.65 * parent means "one daughter is essentially the
+    // parent" — catches asymmetric "mimicking" splits like 1f2ed f4
+    // (d2 volume = 0.74 * parent) where one daughter inherits the parent
+    // and the other is a small bolt-on.
+    float bio_max_single_daughter_volume_fraction = 0.65f;
+
+    // Bridge brightness gate — catches the "two equal-size daughters at
+    // parent center covering one continuous cell" pattern that passes
+    // every other gate.
+    //
+    // Reuses the Voronoi-filtered bright-pixel set that PCA already
+    // computed for the split attempt. Each pixel is projected onto the
+    // split axis (d1→d2), normalized so -1 is d1 center and +1 is d2
+    // center. Two independent signals are computed:
+    //
+    //   gap_density  = fraction of in-range pixels with |t| < 0.3
+    //                  (in the middle ~30% of the axis between daughters)
+    //   valley_ratio = mean(brightness of gap pixels) /
+    //                  mean(brightness of edge pixels at 0.6 < |t| < 1.1)
+    //
+    // For a real division the dividing groove empties the gap (low
+    // density) AND dims it (low ratio). For a fake continuous cell
+    // both signals are flat — high density AND ratio ~1.0. The gate
+    // fires only when BOTH signals indicate "flat profile", so real
+    // divisions with a partial groove still pass.
+    float bio_bridge_max_gap_density = 0.18f;
+    float bio_bridge_max_valley_ratio = 0.85f;
+
+    // Multiplier applied to the Spheroid x/y/z perturbation sigmas during
+    // candidate burn-in. The main-loop sigmas (x=5, y=5, z=8) let daughters
+    // wander 15-25 voxels across a 20-iter burn-in, enough to leave the
+    // parent footprint. 0.4 scales them to (2, 2, 3.2), limiting drift to
+    // refinement distances (<10 voxels) while still letting daughters
+    // settle to the local image optimum.
+    float split_burn_in_pos_sigma_scale = 0.4f;
+
+    // Multiplier applied to the Spheroid majorRadius/bRadius/minorRadius
+    // perturbation sigmas during candidate burn-in. At 0.1, radii can
+    // only drift ~10% of their configured sigma per iteration, preserving
+    // the snapshot-based daughter sizing (`0.794 * src`) through burn-in
+    // instead of letting burn-in collapse one daughter to the radius
+    // floor. Fixes the "real daughter + collapsed sliver" false-split
+    // pattern where one daughter shrinks to (~r_min) at a distant image
+    // spot while the other stays near the parent.
+    float split_burn_in_radius_sigma_scale = 0.1f;
+
+    ProbabilityConfig() = default;
 
     void explodeConfig(const YAML::Node& node) {
-        if (node["split"]) {
-            split = node["split"].as<float>();
-        }
-        if (node["split_cost"]) {
-            split_cost = node["split_cost"].as<float>();
-        }
-        if (node["split_elongation_threshold"]) {
-            split_elongation_threshold = node["split_elongation_threshold"].as<float>();
-        }
-        if (node["overlap_penalty_weight"]) {
-            overlap_penalty_weight = node["overlap_penalty_weight"].as<float>();
-        }
-        if (node["size_reduction_penalty_weight"]) {
-            size_reduction_penalty_weight = node["size_reduction_penalty_weight"].as<float>();
-        }
-        if (node["split_fake_overlap_volume_fraction_threshold"]) {
-            split_fake_overlap_volume_fraction_threshold =
-                node["split_fake_overlap_volume_fraction_threshold"].as<float>();
-        }
-        if (node["split_fake_volume_ratio_threshold"]) {
-            split_fake_volume_ratio_threshold =
-                node["split_fake_volume_ratio_threshold"].as<float>();
-        } else if (node["split_fake_radius_ratio_threshold"]) {
-            split_fake_volume_ratio_threshold =
-                node["split_fake_radius_ratio_threshold"].as<float>();
-        }
-        if (node["split_minor_axis_alignment_tolerance_degrees"]) {
-            split_minor_axis_alignment_tolerance_degrees =
-                node["split_minor_axis_alignment_tolerance_degrees"].as<float>();
-        }
-        if (node["split_minor_axis_alignment_flatness_ratio_threshold"]) {
-            split_minor_axis_alignment_flatness_ratio_threshold =
-                node["split_minor_axis_alignment_flatness_ratio_threshold"].as<float>();
-        }
-        if (node["split_minor_axis_alignment_min_radius_disable_threshold"]) {
-            split_minor_axis_alignment_min_radius_disable_threshold =
-                node["split_minor_axis_alignment_min_radius_disable_threshold"].as<float>();
-        }
-        if (node["split_search_radius_multiplier"]) {
-            split_search_radius_multiplier = node["split_search_radius_multiplier"].as<float>();
-        }
-        if (node["split_fake_bridge_brightness_similarity_threshold"]) {
-            split_fake_bridge_brightness_similarity_threshold =
-                node["split_fake_bridge_brightness_similarity_threshold"].as<float>();
-        }
-        if (node["split_burn_in_iterations"]) {
-            split_burn_in_iterations = node["split_burn_in_iterations"].as<int>();
-        }
-        if (node["max_split_probability"]) {
-            max_split_probability = node["max_split_probability"].as<float>();
-        }
-        if (node["split_pre_burn_in_min_separation_over_major"]) {
-            split_pre_burn_in_min_separation_over_major =
-                node["split_pre_burn_in_min_separation_over_major"].as<float>();
-        }
-        if (node["split_pre_burn_in_z_axis_max_abs"]) {
-            split_pre_burn_in_z_axis_max_abs =
-                node["split_pre_burn_in_z_axis_max_abs"].as<float>();
-        }
-        if (node["split_pre_burn_in_z_axis_max_separation_over_major"]) {
-            split_pre_burn_in_z_axis_max_separation_over_major =
-                node["split_pre_burn_in_z_axis_max_separation_over_major"].as<float>();
-        }
-        if (node["split_pre_burn_in_z_axis_min_drift_over_major"]) {
-            split_pre_burn_in_z_axis_min_drift_over_major =
-                node["split_pre_burn_in_z_axis_min_drift_over_major"].as<float>();
-        }
-        if (node["split_post_burn_in_large_recenter_min_drift_over_major"]) {
-            split_post_burn_in_large_recenter_min_drift_over_major =
-                node["split_post_burn_in_large_recenter_min_drift_over_major"].as<float>();
-        }
-        if (node["split_post_burn_in_large_recenter_max_cost_diff"]) {
-            split_post_burn_in_large_recenter_max_cost_diff =
-                node["split_post_burn_in_large_recenter_max_cost_diff"].as<float>();
-        }
-        if (node["split_min_inside_count"]) {
-            split_min_inside_count = node["split_min_inside_count"].as<int>();
-        }
+        if (node["P_split_base"]) P_split_base = node["P_split_base"].as<float>();
+        if (node["P_split_max"]) P_split_max = node["P_split_max"].as<float>();
+        if (node["shape_elongation_classify_threshold"]) shape_elongation_classify_threshold = node["shape_elongation_classify_threshold"].as<float>();
+        if (node["overlap_penalty_weight"]) overlap_penalty_weight = node["overlap_penalty_weight"].as<float>();
+        if (node["size_reduction_penalty_weight"]) size_reduction_penalty_weight = node["size_reduction_penalty_weight"].as<float>();
+        if (node["split_cost"]) split_cost = node["split_cost"].as<float>();
+        if (node["split_direction_agreement_degrees"]) split_direction_agreement_degrees = node["split_direction_agreement_degrees"].as<float>();
+        if (node["expected_daughter_pre_pass_iterations"]) expected_daughter_pre_pass_iterations = node["expected_daughter_pre_pass_iterations"].as<int>();
+        if (node["split_candidates_per_attempt"]) split_candidates_per_attempt = node["split_candidates_per_attempt"].as<int>();
+        if (node["split_candidate_burn_in_iterations"]) split_candidate_burn_in_iterations = node["split_candidate_burn_in_iterations"].as<int>();
+        if (node["split_final_refine_iterations"]) split_final_refine_iterations = node["split_final_refine_iterations"].as<int>();
+        if (node["split_calibration_iterations_per_cell"]) split_calibration_iterations_per_cell = node["split_calibration_iterations_per_cell"].as<int>();
+        if (node["split_candidate_rotation_delta_degrees"]) split_candidate_rotation_delta_degrees = node["split_candidate_rotation_delta_degrees"].as<float>();
+        if (node["split_candidate_translation_delta_fraction"]) split_candidate_translation_delta_fraction = node["split_candidate_translation_delta_fraction"].as<float>();
+        if (node["bio_daughter_size_ratio_max"]) bio_daughter_size_ratio_max = node["bio_daughter_size_ratio_max"].as<float>();
+        if (node["bio_combined_volume_min_fraction"]) bio_combined_volume_min_fraction = node["bio_combined_volume_min_fraction"].as<float>();
+        if (node["bio_combined_volume_max_fraction"]) bio_combined_volume_max_fraction = node["bio_combined_volume_max_fraction"].as<float>();
+        if (node["bio_max_drift_parent_fraction"]) bio_max_drift_parent_fraction = node["bio_max_drift_parent_fraction"].as<float>();
+        if (node["bio_max_drift_daughter_fraction"]) bio_max_drift_daughter_fraction = node["bio_max_drift_daughter_fraction"].as<float>();
+        if (node["bio_max_midpoint_parent_fraction"]) bio_max_midpoint_parent_fraction = node["bio_max_midpoint_parent_fraction"].as<float>();
+        if (node["bio_max_single_daughter_volume_fraction"]) bio_max_single_daughter_volume_fraction = node["bio_max_single_daughter_volume_fraction"].as<float>();
+        if (node["bio_bridge_max_gap_density"]) bio_bridge_max_gap_density = node["bio_bridge_max_gap_density"].as<float>();
+        if (node["bio_bridge_max_valley_ratio"]) bio_bridge_max_valley_ratio = node["bio_bridge_max_valley_ratio"].as<float>();
+        if (node["split_burn_in_pos_sigma_scale"]) split_burn_in_pos_sigma_scale = node["split_burn_in_pos_sigma_scale"].as<float>();
+        if (node["split_burn_in_radius_sigma_scale"]) split_burn_in_radius_sigma_scale = node["split_burn_in_radius_sigma_scale"].as<float>();
+
+        // Legacy YAML aliases — silently map to the new names.
+        if (node["split"]) P_split_base = node["split"].as<float>();
+        if (node["max_split_probability"]) P_split_max = node["max_split_probability"].as<float>();
     }
+
     void printConfig() const {
         std::cout << "Probability Config\n";
-        std::cout << "split: " << split << '\n';
+        std::cout << "P_split_base: " << P_split_base << '\n';
+        std::cout << "P_split_max: " << P_split_max << '\n';
+        std::cout << "shape_elongation_classify_threshold: " << shape_elongation_classify_threshold << '\n';
         std::cout << "split_cost: " << split_cost << '\n';
-        std::cout << "split_elongation_threshold: " << split_elongation_threshold << '\n';
         std::cout << "overlap_penalty_weight: " << overlap_penalty_weight << '\n';
         std::cout << "size_reduction_penalty_weight: " << size_reduction_penalty_weight << '\n';
-        std::cout << "split_fake_overlap_volume_fraction_threshold: "
-                  << split_fake_overlap_volume_fraction_threshold << '\n';
-        std::cout << "split_fake_volume_ratio_threshold: "
-                  << split_fake_volume_ratio_threshold << '\n';
-        std::cout << "split_minor_axis_alignment_tolerance_degrees: "
-                  << split_minor_axis_alignment_tolerance_degrees << '\n';
-        std::cout << "split_minor_axis_alignment_flatness_ratio_threshold: "
-                  << split_minor_axis_alignment_flatness_ratio_threshold << '\n';
-        std::cout << "split_minor_axis_alignment_min_radius_disable_threshold: "
-                  << split_minor_axis_alignment_min_radius_disable_threshold << '\n';
-        std::cout << "split_search_radius_multiplier: "
-                  << split_search_radius_multiplier << '\n';
-        std::cout << "split_fake_bridge_brightness_similarity_threshold: "
-                  << split_fake_bridge_brightness_similarity_threshold << '\n';
-        std::cout << "split_pre_burn_in_min_separation_over_major: "
-                  << split_pre_burn_in_min_separation_over_major << '\n';
-        std::cout << "split_pre_burn_in_z_axis_max_abs: "
-                  << split_pre_burn_in_z_axis_max_abs << '\n';
-        std::cout << "split_pre_burn_in_z_axis_max_separation_over_major: "
-                  << split_pre_burn_in_z_axis_max_separation_over_major << '\n';
-        std::cout << "split_pre_burn_in_z_axis_min_drift_over_major: "
-                  << split_pre_burn_in_z_axis_min_drift_over_major << '\n';
-        std::cout << "split_post_burn_in_large_recenter_min_drift_over_major: "
-                  << split_post_burn_in_large_recenter_min_drift_over_major << '\n';
-        std::cout << "split_post_burn_in_large_recenter_max_cost_diff: "
-                  << split_post_burn_in_large_recenter_max_cost_diff << std::endl;
+        std::cout << "split_candidates_per_attempt: " << split_candidates_per_attempt << '\n';
+        std::cout << "split_candidate_burn_in_iterations: " << split_candidate_burn_in_iterations << '\n';
+        std::cout << "bio_daughter_size_ratio_max: " << bio_daughter_size_ratio_max << std::endl;
     }
 };
 
@@ -277,6 +323,7 @@ public:
     PerturbParams y{};
     PerturbParams z{};
     PerturbParams majorRadius{};
+    PerturbParams bRadius{};
     PerturbParams minorRadius{};
     PerturbParams thetaX{};
     PerturbParams thetaY{};
@@ -284,13 +331,30 @@ public:
     PerturbParams brightness{};
     double minMajorRadius{};
     double maxMajorRadius{};
+    double minBRadius{};
+    double maxBRadius{};
     double minMinorRadius{};
     double maxMinorRadius{};
+    // Frame-1 seed for per-cell _brightness. See CellFactory for why this
+    // should be well below the preprocessed cell brightness — 0.2 is the
+    // value Vincent's branch uses; 1.0 causes cells to shrink on frame 1.
+    float initialBrightness{0.2f};
     double minBrightness{0.1};
     double maxBrightness{1.0};
     float splitBrightestFraction{0.10f};
     float brightnessUpdateBlend{0.2f};
     float brightnessMeanAmplification{1.0f};
+    // Enable/disable the per-frame volume recovery block in CellUniverse::optimize.
+    // When disabled, the 20%-volume-loss trigger + greedy brightness-monotonic
+    // upscale search is skipped entirely regardless of the other
+    // volumeRecovery* knobs. Default false because empirically the greedy
+    // brightness-monotonicity gate (break-on-first-drop) exits at scale=1.02
+    // for any cell sitting on a bright core, so no [Volume Recovery] log line
+    // has fired in any real run — the block is structurally dead code at its
+    // current thresholds. Kept behind a flag in case the algorithm is reworked
+    // (e.g. to pick the argmax brightness across all scales instead of
+    // bailing on first drop).
+    bool volumeRecoveryEnabled{false};
     float volumeRecoveryLossFractionThreshold{0.4f};
     float volumeRecoveryMaxScaleIncreaseFraction{0.3f};
     // Enable/disable the per-frame flat-cell rotation refine grid search in
@@ -316,6 +380,7 @@ public:
         y.explodeParams(node["y"]);
         z.explodeParams(node["z"]);
         majorRadius.explodeParams(node["majorRadius"]);
+        if (node["bRadius"]) bRadius.explodeParams(node["bRadius"]);
         minorRadius.explodeParams(node["minorRadius"]);
         thetaX.explodeParams(node["thetaX"]);
         thetaY.explodeParams(node["thetaY"]);
@@ -324,13 +389,19 @@ public:
 
         minMajorRadius = node["minMajorRadius"].as<double>();
         maxMajorRadius = node["maxMajorRadius"].as<double>();
+        if (node["minBRadius"]) minBRadius = node["minBRadius"].as<double>();
+        if (node["maxBRadius"]) maxBRadius = node["maxBRadius"].as<double>();
         minMinorRadius = node["minMinorRadius"].as<double>();
         maxMinorRadius = node["maxMinorRadius"].as<double>();
+        if (node["initialBrightness"]) initialBrightness = node["initialBrightness"].as<float>();
         if (node["minBrightness"]) minBrightness = node["minBrightness"].as<double>();
         if (node["maxBrightness"]) maxBrightness = node["maxBrightness"].as<double>();
         if (node["splitBrightestFraction"]) splitBrightestFraction = node["splitBrightestFraction"].as<float>();
         if (node["brightnessUpdateBlend"]) brightnessUpdateBlend = node["brightnessUpdateBlend"].as<float>();
         if (node["brightnessMeanAmplification"]) brightnessMeanAmplification = node["brightnessMeanAmplification"].as<float>();
+        if (node["volumeRecoveryEnabled"]) {
+            volumeRecoveryEnabled = node["volumeRecoveryEnabled"].as<bool>();
+        }
         if (node["volumeRecoveryLossFractionThreshold"]) {
             volumeRecoveryLossFractionThreshold = node["volumeRecoveryLossFractionThreshold"].as<float>();
         }

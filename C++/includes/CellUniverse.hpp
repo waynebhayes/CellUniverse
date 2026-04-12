@@ -18,9 +18,6 @@
 
 namespace fs = std::filesystem;
 
-Image processImage(const Image &image, const BaseConfig &config);
-std::vector<cv::Mat> loadFrame(const std::string &imageFile, BaseConfig &config);
-
 class CellUniverse
 {
 public:
@@ -46,7 +43,7 @@ private:
    std::vector<Frame> frames;
    std::string outputPath;
    int firstFrame;
-   std::map<std::string, float> previousElongations;  // PCA elongation from previous frame, drives P(split)
+   std::map<std::string, PreviousFrameSnapshot> previousSnapshots;
 };
 
 #endif

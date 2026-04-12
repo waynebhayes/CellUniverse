@@ -1,8 +1,10 @@
 #include "../includes/CellUniverse.hpp"
+#include "../includes/ImageHandler.hpp"
 #include <set>
 #include <cmath>
 #include <algorithm>
 #include <limits>
+#include <numeric>
 
 namespace utils
 {
@@ -28,119 +30,6 @@ namespace utils
             std::cout << '\n'; // Newline for each row
         }
     }
-}
-
-// Apply sigmoid contrast: output = 1 / (1 + exp(-k * (input - center)))
-// Makes cells near-white and background near-black, giving the L2 cost
-// function clear gradient signal for cell boundaries.
-static void applySigmoid(cv::Mat &image, float k, float center)
-{
-    image.forEach<float>([k, center](float &pixel, const int *) {
-        pixel = 1.0f / (1.0f + std::exp(-k * (pixel - center)));
-    });
-}
-
-static float computePercentileFromRoi(const cv::Mat &roi, float percentile)
-{
-    CV_Assert(roi.type() == CV_32F);
-
-    if (roi.empty()) {
-        return 0.0f;
-    }
-
-    std::vector<float> values;
-    values.reserve(static_cast<size_t>(roi.total()));
-
-    for (int y = 0; y < roi.rows; ++y) {
-        const float *row = roi.ptr<float>(y);
-        values.insert(values.end(), row, row + roi.cols);
-    }
-
-    if (values.empty()) {
-        return 0.0f;
-    }
-
-    const float clampedPercentile = std::clamp(percentile, 0.0f, 1.0f);
-    const size_t index = static_cast<size_t>(
-        std::floor(clampedPercentile * static_cast<float>(values.size() - 1)));
-
-    std::nth_element(values.begin(),
-                     values.begin() + static_cast<std::ptrdiff_t>(index),
-                     values.end());
-    return values[index];
-}
-
-static float computePercentileFromStack(const std::vector<cv::Mat> &stack, float percentile)
-{
-    std::vector<float> values;
-    size_t totalValues = 0;
-    for (const auto &slice : stack) {
-        if (slice.type() != CV_32F || slice.empty()) {
-            continue;
-        }
-        totalValues += static_cast<size_t>(slice.total());
-    }
-
-    if (totalValues == 0) {
-        return 0.0f;
-    }
-
-    values.reserve(totalValues);
-    for (const auto &slice : stack) {
-        if (slice.type() != CV_32F || slice.empty()) {
-            continue;
-        }
-        for (int y = 0; y < slice.rows; ++y) {
-            const float *row = slice.ptr<float>(y);
-            values.insert(values.end(), row, row + slice.cols);
-        }
-    }
-
-    const float clampedPercentile = std::clamp(percentile, 0.0f, 1.0f);
-    const size_t index = static_cast<size_t>(
-        std::floor(clampedPercentile * static_cast<float>(values.size() - 1)));
-
-    std::nth_element(values.begin(),
-                     values.begin() + static_cast<std::ptrdiff_t>(index),
-                     values.end());
-    return values[index];
-}
-
-static float computePercentileFromStackRoi(const std::vector<cv::Mat> &stack, const cv::Rect &roi, float percentile)
-{
-    std::vector<float> values;
-    size_t totalValues = 0;
-    for (const auto &slice : stack) {
-        if (slice.type() != CV_32F || slice.empty()) {
-            continue;
-        }
-        totalValues += static_cast<size_t>(roi.area());
-    }
-
-    if (totalValues == 0 || roi.width <= 0 || roi.height <= 0) {
-        return 0.0f;
-    }
-
-    values.reserve(totalValues);
-    for (const auto &slice : stack) {
-        if (slice.type() != CV_32F || slice.empty()) {
-            continue;
-        }
-        const cv::Mat roiView = slice(roi);
-        for (int y = 0; y < roiView.rows; ++y) {
-            const float *row = roiView.ptr<float>(y);
-            values.insert(values.end(), row, row + roiView.cols);
-        }
-    }
-
-    const float clampedPercentile = std::clamp(percentile, 0.0f, 1.0f);
-    const size_t index = static_cast<size_t>(
-        std::floor(clampedPercentile * static_cast<float>(values.size() - 1)));
-
-    std::nth_element(values.begin(),
-                     values.begin() + static_cast<std::ptrdiff_t>(index),
-                     values.end());
-    return values[index];
 }
 
 static float computeStackMean(const std::vector<cv::Mat> &stack)
@@ -186,56 +75,44 @@ static float computeMeanOfTopFraction(std::vector<float> values, float topFracti
     return static_cast<float>(sum / selectedCount);
 }
 
-// Blur only across valid image content so zero-valued border padding does not
-// bleed into the specimen near the edges.
-static void applySafeGaussianBlur(cv::Mat &image, double sigma)
+static void scaleStackBrightness(std::vector<cv::Mat> &stack, float scale)
 {
-    CV_Assert(image.type() == CV_32F);
-
-    cv::Mat validMask;
-    cv::compare(image, 0.0f, validMask, cv::CMP_GT);
-
-    if (cv::countNonZero(validMask) == 0) {
+    if (std::abs(scale - 1.0f) <= 1e-6f) {
         return;
     }
 
-    cv::Mat validMaskFloat;
-    validMask.convertTo(validMaskFloat, CV_32F, 1.0 / 255.0);
-
-    cv::Mat weightedImage = image.mul(validMaskFloat);
-    cv::Mat blurredWeighted;
-    cv::Mat blurredWeights;
-
-    cv::GaussianBlur(weightedImage, blurredWeighted, cv::Size(0, 0), sigma, sigma, cv::BORDER_CONSTANT);
-    cv::GaussianBlur(validMaskFloat, blurredWeights, cv::Size(0, 0), sigma, sigma, cv::BORDER_CONSTANT);
-
-    image.setTo(0.0f);
-    cv::divide(blurredWeighted, blurredWeights, image, 1.0, CV_32F);
-    image.setTo(0.0f, blurredWeights <= 1e-6f);
+    for (auto &slice : stack) {
+        if (slice.empty()) {
+            continue;
+        }
+        slice *= scale;
+        cv::min(slice, 1.0f, slice);
+        cv::max(slice, 0.0f, slice);
+    }
 }
 
-static void applyPostSigmoidAdjustments(cv::Mat &slice, float stackDimmestPercentileValue,
-                                        float transitionWidth, float transitionGradient)
+static void exportPreprocessedStack(const std::vector<cv::Mat> &stack,
+                                    const fs::path &baseOutputDir,
+                                    const fs::path &framePath)
 {
-    const float safeTransitionWidth = std::max(0.0f, transitionWidth);
-    const float lowerTransitionBound = std::max(0.0f, stackDimmestPercentileValue - safeTransitionWidth);
-    const float safeGradient = std::max(1.0f, transitionGradient);
+    const fs::path frameOutputDir = baseOutputDir / "preprocessed" / framePath.stem();
+    fs::create_directories(frameOutputDir);
 
-    slice.forEach<float>([stackDimmestPercentileValue, safeTransitionWidth, lowerTransitionBound, safeGradient](float &pixel, const int *) {
-        if (pixel > stackDimmestPercentileValue) {
-            return;
+    for (size_t i = 0; i < stack.size(); ++i) {
+        if (stack[i].empty()) {
+            continue;
         }
 
-        float subtractionScale = 1.0f;
-        if (safeTransitionWidth > 0.0f && pixel >= lowerTransitionBound) {
-            const float normalizedDistance =
-                (stackDimmestPercentileValue - pixel) / safeTransitionWidth;
-            subtractionScale = std::pow(std::clamp(normalizedDistance, 0.0f, 1.0f), safeGradient);
+        cv::Mat outputImage;
+        if (stack[i].depth() != CV_8U) {
+            stack[i].convertTo(outputImage, CV_8U, 255.0);
+        } else {
+            outputImage = stack[i].clone();
         }
 
-        pixel -= stackDimmestPercentileValue * subtractionScale;
-        pixel = std::max(0.0f, pixel);
-    });
+        const fs::path outputFile = frameOutputDir / (std::to_string(i) + ".png");
+        cv::imwrite(outputFile.string(), outputImage);
+    }
 }
 
 static float estimateAdaptiveBackgroundFromFrame(const Frame &frame,
@@ -256,6 +133,7 @@ static float estimateAdaptiveBackgroundFromFrame(const Frame &frame,
     for (const auto &cell : frame.cells) {
         auto params = cell.getCellParams();
         params.majorRadius *= expandFactor;
+        params.bRadius     *= expandFactor;
         params.minorRadius *= expandFactor;
         Spheroid expandedCell(params);
         for (size_t z = 0; z < exclusionMask.size(); ++z) {
@@ -285,237 +163,10 @@ static float estimateAdaptiveBackgroundFromFrame(const Frame &frame,
     return computeMeanOfTopFraction(backgroundCandidates, simulationConfig.adaptive_background_top_fraction);
 }
 
-struct StackStats
-{
-    double minValue = std::numeric_limits<double>::infinity();
-    double maxValue = -std::numeric_limits<double>::infinity();
-    double sum = 0.0;
-    double sumSq = 0.0;
-    std::size_t count = 0;
-};
-
-static StackStats computeStackStats(const std::vector<cv::Mat> &stack)
-{
-    StackStats stats;
-    for (const auto &slice : stack)
-    {
-        CV_Assert(slice.type() == CV_32F);
-        double sliceMin = 0.0;
-        double sliceMax = 0.0;
-        cv::minMaxLoc(slice, &sliceMin, &sliceMax);
-        stats.minValue = std::min(stats.minValue, sliceMin);
-        stats.maxValue = std::max(stats.maxValue, sliceMax);
-
-        for (int y = 0; y < slice.rows; ++y)
-        {
-            const float *row = slice.ptr<float>(y);
-            for (int x = 0; x < slice.cols; ++x)
-            {
-                const double v = row[x];
-                stats.sum += v;
-                stats.sumSq += v * v;
-                ++stats.count;
-            }
-        }
-    }
-
-    if (stats.count == 0)
-    {
-        stats.minValue = 0.0;
-        stats.maxValue = 0.0;
-    }
-    return stats;
-}
-static void printStackStats(const std::string &stage, const std::string &imageFile, const std::vector<cv::Mat> &stack)
-{
-    const StackStats stats = computeStackStats(stack);
-    const double mean = (stats.count > 0) ? stats.sum / static_cast<double>(stats.count) : 0.0;
-    const double variance = (stats.count > 0)
-        ? std::max(0.0, stats.sumSq / static_cast<double>(stats.count) - mean * mean)
-        : 0.0;
-    const double stddev = std::sqrt(variance);
-
-    std::cout << "[Preprocess] file=" << fs::path(imageFile).filename().string()
-              << " stage=" << stage
-              << " slices=" << stack.size()
-              << " voxels=" << stats.count
-              << " min=" << stats.minValue
-              << " max=" << stats.maxValue
-              << " mean=" << mean
-              << " stddev=" << stddev
-              << std::endl;
-}
-
-Image processImage(const Image &image, const BaseConfig &config)
-{
-    Image processedImage;
-
-    if (image.channels() == 3)
-    {
-        cv::cvtColor(image, processedImage, cv::COLOR_RGB2GRAY);
-    }
-    else
-    {
-        processedImage = image.clone();
-    }
-
-    processedImage.convertTo(processedImage, CV_32F, 1.0 / 255.0);
-
-    // Gaussian blur for noise reduction
-    if (config.simulation.blur_sigma > 0) {
-        applySafeGaussianBlur(processedImage, config.simulation.blur_sigma);
-    }
-
-    return processedImage;
-}
-
-std::vector<cv::Mat> loadFrame(const std::string &imageFile, BaseConfig &config)
-{
-    std::vector<cv::Mat> processedZSlices; // vector of matrices, each matrix is a 2D image
-    std::vector<cv::Mat> interpolatedZSlices;
-
-    // Get the file extension
-    std::string extension = imageFile.substr(imageFile.find_last_of('.') + 1);
-    if (extension == "tiff" || extension == "tif")
-    {
-        std::vector<cv::Mat> tiffImage;
-        cv::imreadmulti(imageFile, tiffImage, cv::IMREAD_ANYDEPTH | cv::IMREAD_COLOR);
-
-        long unsigned numTiffSlices {tiffImage.size()};
-        if (numTiffSlices == 0) {
-            throw std::runtime_error("TIFF has 0 slices: " + imageFile);
-        }
-
-        cv::Mat img = tiffImage[0];
-
-        if (img.empty())
-        {
-            std::cout << "Error: Could not read the TIFF image" << '\n';
-            return processedZSlices;
-        }
-
-        std::cout << "[LoadFrame] file=" << fs::path(imageFile).filename().string()
-                  << " rawSlices=" << numTiffSlices
-                  << " rawType=" << img.type()
-                  << " rawChannels=" << img.channels()
-                  << " rawRows=" << img.rows
-                  << " rawCols=" << img.cols
-                  << std::endl;
-
-        // Iterate through tiffImage, begin coversion to black and white, blurring
-        for (unsigned i = 0; i < numTiffSlices; ++i) // should we end at == slices?
-        {
-            cv::Mat slice = tiffImage[i].clone();
-            cv::cvtColor(slice, slice, cv::COLOR_BGR2GRAY);
-            cv::Mat processedImg = processImage(slice, config);
-            processedZSlices.push_back(processedImg);
-        }
-
-        printStackStats("post_blur_pre_sigmoid", imageFile, processedZSlices);
-
-        // --- Calibrate sigmoid center from background zone, then apply sigmoid ---
-        // Measure a configurable percentile in a cell-free zone to determine
-        // sigmoid center.
-        // Sigmoid: output = 1 / (1 + exp(-k * (input - center)))
-        // This amplifies contrast: cells → near 1.0, background → near 0.0.
-        // The L2 cost function needs this contrast to correctly fit cell boundaries.
-        // Defensive fallback; overwritten in every realistic path by the percentile calibration below.
-        float sigmoidCenter = 0.445f;
-        if (!processedZSlices.empty()) {
-            int calX = config.simulation.calibration_x;
-            int calY = config.simulation.calibration_y;
-            int calW = std::min(config.simulation.calibration_width,
-                               processedZSlices[0].cols - calX);
-            int calH = std::min(config.simulation.calibration_height,
-                               processedZSlices[0].rows - calY);
-
-            if (calW > 0 && calH > 0) {
-                cv::Rect roi(calX, calY, calW, calH);
-                float bgPercentile = computePercentileFromStackRoi(
-                    processedZSlices,
-                    roi,
-                    config.simulation.sigmoid_center_percentile);
-                sigmoidCenter = bgPercentile;
-                std::cout << "[Calibration] stack_bg_percentile=" << bgPercentile
-                          << " percentile=" << config.simulation.sigmoid_center_percentile
-                          << " sigmoidCenter=" << sigmoidCenter
-                          << " sigmoid_k=" << config.simulation.sigmoid_k << std::endl;
-            }
-        }
-
-        // Apply sigmoid to all slices — amplifies cell/background contrast
-        if (config.simulation.sigmoid_k > 0) {
-            for (auto &slice : processedZSlices) {
-                applySigmoid(slice, config.simulation.sigmoid_k, sigmoidCenter);
-            }
-
-            const float stackDimmestPercentileValue = computePercentileFromStack(
-                processedZSlices,
-                config.simulation.post_sigmoid_dimmest_percentile);
-
-            for (size_t i = 0; i < processedZSlices.size(); ++i) {
-                auto &slice = processedZSlices[i];
-                applyPostSigmoidAdjustments(slice,
-                                            stackDimmestPercentileValue,
-                                            config.simulation.post_sigmoid_dimmest_transition_width,
-                                            config.simulation.post_sigmoid_dimmest_transition_gradient);
-            }
-        }
-
-        printStackStats("post_sigmoid", imageFile, processedZSlices);
-
-        const int expandFactor = config.simulation.z_scaling;
-        // there will be (expandFactor-1) interpolated slices between each "real" one.
-        // we need one extra at the very top to hold the top "real" z-Slice.
-
-        unsigned numSynthSlices = expandFactor * (numTiffSlices-1) + 1; // 225 for 33 slices
-
-        // iterate through synthslices and interpolate between each "real" slice
-        for (int synthSlice = 0; synthSlice < numSynthSlices; ++synthSlice) {
-            int tiffSlice = int(synthSlice / expandFactor); // "real" slice index
-            if (synthSlice % expandFactor == 0) {
-                interpolatedZSlices.push_back(processedZSlices[tiffSlice]);
-            } else if (synthSlice % expandFactor == 1) {
-                interpolateSlices(processedZSlices[tiffSlice],
-                                  processedZSlices[tiffSlice + 1],
-                                  interpolatedZSlices,
-                                  expandFactor - 1);
-            }
-        }
-
-        // [PATCH] Validate synthetic slice count (only for TIFF branch)
-        if (interpolatedZSlices.size() != numSynthSlices) {
-            std::string errorMessage =
-                "interpolatedZSlices must have exactly " + std::to_string(numSynthSlices) +
-                " slices, but has " + std::to_string(interpolatedZSlices.size()) + " slices";
-            throw std::runtime_error(errorMessage);
-        }
-
-        printStackStats("post_interpolation", imageFile, interpolatedZSlices);
-    }
-    else
-    {
-        // TODO: fix this
-        cv::Mat img = cv::imread(imageFile);
-        if (img.empty())
-        {
-            std::cout << "Error: Could not read the image" << '\n';
-            return processedZSlices;
-        }
-
-        if (img.channels() == 3)
-        {
-            cv::cvtColor(img, img, cv::COLOR_BGR2GRAY);
-        }
-
-        processedZSlices.push_back(processImage(img, config));
-    }
-
-    std::cout << std::to_string(interpolatedZSlices.size()) << "slices built successfully" << std::endl;
-    return interpolatedZSlices;
-}
-
-
+// NOTE: Preprocessing (processImage, loadFrame, and their helpers) has moved
+// to ImageHandler. The old implementation lived here and produced a dual-
+// pipeline LoadedFrame (cost + analysis). The new preprocessing returns a
+// single preprocessed stack via ImageHandler::loadFrame.
 CellUniverse::CellUniverse(std::map<std::string, std::vector<Spheroid>> initialCells,
                            PathVec imagePaths,
                            BaseConfig &config,
@@ -524,11 +175,53 @@ CellUniverse::CellUniverse(std::map<std::string, std::vector<Spheroid>> initialC
                            int continueFrom)
 : config(config), outputPath(outputPath), firstFrame(firstFrame)
 {
+    std::vector<std::vector<cv::Mat>> loadedFrames;
+    std::vector<float> frameMeanBrightness;
+    loadedFrames.reserve(imagePaths.size());
+    frameMeanBrightness.reserve(imagePaths.size());
+
+    // Pass 1: load and preprocess every frame, record per-frame mean brightness.
     for (size_t i = 0; i < imagePaths.size(); ++i)
     {
-        std::vector<Image> real_frame;
-        real_frame = loadFrame(imagePaths[i], config);
-        // loadFrame interpolate frames, update to config is needed
+        std::vector<cv::Mat> real_frame =
+            ImageHandler::loadFrame(imagePaths[i].string(), config);
+        frameMeanBrightness.push_back(computeStackMean(real_frame));
+        loadedFrames.push_back(std::move(real_frame));
+    }
+
+    // Global mean across the whole sequence — used to rescale each frame so
+    // their average brightness matches. Keeps the cost function consistent
+    // across frames that drift in illumination.
+    const float globalMeanBrightness = frameMeanBrightness.empty()
+        ? 0.0f
+        : std::accumulate(frameMeanBrightness.begin(), frameMeanBrightness.end(), 0.0f)
+            / static_cast<float>(frameMeanBrightness.size());
+
+    // Pass 2: scale each frame to the global mean, optionally export, then
+    // construct the Frame using the single-pipeline constructor (dual-pipeline
+    // removed 2026-04-11).
+    for (size_t i = 0; i < imagePaths.size(); ++i)
+    {
+        std::vector<cv::Mat> &real_frame = loadedFrames[i];
+        const float currentMeanBrightness = frameMeanBrightness[i];
+        const float brightnessScale =
+            (currentMeanBrightness > 1e-6f) ? (globalMeanBrightness / currentMeanBrightness) : 1.0f;
+        scaleStackBrightness(real_frame, brightnessScale);
+
+        std::cout << "[Brightness Align] frame=" << imagePaths[i].filename().string()
+                  << " frame_mean=" << currentMeanBrightness
+                  << " global_mean=" << globalMeanBrightness
+                  << " scale=" << brightnessScale << '\n';
+
+        if (config.simulation.export_preprocessed_images) {
+            exportPreprocessedStack(real_frame, fs::path(outputPath), imagePaths[i]);
+        }
+
+        if (config.simulation.quit_after_preprocessing) {
+            continue;
+        }
+
+        // loadFrame interpolates frames; update config to the new slice count.
         config.simulation.z_slices = real_frame.size();
         // Propagate the interpolated-z upper bound into Spheroid::cellConfig so
         // the Spheroid constructor's z clamp uses the actual stack height.
@@ -603,28 +296,26 @@ void CellUniverse::optimize(int frameIndex)
 
     const float overlapWeight = config.prob.overlap_penalty_weight;
     const float sizeReductionWeight = config.prob.size_reduction_penalty_weight;
-    const float baseSplitProb = config.prob.split; // base probability (e.g., 0.03)
+    const float baseSplitProb = config.prob.P_split_base;
 
     // No splits on the first frame — cells can't divide before any time has passed
     bool allowSplits = (frameIndex > 0);
 
-    // Save pre-optimization shapes for each cell before Phase 1 perturbation.
-    // Phase 1 can collapse a cell toward one blob of a splitting pair;
-    // pre-opt position feeds PCA center and pre-opt radii set daughter sizing.
-    struct PreOptShape { float majorR, minorR, x, y, z; };
-    std::map<std::string, PreOptShape> preOptShapes;
-    for (const auto &cell : frame.cells) {
-        auto p = cell.getCellParams();
-        preOptShapes[p.name] = {p.majorRadius, p.minorRadius, p.x, p.y, p.z};
-    }
-
     // Cells that already failed a burn-in this frame — skip all further split attempts.
     std::set<std::string> splitBlacklist;
 
-    // P(split) is driven by PREVIOUS frame's PCA elongation (stored in previousElongations).
-    // If a cell looked elongated last frame, it's likely dividing now → higher P(split).
-    // Frame 1 has no previous data → all cells use base rate.
-    // The current frame's PCA (via trySplitCell→getSplitCells) is used for the split AXIS.
+    // PR-B (2026-04-09): P(split) now reads from previousSnapshots (the
+    // snapshot-driven architecture) instead of previousElongations. The
+    // snapshot's shapeElongation is the max of (running max during
+    // the previous frame, end-of-previous-frame) — capturing transient
+    // elongation peaks that the optimizer flattens out before end-of-frame.
+    //
+    // Hard cutoff: cells whose snapshot elongation is below
+    // MIN_TRIGGER_ELONGATION get P(split) = 0, blocking split attempts
+    // Per-cell P(split) using the plan's formula:
+    //   rawP_i     = P_split_base + max(0, 1 - 1 / snapshot.shapeElongation_i)
+    //   P(split)_i = rawP_i * (P_split_max / max_i rawP_i)
+    // All cells get at least `P_split_base` so missed-split recovery works.
     std::map<std::string, float> rawSplitProbabilities;
     std::map<std::string, float> splitProbabilities;
     float maxRawSplitProbability = 0.0f;
@@ -632,9 +323,9 @@ void CellUniverse::optimize(int frameIndex)
     for (const auto &cell : frame.cells) {
         auto p = cell.getCellParams();
         float prevElong = 1.0f;
-        auto it = previousElongations.find(p.name);
-        if (it != previousElongations.end()) {
-            prevElong = it->second;
+        auto snapIt = previousSnapshots.find(p.name);
+        if (snapIt != previousSnapshots.end() && snapIt->second.valid) {
+            prevElong = snapIt->second.shapeElongation;
         }
         const float rawProbability = allowSplits
             ? (baseSplitProb + std::max(0.0f, 1.0f - 1.0f / prevElong))
@@ -645,21 +336,21 @@ void CellUniverse::optimize(int frameIndex)
 
     const float probabilityScale =
         (allowSplits && maxRawSplitProbability > 1e-6f)
-            ? (config.prob.max_split_probability / maxRawSplitProbability)
+            ? (config.prob.P_split_max / maxRawSplitProbability)
             : 0.0f;
 
     std::cout << "[P(split)] frame " << displayFrame
-              << (allowSplits ? " (from previous frame PCA)" : " (splits disabled)") << std::endl;
+              << (allowSplits ? " (from snapshot)" : " (splits disabled)") << std::endl;
     for (const auto &cell : frame.cells) {
         auto p = cell.getCellParams();
         float prevElong = 1.0f;
-        auto it = previousElongations.find(p.name);
-        if (it != previousElongations.end()) {
-            prevElong = it->second;
+        auto snapIt = previousSnapshots.find(p.name);
+        if (snapIt != previousSnapshots.end() && snapIt->second.valid) {
+            prevElong = snapIt->second.shapeElongation;
         }
         const float ps = allowSplits ? (rawSplitProbabilities[p.name] * probabilityScale) : 0.0f;
         splitProbabilities[p.name] = ps;
-        std::cout << "  " << p.name << " prevElong=" << prevElong << " P(split)=" << ps << std::endl;
+        std::cout << "  " << p.name << " shapeElong=" << prevElong << " P(split)=" << ps << std::endl;
     }
 
     double residSum = 0;
@@ -669,137 +360,557 @@ void CellUniverse::optimize(int frameIndex)
     int splitAttempted = 0;
     int perturbAccepted = 0;
 
-    for (size_t i = 0; i < totalIterations; ++i) {
-        if (frame.cells.empty()) break;
+    // ===============================================================
+    // Triaxial phased pipeline (2026-04-11 redesign):
+    //   1. Classify cells into pre_classified and non_classified using
+    //      snapshot.shapeElongation.
+    //   2. Compute seed D1_exp/D2_exp for every pre_classified cell from
+    //      the snapshot long axis.
+    //   3. Run a pre-pass: for each pre_classified cell, gather bright
+    //      pixels in the snapshot-centered box, PCA split, overwrite the
+    //      seed with image-grounded centroids.
+    //   4. Phase A — iterate non_classified cells. Split attempts use
+    //      snapshot-only claim sets for other cells.
+    //   5. Phase B — iterate pre_classified cells. Non_classified cells
+    //      are settled, so their live positions drive the claim set.
+    //      Other pre_classified cells contribute their pre-pass D1_exp/
+    //      D2_exp (or live positions if they've already been processed).
+    // ===============================================================
 
-        // Pick random cell
-        std::uniform_int_distribution<size_t> cellDist(0, frame.cells.size() - 1);
-        size_t cellIdx = cellDist(gen);
-        auto params = frame.cells[cellIdx].getCellParams();
+    const float T_classify = config.prob.shape_elongation_classify_threshold;
 
-        // P(split) driven by PREVIOUS frame's PCA elongation for this cell.
-        // Current frame's PCA is used for split axis (inside trySplitCell), not probability.
-        float prevElongation = 1.0f;
-        {
-            auto it = previousElongations.find(params.name);
-            if (it != previousElongations.end()) {
-                prevElongation = it->second;
+    // Classify by snapshot.shapeElongation. Cells with no snapshot (frame 1,
+    // or just-split daughters) default to non_classified.
+    std::set<std::string> preClassifiedNames;
+    std::set<std::string> nonClassifiedNames;
+    for (const auto &cell : frame.cells) {
+        const std::string name = cell.getName();
+        auto snapIt = previousSnapshots.find(name);
+        const bool isPre = allowSplits
+                        && snapIt != previousSnapshots.end()
+                        && snapIt->second.valid
+                        && snapIt->second.shapeElongation > T_classify;
+        if (isPre) preClassifiedNames.insert(name);
+        else       nonClassifiedNames.insert(name);
+    }
+
+    std::cout << "[Classify] frame " << displayFrame
+              << " pre=" << preClassifiedNames.size()
+              << " non=" << nonClassifiedNames.size()
+              << " T=" << T_classify << std::endl;
+
+    // Seed expected-daughter positions for pre_classified cells.
+    std::map<std::string, std::pair<cv::Point3f, cv::Point3f>> expectedDaughters;
+    for (const auto &name : preClassifiedNames) {
+        const auto &snap = previousSnapshots[name];
+        const float half = 0.5f * snap.longAxisLength;
+        const cv::Point3f seed1(
+            snap.position.x - half * snap.longAxisDir.x,
+            snap.position.y - half * snap.longAxisDir.y,
+            snap.position.z - half * snap.longAxisDir.z);
+        const cv::Point3f seed2(
+            snap.position.x + half * snap.longAxisDir.x,
+            snap.position.y + half * snap.longAxisDir.y,
+            snap.position.z + half * snap.longAxisDir.z);
+        expectedDaughters[name] = {seed1, seed2};
+    }
+
+    // ---- Pre-pass: image-ground the seeds ----
+    // For each pre_classified cell, gather bright pixels in the snapshot
+    // bounding box using the current seed claim sets, run PCA, overwrite
+    // D1_exp/D2_exp with the image-grounded centroids. Optionally iterate —
+    // round k+1 uses the D1_exp/D2_exp from round k to build the claim sets.
+    const int prePassRounds = std::max(1, config.prob.expected_daughter_pre_pass_iterations);
+    if (!preClassifiedNames.empty()) {
+        std::cout << "[Pre-Pass] frame " << displayFrame
+                  << " rounds=" << prePassRounds
+                  << " preClassified=" << preClassifiedNames.size()
+                  << " mode=image_grounded_pca" << std::endl;
+    }
+    for (int round = 0; round < prePassRounds; ++round) {
+        for (const auto &name : preClassifiedNames) {
+            auto it = std::find_if(frame.cells.begin(), frame.cells.end(),
+                [&](const Spheroid &c) { return c.getName() == name; });
+            if (it == frame.cells.end()) continue;
+            size_t ci = static_cast<size_t>(std::distance(frame.cells.begin(), it));
+
+            const auto &snap = previousSnapshots[name];
+            const auto &seedsBefore = expectedDaughters[name];
+
+            // Build claim-set for all OTHER cells at pre-pass time: each
+            // non_classified contributes its snapshot.center (or live
+            // position if no snapshot), each pre_classified contributes its
+            // current D1_exp/D2_exp (seed on round 0, image-grounded on
+            // later rounds). This matches the plan's neighbor-exclusion
+            // table for the pre-pass rows.
+            Frame::ClaimSet others;
+            for (const auto &other : frame.cells) {
+                const std::string otherName = other.getName();
+                if (otherName == name) continue;
+                if (preClassifiedNames.count(otherName)) {
+                    auto itD = expectedDaughters.find(otherName);
+                    if (itD != expectedDaughters.end()) {
+                        others[otherName].push_back(itD->second.first);
+                        others[otherName].push_back(itD->second.second);
+                    }
+                } else {
+                    auto otherSnap = previousSnapshots.find(otherName);
+                    if (otherSnap != previousSnapshots.end() && otherSnap->second.valid) {
+                        others[otherName].push_back(otherSnap->second.position);
+                    } else {
+                        others[otherName].push_back(cv::Point3f(
+                            other.getX(), other.getY(), other.getZ()));
+                    }
+                }
             }
-        }
-        float pSplit = allowSplits ? splitProbabilities[params.name] : 0.0f;
 
-        if (pSplit > 0.0f && uniform01(gen) < pSplit
-            && splitBlacklist.find(params.name) == splitBlacklist.end()) {
-            // --- Try split (PCA + 500-iter burn-in via trySplitCell) ---
-            splitAttempted++;
-            float preOptMajorR = 0.0f, preOptMinorR = 0.0f;
-            float preOptX = 0.0f, preOptY = 0.0f, preOptZ = 0.0f;
-            auto pit = preOptShapes.find(params.name);
-            if (pit != preOptShapes.end()) {
-                preOptMajorR = pit->second.majorR;
-                preOptMinorR = pit->second.minorR;
-                preOptX = pit->second.x;
-                preOptY = pit->second.y;
-                preOptZ = pit->second.z;
-            }
-            std::cout << "[Split Attempt] " << params.name
-                      << " frame=" << displayFrame
-                      << " iter=" << i
-                      << " prevElong=" << prevElongation
-                      << " P(split)=" << pSplit
-                      << " preOptPos=(" << preOptX << "," << preOptY << "," << preOptZ << ")"
-                      << " preOptR=(" << preOptMajorR << "," << preOptMinorR << ")"
-                      << std::endl;
-            auto result = frame.trySplitCell(cellIdx, preOptMajorR, preOptMinorR,
-                                             preOptX, preOptY, preOptZ,
-                                             config.prob.split_elongation_threshold,
-                                             overlapWeight,
-                                             config.prob.split_fake_overlap_volume_fraction_threshold,
-                                             config.prob.split_fake_volume_ratio_threshold,
-                                             config.prob.split_search_radius_multiplier,
-                                             config.prob.split_minor_axis_alignment_tolerance_degrees,
-                                             config.prob.split_minor_axis_alignment_flatness_ratio_threshold,
-                                             config.prob.split_minor_axis_alignment_min_radius_disable_threshold,
-                                             config.prob.split_fake_bridge_brightness_similarity_threshold,
-                                             config.prob.split_pre_burn_in_min_separation_over_major,
-                                             config.prob.split_pre_burn_in_z_axis_max_abs,
-                                             config.prob.split_pre_burn_in_z_axis_max_separation_over_major,
-                                             config.prob.split_pre_burn_in_z_axis_min_drift_over_major,
-                                             config.prob.split_post_burn_in_large_recenter_min_drift_over_major,
-                                             config.prob.split_post_burn_in_large_recenter_max_cost_diff,
-                                             config.prob.split_burn_in_iterations,
-                                             config.prob.split_min_inside_count);
-            double costDiff = result.first;
-            auto callback = result.second;
+            // Run the image-grounded PCA helper on Frame.
+            cv::Point3f groundedD1, groundedD2;
+            int keptPixels = 0;
+            const bool ok = frame.imageGroundExpectedDaughters(
+                ci, snap, others, groundedD1, groundedD2, &keptPixels);
 
-            if (costDiff < -config.prob.split_cost) {
-                callback(true);
-                splitAccepted++;
-                // Remove parent's previous elongation — daughters are new cells
-                previousElongations.erase(params.name);
-                std::cout << "[Split Accepted] " << params.name << " frame=" << displayFrame
-                          << " iter=" << i << " diff=" << costDiff
-                          << " threshold=" << -config.prob.split_cost
-                          << " prevElong=" << prevElongation
-                          << " P(split)=" << pSplit << std::endl;
+            if (ok) {
+                const cv::Point3f oldD1 = seedsBefore.first;
+                const cv::Point3f oldD2 = seedsBefore.second;
+                expectedDaughters[name] = {groundedD1, groundedD2};
+
+                const cv::Point3f delta1 = groundedD1 - oldD1;
+                const cv::Point3f delta2 = groundedD2 - oldD2;
+                const float shift1 = static_cast<float>(cv::norm(delta1));
+                const float shift2 = static_cast<float>(cv::norm(delta2));
+
+                std::cout << "  [Pre-Pass] round=" << round
+                          << " cell=" << name
+                          << " shapeElong=" << snap.shapeElongation
+                          << " kept=" << keptPixels
+                          << " snapPos=(" << snap.position.x << "," << snap.position.y << "," << snap.position.z << ")"
+                          << " seedD1=(" << oldD1.x << "," << oldD1.y << "," << oldD1.z << ")"
+                          << " expD1=(" << groundedD1.x << "," << groundedD1.y << "," << groundedD1.z << ")"
+                          << " shift1=" << shift1
+                          << " seedD2=(" << oldD2.x << "," << oldD2.y << "," << oldD2.z << ")"
+                          << " expD2=(" << groundedD2.x << "," << groundedD2.y << "," << groundedD2.z << ")"
+                          << " shift2=" << shift2
+                          << std::endl;
             } else {
-                callback(false);
-                // Blacklist this cell from further split attempts this frame.
-                // trySplitCell recomputes PCA internally (ignores cache),
-                // so cache reset alone doesn't prevent repeated burn-ins.
-                splitBlacklist.insert(params.name);
-                std::cout << "[Split RejectCost] " << params.name
-                          << " frame=" << displayFrame
-                          << " iter=" << i
-                          << " diff=" << costDiff
-                          << " threshold=" << -config.prob.split_cost
-                          << " prevElong=" << prevElongation
-                          << " P(split)=" << pSplit
+                // PCA failed or too few pixels — keep the snapshot extrapolation.
+                std::cout << "  [Pre-Pass] round=" << round
+                          << " cell=" << name
+                          << " shapeElong=" << snap.shapeElongation
+                          << " kept=" << keptPixels
+                          << " result=pca_failed_keep_snapshot_seeds"
+                          << " seedD1=(" << seedsBefore.first.x << "," << seedsBefore.first.y << "," << seedsBefore.first.z << ")"
+                          << " seedD2=(" << seedsBefore.second.x << "," << seedsBefore.second.y << "," << seedsBefore.second.z << ")"
                           << std::endl;
             }
-        } else {
-            // --- Try perturbation ---
-            auto result = frame.perturbCell(cellIdx, overlapWeight, sizeReductionWeight);
-            double costDiff = result.first;
-            auto callback = result.second;
-
-            if (costDiff < 0) {
-                callback(true);
-                perturbAccepted++;
-                residSum += costDiff;
-                absResidSum += std::abs(costDiff);
-                residCount++;
-            } else {
-                callback(false);
-            }
-        }
-
-        // Progress logging
-        if (i % 500 == 0 && i > 0) {
-            double avgResid = residCount > 0 ? residSum / residCount : 0.0;
-            double avgAbsResid = residCount > 0 ? absResidSum / residCount : 0.0;
-            std::cout << "Frame " << displayFrame << " iter=" << i
-                      << " perturb_accepted=" << perturbAccepted
-                      << " split_attempts=" << splitAttempted
-                      << " split_accepted=" << splitAccepted
-                    //   << " avg_resid=" << avgResid
-                      << " avg_abs_resid=" << avgAbsResid
-                      << " cells=" << frame.cells.size() << std::endl;
-            residSum = 0;
-            absResidSum = 0;
-            residCount = 0;
         }
     }
 
-    // End of frame: compute PCA elongation for each cell on THIS frame's image.
-    // Store in previousElongations for the NEXT frame's P(split) computation.
-    previousElongations.clear();
-    std::cout << "[Elongation for next frame]" << std::endl;
+    // ---- Per-cell position calibration pass ----
+    // Refine each cell's position with tight position sigmas and frozen
+    // radii BEFORE Phase A/B runs. Purpose: prevent the "Phase A parks
+    // parent on one incipient daughter" pathology where radii shrink and
+    // position drifts onto the stronger bright region, leaving the split
+    // attempt with a half-collapsed baseline parent that only weakly
+    // improves cost when replaced by daughters.
+    //
+    // Tight position sigmas (reuse split_burn_in_pos_sigma_scale) let the
+    // cell refine its center by a few voxels per iteration but not escape
+    // the snapshot footprint. Radius sigmas forced to 0 — cell cannot
+    // shrink or grow during calibration. After calibration, Phase A/B runs
+    // at normal sigmas and may still drift, but by then the calibrated
+    // state is used as the starting point.
+    const int calibrationIters = std::max(0, config.prob.split_calibration_iterations_per_cell);
+    if (calibrationIters > 0 && !frame.cells.empty()) {
+        const float posScale = std::max(0.0f, config.prob.split_burn_in_pos_sigma_scale);
+
+        PerturbParams savedCalX = Spheroid::cellConfig.x;
+        PerturbParams savedCalY = Spheroid::cellConfig.y;
+        PerturbParams savedCalZ = Spheroid::cellConfig.z;
+        PerturbParams savedCalMajor = Spheroid::cellConfig.majorRadius;
+        PerturbParams savedCalB = Spheroid::cellConfig.bRadius;
+        PerturbParams savedCalMinor = Spheroid::cellConfig.minorRadius;
+
+        Spheroid::cellConfig.x.sigma = savedCalX.sigma * posScale;
+        Spheroid::cellConfig.y.sigma = savedCalY.sigma * posScale;
+        Spheroid::cellConfig.z.sigma = savedCalZ.sigma * posScale;
+        Spheroid::cellConfig.majorRadius.sigma = 0.0f;
+        Spheroid::cellConfig.bRadius.sigma     = 0.0f;
+        Spheroid::cellConfig.minorRadius.sigma = 0.0f;
+
+        std::cout << "[Calibration] frame " << displayFrame
+                  << " cells=" << frame.cells.size()
+                  << " itersPerCell=" << calibrationIters
+                  << " posScale=" << posScale
+                  << " radiusSigma=0 (frozen)"
+                  << std::endl;
+
+        // Helper to build the frame-start claim set for a given cell.
+        // Used both for the centroid calibration step and the existing
+        // pre-pass loop. For every OTHER cell: pre-classified contribute
+        // their image-grounded expected-daughter pair (from pre-pass),
+        // non-classified contribute their raw snapshot center.
+        auto buildCalibrationClaimSet = [&](const std::string &selfName) -> Frame::ClaimSet {
+            Frame::ClaimSet others;
+            for (const auto &other : frame.cells) {
+                const std::string otherName = other.getName();
+                if (otherName == selfName) continue;
+                if (preClassifiedNames.count(otherName)) {
+                    auto itD = expectedDaughters.find(otherName);
+                    if (itD != expectedDaughters.end()) {
+                        others[otherName].push_back(itD->second.first);
+                        others[otherName].push_back(itD->second.second);
+                    }
+                } else {
+                    auto otherSnap = previousSnapshots.find(otherName);
+                    if (otherSnap != previousSnapshots.end() && otherSnap->second.valid) {
+                        others[otherName].push_back(otherSnap->second.position);
+                    } else {
+                        others[otherName].push_back(cv::Point3f(
+                            other.getX(), other.getY(), other.getZ()));
+                    }
+                }
+            }
+            return others;
+        };
+
+        for (size_t ci = 0; ci < frame.cells.size(); ++ci) {
+            const std::string calName = frame.cells[ci].getName();
+            const cv::Point3f preCalPos(
+                frame.cells[ci].getX(),
+                frame.cells[ci].getY(),
+                frame.cells[ci].getZ());
+
+            // Step 1: analytic centroid calibration — try the bright-pixel
+            // weighted mean as a candidate position, keep it if it gives
+            // lower L2 cost than the current (snapshot-inherited) position.
+            // This is a one-shot move, not an iterative refinement.
+            auto calSnapIt = previousSnapshots.find(calName);
+            if (calSnapIt != previousSnapshots.end() && calSnapIt->second.valid) {
+                Frame::ClaimSet calOthers = buildCalibrationClaimSet(calName);
+                frame.calibrateCellPositionViaCentroid(ci, calSnapIt->second, calOthers);
+            }
+
+            const cv::Point3f postCentroidPos(
+                frame.cells[ci].getX(),
+                frame.cells[ci].getY(),
+                frame.cells[ci].getZ());
+
+            // Step 2: perturbation refinement around whatever starting
+            // position the centroid step chose (either the original snapshot
+            // position or the centroid, whichever was better).
+            int calAccepts = 0;
+            for (int it = 0; it < calibrationIters; ++it) {
+                auto calResult = frame.perturbCell(ci, overlapWeight, sizeReductionWeight);
+                const bool calAccept = calResult.first < 0.0;
+                if (calAccept) ++calAccepts;
+                calResult.second(calAccept);
+            }
+            const cv::Point3f postCalPos(
+                frame.cells[ci].getX(),
+                frame.cells[ci].getY(),
+                frame.cells[ci].getZ());
+            const float centroidShift = static_cast<float>(cv::norm(postCentroidPos - preCalPos));
+            const float perturbDrift = static_cast<float>(cv::norm(postCalPos - postCentroidPos));
+            const float totalDrift = static_cast<float>(cv::norm(postCalPos - preCalPos));
+            std::cout << "  [Calibration] cell=" << calName
+                      << " iters=" << calibrationIters
+                      << " accepts=" << calAccepts
+                      << " pre=(" << preCalPos.x << "," << preCalPos.y << "," << preCalPos.z << ")"
+                      << " postCentroid=(" << postCentroidPos.x << "," << postCentroidPos.y << "," << postCentroidPos.z << ")"
+                      << " post=(" << postCalPos.x << "," << postCalPos.y << "," << postCalPos.z << ")"
+                      << " centroidShift=" << centroidShift
+                      << " perturbDrift=" << perturbDrift
+                      << " totalDrift=" << totalDrift
+                      << std::endl;
+        }
+
+        Spheroid::cellConfig.x = savedCalX;
+        Spheroid::cellConfig.y = savedCalY;
+        Spheroid::cellConfig.z = savedCalZ;
+        Spheroid::cellConfig.majorRadius = savedCalMajor;
+        Spheroid::cellConfig.bRadius     = savedCalB;
+        Spheroid::cellConfig.minorRadius = savedCalMinor;
+    }
+
+    // ---- Helper: build claim-set for other cells during a split attempt ----
+    auto buildOtherClaimSet = [&](const std::string &selfName,
+                                  const std::set<std::string> &alreadySplitInB,
+                                  const std::set<std::string> &splitRejectedInB,
+                                  bool phaseB) -> Frame::ClaimSet {
+        Frame::ClaimSet others;
+        for (const auto &other : frame.cells) {
+            const std::string otherName = other.getName();
+            if (otherName == selfName) continue;
+
+            const bool isOtherPre = preClassifiedNames.count(otherName) > 0;
+
+            if (phaseB) {
+                if (isOtherPre) {
+                    // If already split-accepted in B → use the daughters'
+                    // live positions. If rejected → use parent live position.
+                    // Otherwise → use expected daughters seed.
+                    if (alreadySplitInB.count(otherName) > 0) {
+                        // Daughters are new cells with names like otherName+"0"/"1".
+                        // They will appear in frame.cells with current live pos.
+                        // Find them by name prefix.
+                        const std::string d1n = otherName + "0";
+                        const std::string d2n = otherName + "1";
+                        for (const auto &c : frame.cells) {
+                            if (c.getName() == d1n || c.getName() == d2n) {
+                                others[c.getName()].push_back(cv::Point3f(c.getX(), c.getY(), c.getZ()));
+                            }
+                        }
+                    } else if (splitRejectedInB.count(otherName) > 0) {
+                        others[otherName].push_back(cv::Point3f(other.getX(), other.getY(), other.getZ()));
+                    } else {
+                        auto itD = expectedDaughters.find(otherName);
+                        if (itD != expectedDaughters.end()) {
+                            others[otherName].push_back(itD->second.first);
+                            others[otherName].push_back(itD->second.second);
+                        }
+                    }
+                } else {
+                    // non_classified: Phase A settled them — use live pos.
+                    others[otherName].push_back(cv::Point3f(other.getX(), other.getY(), other.getZ()));
+                }
+            } else {
+                // Phase A: snapshot-only.
+                if (isOtherPre) {
+                    auto itD = expectedDaughters.find(otherName);
+                    if (itD != expectedDaughters.end()) {
+                        others[otherName].push_back(itD->second.first);
+                        others[otherName].push_back(itD->second.second);
+                    }
+                } else {
+                    auto otherSnap = previousSnapshots.find(otherName);
+                    if (otherSnap != previousSnapshots.end() && otherSnap->second.valid) {
+                        others[otherName].push_back(otherSnap->second.position);
+                    } else {
+                        others[otherName].push_back(cv::Point3f(other.getX(), other.getY(), other.getZ()));
+                    }
+                }
+            }
+        }
+        return others;
+    };
+
+    // ---- Single-phase iteration helper ----
+    auto runPhase = [&](const std::set<std::string> &phaseNames,
+                        bool phaseB,
+                        std::set<std::string> &splitAcceptedInPhase,
+                        std::set<std::string> &splitRejectedInPhase) {
+        if (phaseNames.empty()) return;
+
+        const size_t perCellIters = static_cast<size_t>(config.simulation.iterations_per_cell);
+        const size_t totalPhaseIters = perCellIters * phaseNames.size();
+
+        for (size_t i = 0; i < totalPhaseIters; ++i) {
+            if (frame.cells.empty()) break;
+
+            // Find all live cells whose name is in phaseNames and not blacklisted.
+            std::vector<size_t> eligible;
+            eligible.reserve(phaseNames.size());
+            for (size_t ci = 0; ci < frame.cells.size(); ++ci) {
+                const std::string cname = frame.cells[ci].getName();
+                if (phaseNames.count(cname) == 0) continue;
+                if (splitBlacklist.count(cname) > 0) {
+                    // Still eligible for perturbation — the blacklist gates
+                    // split attempts, not perturbation.
+                }
+                eligible.push_back(ci);
+            }
+            if (eligible.empty()) break;
+
+            std::uniform_int_distribution<size_t> cellDist(0, eligible.size() - 1);
+            const size_t cellIdx = eligible[cellDist(gen)];
+            const std::string cellName = frame.cells[cellIdx].getName();
+
+            const float pSplit = allowSplits ? splitProbabilities[cellName] : 0.0f;
+            const bool canSplit = pSplit > 0.0f
+                               && splitBlacklist.count(cellName) == 0;
+
+            if (canSplit && uniform01(gen) < pSplit) {
+                // --- Split attempt ---
+                splitAttempted++;
+                auto snapIt = previousSnapshots.find(cellName);
+                if (snapIt == previousSnapshots.end() || !snapIt->second.valid) {
+                    splitBlacklist.insert(cellName);
+                    continue;
+                }
+
+                const bool isPre = preClassifiedNames.count(cellName) > 0;
+                const bool useSnapDir = isPre;
+
+                Frame::ClaimSet others = buildOtherClaimSet(
+                    cellName,
+                    splitAcceptedInPhase,
+                    splitRejectedInPhase,
+                    phaseB);
+
+                // Pass a snapshot copy whose long-axis direction / length
+                // / position reflect the image-grounded {D1_exp, D2_exp}
+                // from the pre-pass (when available). Without this override,
+                // `trySplitCellPhased` would rebuild its self-claim from the
+                // raw snapshot.longAxisDir/longAxisLength and miss the
+                // grounded positions the pre-pass computed. Non-pre-classified
+                // cells have no entry in `expectedDaughters`, so they pass
+                // the original snapshot through unchanged.
+                PreviousFrameSnapshot splitSnapshot = snapIt->second;
+                if (isPre) {
+                    auto itD = expectedDaughters.find(cellName);
+                    if (itD != expectedDaughters.end()) {
+                        const cv::Point3f &gd1 = itD->second.first;
+                        const cv::Point3f &gd2 = itD->second.second;
+                        const cv::Point3f mid(
+                            0.5f * (gd1.x + gd2.x),
+                            0.5f * (gd1.y + gd2.y),
+                            0.5f * (gd1.z + gd2.z));
+                        const cv::Point3f delta = gd2 - gd1;
+                        const float len = static_cast<float>(cv::norm(delta));
+                        if (len > 1e-3f) {
+                            splitSnapshot.position = mid;
+                            splitSnapshot.longAxisDir = cv::Point3f(
+                                delta.x / len, delta.y / len, delta.z / len);
+                            splitSnapshot.longAxisLength = len;
+                        }
+                    }
+                }
+
+                auto result = frame.trySplitCellPhased(
+                    cellIdx, splitSnapshot, others, useSnapDir, config.prob);
+
+                double costDiff = result.first;
+                auto callback = result.second;
+
+                const bool accept = (costDiff < 0.0);
+                callback(accept);
+                if (accept) {
+                    splitAccepted++;
+                    splitAcceptedInPhase.insert(cellName);
+                    previousSnapshots.erase(cellName);
+                } else {
+                    splitBlacklist.insert(cellName);
+                    splitRejectedInPhase.insert(cellName);
+
+                    // Plan compensation: "revert; blacklist i; perturb i once".
+                    // Run a single perturbation on the (now-reverted) parent
+                    // so a rejected split doesn't waste the whole iteration
+                    // budget for this cell. Re-lookup the cell index by name
+                    // because the cells vector is untouched by revert but
+                    // cellIdx is only cheap-safe immediately after the revert.
+                    auto parentIt = std::find_if(frame.cells.begin(), frame.cells.end(),
+                        [&](const Spheroid &c) { return c.getName() == cellName; });
+                    if (parentIt != frame.cells.end()) {
+                        const size_t parentIdx = static_cast<size_t>(
+                            std::distance(frame.cells.begin(), parentIt));
+                        auto compResult = frame.perturbCell(
+                            parentIdx, overlapWeight, sizeReductionWeight);
+                        const bool compAccept = compResult.first < 0.0;
+                        compResult.second(compAccept);
+                        if (compAccept) {
+                            perturbAccepted++;
+                            residSum += compResult.first;
+                            absResidSum += std::abs(compResult.first);
+                            residCount++;
+                        }
+                    }
+                }
+            } else {
+                // --- Perturbation ---
+                auto result = frame.perturbCell(cellIdx, overlapWeight, sizeReductionWeight);
+                double costDiff = result.first;
+                auto callback = result.second;
+                if (costDiff < 0) {
+                    callback(true);
+                    perturbAccepted++;
+                    residSum += costDiff;
+                    absResidSum += std::abs(costDiff);
+                    residCount++;
+                } else {
+                    callback(false);
+                }
+            }
+
+            if ((i + 1) % 500 == 0) {
+                std::cout << "Frame " << displayFrame
+                          << (phaseB ? " PhaseB " : " PhaseA ")
+                          << "iter=" << i
+                          << " perturb_accepted=" << perturbAccepted
+                          << " split_attempts=" << splitAttempted
+                          << " split_accepted=" << splitAccepted
+                          << " cells=" << frame.cells.size() << std::endl;
+            }
+        }
+    };
+
+    std::set<std::string> phaseASplitAccepted;
+    std::set<std::string> phaseASplitRejected;
+    runPhase(nonClassifiedNames, /* phaseB */ false, phaseASplitAccepted, phaseASplitRejected);
+
+    std::set<std::string> phaseBSplitAccepted;
+    std::set<std::string> phaseBSplitRejected;
+    runPhase(preClassifiedNames, /* phaseB */ true, phaseBSplitAccepted, phaseBSplitRejected);
+
+    // End of frame: build PreviousFrameSnapshot for each cell, combining the
+    // in-frame running max (from the periodic sampling above) with the
+    // end-of-frame PCA measurement. The snapshot is the authoritative source
+    // for next-frame split decisions (PR-B trigger, PR-C placement, PR-D peaks).
+    // PR-E: previousElongations removed — snapshots are the sole data store.
+    //
+    // Don't clear previousSnapshots — entries for cells that disappeared this
+    // frame (e.g., parents replaced by daughters) become stale but are
+    // overwritten below for surviving cells. Daughters get fresh snapshots.
+    // We do erase entries that don't exist anymore to prevent unbounded growth.
+    {
+        std::set<std::string> liveCells;
+        for (const auto &cell : frame.cells) {
+            liveCells.insert(cell.getName());
+        }
+        for (auto it = previousSnapshots.begin(); it != previousSnapshots.end();) {
+            if (liveCells.find(it->first) == liveCells.end()) {
+                it = previousSnapshots.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+    std::cout << "[Snapshot] frame " << displayFrame << std::endl;
     for (size_t ci = 0; ci < frame.cells.size(); ++ci) {
         auto p = frame.cells[ci].getCellParams();
-        float elong = frame.computeElongationForCell(ci);
-        previousElongations[p.name] = elong;
-        std::cout << "  " << p.name << " elongation=" << elong << std::endl;
+
+        // Triaxial fitted-shape elongation is the classification signal.
+        // max(a,b,c)/min(a,b,c) from the fit, plus the world-space direction
+        // and length of the longest axis. No image-PCA anymore.
+        const float fitShapeElong = frame.cells[ci].shapeElongation();
+        cv::Point3f fitLongAxisDir;
+        float fitLongAxisLength = 0.0f;
+        frame.cells[ci].worldLongAxis(fitLongAxisDir, fitLongAxisLength);
+
+        PreviousFrameSnapshot snap;
+        snap.valid = true;
+        snap.shapeElongation = fitShapeElong;
+        snap.longAxisDir = fitLongAxisDir;
+        snap.longAxisLength = fitLongAxisLength;
+
+        snap.position = cv::Point3f(p.x, p.y, p.z);
+        snap.majorRadius = p.majorRadius;
+        snap.bRadius     = p.bRadius;
+        snap.minorRadius = p.minorRadius;
+        snap.thetaX = p.theta_x;
+        snap.thetaY = p.theta_y;
+        snap.thetaZ = p.theta_z;
+        snap.brightness = p.brightness;
+
+        previousSnapshots[p.name] = snap;
+
+        std::cout << "  " << p.name
+                  << " shapeElong=" << snap.shapeElongation
+                  << " longAxisLen=" << snap.longAxisLength
+                  << " pos=(" << snap.position.x
+                  << "," << snap.position.y
+                  << "," << snap.position.z << ")"
+                  << std::endl;
     }
 
     const float brightnessBlend = std::clamp(config.cell ? config.cell->brightnessUpdateBlend : 0.0f, 0.0f, 1.0f);
@@ -816,7 +927,7 @@ void CellUniverse::optimize(int frameIndex)
         frame.regenerateSynthFrame();
     }
 
-    if (frameIndex > 0 && config.cell) {
+    if (frameIndex > 0 && config.cell && config.cell->volumeRecoveryEnabled) {
         const float lossThreshold = std::clamp(config.cell->volumeRecoveryLossFractionThreshold, 0.0f, 0.99f);
         const float maxScaleIncreaseFraction =
             std::max(0.0f, config.cell->volumeRecoveryMaxScaleIncreaseFraction);
@@ -828,9 +939,11 @@ void CellUniverse::optimize(int frameIndex)
             }
 
             const auto &realFrame = frame.getRealFrame();
+            // Triaxial volume proxy: a * b * c (omit the 4/3 * pi constant
+            // since it cancels in every ratio comparison downstream).
             const auto computeVolume = [](const Spheroid &cell) {
                 return static_cast<double>(cell.getMajorRadius()) *
-                       static_cast<double>(cell.getMajorRadius()) *
+                       static_cast<double>(cell.getBRadius()) *
                        static_cast<double>(cell.getMinorRadius());
             };
 
@@ -946,7 +1059,7 @@ void CellUniverse::optimize(int frameIndex)
                                     continue;
                                 }
 
-                                const Spheroid candidate(SpheroidParams(
+                                SpheroidParams candidateParams(
                                     passCenter.name,
                                     passCenter.x,
                                     passCenter.y,
@@ -956,7 +1069,9 @@ void CellUniverse::optimize(int frameIndex)
                                     passCenter.theta_x + deltaX,
                                     passCenter.theta_y + deltaY,
                                     passCenter.theta_z + deltaZ,
-                                    passCenter.brightness));
+                                    passCenter.brightness);
+                                candidateParams.bRadius = passCenter.bRadius;
+                                const Spheroid candidate(candidateParams);
                                 const auto [candidateMeanBrightness, candidateStdBrightness] =
                                     candidate.measureBrightnessStats(realFrame);
                                 const bool betterMean = candidateMeanBrightness > passBestMeanBrightness + 1e-6f;
@@ -1072,7 +1187,7 @@ void CellUniverse::saveCells(int frameIndex)
             file.close();
             file.open(cellsPath, std::ios::trunc);
         }
-        file << "file,name,x,y,z,majorRadius,minorRadius,theta_x,theta_y,theta_z" << '\n';
+        file << "file,name,x,y,z,majorRadius,bRadius,minorRadius,theta_x,theta_y,theta_z" << '\n';
     }
 
     Frame &frame = frames[frameIndex];
@@ -1087,6 +1202,7 @@ void CellUniverse::saveCells(int frameIndex)
              << params.y << ","
              << params.z << ","
              << params.majorRadius << ","
+             << params.bRadius << ","
              << params.minorRadius << ","
              << params.theta_x << ","
              << params.theta_y << ","

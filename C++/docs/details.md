@@ -6,6 +6,46 @@ CellUniverse tracks 3D cells across time-lapse microscopy frames. For each frame
 
 ---
 
+## 0.1. 2026-04-11 Update Pointer (read this first)
+
+The split pipeline was rewritten on 2026-04-11 around a **triaxial cell
+model** (`a`, `b`, `c` all independent — no longer oblate). All 2026-04-06
+fake-guards, Pillar B machinery, and the monolithic 1000-iter burn-in have
+been deleted. The new pipeline classifies cells by **fitted shape
+elongation** (`max(a,b,c)/min(a,b,c)`) and routes split attempts through
+`Frame::trySplitCellPhased`, which evaluates K=5 short candidate burn-ins
+and picks the best via a bio check (size ratio, volume fraction, buried
+checks, drift-from-seed) + cost gate. Supporting changes:
+
+- `PreviousFrameSnapshot` carries `shapeElongation`, `longAxisDir`,
+  `longAxisLength`, and the end-of-frame cell state.
+- `Spheroid::shapeElongation()` and `Spheroid::worldLongAxis()` are the
+  classification inputs.
+- `ProbabilityConfig` fields — new (`P_split_base`, `P_split_max`,
+  `shape_elongation_classify_threshold`, `split_candidates_per_attempt`,
+  `split_candidate_burn_in_iterations`, `split_candidate_rotation_delta_degrees`,
+  `split_candidate_translation_delta_fraction`, `split_direction_agreement_degrees`,
+  `bio_daughter_size_ratio_max`, `bio_combined_volume_min_fraction`,
+  `bio_combined_volume_max_fraction`, `bio_max_drift_parent_fraction`,
+  `bio_max_drift_daughter_fraction`, `split_burn_in_pos_sigma_scale`);
+  deleted (all `split_fake_*`, `split_pre_burn_in_*`, `split_post_burn_in_*`,
+  `split_minor_axis_alignment_*`, `split_burn_in_iterations`,
+  `split_elongation_threshold`).
+- `Frame::trySplitCellPhased(cellIndex, snapshot, otherClaimSets,
+  useSnapshotDirection, probConfig)` — daughters sized from snapshot parent
+  radii, position perturbation sigmas tightened during burn-in, post-burn-in
+  drift-from-seed gate rejects daughters that escaped the parent footprint.
+- `Frame::bioCheckDaughters(...)` now takes `double refParentVolume`
+  instead of `const Spheroid &parent` — volume fraction ratios use snapshot
+  parent volume, not live parent.
+
+See `docs/changelogs/changelogv5.md` entries dated 2026-04-11 for the
+per-file, per-line before/after. Everything below this section predates
+the triaxial rewrite and references APIs and config fields that no longer
+exist.
+
+---
+
 ## 0. 2026-04-07 Update Pointer (read this first)
 
 This document's lower sections predate the **2026-04-05 / 2026-04-06 brightness + split-guard rework** and the **2026-04-07 merge** (`yp_yd_merge_04072026`). Sections 1–3 below have been updated. **Sections 6 (Split Detection) and below still describe the older, simpler burn-in logic** and are missing most of the new guards.

@@ -105,6 +105,40 @@ void Spheroid::inverseRotatePoint(double dx, double dy, double dz,
     lz = R_T[6] * dx + R_T[7] * dy + R_T[8] * dz;
 }
 
+void Spheroid::worldLongAxis(cv::Point3f &dir, float &length) const
+{
+    // Pick whichever of (a, b, c) is largest and rotate the corresponding
+    // local unit vector out to world space using the forward rotation
+    // R = Rz * Ry * Rx. Since R_T in generateInverseRotationMatrix is R^T
+    // stored row-major, column-i of R (which maps local axis i to world) is
+    // read out of R_T as (R_T[i], R_T[3 + i], R_T[6 + i]).
+    std::array<double, 9> R_T{};
+    generateInverseRotationMatrix(R_T);
+
+    int longestAxis = 0; // 0 = a (local x), 1 = b (local y), 2 = c (local z)
+    double longestValue = a;
+    if (b > longestValue) { longestAxis = 1; longestValue = b; }
+    if (c > longestValue) { longestAxis = 2; longestValue = c; }
+
+    // Column `longestAxis` of R = (R_T[longestAxis], R_T[3 + longestAxis], R_T[6 + longestAxis]).
+    const double dx = R_T[longestAxis];
+    const double dy = R_T[3 + longestAxis];
+    const double dz = R_T[6 + longestAxis];
+
+    // The column should already be a unit vector because R is orthonormal,
+    // but normalize defensively against floating-point drift.
+    const double norm = std::sqrt(dx * dx + dy * dy + dz * dz);
+    if (norm > 1e-9) {
+        dir = cv::Point3f(
+            static_cast<float>(dx / norm),
+            static_cast<float>(dy / norm),
+            static_cast<float>(dz / norm));
+    } else {
+        dir = cv::Point3f(1.0f, 0.0f, 0.0f);
+    }
+    length = static_cast<float>(longestValue);
+}
+
 void Spheroid::generateInverseRotationMatrix(std::array<double, 9> &R_T) const {
     const double cx = std::cos(_theta_x), sx = std::sin(_theta_x);
     const double cy = std::cos(_theta_y), sy = std::sin(_theta_y);
@@ -148,7 +182,9 @@ bool Spheroid::computeSliceBounds(const cv::Mat &image, float z,
 // No voxel matrix construction needed — drawing is done analytically.
 Spheroid::Spheroid(const SpheroidParams &init_props)
 : _name(init_props.name), _position{init_props.x, init_props.y, init_props.z},
-          _major_radius(init_props.majorRadius), _minor_radius(init_props.minorRadius),
+          _major_radius(init_props.majorRadius),
+          _b_radius(init_props.bRadius > 0.0f ? init_props.bRadius : init_props.majorRadius),
+          _minor_radius(init_props.minorRadius),
           _theta_x(init_props.theta_x), _theta_y(init_props.theta_y), _theta_z(init_props.theta_z),
           _brightness(init_props.brightness)
 {
@@ -156,6 +192,15 @@ Spheroid::Spheroid(const SpheroidParams &init_props)
     _major_radius = std::fmin(_major_radius, cellConfig.maxMajorRadius);
     _minor_radius = std::fmax(_minor_radius, cellConfig.minMinorRadius);
     _minor_radius = std::fmin(_minor_radius, cellConfig.maxMinorRadius);
+    // Triaxial b-axis is clamped to [minBRadius, maxBRadius] when those bounds
+    // are configured. If they are not set (still zero), fall back to the same
+    // bounds as the a-axis so an unconfigured run still behaves near-oblate.
+    const double minBR = (cellConfig.maxBRadius > 0.0)
+        ? cellConfig.minBRadius : cellConfig.minMajorRadius;
+    const double maxBR = (cellConfig.maxBRadius > 0.0)
+        ? cellConfig.maxBRadius : cellConfig.maxMajorRadius;
+    _b_radius = std::fmax(_b_radius, minBR);
+    _b_radius = std::fmin(_b_radius, maxBR);
 
     // Clamp z to the valid interpolated-z range. Without this, perturbation can
     // push cells off the z-stack (where they contribute zero pixels and reduce
@@ -171,7 +216,7 @@ Spheroid::Spheroid(const SpheroidParams &init_props)
     _brightness = std::fmin(_brightness, static_cast<float>(cellConfig.maxBrightness));
 
     this->a = this->_major_radius;
-    this->b = this->a; // oblate: a == b
+    this->b = this->_b_radius;
     this->c = this->_minor_radius;
 
     if (a <= 0 || b <= 0 || c <= 0) {
@@ -320,556 +365,66 @@ void Spheroid::drawOutline(cv::Mat &image, float color, float z) const {
         _position.x + cellConfig.x.getPerturbOffset(),
         _position.y + cellConfig.y.getPerturbOffset(),
         _position.z + cellConfig.z.getPerturbOffset(),
-        _major_radius + cellConfig.majorRadius.getPerturbOffset(),
-        _minor_radius + cellConfig.minorRadius.getPerturbOffset(),
-        _theta_x + cellConfig.thetaX.getPerturbOffset(),
-        _theta_y + cellConfig.thetaY.getPerturbOffset(),
-        _theta_z + cellConfig.thetaZ.getPerturbOffset(),
+        static_cast<float>(_major_radius) + cellConfig.majorRadius.getPerturbOffset(),
+        static_cast<float>(_minor_radius) + cellConfig.minorRadius.getPerturbOffset(),
+        static_cast<float>(_theta_x) + cellConfig.thetaX.getPerturbOffset(),
+        static_cast<float>(_theta_y) + cellConfig.thetaY.getPerturbOffset(),
+        static_cast<float>(_theta_z) + cellConfig.thetaZ.getPerturbOffset(),
         _brightness + cellConfig.brightness.getPerturbOffset());
+    // Triaxial b-axis perturbation. Applied as a separate field assignment
+    // because the SpheroidParams constructor signatures do not include bRadius
+    // (an 11-arg form would be ambiguous with the 10-arg oblate form).
+    spheroidParams.bRadius = static_cast<float>(_b_radius) + cellConfig.bRadius.getPerturbOffset();
     return Spheroid(spheroidParams);
 }
 
-std::tuple<Spheroid, Spheroid, bool, float, SplitDiagnostics> Spheroid::getSplitCells(
-    const std::vector<cv::Mat> &image, 
-    float z_scaling,
-    float backgroundColor,
-    const std::vector<cv::Point3f> &neighborCenters,
-    float preOptMajorR, float preOptMinorR,
-    float preOptX, float preOptY, float preOptZ,
-    float splitSearchRadiusMultiplier,
-    float splitMinorAxisAlignmentToleranceDegrees,
-    float splitMinorAxisAlignmentFlatnessRatioThreshold,
-    float splitMinorAxisAlignmentMinRadiusDisableThreshold) const {
-    // Step 1: Get the bounding box, expanded for split detection.
-    // Use pre-optimization radii if available (Phase 1 may collapse the cell).
-    // Use pre-optimization position if available (Phase 1 may shift the cell
-    // toward one blob, making PCA look spherical from the shifted center).
+bool Spheroid::isPointInsideEllipsoid(const cv::Point3f &worldPoint,
+                                      float scaleFactor) const
+{
+    // Inverse-rotate the world-space displacement back into the cell's
+    // local (upright) frame, then test the scaled ellipsoid inequality
+    // (lx/sa)^2 + (ly/sb)^2 + (lz/sc)^2 <= 1.
+    const double dx = static_cast<double>(worldPoint.x) - _position.x;
+    const double dy = static_cast<double>(worldPoint.y) - _position.y;
+    const double dz = static_cast<double>(worldPoint.z) - _position.z;
+    double lx = 0.0, ly = 0.0, lz = 0.0;
+    inverseRotatePoint(dx, dy, dz, lx, ly, lz);
 
-    float effA = (preOptMajorR > 0.0f) ? std::max(static_cast<float>(a), preOptMajorR) : static_cast<float>(a);
-    float effB = (preOptMajorR > 0.0f) ? std::max(static_cast<float>(b), preOptMajorR) : static_cast<float>(b);
-    float effC = (preOptMinorR > 0.0f) ? std::max(static_cast<float>(c), preOptMinorR) : static_cast<float>(c);
-    float maxR = std::max({effA, effB, effC});
-
-    const float clampedSplitSearchRadiusMultiplier = std::max(0.1f, splitSearchRadiusMultiplier);
-    float splitSearchRadius = maxR * clampedSplitSearchRadiusMultiplier;
-
-    // PCA center: use pre-opt position when available so PCA sees both blobs
-    // from the original midpoint, not the Phase-1-shifted position.
-    cv::Point3f pcaCenter = _position;
-    if (preOptMajorR > 0.0f) {
-        pcaCenter = cv::Point3f(preOptX, preOptY, preOptZ);
+    const double clampedScale = std::max(1e-3, static_cast<double>(scaleFactor));
+    const double sa = a * clampedScale;
+    const double sb = b * clampedScale;
+    const double sc = c * clampedScale;
+    if (sa <= 0.0 || sb <= 0.0 || sc <= 0.0) {
+        return false;
     }
-
-    if (preOptMajorR > 0.0f) {
-        std::cout << "[Split PreOpt] " << _name
-                  << " current=(" << a << "," << b << "," << c << ")"
-                  << " preOpt=(" << preOptMajorR << "," << preOptMajorR << "," << preOptMinorR << ")"
-                  << " effective=(" << effA << "," << effB << "," << effC << ")"
-                  << " searchRadius=" << splitSearchRadius
-                  << " pcaCenter=(" << pcaCenter.x << "," << pcaCenter.y << "," << pcaCenter.z << ")"
-                  << " currentPos=(" << _position.x << "," << _position.y << "," << _position.z << ")"
-                  << '\n';
-    }
-
-    int minX = std::max(0, static_cast<int>(std::floor(pcaCenter.x - splitSearchRadius)));
-    int maxX = std::min(static_cast<int>(image[0].cols) - 1, static_cast<int>(std::ceil(pcaCenter.x + splitSearchRadius)));
-
-    int minY = std::max(0, static_cast<int>(std::floor(pcaCenter.y - splitSearchRadius)));
-    int maxY = std::min(static_cast<int>(image[0].rows) - 1, static_cast<int>(std::ceil(pcaCenter.y + splitSearchRadius)));
-
-    int minZ = std::max(0, static_cast<int>(std::floor(pcaCenter.z - splitSearchRadius)));
-    int maxZ = std::min(static_cast<int>(image.size()) - 1, static_cast<int>(std::ceil(pcaCenter.z + splitSearchRadius)));
-
-    std::cout << "[Split Region] " << _name
-              << " box=(" << minX << ":" << maxX
-              << "," << minY << ":" << maxY
-              << "," << minZ << ":" << maxZ << ")"
-              << " dims=(" << (maxX - minX + 1)
-              << "," << (maxY - minY + 1)
-              << "," << (maxZ - minZ + 1) << ")"
-              << " searchRadius=" << splitSearchRadius
-              << " gateScale=2"
-              << " neighbors=" << neighborCenters.size()
-              << std::endl;
-
-    const float expandedGateScale = 2.0f;
-    const float gateA = std::max(1e-6f, expandedGateScale * effA);
-    const float gateB = std::max(1e-6f, expandedGateScale * effB);
-    const float gateC = std::max(1e-6f, expandedGateScale * effC);
-    auto insideExpandedGate = [&](const cv::Point3f &center, int x, int y, int z) {
-        const float dx = (static_cast<float>(x) - center.x) / gateA;
-        const float dy = (static_cast<float>(y) - center.y) / gateB;
-        const float dz = (static_cast<float>(z) - center.z) / gateC;
-        return (dx * dx + dy * dy + dz * dz) <= 1.0f;
-    };
-
-    // Step 2: Collect bright pixels from the REAL IMAGE near this cell.
-    // Previously we used the spheroid boundary (geometric shape), but for
-    // oblate spheroids (a == b) PCA of a symmetric shape gives a random
-    // axis — useless for finding the split direction.
-    // Instead, PCA on real-image bright pixels finds where the actual cell
-    // mass is. If the cell has split, there are two clusters of bright
-    // pixels and PCA finds the axis between them.
-
-    // First pass: collect brightness values inside the spheroid boundary.
-    // We use these to derive a percentile threshold for the brightest pixels.
-    // Precompute constants for fast evaluation
-    std::array<double, 9> R_T;
-    generateInverseRotationMatrix(R_T);
-
-    const double invA2 = 1.0 / (a * a);
-    const double invB2 = 1.0 / (b * b);
-    const double invC2 = 1.0 / (c * c);
-
-
-    std::vector<float> insideBrightnessValues;
-    insideBrightnessValues.reserve((maxX - minX + 1) * (maxY - minY + 1));
-    double brightnessSum = 0.0;
-    double brightnessSqSum = 0.0;
-    int brightnessCount = 0;
-    int candidateVoxelCount = 0;
-
-
-    scanSpheroidVolume(
-        image, minX, maxX, minY, maxY, minZ, maxZ, _position,
-        R_T, invA2, invB2, invC2,
-        [&](int /*x*/, int /*y*/, int /*z*/, float pixel, double val) {
-
-            if (val <= 1.0 && pixel >= backgroundColor) {
-                insideBrightnessValues.push_back(pixel);
-
-                candidateVoxelCount++;
-                brightnessSum += pixel;
-                brightnessSqSum += pixel * pixel;
-                brightnessCount++;
-            }
-        });
-
-    const float brightestFraction =
-        std::clamp(cellConfig.splitBrightestFraction, 0.0f, 1.0f);
-    float pixelThreshold = 0.4f;
-    if (!insideBrightnessValues.empty()) {
-        if (brightestFraction <= 0.0f) {
-            pixelThreshold = std::numeric_limits<float>::infinity();
-        } else if (brightestFraction >= 1.0f) {
-            pixelThreshold = *std::min_element(insideBrightnessValues.begin(), insideBrightnessValues.end());
-        } else {
-            const size_t total = insideBrightnessValues.size();
-            const size_t selectedCount = std::max<size_t>(
-                1, static_cast<size_t>(std::ceil(brightestFraction * static_cast<float>(total))));
-            const size_t thresholdIndex = total - selectedCount;
-            std::nth_element(
-                insideBrightnessValues.begin(),
-                insideBrightnessValues.begin() + static_cast<std::ptrdiff_t>(thresholdIndex),
-                insideBrightnessValues.end());
-            pixelThreshold = insideBrightnessValues[thresholdIndex];
-        }
-    }
-
-    const float meanBrightness = (brightnessCount > 0)
-        ? static_cast<float>(brightnessSum / static_cast<double>(brightnessCount))
-        : 0.0f;
-    const double variance = (brightnessCount > 0)
-        ? std::max(0.0, brightnessSqSum / static_cast<double>(brightnessCount) -
-                              static_cast<double>(meanBrightness) * static_cast<double>(meanBrightness))
-        : 0.0;
-    const float stddevBrightness = static_cast<float>(std::sqrt(variance));
-
-    std::cout << "[Split Brightness] " << _name
-              << " inside_count=" << candidateVoxelCount
-              << " mean=" << meanBrightness
-              << " stddev=" << stddevBrightness
-              << " threshold=" << pixelThreshold
-              << std::endl;
-
-
-    // Second pass: collect bright pixels within an expanded boundary (2.0x radius).
-    // The expansion captures daughter blobs that may extend beyond the parent's boundary.
-    // Only the top configurable fraction of brightest pixels are included.
-    // Skip pixels closer to a neighbor cell than to this cell (prevents PCA contamination).
-    // Store raw image-space coordinates for centroid-based daughter placement.
-    std::vector<cv::Point3f> rawPoints;
-    rawPoints.reserve((maxX - minX + 1) * (maxY - minY + 1));
-
-    // Collect bright pixels only inside an expanded ellipsoid centered at the
-    // PCA center. Use effective pre-opt radii here so the gate is large
-    // enough to include true daughter blobs, but still excludes far-field
-    // noise and bright structures from neighboring cells.
-
-    scanSpheroidVolume(
-        image, minX, maxX, minY, maxY, minZ, maxZ, _position,
-        R_T, invA2, invB2, invC2,
-        [&](double /*dx*/, double /*dy*/, double /*dz*/, int x, int y, int z, float pixel, double /*val*/) {
-
-            if (pixel >= pixelThreshold && pixel >= backgroundColor) {
-
-                if (!insideExpandedGate(pcaCenter, x, y, z)) return;
-                // Skip pixel if it's closer to any neighbor than to pcaCenter
-                // (use pcaCenter = pre-opt position so distance is measured from
-                // the original cell midpoint, not the Phase-1-shifted position)
-                    float selfDx = static_cast<float>(x) - pcaCenter.x;
-                    float selfDy = static_cast<float>(y) - pcaCenter.y;
-                    float selfDz = static_cast<float>(z) - pcaCenter.z;
-                    float distSqToSelf = selfDx * selfDx + selfDy * selfDy + selfDz * selfDz;
-                    bool closerToNeighbor = false;
-                    float ndx, ndy, ndz, distSqToNeighbor;
-                    for (const auto &nc : neighborCenters) {
-                        ndx = static_cast<float>(x) - nc.x;
-                        ndy = static_cast<float>(y) - nc.y;
-                        ndz = static_cast<float>(z) - nc.z;
-                        distSqToNeighbor = ndx * ndx + ndy * ndy + ndz * ndz;
-                        if (distSqToNeighbor < distSqToSelf) {
-                            closerToNeighbor = true;
-                            break;
-                        }
-                    }
-                    if (closerToNeighbor) return;
-
-                    rawPoints.emplace_back(
-                        static_cast<float>(x),
-                        static_cast<float>(y),
-                        static_cast<float>(z));
-            }
-        });
-
-    // Step 2b: Iterative centroid refinement.
-    // If pcaCenter drifted onto one blob (Phase 1 of previous frame dragged
-    // it there), the neighbor exclusion clips the far blob. Compute the
-    // centroid of collected pixels; if it differs significantly from
-    // pcaCenter, re-collect using the centroid as the new center. This
-    // shifts the Voronoi boundary to capture both blobs more evenly.
-    float recenterDrift = 0.0f;
-    bool recentered = false;
-    std::size_t rawPointsBeforeRecenter = rawPoints.size();
-    if (rawPoints.size() >= 10) {
-        cv::Point3f centroid(0, 0, 0);
-        for (const auto &pt : rawPoints) {
-            centroid.x += pt.x;
-            centroid.y += pt.y;
-            centroid.z += pt.z;
-        }
-        centroid *= (1.0f / rawPoints.size());
-
-        float driftSq = (centroid.x - pcaCenter.x) * (centroid.x - pcaCenter.x)
-                       + (centroid.y - pcaCenter.y) * (centroid.y - pcaCenter.y)
-                       + (centroid.z - pcaCenter.z) * (centroid.z - pcaCenter.z);
-
-        if (driftSq > 25.0f) { // > 5 pixels drift
-            recentered = true;
-            recenterDrift = std::sqrt(driftSq);
-            std::cout << "[PCA Recenter] " << _name
-                      << " pcaCenter=(" << pcaCenter.x << "," << pcaCenter.y << "," << pcaCenter.z << ")"
-                      << " centroid=(" << centroid.x << "," << centroid.y << "," << centroid.z << ")"
-                      << " drift=" << recenterDrift
-                      << " rawPointsBefore=" << rawPoints.size() << '\n';
-            pcaCenter = centroid;
-            rawPoints.clear();
-
-            scanSpheroidVolume(
-                image, minX, maxX, minY, maxY, minZ, maxZ, _position,
-                R_T, invA2, invB2, invC2,
-                [&](double /*dx*/, double /*dy*/, double /*dz*/, int x, int y, int z, float pixel, double /*val*/) {
-                    if (pixel >= pixelThreshold && pixel >= backgroundColor) {
-                    
-                        if (!insideExpandedGate(pcaCenter, x, y, z)) return;
-                        float selfDx = static_cast<float>(x) - pcaCenter.x;
-                        float selfDy = static_cast<float>(y) - pcaCenter.y;
-                        float selfDz = static_cast<float>(z) - pcaCenter.z;
-                        float distSqToSelf = selfDx * selfDx + selfDy * selfDy + selfDz * selfDz;
-                        bool closerToNeighbor = false;
-                        for (const auto &nc : neighborCenters) {
-                            float ndx = static_cast<float>(x) - nc.x;
-                            float ndy = static_cast<float>(y) - nc.y;
-                            float ndz = static_cast<float>(z) - nc.z;
-                            float distSqToNeighbor = ndx * ndx + ndy * ndy + ndz * ndz;
-                            if (distSqToNeighbor < distSqToSelf) {
-                                closerToNeighbor = true;
-                                break;
-                            }
-                        }
-                        if (closerToNeighbor) return;
-                        rawPoints.emplace_back(
-                            static_cast<float>(x),
-                            static_cast<float>(y),
-                            static_cast<float>(z));
-                    }
-                });
-            std::cout << "[PCA Recenter Result] " << _name
-                      << " rawPointsAfter=" << rawPoints.size()
-                      << std::endl;
-        }
-    }
-
-    // Step 3: Run PCA with isotropic normalization.
-    cv::Point3f split_axis;
-    float elongationRatio = 1.0f;
-
-    if (rawPoints.size() >= 3) {
-        int n = static_cast<int>(rawPoints.size());
-        cv::Mat data(n, 3, CV_32F);
-        for (int i = 0; i < n; ++i) {
-            data.at<float>(i, 0) = rawPoints[i].x - pcaCenter.x;
-            data.at<float>(i, 1) = rawPoints[i].y - pcaCenter.y;
-            data.at<float>(i, 2) = rawPoints[i].z - pcaCenter.z;
-        }
-
-        // Isotropic normalization: divide all axes by majorR (effA).
-        // Per-axis normalization (effA, effB, effC) suppresses x-y splits
-        // in pancaked cells because the small z-radius amplifies z-noise,
-        // inflating all eigenvalues while keeping the ratio low.
-        // Isotropic normalization preserves the true shape of the bright
-        // pixel distribution regardless of cell aspect ratio.
-        float normR = (effA > 1e-6f) ? effA : 1.0f;
-        float invS = 1.0f / normR;
-
-        for (int i = 0; i < n; ++i) data.at<float>(i, 0) *= invS;
-        for (int i = 0; i < n; ++i) data.at<float>(i, 1) *= invS;
-        for (int i = 0; i < n; ++i) data.at<float>(i, 2) *= invS;
-
-        cv::PCA pca(data, cv::Mat(), cv::PCA::DATA_AS_ROW);
-
-        float lambda1 = pca.eigenvalues.at<float>(0);
-        float lambda2 = pca.eigenvalues.at<float>(1);
-        float lambda3 = pca.eigenvalues.at<float>(2);
-
-        // First eigenvector (max variance direction) in normalized space
-        cv::Point3f ev_norm(
-            pca.eigenvectors.at<float>(0, 0),
-            pca.eigenvectors.at<float>(0, 1),
-            pca.eigenvectors.at<float>(0, 2));
-
-        // With isotropic normalization, eigenvector direction is unchanged
-        cv::Point3f ev_image(
-            ev_norm.x * normR,
-            ev_norm.y * normR,
-            ev_norm.z * normR);
-
-        // Normalize to unit vector
-        float norm = std::sqrt(ev_image.x * ev_image.x +
-                               ev_image.y * ev_image.y +
-                               ev_image.z * ev_image.z);
-
-        if (norm > 1e-6f) {
-            split_axis = ev_image * (1.0f / norm);
-        } else {
-            thread_local std::mt19937 rng{std::random_device{}()};
-            std::uniform_real_distribution<double> thetaDist(0.0, 2.0 * M_PI);
-            std::uniform_real_distribution<double> phiDist(0.0, M_PI);
-            double theta = thetaDist(rng);
-            double phi = phiDist(rng);
-            split_axis = cv::Point3f(sin(phi) * cos(theta), sin(phi) * sin(theta), cos(phi));
-        }
-
-        elongationRatio = (effC > 1e-6f) ? (effA / effC) : 1.0f;
-        std::cout << "[PCA Split] " << _name
-                  << " elongation_ratio=" << elongationRatio
-                  << " split_axis=(" << split_axis.x << ", " << split_axis.y << ", " << split_axis.z << ")"
-                  << " eigenvalues=(" << lambda1 << ", " << lambda2 << ", " << lambda3 << ")"
-                  << " num_bright_pixels=" << rawPoints.size()
-                  << " normR=" << normR
-                  << " threshold=" << pixelThreshold
-                  << " selected_fraction=" << brightestFraction
-                  << " inside_count=" << insideBrightnessValues.size()
-                  << '\n';
-    } else {
-        std::cout << "[PCA Split] " << _name
-                  << " only " << rawPoints.size() << " bright pixels found. Using random split axis."
-                  << '\n';
-        thread_local std::mt19937 rng{std::random_device{}()};
-        std::uniform_real_distribution<double> thetaDist(0.0, 2.0 * M_PI);
-        std::uniform_real_distribution<double> phiDist(0.0, M_PI);
-        double theta = thetaDist(rng);
-        double phi = phiDist(rng);
-        split_axis = cv::Point3f(sin(phi) * cos(theta), sin(phi) * sin(theta), cos(phi));
-    }
-
-    double effMajorR = (preOptMajorR > 0.0f) ? std::max(_major_radius, static_cast<double>(preOptMajorR)) : _major_radius;
-    double effMinorR = (preOptMinorR > 0.0f) ? std::max(_minor_radius, static_cast<double>(preOptMinorR)) : _minor_radius;
-    const double cx = std::cos(_theta_x), sx = std::sin(_theta_x);
-    const double cy = std::cos(_theta_y), sy = std::sin(_theta_y);
-    const double cz = std::cos(_theta_z), sz = std::sin(_theta_z);
-    const cv::Point3f localZAxis(
-        static_cast<float>(cz * sy * cx + sz * sx),
-        static_cast<float>(sz * sy * cx - cz * sx),
-        static_cast<float>(cy * cx));
-    const float flatnessRatio = (effMajorR > 1e-6) ? static_cast<float>(effMinorR / effMajorR) : 1.0f;
-    const bool disableMinorAxisAlignmentForSmallCell =
-        effMajorR < splitMinorAxisAlignmentMinRadiusDisableThreshold &&
-        effMinorR < splitMinorAxisAlignmentMinRadiusDisableThreshold;
-    const bool enforceMinorAxisAlignment =
-        !disableMinorAxisAlignmentForSmallCell &&
-        flatnessRatio <= splitMinorAxisAlignmentFlatnessRatioThreshold;
-    if (enforceMinorAxisAlignment) {
-        const float alignmentDot = std::clamp(std::abs(split_axis.dot(localZAxis)), 0.0f, 1.0f);
-        const float alignmentAngleDegrees =
-            static_cast<float>(std::acos(alignmentDot) * 180.0 / M_PI);
-        if (alignmentAngleDegrees > splitMinorAxisAlignmentToleranceDegrees) {
-            const float signedAlignment = split_axis.dot(localZAxis);
-            split_axis = (signedAlignment >= 0.0f) ? localZAxis : (localZAxis * -1.0f);
-            std::cout << "[Split Align] " << _name
-                      << " flatness_ratio=" << flatnessRatio
-                      << " threshold=" << splitMinorAxisAlignmentFlatnessRatioThreshold
-                      << " minor-axis alignment angle=" << alignmentAngleDegrees
-                      << " > tolerance=" << splitMinorAxisAlignmentToleranceDegrees
-                      << " forcing split_axis to local_z=(" << split_axis.x << ", "
-                      << split_axis.y << ", " << split_axis.z << ")"
-                      << '\n';
-        }
-    } else if (disableMinorAxisAlignmentForSmallCell) {
-        std::cout << "[Split Align Skip] " << _name
-                  << " major_radius=" << effMajorR
-                  << " minor_radius=" << effMinorR
-                  << " disable_threshold=" << splitMinorAxisAlignmentMinRadiusDisableThreshold
-                  << '\n';
-    }
-
-    // Step 4: Centroid-based daughter placement.
-    // Project each bright pixel onto the split axis through the cell center.
-    // Split into positive/negative groups and compute 3D centroids.
-    // This places daughters where the real bright pixel clusters are,
-    // instead of at a fixed offset that may not match the data.
-    // Use pre-optimization radii for daughter sizes when available.
-    // Phase 1 may collapse the parent (e.g. majorR 31→22 when fitting one cell
-    // to two blobs), making daughters too small to produce meaningful cost improvement.
-    // The pre-optimization size reflects the true biological cell size before collapse.
-    // Use pre-opt radii for daughter sizing when available. Phase 1 may
-    // collapse the parent (e.g. 28→21) when fitting one sphere to a two-cell
-    // image, making current-radius daughters too small for meaningful cost
-    // improvement. Pre-opt radii reflect the cell size before collapse.
-    // (Previously this was blocked by daughter-daughter overlap gates, now removed.)
-    double volumeScale = std::cbrt(0.5);
-    double daughterMajorRadius = effMajorR * volumeScale;
-    double daughterMinorRadius = effMinorR * volumeScale;
-
-    cv::Point3f centroid1(0, 0, 0), centroid2(0, 0, 0);
-    int count1 = 0, count2 = 0;
-
-    for (const auto &pt : rawPoints) {
-        const double dx = pt.x - pcaCenter.x;
-        const double dy = pt.y - pcaCenter.y;
-        const double dz = pt.z - pcaCenter.z;
-        float projection = dx * split_axis.x + dy * split_axis.y + dz * split_axis.z;
-
-        if (projection >= 0) {
-            centroid1 += cv::Point3f(pt.x, pt.y, pt.z);
-            count1++;
-        } else {
-            centroid2 += cv::Point3f(pt.x, pt.y, pt.z);
-            count2++;
-        }
-    }
-
-    cv::Point3f new_position1, new_position2;
-
-    if (count1 > 0 && count2 > 0) {
-        // Use actual centroid positions — this is where the bright pixel
-        // clusters really are. Daughters may initially overlap each other,
-        // which is expected since they split from a single parent. The
-        // overlap check in trySplitCell skips the daughter-daughter pair
-        // and burn-in handles separation.
-        centroid1 *= (1.0f / count1);
-        centroid2 *= (1.0f / count2);
-        const cv::Point3f centroidOffset1 = centroid1 - pcaCenter;
-        const cv::Point3f centroidOffset2 = centroid2 - pcaCenter;
-        float projection1 = centroidOffset1.dot(split_axis);
-        float projection2 = centroidOffset2.dot(split_axis);
-
-        if (projection1 < projection2) {
-            std::swap(projection1, projection2);
-        }
-
-        new_position1 = pcaCenter + split_axis * projection1;
-        new_position2 = pcaCenter + split_axis * projection2;
-
-        float sep = std::sqrt(
-            (new_position1.x - new_position2.x) * (new_position1.x - new_position2.x) +
-            (new_position1.y - new_position2.y) * (new_position1.y - new_position2.y) +
-            (new_position1.z - new_position2.z) * (new_position1.z - new_position2.z));
-
-        std::cout << "[Split Placement] centroid-based:"
-                  << " c1=(" << new_position1.x << "," << new_position1.y << "," << new_position1.z << ")"
-                  << " c2=(" << new_position2.x << "," << new_position2.y << "," << new_position2.z << ")"
-                  << " sep=" << sep
-                  << " line_axis=(" << split_axis.x << "," << split_axis.y << "," << split_axis.z << ")"
-                  << " daughterMajorR=" << daughterMajorRadius
-                  << " daughterMinorR=" << daughterMinorRadius << '\n';
-    } else {
-        // All pixels on one side — fall back to small offset along split axis
-        float offset = static_cast<float>(daughterMajorRadius * 0.5);
-        new_position1 = pcaCenter + split_axis * offset;
-        new_position2 = pcaCenter - split_axis * offset;
-        std::cout << "[Split Placement] one-sided (" << count1 << "/" << count2
-                  << "), using fixed offset=" << offset << '\n';
-    }
-
-
-    //TODO use a batter way to represent the cell relationships
-
-    // Inherit parent rotation angles and brightness
-    Spheroid cell1(SpheroidParams(
-        _name + "0", new_position1.x, new_position1.y, new_position1.z,
-        daughterMajorRadius, daughterMinorRadius, _theta_x, _theta_y, _theta_z, _brightness));
-    Spheroid cell2(SpheroidParams(
-        _name + "1", new_position2.x, new_position2.y, new_position2.z,
-        daughterMajorRadius, daughterMinorRadius, _theta_x, _theta_y, _theta_z, _brightness));
-
-    const int totalCount = count1 + count2;
-    const int dominantCount = std::max(count1, count2);
-    const int minorCount = std::min(count1, count2);
-    const float balance = (dominantCount > 0)
-        ? static_cast<float>(minorCount) / static_cast<float>(dominantCount)
-        : 0.0f;
-    const float separation = std::sqrt(
-        (new_position1.x - new_position2.x) * (new_position1.x - new_position2.x) +
-        (new_position1.y - new_position2.y) * (new_position1.y - new_position2.y) +
-        (new_position1.z - new_position2.z) * (new_position1.z - new_position2.z));
-    const float separationOverDaughterMajor = (daughterMajorRadius > 1e-6)
-        ? separation / static_cast<float>(daughterMajorRadius)
-        : 0.0f;
-    const float driftOverParentMajor = (effMajorR > 1e-6)
-        ? recenterDrift / static_cast<float>(effMajorR)
-        : 0.0f;
-
-    std::cout << "[Split ClusterStats] " << _name
-              << " total=" << totalCount
-              << " count1=" << count1
-              << " count2=" << count2
-              << " balance=" << balance
-              << " sep=" << separation
-              << " sepOverDaughterMajor=" << separationOverDaughterMajor
-              << " recentered=" << (recentered ? 1 : 0)
-              << " recenterDrift=" << recenterDrift
-              << " driftOverParentMajor=" << driftOverParentMajor
-              << " rawPointsBeforeRecenter=" << rawPointsBeforeRecenter
-              << " rawPointsFinal=" << rawPoints.size()
-              << std::endl;
-
-    SplitDiagnostics diagnostics;
-    diagnostics.elongationRatio = elongationRatio;
-    diagnostics.totalCount = totalCount;
-    diagnostics.count1 = count1;
-    diagnostics.count2 = count2;
-    diagnostics.balance = balance;
-    diagnostics.separation = separation;
-    diagnostics.separationOverDaughterMajor = separationOverDaughterMajor;
-    diagnostics.recentered = recentered;
-    diagnostics.recenterDrift = recenterDrift;
-    diagnostics.driftOverParentMajor = driftOverParentMajor;
-    diagnostics.daughterMajorRadius = static_cast<float>(daughterMajorRadius);
-    diagnostics.daughterMinorRadius = static_cast<float>(daughterMinorRadius);
-    diagnostics.axisAbsZ = std::abs(split_axis.z);
-    diagnostics.insideCount = candidateVoxelCount;
-
-    bool constraints = cell1.checkConstraints() && cell2.checkConstraints();
-    return std::make_tuple(Spheroid(cell1), Spheroid(cell2), constraints, elongationRatio, diagnostics);
+    const double fx = lx / sa;
+    const double fy = ly / sb;
+    const double fz = lz / sc;
+    return (fx * fx + fy * fy + fz * fz) <= 1.0;
 }
 
+
+
 bool Spheroid::checkConstraints() const {
-    return (cellConfig.minMajorRadius <= _major_radius) && (_major_radius <= cellConfig.maxMajorRadius) && (cellConfig.minMinorRadius <= _minor_radius) && (_minor_radius <= cellConfig.maxMinorRadius);
+    const bool majorOk = (cellConfig.minMajorRadius <= _major_radius) &&
+                         (_major_radius <= cellConfig.maxMajorRadius);
+    const bool minorOk = (cellConfig.minMinorRadius <= _minor_radius) &&
+                         (_minor_radius <= cellConfig.maxMinorRadius);
+    // If bRadius bounds are not configured (both zero), skip the bRadius
+    // constraint so unconfigured runs stay oblate-compatible.
+    const bool bConfigured = (cellConfig.maxBRadius > 0.0);
+    const bool bOk = !bConfigured ||
+        ((cellConfig.minBRadius <= _b_radius) && (_b_radius <= cellConfig.maxBRadius));
+    return majorOk && minorOk && bOk;
 }
 
 SpheroidParams Spheroid::getCellParams() const {
-    return SpheroidParams(_name, _position.x, _position.y, _position.z, _major_radius, _minor_radius, _theta_x, _theta_y, _theta_z, _brightness);
+    SpheroidParams params(_name, _position.x, _position.y, _position.z,
+                          static_cast<float>(_major_radius), static_cast<float>(_minor_radius),
+                          static_cast<float>(_theta_x), static_cast<float>(_theta_y), static_cast<float>(_theta_z),
+                          _brightness);
+    params.bRadius = static_cast<float>(_b_radius);
+    return params;
 }
 
 [[nodiscard]] std::pair<std::vector<float>, std::vector<float>> Spheroid::calculateCorners() const {
