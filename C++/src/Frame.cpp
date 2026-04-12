@@ -1086,20 +1086,38 @@ CostCallbackPair Frame::trySplitCellPhased(
         const double swappedImageCost = calculateIncrementalCost(swappedSynth,
                                                                    affMinS, affMaxS,
                                                                    swappedPerSlice);
-        _synthFrame = swappedSynth;
-        _currentCost = swappedImageCost;
-        _currentCostPerSlice = swappedPerSlice;
+        // Use min(liveCost, snapCost) as baseline. If the snapshot parent
+        // is much worse than live (cell drifted between frames), keeping
+        // the inflated snapshot baseline would make ANY daughter placement
+        // look like an improvement — causing false splits. Using the
+        // minimum ensures the split must beat the TIGHTER of the two fits.
+        const bool useSnapshotBaseline = (swappedImageCost <= liveCostBeforeSwap);
+        if (useSnapshotBaseline) {
+            _synthFrame = swappedSynth;
+            _currentCost = swappedImageCost;
+            _currentCostPerSlice = swappedPerSlice;
+        } else {
+            // Revert: live parent was a better fit, keep it as baseline.
+            cells[cellIndex] = liveParent;
+            // _synthFrame / _currentCost / _currentCostPerSlice already
+            // reflect the live parent (never changed).
+        }
 
         std::cout << "  [Split Snapshot Parent] " << parentName
                   << " livePos=(" << liveParent.getX() << "," << liveParent.getY() << "," << liveParent.getZ() << ")"
                   << " snapPos=(" << snapshot.position.x << "," << snapshot.position.y << "," << snapshot.position.z << ")"
                   << " liveR=(" << liveParent.getMajorRadius() << "," << liveParent.getBRadius() << "," << liveParent.getMinorRadius() << ")"
                   << " snapR=(" << srcMajor << "," << srcB << "," << srcMinor << ")"
-                  << " snapTheta=(" << snapshot.thetaX << "," << snapshot.thetaY << "," << snapshot.thetaZ << ")"
                   << " liveCost=" << liveCostBeforeSwap
                   << " snapCost=" << swappedImageCost
-                  << " costDelta=" << (swappedImageCost - liveCostBeforeSwap)
+                  << " baseline=" << (useSnapshotBaseline ? "snapshot" : "live")
                   << std::endl;
+
+        // Update snapshotParent to match what was actually installed so
+        // restoreLiveParent works correctly on rejection paths.
+        if (!useSnapshotBaseline) {
+            snapshotParent = liveParent;
+        }
     }
 
     // parent now reflects the installed snapshot-state (or live fallback
