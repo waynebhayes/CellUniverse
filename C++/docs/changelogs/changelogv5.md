@@ -1595,3 +1595,64 @@ In `trySplitCellPhased`:
   anchor; if `pca_mid`, the image centroid is.
 
 Post-first-build validation pending.
+
+## 2026-04-12 — Shape EMA, config tuning, drift gate disable
+
+### Shape EMA (volume-preserving PCA-driven radius blending) — **ACTIVE**
+
+**Problem:** Cell 1f89ab stays spherical (majorR≈minorR≈30.5, shapeElong=1.09) across
+all frames even though the real image shows clear pre-division elongation at f7+. The
+perturbation optimizer has no gradient pushing radii apart because a round sphere covers
+both bright lobes well enough in L2 cost. This causes: low P(split), no snapshot
+direction, poor PCA seed placement, and missed splits.
+
+**Solution:** Shape EMA — analogous to the existing brightness EMA. Each frame, after
+optimization, measure the cell's PCA eigenvalue ratios from real-image pixels inside
+the cell volume, then blend the fitted radii toward the observed shape while preserving
+total volume (cbrt(a*b*c) stays constant).
+
+**Files changed:**
+
+- `C++/includes/ConfigTypes.hpp` — added `shapeUpdateBlend` field + YAML parsing
+- `C++/includes/Spheroid.hpp` — added `PCAShapeResult` struct, `measurePCAShape()`, `setRadii()`
+- `C++/src/Spheroid.cpp` — implemented `measurePCAShape()` (PCA on weighted bright pixels
+  with isotropic normalization) and `setRadii()` (clamped radius setter)
+- `C++/src/CellUniverse.cpp` — shape EMA block after brightness EMA: measure PCA, compute
+  volume-preserving target radii, blend sorted axes, apply via `setRadii()`
+- `C++/config/config.yaml` — added `shapeUpdateBlend: 0.3`
+
+**Effect:** Cells whose real-image shape diverges from the fitted model will gradually
+adapt their radii to match, making shapeElongation track real pre-division elongation.
+
+### Config tuning — **ACTIVE**
+
+- `split_cost: 20 → 15` — real splits [-90, -18] vs false splits [+5, +57], 23+ unit gap
+- `bio_max_drift_parent_fraction: 0.4 → 999.0` — drift gate disabled; bridge+cost sufficient
+- `bio_max_drift_daughter_fraction: 0.85 → 999.0` — same rationale
+- `brightnessMeanAmplification: 1.1 → 1.0` — removed 10% amplification causing cell shrinking
+
+### Always-dual-direction candidate generation — **ACTIVE**
+
+**Problem:** At f10, cell 1f2ed's snapshot had the correct y-dominant split direction
+`(0.23, -0.89, 0.40)` but it was discarded because `snapElong=1.19 < threshold 1.20`.
+PCA gave a wrong z-dominant axis `(0.19, 0.13, 0.97)`. Daughters placed along z failed
+the bridge gate. By f12 the directions corrected, but the split was 1 frame late.
+
+**Solution:** Remove the direction-selection heuristic entirely. Always try BOTH PCA
+and snapshot directions (when they disagree by >10°), generating 20 candidates instead
+of 10. Cost picks the winner. When directions agree (<10°), only 10 candidates are
+generated (no duplication waste).
+
+**File:** `C++/src/Frame.cpp` lines ~1272-1295
+
+**Before:** `useSnapshotDirection` flag gated by `shape_elongation_classify_threshold`.
+If `snapElong < threshold`, snapshot direction was discarded and only PCA used.
+
+**After:** PCA direction always included. Snapshot direction added as second primary
+whenever it exists and differs from PCA by >10°. No classify threshold for direction
+selection. The threshold still controls P(split) classification but no longer gates
+the direction.
+
+**Effect:** At f10, both z-direction (PCA) and y-direction (snapshot) candidates are
+tried. The y-direction candidates should win on cost, enabling the split 1-2 frames
+earlier.

@@ -62,8 +62,8 @@ cell:
     mu: 0
     sigma: 0.05
   brightness:
-    increase_prob: 0.7
-    decrease_prob: 0.8
+    increase_prob: 0.0
+    decrease_prob: 0.0
     mu: 0
     sigma: 0.0
 
@@ -97,7 +97,8 @@ cell:
   abRatioProbabilityTrust: 0.1
 
   brightnessUpdateBlend: 0.9
-  brightnessMeanAmplification: 1.1
+  brightnessMeanAmplification: 1.0
+
 
 # Image preprocessing pipeline — iterative contrast enhancer ported from
 # scripts/image_processor_clean.py. No sigmoid — the old sigmoid fields
@@ -155,7 +156,7 @@ simulation:
 prob:
   P_split_base: 0.03
   P_split_max: 0.5
-  shape_elongation_classify_threshold: 1.20
+  shape_elongation_classify_threshold: 1.15
 
   split_cost: 15
   overlap_penalty_weight: 500.0
@@ -168,7 +169,7 @@ prob:
   # primary direction. With split_direction_agreement giving 1 primary in
   # most cases, total is 10.
   split_candidates_per_attempt: 10
-  split_candidate_burn_in_iterations: 20
+  split_candidate_burn_in_iterations: 50
   # Extra refine iterations on the winning candidate's daughters before
   # the bio/cost gates fire. Uses the same tight burn-in sigmas.
   split_final_refine_iterations: 30
@@ -188,8 +189,8 @@ prob:
   # max(parent_frac * parent_maxR, daughter_frac * daughter_maxR) from the
   # seed position. Catches daughters escaping the parent footprint during
   # burn-in (f4/f5 false-split pathology).
-  bio_max_drift_parent_fraction: 0.4
-  bio_max_drift_daughter_fraction: 0.8
+  bio_max_drift_parent_fraction: 999.0
+  bio_max_drift_daughter_fraction: 999.0
   # Midpoint-near-snapshot-parent gate (2026-04-11). Rejects a split
   # when the daughter midpoint is more than 0.95 * parent_maxR from the
   # snapshot (last-frame) parent center. Catches parent drift and

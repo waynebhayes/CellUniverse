@@ -1269,29 +1269,30 @@ CostCallbackPair Frame::trySplitCellPhased(
               << " expSep=" << cv::norm(d1Pca - d2Pca)
               << std::endl;
 
-    // Choose primary direction(s). For pre-classified cells with a trusted
-    // snapshot direction, use it; if PCA disagrees by more than the
-    // configured angle, try BOTH as separate primaries.
+    // Choose primary direction(s). Always try PCA direction. If a valid
+    // snapshot direction exists, try it too — cost picks the winner.
+    // This avoids the classify-threshold problem where a correct snapshot
+    // direction (e.g. 1f2ed f10: y-dominant) is discarded because
+    // snapElong barely misses the threshold while PCA gives a wrong
+    // z-dominant axis.
     std::vector<cv::Point3f> primaryDirs;
     const char *dirMode = "pca_only";
     float dirAngleDeg = 0.0f;
-    if (useSnapshotDirection && snapshot.longAxisLength > 1e-3f) {
-        primaryDirs.push_back(snapshot.longAxisDir);
+    primaryDirs.push_back(dirPca);
+    if (snapshotValid && snapshot.longAxisLength > 1e-3f) {
         const float cosAngle = std::clamp(
             snapshot.longAxisDir.x * dirPca.x +
             snapshot.longAxisDir.y * dirPca.y +
             snapshot.longAxisDir.z * dirPca.z, -1.0f, 1.0f);
         const float angle = std::acos(std::abs(cosAngle)); // axis is undirected
         dirAngleDeg = angle * 180.0f / static_cast<float>(M_PI);
-        const float agreeRad = probConfig.split_direction_agreement_degrees * static_cast<float>(M_PI) / 180.0f;
-        if (angle >= agreeRad) {
-            primaryDirs.push_back(dirPca);
-            dirMode = "snapshot+pca";
-        } else {
-            dirMode = "snapshot_only";
+        // Only add snapshot as a separate direction if it differs enough
+        // from PCA (>10°). When they agree, the extra candidates are
+        // near-duplicates and waste burn-in iterations.
+        if (dirAngleDeg > 10.0f) {
+            primaryDirs.push_back(snapshot.longAxisDir);
+            dirMode = "pca+snapshot";
         }
-    } else {
-        primaryDirs.push_back(dirPca);
     }
     std::cout << "  [Split Dirs] " << parentName
               << " mode=" << dirMode

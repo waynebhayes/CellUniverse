@@ -249,6 +249,7 @@ void Spheroid::setBrightness(float brightness)
                              static_cast<float>(cellConfig.maxBrightness));
 }
 
+
 void Spheroid::setMajorRadiusPerturbProbabilities(float increaseProbability, float decreaseProbability)
 {
     const float clampedIncrease = std::clamp(increaseProbability, 0.0f, 1.0f);
@@ -434,6 +435,7 @@ std::pair<float, float> Spheroid::measureBrightnessStats(const std::vector<cv::M
     const double variance = std::max(0.0, (sumSquares / count) - mean * mean);
     return {static_cast<float>(mean), static_cast<float>(std::sqrt(variance))};
 }
+
 
 // ---- ROTATION-AWARE drawOutline() ----
 // Scans pixels and marks those near the spheroid surface.
