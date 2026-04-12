@@ -157,7 +157,7 @@ prob:
   P_split_max: 0.5
   shape_elongation_classify_threshold: 1.20
 
-  split_cost: 20
+  split_cost: 15
   overlap_penalty_weight: 500.0
   size_reduction_penalty_weight: 30
 
