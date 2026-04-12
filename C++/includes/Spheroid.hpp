@@ -41,10 +41,6 @@ public:
         : CellParams(name), x(x), y(y), z(z), majorRadius(majorRadius), bRadius(0), minorRadius(minorRadius), theta_x(0), theta_y(0), theta_z(0), brightness(0.5f) {}
     SpheroidParams(const std::string &name, float x, float y, float z, float majorRadius, float minorRadius, float theta_x, float theta_y, float theta_z, float brightness = 0.5f)
         : CellParams(name), x(x), y(y), z(z), majorRadius(majorRadius), bRadius(0), minorRadius(minorRadius), theta_x(theta_x), theta_y(theta_y), theta_z(theta_z), brightness(brightness) {}
-    // NOTE: no 11-arg (majorRadius, bRadius, minorRadius, ...) constructor to
-    // avoid overload ambiguity with the 10-arg oblate signature. Callers that
-    // need to set bRadius explicitly should use one of the above constructors
-    // and assign `.bRadius = ...;` as a follow-up.
 };
 
 // Per-cell snapshot captured at end of each frame. Authoritative source for
@@ -67,6 +63,14 @@ struct PreviousFrameSnapshot
     float brightness = 0.5f;
 };
 
+struct PerturbDirections
+{
+    int brightness = 0;
+    int majorRadius = 0;
+    int minorRadius = 0;
+    int abRatio = 0;
+};
+
 class Spheroid
 {
     private:
@@ -80,6 +84,10 @@ class Spheroid
         double _theta_y;  // rotation angle about y-axis (radians)
         double _theta_z;  // rotation angle about z-axis (radians)
         float _brightness; // per-cell rendering brightness [0,1]
+        PerturbParams _majorRadiusPerturbParams;
+        PerturbParams _minorRadiusPerturbParams;
+        PerturbParams _abRatioPerturbParams;
+        PerturbParams _brightnessPerturbParams;
 
         // Inverse rotation: transforms world-space displacement back to local (upright) frame
         void inverseRotatePoint(double dx, double dy, double dz,
@@ -120,7 +128,28 @@ class Spheroid
         //   D2_seed = snapshot.center + 0.5 * longAxisLength * longAxisDir
         void worldLongAxis(cv::Point3f &dir, float &length) const;
         float getBrightness() const { return _brightness; }
+        float getMajorRadiusIncreaseProbability() const { return _majorRadiusPerturbParams.increase_prob; }
+        float getMajorRadiusDecreaseProbability() const { return _majorRadiusPerturbParams.decrease_prob; }
+        float getMinorRadiusIncreaseProbability() const { return _minorRadiusPerturbParams.increase_prob; }
+        float getMinorRadiusDecreaseProbability() const { return _minorRadiusPerturbParams.decrease_prob; }
+        float getABRatioIncreaseProbability() const { return _abRatioPerturbParams.increase_prob; }
+        float getABRatioDecreaseProbability() const { return _abRatioPerturbParams.decrease_prob; }
+        float getBrightnessIncreaseProbability() const { return _brightnessPerturbParams.increase_prob; }
+        float getBrightnessDecreaseProbability() const { return _brightnessPerturbParams.decrease_prob; }
         void setBrightness(float brightness);
+        void setMajorRadiusPerturbProbabilities(float increaseProbability, float decreaseProbability);
+        void setMinorRadiusPerturbProbabilities(float increaseProbability, float decreaseProbability);
+        void setABRatioPerturbProbabilities(float increaseProbability, float decreaseProbability);
+        void setBrightnessPerturbProbabilities(float increaseProbability, float decreaseProbability);
+        void blendAdaptivePerturbProbabilitiesWithConfig(float brightnessTrust,
+                                                         float majorRadiusTrust,
+                                                         float minorRadiusTrust,
+                                                         float abRatioTrust);
+        void blendBrightnessPerturbProbabilitiesWithConfig(float trust);
+        void adjustMajorRadiusPerturbProbability(int direction, float delta);
+        void adjustMinorRadiusPerturbProbability(int direction, float delta);
+        void adjustABRatioPerturbProbability(int direction, float delta);
+        void adjustBrightnessPerturbProbability(int direction, float delta);
         float measureMeanBrightness(const std::vector<cv::Mat> &image) const;
         std::pair<float, float> measureBrightnessStats(const std::vector<cv::Mat> &image) const;
 
@@ -132,7 +161,7 @@ class Spheroid
 
         void drawOutline(cv::Mat &image, float color, float z = 0) const;
 
-        [[nodiscard]] Spheroid getPerturbedCell() const;
+        [[nodiscard]] Spheroid getPerturbedCell(PerturbDirections *directions = nullptr) const;
 
         // Test if point is inside this cell's (optionally scaled) ellipsoid
         bool isPointInsideEllipsoid(const cv::Point3f &worldPoint,

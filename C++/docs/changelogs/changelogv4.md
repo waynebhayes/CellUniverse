@@ -3051,3 +3051,92 @@ the peak-too-far case falls through to the axis-based paths.
 - Peaks captured at end of previous frame that are still near the cell are
   used normally (no change for well-positioned cells)
 
+## 2026-04-11 — Remove dead config fields and their code blocks
+
+**Status:** ACTIVE
+
+### Motivation
+
+Ten config fields and their corresponding code blocks were dead:
+- `volumeRecoveryEnabled` (and 2 thresholds) — gated by `false`, never fired in any run
+- `flatCellRotationRefineEnabled` (and 4 tuning knobs) — gated by `false` in config
+- `splitBrightestFraction` — declared and parsed but never referenced in source
+- `firstFrameBrightnessPerturbationOnly` — gated by `false`, used only by the
+  `brightnessPerturbFirstFrameOnly` block that disabled brightness perturbation
+  after frame 1
+- `initialABRatio` (CellFactory.hpp) — declared but never referenced in source
+
+Removing them reduces config noise, eliminates ~200 lines of dead code in
+`CellUniverse::optimize()`, and removes YAML knobs that mislead tuners.
+
+### Files changed
+
+- `C++/config/config.yaml`
+- `C++/includes/ConfigTypes.hpp`
+- `C++/includes/CellFactory.hpp`
+- `C++/src/CellUniverse.cpp`
+
+### Changes
+
+**File:** `C++/config/config.yaml`
+
+Removed 10 YAML lines:
+- `firstFrameBrightnessPerturbationOnly: false`
+- `volumeRecoveryEnabled: false`
+- `volumeRecoveryLossFractionThreshold: 0.2`
+- `volumeRecoveryMaxScaleIncreaseFraction: 0.6`
+- `flatCellRotationRefineEnabled: false`
+- `flatCellRotationRefineFlatnessThreshold: 0.8`
+- `flatCellRotationRefineAngleStep: 0.1`
+- `flatCellRotationRefineMaxOffsetDegrees: 15.0`
+- `flatCellRotationRefinePasses: 1`
+- `splitBrightestFraction: 0.055`
+
+**File:** `C++/includes/ConfigTypes.hpp`
+
+Removed from `SpheroidConfig` class:
+- Field `float splitBrightestFraction{0.10f};`
+- Field `bool firstFrameBrightnessPerturbationOnly{false};`
+- Field `bool volumeRecoveryEnabled{false};` and its 10-line comment block
+- Field `float volumeRecoveryLossFractionThreshold{0.4f};`
+- Field `float volumeRecoveryMaxScaleIncreaseFraction{0.3f};`
+- Field `bool flatCellRotationRefineEnabled{true};` and its 4-line comment block
+- Field `float flatCellRotationRefineFlatnessThreshold{0.8f};`
+- Field `float flatCellRotationRefineAngleStep{0.15f};`
+- Field `float flatCellRotationRefineMaxOffsetDegrees{15.0f};`
+- Field `int flatCellRotationRefinePasses{2};`
+
+Removed from `SpheroidConfig::explodeConfig()`:
+- `if (node["splitBrightestFraction"])` parse line
+- `if (node["firstFrameBrightnessPerturbationOnly"])` parse block (3 lines)
+- `if (node["volumeRecoveryEnabled"])` parse block (3 lines)
+- `if (node["volumeRecoveryLossFractionThreshold"])` parse block (3 lines)
+- `if (node["volumeRecoveryMaxScaleIncreaseFraction"])` parse block (4 lines)
+- `if (node["flatCellRotationRefineEnabled"])` parse block (3 lines)
+- `if (node["flatCellRotationRefineFlatnessThreshold"])` parse block (4 lines)
+- `if (node["flatCellRotationRefineAngleStep"])` parse block (3 lines)
+- `if (node["flatCellRotationRefineMaxOffsetDegrees"])` parse block (4 lines)
+- `if (node["flatCellRotationRefinePasses"])` parse block (3 lines)
+
+**File:** `C++/includes/CellFactory.hpp`
+
+Removed field `float initialABRatio = 1.0f;` (line 26).
+
+**File:** `C++/src/CellUniverse.cpp`
+
+Removed the `brightnessPerturbFirstFrameOnly` block (~8 lines at former lines 252-259).
+
+Removed the entire `volumeRecoveryEnabled` if-block (~90 lines at former lines 937-1027),
+including the greedy brightness-monotonic upscale search loop.
+
+Removed the entire `flatCellRotationRefineEnabled` if-block (~100 lines at former
+lines 1029-1131), including the 3D rotation grid search with multi-pass refinement.
+
+### Effect
+
+- 10 dead YAML fields removed from config
+- ~200 lines of dead code removed from `CellUniverse::optimize()`
+- 10 dead field declarations + ~30 lines of dead parse code removed from ConfigTypes.hpp
+- 1 dead field removed from CellFactory.hpp
+- Zero remaining references to any removed field in `*.cpp`, `*.hpp`, or `*.yaml`
+

@@ -101,6 +101,37 @@ public:
         std::cout << "iterations_per_cell: " << iterations_per_cell << '\n';
         std::cout << "z_scaling: " << z_scaling << '\n';
         std::cout << "blur_sigma: " << blur_sigma << '\n';
+        std::cout << "iterative_penalty: " << iterative_penalty << '\n';
+        std::cout << "iterative_min_penalty: " << iterative_min_penalty << '\n';
+        std::cout << "iterative_collapse_backoff: " << iterative_collapse_backoff << '\n';
+        std::cout << "iterative_penalty_range: " << iterative_penalty_range << '\n';
+        std::cout << "iterative_reward_gate: " << iterative_reward_gate << '\n';
+        std::cout << "iterative_reward_gate_decrement: " << iterative_reward_gate_decrement << '\n';
+        std::cout << "iterative_reward_gate_min: " << iterative_reward_gate_min << '\n';
+        std::cout << "iterative_reward: " << iterative_reward << '\n';
+        std::cout << "iterative_score_max: " << iterative_score_max << '\n';
+        std::cout << "iterative_max_count: " << iterative_max_count << '\n';
+        std::cout << "iterative_no_improvement_patience: " << iterative_no_improvement_patience << '\n';
+        std::cout << "iterative_improvement_tolerance: " << iterative_improvement_tolerance << '\n';
+        std::cout << "iterative_score_drop_stop_threshold: " << iterative_score_drop_stop_threshold << '\n';
+        std::cout << "iterative_score_percentile: " << iterative_score_percentile << '\n';
+        std::cout << "iterative_score_percentile_max: " << iterative_score_percentile_max << '\n';
+        std::cout << "iterative_score_percentile_increment: " << iterative_score_percentile_increment << '\n';
+        std::cout << "contrast_inner_window_size: " << contrast_inner_window_size << '\n';
+        std::cout << "contrast_outer_window_size: " << contrast_outer_window_size << '\n';
+        std::cout << "contrast_structure_threshold: " << contrast_structure_threshold << '\n';
+        std::cout << "contrast_eps: " << contrast_eps << '\n';
+        std::cout << "post_process_blur_sigma: " << post_process_blur_sigma << '\n';
+        std::cout << "post_process_amplification: " << post_process_amplification << '\n';
+        std::cout << "post_process_black_percentile: " << post_process_black_percentile << '\n';
+        std::cout << "post_process_white_percentile: " << post_process_white_percentile << '\n';
+        std::cout << "michelson_low_percentile: " << michelson_low_percentile << '\n';
+        std::cout << "michelson_high_percentile: " << michelson_high_percentile << '\n';
+        std::cout << "weber_background_percentile: " << weber_background_percentile << '\n';
+        std::cout << "weber_signal_percentile: " << weber_signal_percentile << '\n';
+        std::cout << "weber_background_floor: " << weber_background_floor << '\n';
+        std::cout << "export_preprocessed_images: " << export_preprocessed_images << '\n';
+        std::cout << "quit_after_preprocessing: " << quit_after_preprocessing << '\n';
         std::cout << "adaptive_background_expand_factor: " << adaptive_background_expand_factor << '\n';
         std::cout << "adaptive_background_top_fraction: " << adaptive_background_top_fraction << '\n';
         std::cout << "z_slices: " << z_slices << std::endl;
@@ -276,6 +307,11 @@ public:
 class PerturbParams {
     //Used with a cell config to add perturb parameters.
 public:
+    struct Sample {
+        float offset = 0.0f;
+        int direction = 0; // -1 decrease, +1 increase, 0 no signed move
+    };
+
     float prob  = 0.0f;
     float increase_prob = -1.0f;
     float decrease_prob = -1.0f;
@@ -288,32 +324,54 @@ public:
         mu = node["mu"].as<float>();
         sigma = node["sigma"].as<float>();
     }
-    [[nodiscard]] float getPerturbOffset() const {
+    [[nodiscard]] Sample samplePerturb() const {
         thread_local std::mt19937 gen{std::random_device{}()};
         std::uniform_real_distribution<float> dis(0.0f, 1.0f);
         const bool hasSeparateSignProbabilities = increase_prob >= 0.0f || decrease_prob >= 0.0f;
         if (!hasSeparateSignProbabilities) {
             if (dis(gen) < prob) {
                 std::normal_distribution<float> d(mu, sigma);
-                return d(gen);
+                return {d(gen), 0};
             }
-            return mu;
+            return {mu, 0};
         }
 
         const float incProb = std::clamp(increase_prob >= 0.0f ? increase_prob : 0.0f, 0.0f, 1.0f);
-        const float decProb = std::clamp(decrease_prob >= 0.0f ? decrease_prob : 0.0f, 0.0f, 1.0f);
+        const float decProbRaw = std::clamp(decrease_prob >= 0.0f ? decrease_prob : 0.0f, 0.0f, 1.0f);
+        const float decProb = std::min(decProbRaw, 1.0f - incProb);
         const float roll = dis(gen);
         const float magnitude = (sigma > 0.0f)
             ? std::abs(std::normal_distribution<float>(mu, sigma)(gen))
             : std::abs(mu);
 
         if (roll < incProb) {
-            return magnitude;
+            return {magnitude, 1};
         }
         if (roll < incProb + decProb) {
-            return -magnitude;
+            return {-magnitude, -1};
         }
-        return 0.0f;
+        return {0.0f, 0};
+    }
+    [[nodiscard]] float getPerturbOffset() const {
+        return samplePerturb().offset;
+    }
+    void adjustSignedProbability(int direction, float delta) {
+        if (direction == 0 || std::abs(delta) <= 1e-9f) {
+            return;
+        }
+        const bool hasSeparateSignProbabilities = increase_prob >= 0.0f || decrease_prob >= 0.0f;
+        if (!hasSeparateSignProbabilities) {
+            return;
+        }
+
+        if (direction > 0) {
+            const float other = std::clamp(decrease_prob >= 0.0f ? decrease_prob : 0.0f, 0.0f, 1.0f);
+            increase_prob = std::clamp((increase_prob >= 0.0f ? increase_prob : 0.0f) + delta, 0.0f, 1.0f - other);
+            return;
+        }
+
+        const float other = std::clamp(increase_prob >= 0.0f ? increase_prob : 0.0f, 0.0f, 1.0f);
+        decrease_prob = std::clamp((decrease_prob >= 0.0f ? decrease_prob : 0.0f) + delta, 0.0f, 1.0f - other);
     }
 };
 
@@ -325,6 +383,7 @@ public:
     PerturbParams majorRadius{};
     PerturbParams bRadius{};
     PerturbParams minorRadius{};
+    PerturbParams abRatio{};
     PerturbParams thetaX{};
     PerturbParams thetaY{};
     PerturbParams thetaZ{};
@@ -335,38 +394,21 @@ public:
     double maxBRadius{};
     double minMinorRadius{};
     double maxMinorRadius{};
-    // Frame-1 seed for per-cell _brightness. See CellFactory for why this
-    // should be well below the preprocessed cell brightness — 0.2 is the
-    // value Vincent's branch uses; 1.0 causes cells to shrink on frame 1.
     float initialBrightness{0.2f};
+    float initialRadiusScale{1.0f};
+    float backgroundColor{0.0f};
     double minBrightness{0.1};
     double maxBrightness{1.0};
-    float splitBrightestFraction{0.10f};
+    float brightnessProbabilityStep{0.02f};
+    float brightnessProbabilityTrust{1.0f};
+    float majorRadiusProbabilityStep{0.02f};
+    float majorRadiusProbabilityTrust{1.0f};
+    float minorRadiusProbabilityStep{0.02f};
+    float minorRadiusProbabilityTrust{1.0f};
+    float abRatioProbabilityStep{0.02f};
+    float abRatioProbabilityTrust{1.0f};
     float brightnessUpdateBlend{0.2f};
     float brightnessMeanAmplification{1.0f};
-    // Enable/disable the per-frame volume recovery block in CellUniverse::optimize.
-    // When disabled, the 20%-volume-loss trigger + greedy brightness-monotonic
-    // upscale search is skipped entirely regardless of the other
-    // volumeRecovery* knobs. Default false because empirically the greedy
-    // brightness-monotonicity gate (break-on-first-drop) exits at scale=1.02
-    // for any cell sitting on a bright core, so no [Volume Recovery] log line
-    // has fired in any real run — the block is structurally dead code at its
-    // current thresholds. Kept behind a flag in case the algorithm is reworked
-    // (e.g. to pick the argmax brightness across all scales instead of
-    // bailing on first drop).
-    bool volumeRecoveryEnabled{false};
-    float volumeRecoveryLossFractionThreshold{0.4f};
-    float volumeRecoveryMaxScaleIncreaseFraction{0.3f};
-    // Enable/disable the per-frame flat-cell rotation refine grid search in
-    // CellUniverse::optimize. When disabled, the entire 3D rotation grid search
-    // is skipped regardless of the other flatCellRotationRefine* knobs.
-    // Default true for backward compat; current YAML sets it to false because
-    // the grid search is expensive and the benefit is questionable.
-    bool flatCellRotationRefineEnabled{true};
-    float flatCellRotationRefineFlatnessThreshold{0.8f};
-    float flatCellRotationRefineAngleStep{0.15f};
-    float flatCellRotationRefineMaxOffsetDegrees{15.0f};
-    int flatCellRotationRefinePasses{2};
     // Maximum valid z position (interpolated z-space). Used to clamp Spheroid
     // center z in the constructor, preventing cells from drifting off the z-stack.
     // Default 224 = (z_slices=225) - 1. Runtime-updated by CellUniverse::loadFrame
@@ -382,6 +424,7 @@ public:
         majorRadius.explodeParams(node["majorRadius"]);
         if (node["bRadius"]) bRadius.explodeParams(node["bRadius"]);
         minorRadius.explodeParams(node["minorRadius"]);
+        if (node["abRatio"]) abRatio.explodeParams(node["abRatio"]);
         thetaX.explodeParams(node["thetaX"]);
         thetaY.explodeParams(node["thetaY"]);
         thetaZ.explodeParams(node["thetaZ"]);
@@ -394,38 +437,26 @@ public:
         minMinorRadius = node["minMinorRadius"].as<double>();
         maxMinorRadius = node["maxMinorRadius"].as<double>();
         if (node["initialBrightness"]) initialBrightness = node["initialBrightness"].as<float>();
+        if (node["initialRadiusScale"]) initialRadiusScale = node["initialRadiusScale"].as<float>();
+        if (node["backgroundColor"]) backgroundColor = node["backgroundColor"].as<float>();
         if (node["minBrightness"]) minBrightness = node["minBrightness"].as<double>();
         if (node["maxBrightness"]) maxBrightness = node["maxBrightness"].as<double>();
-        if (node["splitBrightestFraction"]) splitBrightestFraction = node["splitBrightestFraction"].as<float>();
+        if (node["brightnessProbabilityStep"]) brightnessProbabilityStep = node["brightnessProbabilityStep"].as<float>();
+        if (node["brightnessProbabilityTrust"]) brightnessProbabilityTrust = node["brightnessProbabilityTrust"].as<float>();
+        majorRadiusProbabilityStep = brightnessProbabilityStep;
+        majorRadiusProbabilityTrust = brightnessProbabilityTrust;
+        minorRadiusProbabilityStep = brightnessProbabilityStep;
+        minorRadiusProbabilityTrust = brightnessProbabilityTrust;
+        abRatioProbabilityStep = brightnessProbabilityStep;
+        abRatioProbabilityTrust = brightnessProbabilityTrust;
+        if (node["majorRadiusProbabilityStep"]) majorRadiusProbabilityStep = node["majorRadiusProbabilityStep"].as<float>();
+        if (node["majorRadiusProbabilityTrust"]) majorRadiusProbabilityTrust = node["majorRadiusProbabilityTrust"].as<float>();
+        if (node["minorRadiusProbabilityStep"]) minorRadiusProbabilityStep = node["minorRadiusProbabilityStep"].as<float>();
+        if (node["minorRadiusProbabilityTrust"]) minorRadiusProbabilityTrust = node["minorRadiusProbabilityTrust"].as<float>();
+        if (node["abRatioProbabilityStep"]) abRatioProbabilityStep = node["abRatioProbabilityStep"].as<float>();
+        if (node["abRatioProbabilityTrust"]) abRatioProbabilityTrust = node["abRatioProbabilityTrust"].as<float>();
         if (node["brightnessUpdateBlend"]) brightnessUpdateBlend = node["brightnessUpdateBlend"].as<float>();
         if (node["brightnessMeanAmplification"]) brightnessMeanAmplification = node["brightnessMeanAmplification"].as<float>();
-        if (node["volumeRecoveryEnabled"]) {
-            volumeRecoveryEnabled = node["volumeRecoveryEnabled"].as<bool>();
-        }
-        if (node["volumeRecoveryLossFractionThreshold"]) {
-            volumeRecoveryLossFractionThreshold = node["volumeRecoveryLossFractionThreshold"].as<float>();
-        }
-        if (node["volumeRecoveryMaxScaleIncreaseFraction"]) {
-            volumeRecoveryMaxScaleIncreaseFraction =
-                node["volumeRecoveryMaxScaleIncreaseFraction"].as<float>();
-        }
-        if (node["flatCellRotationRefineEnabled"]) {
-            flatCellRotationRefineEnabled = node["flatCellRotationRefineEnabled"].as<bool>();
-        }
-        if (node["flatCellRotationRefineFlatnessThreshold"]) {
-            flatCellRotationRefineFlatnessThreshold =
-                node["flatCellRotationRefineFlatnessThreshold"].as<float>();
-        }
-        if (node["flatCellRotationRefineAngleStep"]) {
-            flatCellRotationRefineAngleStep = node["flatCellRotationRefineAngleStep"].as<float>();
-        }
-        if (node["flatCellRotationRefineMaxOffsetDegrees"]) {
-            flatCellRotationRefineMaxOffsetDegrees =
-                node["flatCellRotationRefineMaxOffsetDegrees"].as<float>();
-        }
-        if (node["flatCellRotationRefinePasses"]) {
-            flatCellRotationRefinePasses = node["flatCellRotationRefinePasses"].as<int>();
-        }
     }
 };
 

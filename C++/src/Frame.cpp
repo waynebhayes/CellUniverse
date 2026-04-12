@@ -21,6 +21,7 @@ double computeSizeReductionPenalty(const Spheroid &oldCell, const Spheroid &newC
          + accumulateReductionPenalty(oldCell.getBRadius(),     newCell.getBRadius())
          + accumulateReductionPenalty(oldCell.getMinorRadius(), newCell.getMinorRadius());
 }
+// Vincent's old split helpers (computeEquivalentSphereRadius,
 } // namespace
 
 // Function to interpolate between two slices
@@ -216,15 +217,14 @@ std::vector<cv::Mat> Frame::generateOutputFrame()
     {
         const cv::Mat &realImage = _realFrame[i];
         double z = z_slices[i];
+        const float outlineIntensity = std::min(1.0f, _backgroundValue * 1.6f);
 
-        // Convert grayscale to RGB
-        cv::Mat outputFrame;
-        cv::cvtColor(realImage, outputFrame, cv::COLOR_GRAY2BGR);
+        cv::Mat outputFrame = realImage.clone();
 
         // Draw outlines for each cell
         for (const auto &cell : cells)
         {
-            cell.drawOutline(outputFrame, 1.0, z); // Assuming drawOutline takes a cv::Scalar for color
+            cell.drawOutline(outputFrame, outlineIntensity, z);
         }
 
         // Convert to 8-bit image if necessary
@@ -274,11 +274,12 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight, float siz
     }
 
     Spheroid oldCell = cells[index];
+    PerturbDirections perturbDirections;
 
     // O(n) overlap for just this cell before perturbation
     double oldOverlapCell = computeOverlapForCell(index, overlapWeight);
 
-    cells[index] = cells[index].getPerturbedCell();
+    cells[index] = cells[index].getPerturbedCell(&perturbDirections);
 
     // Min-radius hard clamp (2026-04-09): prevent cells from ratcheting down to
     // minimum radius bounds via unconstrained perturbation. The Spheroid ctor
@@ -332,14 +333,27 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight, float siz
                     - (oldImageCost + oldOverlapCell);
 
     CallBackFunc callback = [this, newSynthFrame, newCostPerSlice,
-                             oldCell, index, newImageCost](bool accept)
+                             oldCell, index, newImageCost, perturbDirections](bool accept)
     {
+        const float brightnessStep = std::max(0.0f, Spheroid::cellConfig.brightnessProbabilityStep);
+        const float majorRadiusStep = std::max(0.0f, Spheroid::cellConfig.majorRadiusProbabilityStep);
+        const float minorRadiusStep = std::max(0.0f, Spheroid::cellConfig.minorRadiusProbabilityStep);
+        const float abRatioStep = std::max(0.0f, Spheroid::cellConfig.abRatioProbabilityStep);
         if (accept) {
+            if (perturbDirections.brightness != 0) this->cells[index].adjustBrightnessPerturbProbability(perturbDirections.brightness, brightnessStep);
+            if (perturbDirections.majorRadius != 0) this->cells[index].adjustMajorRadiusPerturbProbability(perturbDirections.majorRadius, majorRadiusStep);
+            if (perturbDirections.minorRadius != 0) this->cells[index].adjustMinorRadiusPerturbProbability(perturbDirections.minorRadius, minorRadiusStep);
+            if (perturbDirections.abRatio != 0) this->cells[index].adjustABRatioPerturbProbability(perturbDirections.abRatio, abRatioStep);
             this->_synthFrame = newSynthFrame;
             this->_currentCost = newImageCost;
             this->_currentCostPerSlice = newCostPerSlice;
         } else {
-            this->cells[index] = oldCell;
+            Spheroid revertedCell = oldCell;
+            if (perturbDirections.brightness != 0) revertedCell.adjustBrightnessPerturbProbability(perturbDirections.brightness, -brightnessStep);
+            if (perturbDirections.majorRadius != 0) revertedCell.adjustMajorRadiusPerturbProbability(perturbDirections.majorRadius, -majorRadiusStep);
+            if (perturbDirections.minorRadius != 0) revertedCell.adjustMinorRadiusPerturbProbability(perturbDirections.minorRadius, -minorRadiusStep);
+            if (perturbDirections.abRatio != 0) revertedCell.adjustABRatioPerturbProbability(perturbDirections.abRatio, -abRatioStep);
+            this->cells[index] = revertedCell;
         }
     };
     return {costDiff, callback};

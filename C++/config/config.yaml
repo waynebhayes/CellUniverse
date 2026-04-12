@@ -24,19 +24,16 @@ cell:
     decrease_prob: 0.7
     mu: 0
     sigma: 2
-  # Triaxial b-axis perturbation (independent equatorial radius). If absent,
-  # Spheroid defaults bRadius = majorRadius at construction time (oblate
-  # fallback).
-  #
-  # Conservative seed: symmetric probs (no growth bias) and low prob so
-  # bRadius stays close to majorRadius unless the image strongly favors an
-  # elongated fit. Raise prob + add growth bias (e.g. increase_prob 0.6,
-  # decrease_prob 0.3) once the triaxial pipeline is stable.
   bRadius:
     increase_prob: 0.2
     decrease_prob: 0.2
     mu: 0
     sigma: 2
+  abRatio:
+    increase_prob: 0.5
+    decrease_prob: 0.5
+    mu: 0
+    sigma: 0.08
   minorRadius:
     increase_prob: 0.5
     decrease_prob: 0.85
@@ -50,27 +47,26 @@ cell:
   # iters is sqrt(0.3*350*0.0025) ≈ 0.51 rad (~29°) before the cost basin
   # pulls back — small enough to let the optimizer lock in orientation.
   thetaX:
-    increase_prob: 0.3
-    decrease_prob: 0.3
+    increase_prob: 0.7
+    decrease_prob: 0.7
     mu: 0
     sigma: 0.05
   thetaY:
-    increase_prob: 0.3
-    decrease_prob: 0.3
+    increase_prob: 0.7
+    decrease_prob: 0.7
     mu: 0
     sigma: 0.05
   thetaZ:
-    increase_prob: 0.3
-    decrease_prob: 0.3
+    increase_prob: 0.7
+    decrease_prob: 0.7
     mu: 0
     sigma: 0.05
   brightness:
-    increase_prob: 0.0   # disabled — brightness updated via EMA from real imagec
-    decrease_prob: 0.0
+    increase_prob: 0.7
+    decrease_prob: 0.8
     mu: 0
     sigma: 0.0
 
-  # Radius and brightness bounds
   minMajorRadius: 10
   maxMajorRadius: 50
   # Triaxial b-axis bounds. Keeping them wide (matching major) means the b
@@ -80,38 +76,32 @@ cell:
   maxBRadius: 50
   minMinorRadius: 5
   maxMinorRadius: 45
+
+  initialRadiusScale: 1.0
+  initialBrightness: 0.22
+  backgroundColor: 0.05
+
   minBrightness: 0.1
   maxBrightness: 0.98
 
-  # Frame-1 seed for per-cell brightness. Matches Vincent's preprocessing
-  # branch. Should be well below the post-preprocessing cell brightness
-  # (~1.0) so cells do not shrink on frame 1 due to L2 penalty on boundary
-  # dark pixels. Raised to ~0.4–0.6 if cells look too dim in frame-1 output.
-  initialBrightness: 0.2
+  brightnessProbabilityStep: 0.02
+  brightnessProbabilityTrust: 0.3
 
-  # Per-frame brightness EMA: new = old*(1-blend) + observed*blend*amplification
-  # Tuning lifted from Vincent's ab0fae0 commit (2026-04-11).
+  majorRadiusProbabilityStep: 0.01
+  majorRadiusProbabilityTrust: 0.1
+
+  minorRadiusProbabilityStep: 0.01
+  minorRadiusProbabilityTrust: 0.1
+
+  abRatioProbabilityStep: 0.02
+  abRatioProbabilityTrust: 0.1
+
   brightnessUpdateBlend: 0.9
-  brightnessMeanAmplification: 1.0
-
-  # Disabled features (kept for schema compatibility)
-  volumeRecoveryEnabled: false
-  volumeRecoveryLossFractionThreshold: 0.2
-  volumeRecoveryMaxScaleIncreaseFraction: 0.6
-  flatCellRotationRefineEnabled: false
-  flatCellRotationRefineFlatnessThreshold: 0.8
-  flatCellRotationRefineAngleStep: 0.15
-  flatCellRotationRefineMaxOffsetDegrees: 15.0
-  flatCellRotationRefinePasses: 2
-
-  splitBrightestFraction: 0.055
+  brightnessMeanAmplification: 1.1
 
 # Image preprocessing pipeline — iterative contrast enhancer ported from
-# scripts/image_processor_clean.py. The raw TIFF is normalized to [0,1], then
-# run through the iterative penalty/reward loop, then post-processed
-# (black-clamp + mid-band amplification + gentle blur). No sigmoid — the old
-# sigmoid / post-sigmoid fields were removed on 2026-04-11 when the dual
-# pipeline was torn out.
+# scripts/image_processor_clean.py. No sigmoid — the old sigmoid fields
+# were removed when the dual pipeline was torn out.
 simulation:
   iterations_per_cell: 500
   z_scaling: 7

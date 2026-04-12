@@ -2,19 +2,11 @@
 
 CellFactory::CellFactory(const BaseConfig &config) {
     std::string cellType = config.cellType;
-    // Frame-1 seed for per-cell _brightness. Pulled from
-    // `cell.initialBrightness` in config.yaml (default 0.2).
-    //
-    // Why NOT 1.0: the new ImageHandler preprocessing produces bright cells
-    // near 1.0 and background near 0.0. With a cell brightness of 1.0,
-    // every pixel the cell grows into dark background adds (0-1)^2 = 1.0
-    // to L2 cost, so cells get aggressively tightened around their mass on
-    // frame 1 and end up visibly smaller than the raw cell size. With a dim
-    // 0.2 seed, the same boundary-growth pixel only adds (0-0.2)^2 = 0.04 to
-    // L2, so cells stay near their initial radii until the per-frame EMA
-    // update (brightnessUpdateBlend * brightnessMeanAmplification) raises
-    // them toward the measured mean — which only starts on frame 2.
+    // Frame-1 seed for per-cell _brightness. After frame 1, the per-cell EMA
+    // update (measureMeanBrightness * brightnessMeanAmplification blended via
+    // brightnessUpdateBlend) takes over.
     initialBrightness = config.cell ? config.cell->initialBrightness : 0.2f;
+    initialRadiusScale = config.cell ? config.cell->initialRadiusScale : 1.0f;
     // TODO: add more else if branches for more cell Types
     if (cellType == "spheroid") {
         Spheroid::cellConfig = *config.cell;
@@ -67,15 +59,15 @@ while (std::getline(file, line)) {
         float x = std::stof(tokens[2]);
         float y = std::stof(tokens[3]);
         float z = std::stof(tokens[4]);
-        float majorRadius = std::stof(tokens[5]);
+        float majorRadius = std::stof(tokens[5]) * initialRadiusScale;
         float bRadius;
         float minorRadius;
         if (tokens.size() >= 8) {
-            bRadius     = std::stof(tokens[6]);
-            minorRadius = std::stof(tokens[7]);
+            bRadius     = std::stof(tokens[6]) * initialRadiusScale;
+            minorRadius = std::stof(tokens[7]) * initialRadiusScale;
         } else {
             bRadius     = majorRadius; // oblate fallback
-            minorRadius = std::stof(tokens[6]);
+            minorRadius = std::stof(tokens[6]) * initialRadiusScale;
         }
 
         float brightness = initialBrightness;
@@ -110,17 +102,16 @@ while (std::getline(file, line)) {
         z *= z_scaling;
 
         // Default radii for embryo initial points (tunable)
-        // You can adjust these later if needed.
-        const float defaultMajorRadius = 10.0f;
-        const float defaultMinorRadius = 10.0f;
+        const float defaultMajorRadius = 10.0f * initialRadiusScale;
+        const float defaultMinorRadius = 10.0f * initialRadiusScale;
 
         // Generate a stable name
         const std::string cellName = cellType + "_" + std::to_string(line_cnt + 1);
 
-        initialCells[filePath].push_back(
-            Spheroid(SpheroidParams(cellName, x, y, z, defaultMajorRadius, defaultMinorRadius))
-        );
-        initialCells[filePath].back().setBrightness(initialBrightness);
+        SpheroidParams params(cellName, x, y, z, defaultMajorRadius, defaultMinorRadius,
+                              0.0f, 0.0f, 0.0f, initialBrightness);
+        params.bRadius = defaultMajorRadius; // oblate fallback for Napari format
+        initialCells[filePath].push_back(Spheroid(params));
 
         ++line_cnt;
         continue;

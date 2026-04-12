@@ -163,10 +163,8 @@ static float estimateAdaptiveBackgroundFromFrame(const Frame &frame,
     return computeMeanOfTopFraction(backgroundCandidates, simulationConfig.adaptive_background_top_fraction);
 }
 
-// NOTE: Preprocessing (processImage, loadFrame, and their helpers) has moved
-// to ImageHandler. The old implementation lived here and produced a dual-
-// pipeline LoadedFrame (cost + analysis). The new preprocessing returns a
-// single preprocessed stack via ImageHandler::loadFrame.
+// Preprocessing moved to ImageHandler. Single preprocessed stack via
+// ImageHandler::loadFrame.
 CellUniverse::CellUniverse(std::map<std::string, std::vector<Spheroid>> initialCells,
                            PathVec imagePaths,
                            BaseConfig &config,
@@ -189,17 +187,13 @@ CellUniverse::CellUniverse(std::map<std::string, std::vector<Spheroid>> initialC
         loadedFrames.push_back(std::move(real_frame));
     }
 
-    // Global mean across the whole sequence — used to rescale each frame so
-    // their average brightness matches. Keeps the cost function consistent
-    // across frames that drift in illumination.
+    // Global mean across frames — rescale each frame so brightness is consistent.
     const float globalMeanBrightness = frameMeanBrightness.empty()
         ? 0.0f
         : std::accumulate(frameMeanBrightness.begin(), frameMeanBrightness.end(), 0.0f)
             / static_cast<float>(frameMeanBrightness.size());
 
-    // Pass 2: scale each frame to the global mean, optionally export, then
-    // construct the Frame using the single-pipeline constructor (dual-pipeline
-    // removed 2026-04-11).
+    // Pass 2: scale each frame to the global mean, export, construct Frame.
     for (size_t i = 0; i < imagePaths.size(); ++i)
     {
         std::vector<cv::Mat> &real_frame = loadedFrames[i];
@@ -239,6 +233,11 @@ CellUniverse::CellUniverse(std::map<std::string, std::vector<Spheroid>> initialC
         else
         {
             frames.emplace_back(real_frame, config.simulation, std::vector<Spheroid>(), outputPath, file_name);
+        }
+
+        if (config.cell) {
+            frames.back().setBackgroundColor(config.cell->backgroundColor);
+            frames.back().regenerateSynthFrame();
         }
     }
 }
@@ -927,201 +926,6 @@ void CellUniverse::optimize(int frameIndex)
         frame.regenerateSynthFrame();
     }
 
-    if (frameIndex > 0 && config.cell && config.cell->volumeRecoveryEnabled) {
-        const float lossThreshold = std::clamp(config.cell->volumeRecoveryLossFractionThreshold, 0.0f, 0.99f);
-        const float maxScaleIncreaseFraction =
-            std::max(0.0f, config.cell->volumeRecoveryMaxScaleIncreaseFraction);
-        if (lossThreshold > 0.0f) {
-            const Frame &previousFrame = frames[frameIndex - 1];
-            std::map<std::string, Spheroid> previousCellsByName;
-            for (const auto &previousCell : previousFrame.cells) {
-                previousCellsByName.emplace(previousCell.getName(), previousCell);
-            }
-
-            const auto &realFrame = frame.getRealFrame();
-            // Triaxial volume proxy: a * b * c (omit the 4/3 * pi constant
-            // since it cancels in every ratio comparison downstream).
-            const auto computeVolume = [](const Spheroid &cell) {
-                return static_cast<double>(cell.getMajorRadius()) *
-                       static_cast<double>(cell.getBRadius()) *
-                       static_cast<double>(cell.getMinorRadius());
-            };
-
-            bool recoveredAnyVolume = false;
-            for (auto &cell : frame.cells) {
-                const auto previousIt = previousCellsByName.find(cell.getName());
-                if (previousIt == previousCellsByName.end()) {
-                    continue;
-                }
-
-                const double previousVolume = computeVolume(previousIt->second);
-                const double currentVolume = computeVolume(cell);
-                if (previousVolume <= 1e-6) {
-                    continue;
-                }
-
-                const double minimumAllowedVolume = previousVolume * (1.0 - lossThreshold);
-                if (currentVolume >= minimumAllowedVolume) {
-                    continue;
-                }
-
-                const float baseMajorRadius = cell.getMajorRadius();
-                const float baseMinorRadius = cell.getMinorRadius();
-                const float baseBrightness = cell.getBrightness();
-                const float baseMeanBrightness = cell.measureMeanBrightness(realFrame);
-                Spheroid bestCell = cell;
-                float bestMeanBrightness = baseMeanBrightness;
-
-                for (float scale = 1.02f; scale <= 1.0f + maxScaleIncreaseFraction + 1e-6f; scale += 0.02f) {
-                    const SpheroidParams candidateParams(
-                        cell.getName(),
-                        cell.getX(),
-                        cell.getY(),
-                        cell.getZ(),
-                        baseMajorRadius * scale,
-                        baseMinorRadius * scale,
-                        cell.getCellParams().theta_x,
-                        cell.getCellParams().theta_y,
-                        cell.getCellParams().theta_z,
-                        baseBrightness);
-                    Spheroid candidate(candidateParams);
-                    const float candidateMeanBrightness = candidate.measureMeanBrightness(realFrame);
-                    if (candidateMeanBrightness + 1e-6f < bestMeanBrightness) {
-                        break;
-                    }
-                    if (candidateMeanBrightness > bestMeanBrightness + 1e-6f) {
-                        bestMeanBrightness = candidateMeanBrightness;
-                        bestCell = candidate;
-                    }
-                }
-
-                if (bestCell.getMajorRadius() > cell.getMajorRadius() + 1e-6f ||
-                    bestCell.getMinorRadius() > cell.getMinorRadius() + 1e-6f) {
-                    std::cout << "[Volume Recovery] frame " << displayFrame
-                              << " cell=" << cell.getName()
-                              << " prev_volume=" << previousVolume
-                              << " current_volume=" << currentVolume
-                              << " threshold_volume=" << minimumAllowedVolume
-                              << " mean_brightness=" << baseMeanBrightness
-                              << " recovered_mean_brightness=" << bestMeanBrightness
-                              << " majorRadius=" << cell.getMajorRadius() << "->" << bestCell.getMajorRadius()
-                              << " minorRadius=" << cell.getMinorRadius() << "->" << bestCell.getMinorRadius()
-                              << '\n';
-                    cell = bestCell;
-                    recoveredAnyVolume = true;
-                }
-            }
-
-            if (recoveredAnyVolume) {
-                frame.regenerateSynthFrame();
-            }
-        }
-    }
-
-    if (config.cell && config.cell->flatCellRotationRefineEnabled) {
-        const float flatnessThreshold =
-            std::clamp(config.cell->flatCellRotationRefineFlatnessThreshold, 0.0f, 1.0f);
-        const float configuredAngleStep = std::max(0.0f, config.cell->flatCellRotationRefineAngleStep);
-        const float maxOffsetRadians = std::max(
-            0.0f,
-            config.cell->flatCellRotationRefineMaxOffsetDegrees * static_cast<float>(M_PI / 180.0));
-        const int refinePasses = std::max(0, config.cell->flatCellRotationRefinePasses);
-        if (configuredAngleStep > 0.0f && refinePasses > 0 && maxOffsetRadians > 0.0f) {
-            const auto &realFrame = frame.getRealFrame();
-            bool refinedAnyRotation = false;
-            for (auto &cell : frame.cells) {
-                if (cell.getMajorRadius() <= 1e-6f) {
-                    continue;
-                }
-                const float flatnessRatio = cell.getMinorRadius() / cell.getMajorRadius();
-                if (flatnessRatio > flatnessThreshold) {
-                    continue;
-                }
-
-                const auto originalParams = cell.getCellParams();
-                const auto [originalMeanBrightness, originalStdBrightness] =
-                    cell.measureBrightnessStats(realFrame);
-                Spheroid bestCell = cell;
-                float bestMeanBrightness = originalMeanBrightness;
-                float bestStdBrightness = originalStdBrightness;
-                for (int pass = 0; pass < refinePasses; ++pass) {
-                    const auto passCenter = bestCell.getCellParams();
-                    Spheroid passBestCell = bestCell;
-                    float passBestMeanBrightness = bestMeanBrightness;
-                    float passBestStdBrightness = bestStdBrightness;
-
-                    for (float deltaX = -maxOffsetRadians; deltaX <= maxOffsetRadians + 1e-6f; deltaX += configuredAngleStep) {
-                        for (float deltaY = -maxOffsetRadians; deltaY <= maxOffsetRadians + 1e-6f; deltaY += configuredAngleStep) {
-                            for (float deltaZ = -maxOffsetRadians; deltaZ <= maxOffsetRadians + 1e-6f; deltaZ += configuredAngleStep) {
-                                if (std::abs(deltaX) < 1e-6f &&
-                                    std::abs(deltaY) < 1e-6f &&
-                                    std::abs(deltaZ) < 1e-6f) {
-                                    continue;
-                                }
-
-                                SpheroidParams candidateParams(
-                                    passCenter.name,
-                                    passCenter.x,
-                                    passCenter.y,
-                                    passCenter.z,
-                                    passCenter.majorRadius,
-                                    passCenter.minorRadius,
-                                    passCenter.theta_x + deltaX,
-                                    passCenter.theta_y + deltaY,
-                                    passCenter.theta_z + deltaZ,
-                                    passCenter.brightness);
-                                candidateParams.bRadius = passCenter.bRadius;
-                                const Spheroid candidate(candidateParams);
-                                const auto [candidateMeanBrightness, candidateStdBrightness] =
-                                    candidate.measureBrightnessStats(realFrame);
-                                const bool betterMean = candidateMeanBrightness > passBestMeanBrightness + 1e-6f;
-                                const bool lowerStd = candidateStdBrightness < passBestStdBrightness - 1e-6f;
-                                const bool nonWorseMean = candidateMeanBrightness >= passBestMeanBrightness - 1e-6f;
-                                const bool nonWorseStd = candidateStdBrightness <= passBestStdBrightness + 1e-6f;
-                                if ((betterMean && nonWorseStd) || (lowerStd && nonWorseMean)) {
-                                    passBestCell = candidate;
-                                    passBestMeanBrightness = candidateMeanBrightness;
-                                    passBestStdBrightness = candidateStdBrightness;
-                                }
-                            }
-                        }
-                    }
-
-                    if (passBestCell.getCellParams().theta_x == bestCell.getCellParams().theta_x &&
-                        passBestCell.getCellParams().theta_y == bestCell.getCellParams().theta_y &&
-                        passBestCell.getCellParams().theta_z == bestCell.getCellParams().theta_z) {
-                        break;
-                    }
-
-                    bestCell = passBestCell;
-                    bestMeanBrightness = passBestMeanBrightness;
-                    bestStdBrightness = passBestStdBrightness;
-                    refinedAnyRotation = true;
-                }
-
-                if (bestCell.getCellParams().theta_x != cell.getCellParams().theta_x ||
-                    bestCell.getCellParams().theta_y != cell.getCellParams().theta_y ||
-                    bestCell.getCellParams().theta_z != cell.getCellParams().theta_z) {
-                    const auto paramsBefore = cell.getCellParams();
-                    const auto paramsAfter = bestCell.getCellParams();
-                    std::cout << "[Flat Rotation Refine] frame " << displayFrame
-                              << " cell=" << cell.getName()
-                              << " flatness_ratio=" << flatnessRatio
-                              << " mean=" << originalMeanBrightness << "->" << bestMeanBrightness
-                              << " std=" << originalStdBrightness << "->" << bestStdBrightness
-                              << " theta=(" << paramsBefore.theta_x << "," << paramsBefore.theta_y << "," << paramsBefore.theta_z
-                              << ")->(" << paramsAfter.theta_x << "," << paramsAfter.theta_y << "," << paramsAfter.theta_z << ")"
-                              << '\n';
-                    cell = bestCell;
-                }
-            }
-
-            if (refinedAnyRotation) {
-                frame.regenerateSynthFrame();
-            }
-        }
-    }
-
     std::cout << "[Optimize Done] frame " << displayFrame
               << " perturb_accepted=" << perturbAccepted
               << " split_attempts=" << splitAttempted
@@ -1222,6 +1026,15 @@ void CellUniverse::copyCellsForward(size_t to)
     }
     // assumes cells have deepcopy copy constructors
     frames[to].cells = frames[to - 1].cells;
+    if (config.cell) {
+        for (auto &cell : frames[to].cells) {
+            cell.blendAdaptivePerturbProbabilitiesWithConfig(
+                config.cell->brightnessProbabilityTrust,
+                config.cell->majorRadiusProbabilityTrust,
+                config.cell->minorRadiusProbabilityTrust,
+                config.cell->abRatioProbabilityTrust);
+        }
+    }
 }
 
 unsigned int CellUniverse::length()
