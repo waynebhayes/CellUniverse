@@ -1,0 +1,204 @@
+classDiagram
+direction LR
+
+%% ============================================================
+%% TARGET STATE — 2026-03-28
+%% Sigmoid preprocessing, L2 cost, unified stochastic loop
+%% Per-cell brightness stored but unused (draw uses cell_color)
+%% Cross-frame PCA elongation drives P(split)
+%% ============================================================
+
+class SpheroidParams {
+  +string name
+  +float x
+  +float y
+  +float z
+  +float majorRadius
+  +float minorRadius
+  +float theta_x
+  +float theta_y
+  +float theta_z
+  +float brightness
+}
+
+class CellParams {
+  +string name
+}
+
+class SimulationConfig {
+  +int iterations_per_cell
+  +float background_color
+  +float cell_color
+  +float z_scaling
+  +float blur_sigma
+  +float sigmoid_k
+  +float sigmoid_center
+  +float sigmoid_center_offset
+  +int z_slices
+  +int calibration_x/y/z
+  +int calibration_width/height
+}
+
+class ProbabilityConfig {
+  +float split
+  +float split_cost
+  +float split_elongation_threshold
+  +float overlap_penalty_weight
+  +int split_burn_in_iterations
+  +float max_split_probability
+}
+
+class PerturbParams {
+  +float prob
+  +float mu
+  +float sigma
+  +getPerturbOffset() float
+}
+
+class SpheroidConfig {
+  +PerturbParams x y z majorRadius minorRadius
+  +PerturbParams thetaX thetaY thetaZ brightness
+  +double minMajorRadius maxMajorRadius
+  +double minMinorRadius maxMinorRadius
+  +double minBrightness maxBrightness
+  +explodeConfig(node)
+}
+
+class BaseConfig {
+  +string cellType
+  +unique_ptr~SpheroidConfig~ cell
+  +SimulationConfig simulation
+  +ProbabilityConfig prob
+  +explodeConfig(node)
+  +printConfig() const
+}
+
+class Spheroid {
+  -string _name
+  -Point3f _position
+  -double _major_radius _minor_radius
+  -double a b c
+  -double _theta_x _theta_y _theta_z
+  -float _brightness
+  +getName() const string ref
+  +getX() getY() getZ() float
+  +getMajorRadius() getMinorRadius() float
+  +getBrightness() float
+  +draw(image, simulationConfig, z)
+  +drawOutline(image, color, z)
+  +getPerturbedCell() Spheroid
+  +getSplitCells(...) tuple~Spheroid Spheroid bool float~
+  +checkConstraints() bool
+  +getCellParams() SpheroidParams
+  +get_center() Point3f
+  -inverseRotatePoint(...)
+  -generateInverseRotationMatrix(...)
+  -computeSliceBounds(...)
+}
+
+class Frame {
+  +vector~Spheroid~ cells
+  -vector~double~ z_slices
+  -SimulationConfig simulationConfig
+  -vector~Mat~ _realFrame
+  -vector~Mat~ _synthFrame
+  -double _currentCost
+  +generateSynthFrame()
+  +generateSynthFrameFast(oldCell, newCell)
+  +calculateCost(synthFrame) Cost
+  +perturbCell(index, overlapWeight) CostCallbackPair
+  +trySplitCell(index, preOpt..., threshold, overlapWeight) CostCallbackPair
+  +computeOverlapPenalty(weight) double
+  +computeOverlapForCell(cellIdx, weight) double
+  +computeElongationForCell(cellIdx) float
+  +computeElongationRatios() map
+  +regenerateSynthFrame()
+  +length() size_t
+}
+
+class CellUniverse {
+  -BaseConfig config
+  -vector~Frame~ frames
+  -string outputPath
+  -int firstFrame
+  -map~string_float~ previousElongations
+  +optimize(frameIndex)
+  +saveImages(frameIndex)
+  +saveCells(frameIndex)
+  +copyCellsForward(to)
+  +length() unsigned int
+  +getCells(frameIndex)
+}
+
+class CellFactory {
+  +CellFactory(config)
+  +createCells(path, z_offset, z_scaling, firstFrameFile)
+}
+
+class LineageViewer {
+  +update(frameIndex, cells)
+  +close()
+  -ensureNodeExists(rawName)
+  -render2D(frameIndex, cells)
+}
+
+class CellViz {
+  +string rawName
+  +float x
+  +float y
+}
+
+class MainModule {
+  <<module>>
+  +applySigmoid(image, k, center)$
+  +processImage(image, config)$
+  +loadFrame(imageFile, config)$
+  +main(argc, argv)$
+}
+
+%% ============================================================
+%% RELATIONSHIPS
+%% ============================================================
+
+CellParams <|-- SpheroidParams
+
+BaseConfig *-- SimulationConfig
+BaseConfig *-- ProbabilityConfig
+BaseConfig o-- SpheroidConfig : unique_ptr
+SpheroidConfig *-- PerturbParams
+
+Spheroid ..> SpheroidConfig : static config
+Spheroid ..> SpheroidParams
+Spheroid ..> SimulationConfig
+
+Frame *-- "0..*" Spheroid : cells
+Frame *-- SimulationConfig
+Frame ..> Spheroid
+
+CellUniverse *-- "0..*" Frame
+CellUniverse *-- BaseConfig
+CellUniverse ..> Spheroid
+
+CellFactory ..> BaseConfig
+CellFactory ..> Spheroid
+CellFactory ..> SpheroidParams
+
+LineageViewer ..> CellViz
+
+MainModule ..> BaseConfig
+MainModule ..> CellFactory
+MainModule ..> CellUniverse
+
+%% ============================================================
+%% NOTES
+%% ============================================================
+
+note for Spheroid "STANDALONE — no Cell base class.\ndraw() uses simulationConfig.cell_color (1.0),\nNOT per-cell _brightness.\n_brightness stored but unused.\nSrc: src/Spheroid.cpp (~658 lines)"
+
+note for Frame "L2 cost (NORM_L2) + overlap penalty.\n_currentCost cached to avoid redundant L2.\nperturbCell uses computeOverlapForCell (O(n)).\ntrySplitCell burn-in uses overlap penalty.\nSrc: src/Frame.cpp (~423 lines)"
+
+note for CellUniverse "Unified stochastic loop in optimize().\nP(split) from PREVIOUS frame PCA elongation.\nPre-opt shapes saved for trySplitCell.\nSplit blacklist prevents redundant burn-ins.\npreviousElongations stored end-of-frame.\nSrc: src/CellUniverse.cpp (~498 lines)"
+
+note for BaseConfig "cell is unique_ptr~SpheroidConfig~.\nRule of Five: copy ctor deep-copies,\nmove ctor/assign = default."
+
+note for MainModule "Preprocessing pipeline:\n1. BGR→Gray, normalize [0,1]\n2. Gaussian blur (sigma=10)\n3. Auto-calibrate sigmoid center from bg zone\n4. Sigmoid: 1/(1+exp(-75*(x-center)))\n5. Z-interpolation (33→225 slices)"

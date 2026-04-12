@@ -1,0 +1,222 @@
+cellType: spheroid
+
+# Perturbation parameters for each dimension.
+# increase_prob/decrease_prob: probability of applying a random offset per iteration.
+# mu/sigma: Gaussian offset mean and standard deviation.
+cell:
+  x:
+    increase_prob: 0.45
+    decrease_prob: 0.45
+    mu: 0
+    sigma: 5
+  y:
+    increase_prob: 0.45
+    decrease_prob: 0.45
+    mu: 0
+    sigma: 5
+  z:
+    increase_prob: 0.35
+    decrease_prob: 0.35
+    mu: 0
+    sigma: 8
+  majorRadius:
+    increase_prob: 0.5
+    decrease_prob: 0.7
+    mu: 0
+    sigma: 2
+  bRadius:
+    increase_prob: 0.2
+    decrease_prob: 0.2
+    mu: 0
+    sigma: 2
+  abRatio:
+    increase_prob: 0.5
+    decrease_prob: 0.5
+    mu: 0
+    sigma: 0.08
+  minorRadius:
+    increase_prob: 0.5
+    decrease_prob: 0.85
+    mu: 0
+    sigma: 2
+  # Rotation perturbation — tuned DOWN from (prob 0.9, sigma 0.1) on
+  # 2026-04-11 because the old values were fine under oblate (a==b makes
+  # rotation around z a structural no-op, so the random walk was invisible)
+  # but tumble the cell under triaxial (a != b makes rotation affect L2).
+  # Current: prob 0.3, sigma 0.05 rad (~3°). Random-walk stddev over 350
+  # iters is sqrt(0.3*350*0.0025) ≈ 0.51 rad (~29°) before the cost basin
+  # pulls back — small enough to let the optimizer lock in orientation.
+  thetaX:
+    increase_prob: 0.7
+    decrease_prob: 0.7
+    mu: 0
+    sigma: 0.05
+  thetaY:
+    increase_prob: 0.7
+    decrease_prob: 0.7
+    mu: 0
+    sigma: 0.05
+  thetaZ:
+    increase_prob: 0.7
+    decrease_prob: 0.7
+    mu: 0
+    sigma: 0.05
+  brightness:
+    increase_prob: 0.7
+    decrease_prob: 0.8
+    mu: 0
+    sigma: 0.0
+
+  minMajorRadius: 10
+  maxMajorRadius: 50
+  # Triaxial b-axis bounds. Keeping them wide (matching major) means the b
+  # axis can shrink or grow into the full equatorial range. Tighten these
+  # to constrain the aspect ratio (e.g. minBRadius: 8, maxBRadius: 45).
+  minBRadius: 10
+  maxBRadius: 50
+  minMinorRadius: 5
+  maxMinorRadius: 45
+
+  initialRadiusScale: 1.0
+  initialBrightness: 0.22
+  backgroundColor: 0.05
+
+  minBrightness: 0.1
+  maxBrightness: 0.98
+
+  brightnessProbabilityStep: 0.02
+  brightnessProbabilityTrust: 0.3
+
+  majorRadiusProbabilityStep: 0.01
+  majorRadiusProbabilityTrust: 0.1
+
+  minorRadiusProbabilityStep: 0.01
+  minorRadiusProbabilityTrust: 0.1
+
+  abRatioProbabilityStep: 0.02
+  abRatioProbabilityTrust: 0.1
+
+  brightnessUpdateBlend: 0.9
+  brightnessMeanAmplification: 1.1
+
+# Image preprocessing pipeline — iterative contrast enhancer ported from
+# scripts/image_processor_clean.py. No sigmoid — the old sigmoid fields
+# were removed when the dual pipeline was torn out.
+simulation:
+  iterations_per_cell: 500
+  z_scaling: 7
+  blur_sigma: 0.0
+
+  iterative_penalty: 0.1
+  iterative_min_penalty: 0.005
+  iterative_collapse_backoff: 0.99
+  iterative_penalty_range: 0.9
+  iterative_reward_gate: 1.0
+  iterative_reward_gate_decrement: 0.008
+  iterative_reward_gate_min: 0.025
+  iterative_reward: 0.1
+  iterative_score_max: 0.5
+  iterative_max_count: 300
+  iterative_no_improvement_patience: 10
+  iterative_improvement_tolerance: 0.01
+  iterative_score_drop_stop_threshold: 0.1
+  iterative_score_percentile: 0.05
+  iterative_score_percentile_max: 0.90
+  iterative_score_percentile_increment: 0.025
+
+  contrast_structure_threshold: 0.02
+  contrast_eps: 0.000001
+
+  post_process_blur_sigma: 2.5
+  post_process_amplification: 2.5
+  post_process_black_percentile: 0.1
+  post_process_white_percentile: 0.5
+
+  michelson_low_percentile: 0.10
+  michelson_high_percentile: 0.90
+  michelson_eps: 0.000001
+
+  weber_background_percentile: 0.10
+  weber_signal_percentile: 0.90
+  weber_background_floor: 0.0039215686
+  weber_eps: 0.000001
+
+  export_preprocessed_images: false
+  quit_after_preprocessing: false
+
+  adaptive_background_expand_factor: 1.1
+  adaptive_background_top_fraction: 0.4
+
+# Triaxial split detection pipeline (2026-04-11 redesign).
+# Classification: cells with snapshot.shapeElongation > T_classify become
+# pre_classified (Phase B); the rest stay non_classified (Phase A).
+# Split attempts generate K candidate placements around the snapshot/PCA
+# direction, burn each in briefly, pick the best, then bio check + cost gate.
+prob:
+  P_split_base: 0.03
+  P_split_max: 0.5
+  shape_elongation_classify_threshold: 1.20
+
+  split_cost: 15
+  overlap_penalty_weight: 500.0
+  size_reduction_penalty_weight: 30
+
+  split_direction_agreement_degrees: 20
+  expected_daughter_pre_pass_iterations: 1
+
+  # 2 midpoints (PCA + snapshot) x 5 variants each = 10 candidates per
+  # primary direction. With split_direction_agreement giving 1 primary in
+  # most cases, total is 10.
+  split_candidates_per_attempt: 10
+  split_candidate_burn_in_iterations: 20
+  # Extra refine iterations on the winning candidate's daughters before
+  # the bio/cost gates fire. Uses the same tight burn-in sigmas.
+  split_final_refine_iterations: 30
+  # Per-cell position calibration pass between pre-pass and Phase A/B.
+  # Runs M perturbCell iterations with tight position sigmas and radii
+  # frozen at 0 sigma so the parent position refines without radius
+  # collapse. Catches the "Phase A parks parent on one daughter" pathology.
+  split_calibration_iterations_per_cell: 50
+  split_candidate_rotation_delta_degrees: 8
+  split_candidate_translation_delta_fraction: 0.2
+
+  bio_daughter_size_ratio_max: 1.5
+  bio_combined_volume_min_fraction: 0.6
+  bio_combined_volume_max_fraction: 1.3
+  # Drift-from-seed bio gate (2026-04-11). Rejects a split when the best
+  # candidate's post-burn-in daughter center has wandered more than
+  # max(parent_frac * parent_maxR, daughter_frac * daughter_maxR) from the
+  # seed position. Catches daughters escaping the parent footprint during
+  # burn-in (f4/f5 false-split pathology).
+  bio_max_drift_parent_fraction: 0.4
+  bio_max_drift_daughter_fraction: 0.8
+  # Midpoint-near-snapshot-parent gate (2026-04-11). Rejects a split
+  # when the daughter midpoint is more than 0.95 * parent_maxR from the
+  # snapshot (last-frame) parent center. Catches parent drift and
+  # parent inflation — real divisions happen at the parent's last-frame
+  # location, false ones place daughters in adjacent empty image space.
+  bio_max_midpoint_parent_fraction: 0.95
+  # Single-daughter volume gate (2026-04-11). Rejects a split when one
+  # daughter's volume exceeds 0.65 * parent volume. Catches the
+  # "one daughter mimics parent, one is a small satellite" pattern
+  # (1f2ed f4: d2 vol = 0.74 * parent vol).
+  bio_max_single_daughter_volume_fraction: 0.65
+  # Bridge brightness gate (2026-04-11). Reuses the Voronoi-filtered
+  # bright-pixel set from PCA, projects onto the split axis, and checks
+  # for a dividing groove between daughter centers. Rejects when BOTH
+  # signals indicate a flat profile: (1) >18% of in-range pixels are
+  # in the middle 30% of the axis, AND (2) gap-pixel brightness is
+  # >85% of edge-pixel brightness. Catches the hardest false-split
+  # pattern where two equal-size daughters mimic a single continuous
+  # cell at parent center.
+  bio_bridge_max_gap_density: 0.18
+  bio_bridge_max_valley_ratio: 0.85
+  # Multiplier on Spheroid x/y/z perturbation sigmas during candidate burn-in.
+  # Main-loop sigmas (5, 5, 8) let daughters wander 15-25 voxels across
+  # 20 iters; 0.4 tightens to (2, 2, 3.2) so burn-in only refines.
+  split_burn_in_pos_sigma_scale: 0.4
+  # Multiplier on Spheroid majorR/bR/minorR perturbation sigmas during
+  # burn-in. 0.1 preserves the snapshot-based daughter sizing (0.794 *
+  # src) through burn-in + refine, preventing the "collapsed sliver"
+  # false-split pattern where one daughter shrinks to the radius floor.
+  split_burn_in_radius_sigma_scale: 0.1

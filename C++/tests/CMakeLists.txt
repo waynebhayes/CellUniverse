@@ -18,6 +18,7 @@ set(CMAKE_WARN_DEPRECATED ${_OLD_CMAKE_WARN_DEPRECATED})
 
 add_executable(core_unit_test
         hello_test.cc
+        config_types_test.cc
         interpolate_test.cc
         frame_test.cc
         process_image_test.cc
@@ -25,15 +26,15 @@ add_executable(core_unit_test
         spheroid_params_test.cc
         spheroid_rotation_test.cc
         ${CMAKE_SOURCE_DIR}/src/Frame.cpp
-        ${CMAKE_SOURCE_DIR}/src/Lineage.cpp
-        ${CMAKE_SOURCE_DIR}/src/Cells/Spheroid.cpp
+        ${CMAKE_SOURCE_DIR}/src/CellUniverse.cpp
+        ${CMAKE_SOURCE_DIR}/src/ImageHandler.cpp
+        ${CMAKE_SOURCE_DIR}/src/Spheroid.cpp
 )
 
 target_include_directories(core_unit_test PRIVATE
         ${OpenCV_INCLUDE_DIRS}
         ${CMAKE_SOURCE_DIR}/includes
         ${CMAKE_SOURCE_DIR}/src
-        ${CMAKE_SOURCE_DIR}/src/Cells
         ${CMAKE_SOURCE_DIR}/lib/yaml-cpp/include
 )
 

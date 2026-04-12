@@ -2,7 +2,78 @@
 
 ## Overview
 
-CellUniverse tracks 3D cells across time-lapse microscopy frames. For each frame, it fits 3D spheroid models to real image data using Monte Carlo perturbation, then detects cell divisions (splits) using PCA on bright pixels. The pipeline runs frame-by-frame: optimize cell positions → detect splits → copy cells forward → save results.
+CellUniverse tracks 3D cells across time-lapse microscopy frames. For each frame, it fits 3D spheroid models to real image data using Monte Carlo perturbation, then detects cell divisions (splits) using PCA on bright pixels + a stack of soft fake-guards. The pipeline runs frame-by-frame: load + preprocess → update per-cell brightness → optimize cell positions → copy cells forward → save results.
+
+---
+
+## 0.1. 2026-04-11 Update Pointer (read this first)
+
+The split pipeline was rewritten on 2026-04-11 around a **triaxial cell
+model** (`a`, `b`, `c` all independent — no longer oblate). All 2026-04-06
+fake-guards, Pillar B machinery, and the monolithic 1000-iter burn-in have
+been deleted. The new pipeline classifies cells by **fitted shape
+elongation** (`max(a,b,c)/min(a,b,c)`) and routes split attempts through
+`Frame::trySplitCellPhased`, which evaluates K=5 short candidate burn-ins
+and picks the best via a bio check (size ratio, volume fraction, buried
+checks, drift-from-seed) + cost gate. Supporting changes:
+
+- `PreviousFrameSnapshot` carries `shapeElongation`, `longAxisDir`,
+  `longAxisLength`, and the end-of-frame cell state.
+- `Spheroid::shapeElongation()` and `Spheroid::worldLongAxis()` are the
+  classification inputs.
+- `ProbabilityConfig` fields — new (`P_split_base`, `P_split_max`,
+  `shape_elongation_classify_threshold`, `split_candidates_per_attempt`,
+  `split_candidate_burn_in_iterations`, `split_candidate_rotation_delta_degrees`,
+  `split_candidate_translation_delta_fraction`, `split_direction_agreement_degrees`,
+  `bio_daughter_size_ratio_max`, `bio_combined_volume_min_fraction`,
+  `bio_combined_volume_max_fraction`, `bio_max_drift_parent_fraction`,
+  `bio_max_drift_daughter_fraction`, `split_burn_in_pos_sigma_scale`);
+  deleted (all `split_fake_*`, `split_pre_burn_in_*`, `split_post_burn_in_*`,
+  `split_minor_axis_alignment_*`, `split_burn_in_iterations`,
+  `split_elongation_threshold`).
+- `Frame::trySplitCellPhased(cellIndex, snapshot, otherClaimSets,
+  useSnapshotDirection, probConfig)` — daughters sized from snapshot parent
+  radii, position perturbation sigmas tightened during burn-in, post-burn-in
+  drift-from-seed gate rejects daughters that escaped the parent footprint.
+- `Frame::bioCheckDaughters(...)` now takes `double refParentVolume`
+  instead of `const Spheroid &parent` — volume fraction ratios use snapshot
+  parent volume, not live parent.
+
+See `docs/changelogs/changelogv5.md` entries dated 2026-04-11 for the
+per-file, per-line before/after. Everything below this section predates
+the triaxial rewrite and references APIs and config fields that no longer
+exist.
+
+---
+
+## 0. 2026-04-07 Update Pointer (read this first)
+
+This document's lower sections predate the **2026-04-05 / 2026-04-06 brightness + split-guard rework** and the **2026-04-07 merge** (`yp_yd_merge_04072026`). Sections 1–3 below have been updated. **Sections 6 (Split Detection) and below still describe the older, simpler burn-in logic** and are missing most of the new guards.
+
+For the authoritative current state, read in this order:
+
+1. `docs/conversation_archive_2026-04-05.md` — percentile-based sigmoid, per-cell brightness EMA, safe blur, post-sigmoid dim subtraction, P(split) proportional rescale, adaptive synthetic background
+2. `docs/conversation_archive_2026-04-06.md` — split fake-guards (overlap-volume, radius-ratio, bridge-brightness), flatness-gated minor-axis steering, size-reduction perturbation penalty, sign-split perturb probabilities
+3. `docs/plans/2026-04-07-yp-yd-merge-review-and-next-steps.md` — merge review (goods/bads, dead code, risks) + phased implementation plan for cleanup / brightness-unification / lineage / tests
+4. `.claude/rules/algorithms.md` — updated 2026-04-07 with the full preprocessing pipeline and layered split guards
+5. `.claude/rules/gotchas.md` — updated 2026-04-07 — brightness is now LIVE, not disabled; sigmoid center is auto-calibrated (not background_color); split fake-guards enumerated
+6. `.claude/rules/config.md` — updated 2026-04-07 with the full config field inventory including 04-05/06 additions
+
+### Known stale sections in THIS file
+
+- **Section 6 (Split Detection)** describes only the original burn-in with overlap penalty. It is **missing** all post-burn-in fake-guards (overlap-volume, radius-ratio, bridge-brightness, large-recenter), pre-burn-in PCA gates (separation, z-axis collapse), and the flatness-gated minor-axis steering. See `algorithms.md` for the current layered guard stack (~11 steps).
+- **Section 7 (PCA Split Detection)** is mostly still correct but missing the flatness-gated minor-axis steering added on 2026-04-06 (forces split axis onto local z when `minorR/majorR ≤ flatness_threshold` AND PCA axis disagrees with z by more than `tolerance_degrees`).
+- Any reference to **"brightness perturbation disabled"** or **"draw() uses cell_color"** in lower sections is OUTDATED — see 3.2 above for the corrected per-cell brightness EMA path.
+- Any reference to `sigmoid_center_offset` as an active parameter is OUTDATED — it is parsed but unread. Use `sigmoid_center_percentile` instead.
+- The `P(split) = min(max_split_probability, ...)` formula mentioned in the algorithms/config sections is OUTDATED — the current formula computes raw P(split) per cell and then proportionally rescales all cells so max = `max_split_probability`.
+
+### Config field inventory added 2026-04-05/06 (see rules/config.md for full table)
+
+**Cell-level:** `brightnessUpdateBlend`, `brightnessMeanAmplification`, `splitBrightestFraction`, `increase_prob`/`decrease_prob` per-parameter split.
+
+**Simulation-level:** `sigmoid_center_percentile` (replaces `sigmoid_center_offset`), `post_sigmoid_dimmest_percentile`, `post_sigmoid_dimmest_transition_width`, `post_sigmoid_dimmest_transition_gradient`, `adaptive_background_expand_factor`, `adaptive_background_top_fraction`.
+
+**Prob-level (split guards):** `split_fake_overlap_volume_fraction_threshold`, `split_fake_radius_ratio_threshold`, `split_fake_bridge_brightness_similarity_threshold`, `split_minor_axis_alignment_tolerance_degrees` (DEGREES, not radians), `split_minor_axis_alignment_flatness_ratio_threshold`, `split_pre_burn_in_min_separation_over_major`, `split_pre_burn_in_z_axis_*`, `split_post_burn_in_large_recenter_*`, `size_reduction_penalty_weight`.
 
 ---
 
@@ -43,15 +114,23 @@ Supports three input modes:
 
 Calls `updateTiffConfigIfNeeded()` (lines 27–43) to auto-detect z-slice count from the first TIFF file using `cv::imreadmulti()`.
 
-### 1.4 Cell Creation — `CellFactory::createCells()` in `C++/src/CellFactory.cpp` (lines 18–61)
+### 1.4 Cell Creation — `CellFactory::createCells()` in `C++/src/CellFactory.cpp` (lines 14–117)
 
-Reads the initial CSV (columns: `file, name, x, y, z, majorRadius, minorRadius, theta_x, theta_y, theta_z`). For each row:
-1. Parse fields
-2. Scale z-coordinate: `z *= z_scaling` (line 44)
+Takes `firstFrameFile` as a parameter (passed from `main.cpp`). Reads the initial CSV in one of two formats:
+
+**Case A — 7-column format** (lines 45–70):
+Columns: `file, name, x, y, z, majorRadius, minorRadius` (no brightness column — brightness defaults to 0.5).
+
+**Case B — 4-column Napari format** (lines 78–104):
+Columns: `cell_type, z, y, x`. Uses `firstFrameFile` as the frame key and assigns default radii (10.0).
+
+For each row:
+1. Parse fields, trim whitespace
+2. Scale z-coordinate: `z *= z_scaling` (line 61/88)
 3. Construct `Spheroid` with clamped radii
 4. Group by filename: `map<filename, vector<Spheroid>>`
 
-### 1.5 Lineage Construction — `Lineage()` in `C++/src/Lineage.cpp` (lines 138–162)
+### 1.5 CellUniverse Construction — `CellUniverse()` in `C++/src/CellUniverse.cpp` (lines 180–208)
 
 For each image path:
 1. Call `loadFrame()` to load and preprocess the TIFF
@@ -61,22 +140,28 @@ For each image path:
 
 ## 2. Frame Loading & Z-Interpolation
 
-### 2.1 `loadFrame()` in `C++/src/Lineage.cpp` (lines 55–135)
+### 2.1 `loadFrame()` in `C++/src/CellUniverse.cpp` (lines 64–177)
 
 Each TIFF frame is a multi-page file where each page is one z-slice (e.g., 33 slices from a confocal microscope).
 
 **Processing steps:**
-1. Load all TIFF pages with `cv::imreadmulti()` (line 65)
+1. Load all TIFF pages with `cv::imreadmulti()` (line 74)
 2. For each slice:
-   - Convert BGR → Grayscale (line 80)
-   - Apply Gaussian blur with sigma=1.5 (line 50)
-   - Convert to CV_32F normalized to [0, 1] (line 43)
-3. **Z-interpolation** (lines 94–107): Expand 33 slices to 225 using linear interpolation:
+   - Convert BGR → Grayscale (line 93)
+   - Apply Gaussian blur with configurable sigma (line 57–59 via `processImage`)
+   - Convert to CV_32F normalized to [0, 1] (line 54)
+3. **Sigmoid contrast enhancement** (CellUniverse.cpp:422–448, updated 2026-04-05):
+   - **Calibration (percentile-based, active path)**: Compute a percentile of brightness values in the calibration ROI *over the full stack* (not per-slice). Sigmoid center = `simulation.sigmoid_center_percentile` percentile of those values. This REPLACED the earlier `bgMean + sigmoid_center_offset` logic — the `sigmoid_center_offset` field is now parsed but **unread** (scheduled for deletion per `docs/plans/2026-04-07-yp-yd-merge-review-and-next-steps.md`).
+   - **Safe/masked blur** is applied before the sigmoid (avoids bleeding zero-valued borders into valid content).
+   - **Apply sigmoid**: `output = 1 / (1 + exp(-k * (input - center)))` with `simulation.sigmoid_k` (was 75, commonly tuned to ~60).
+   - **Post-sigmoid dim-region subtraction** (added 2026-04-06): compute a stack-wide dimmest percentile (`post_sigmoid_dimmest_percentile`, ~0.99). Pixels above cutoff are kept unchanged; pixels below are reduced; a transition band (`post_sigmoid_dimmest_transition_width`, `post_sigmoid_dimmest_transition_gradient`) smoothly tapers the subtraction. Clamp negatives to zero.
+   - **Result**: Cells → ~1.0, background → ~0.0. This gives the L2 cost function clear gradient signal at cell boundaries.
+4. **Z-interpolation** (lines 130–147): Expand 33 slices to 225 using linear interpolation:
    - Original slices placed at indices: `0, z_scaling, 2×z_scaling, ...` (where z_scaling=7)
    - Between each pair, insert `z_scaling - 1 = 6` interpolated slices
    - Formula: `interpolated[k] = (1 - t) × slice[i] + t × slice[i+1]` where `t = k / z_scaling`
    - Result: 33 × 7 - 6 = **225 total z-slices**
-4. Validate: throws error if result ≠ expected slice count (line 128)
+5. Validate: throws error if result != expected slice count (line 150)
 
 ---
 
@@ -88,19 +173,27 @@ Creates the entire synthetic image stack from scratch:
 
 ```
 For each z-slice (0 to 224):
-    Create blank image filled with background_color (e.g., 0.39)
+    Create blank image filled with background_color (0.0)
     For each cell:
-        cell.draw(image, config, nullptr, z)
+        cell.draw(image, simulationConfig, z)
 ```
 
-### 3.2 `Spheroid::draw()` in `C++/src/Cells/Spheroid.cpp` (lines 113–157)
+### 3.2 `Spheroid::draw()` in `C++/src/Spheroid.cpp` (lines 191–211)
 
 Renders one spheroid into one z-slice. This is a **per-pixel analytical test** — no voxel matrix is stored.
 
+`draw()` uses **per-cell `_brightness`** (updated 2026-04-05). It does NOT use `simulationConfig.cell_color` except as the frame-1 seed for each cell's `_brightness`. After frame 1, `_brightness` is updated every frame via EMA blend from the real image mean inside the cell volume, multiplied by `cell.brightnessMeanAmplification`. Combined with `background_color=0.0`, this matches the post-sigmoid real image where background is ~0.0 and cells track their measured brightness.
+
+**Per-frame brightness update** (see `CellUniverse::updateCellBrightnessFromReal()` or equivalent):
+1. Measure mean real-image brightness inside cell volume via `Spheroid::measureMeanBrightness()`
+2. `observed *= cell.brightnessMeanAmplification` (default 1.0)
+3. EMA blend: `_brightness = _brightness * (1 - blend) + observed * blend` where `blend = cell.brightnessUpdateBlend`
+4. Clamp to `[minBrightness, maxBrightness]`
+
 **Steps:**
-1. **Early exit**: Skip if z-slice is beyond `maxR = max(majorR, majorR, minorR)` from cell center (line 129)
-2. **Bounding box**: Compute 2D box as `center ± maxR` in x and y (lines 131–134)
-3. **Per-pixel test** (lines 136–155):
+1. **Early exit**: Skip if z-slice is beyond `maxR = max(majorR, majorR, minorR)` from cell center
+2. **Bounding box**: Compute 2D box as `center +/- maxR` in x and y
+3. **Per-pixel test**:
    ```
    For each pixel (x, y) in bounding box:
        dx = x - center.x
@@ -111,10 +204,10 @@ Renders one spheroid into one z-slice. This is a **per-pixel analytical test** �
        (lx, ly, lz) = inverseRotate(dx, dy, dz)
 
        // Ellipsoid equation test
-       val = (lx/a)² + (ly/b)² + (lz/c)²
+       val = (lx/a)^2 + (ly/b)^2 + (lz/c)^2
 
-       if val ≤ 1.0:
-           pixel = cell_color  (e.g., 0.53)
+       if val <= 1.0:
+           pixel = simulationConfig.cell_color  (1.0)
    ```
 
 The **inverse rotation** (`inverseRotatePoint()`, lines 19–42) applies:
@@ -124,22 +217,22 @@ The spheroid shape is **oblate**: `a = b = majorRadius`, `c = minorRadius`. So:
 - `a = b`: Equal equatorial radii
 - `c`: Polar radius (shorter for oblate/pancake shape)
 
-### 3.3 Fast Re-render — `Frame::generateSynthFrameFast()` in `Frame.cpp` (lines 115–154)
+### 3.3 Fast Re-render — `Frame::generateSynthFrameFast()` in `Frame.cpp` (lines 78–117)
 
 When only one cell changes (during perturbation), re-renders only the affected region:
 1. Compute bounding box enclosing both old and new cell positions
 2. Copy unchanged z-slices from existing synthetic frame
 3. Re-render only z-slices within the bounding box
 
-### 3.4 Cell Outlines — `Spheroid::drawOutline()` in `Spheroid.cpp` (lines 161–196)
+### 3.4 Cell Outlines — `Spheroid::drawOutline()` in `Spheroid.cpp` (lines 214–255)
 
-Used when saving output images. Same as `draw()` but only marks **surface pixels** where `0.95 ≤ val ≤ 1.05` in green.
+Used when saving output images. Same as `draw()` but only marks **surface pixels** where `0.95 <= val <= 1.05` in green.
 
 ---
 
 ## 4. Cost Function
 
-### 4.1 `Frame::calculateCost()` in `Frame.cpp` (lines 100–113)
+### 4.1 `Frame::calculateCost()` in `Frame.cpp` (lines 63–76)
 
 Measures how well the synthetic image matches the real image:
 
@@ -149,28 +242,32 @@ For each z-slice i:
     totalCost += ||real[i] - synth[i]||_L2
 ```
 
-Where `||·||_L2` is the L2 norm (sum of squared pixel differences, square-rooted). Lower cost = better fit.
+Where `||...||_L2` is the L2 norm (`cv::NORM_L2`) over all 225 z-slices. Lower cost = better fit.
+
+An overlap penalty (`computeOverlapPenalty()` / `computeOverlapForCell()`, lines 213–258) is added to the cost during perturbation and split evaluation. This penalizes cells that physically overlap, weighted by `config.prob.overlap_penalty_weight`.
 
 ---
 
-## 5. Phase 1: Perturbation Optimization
+## 5. Unified Stochastic Optimization Loop
 
-### 5.1 `Lineage::optimize()` Phase 1 in `Lineage.cpp` (lines 179–209)
+### 5.1 `CellUniverse::optimize()` in `CellUniverse.cpp` (lines 209–378)
 
-Runs `iterations_per_cell × num_cells` iterations of random perturbation.
+Runs `iterations_per_cell * num_cells` total iterations in a **unified stochastic loop** where each iteration is either a perturbation or a split attempt.
 
-**Each iteration calls `Frame::perturb()`** in `Frame.cpp` (lines 219–267):
+**Key features:**
+- **P(split) driven by PREVIOUS frame's PCA elongation** (lines 248–265): If a cell looked elongated last frame, it is more likely to be dividing now, so it gets a higher P(split). Frame 1 has no previous data, so all cells use the base rate. The current frame's PCA (via `trySplitCell` -> `getSplitCells`) is used only for the split AXIS, not probability.
+- **Pre-opt shapes saved** (lines 238–243): Before any iterations, save each cell's position and radii. Phase 1 perturbations can collapse a cell toward one blob; pre-opt state feeds PCA center and daughter sizing.
+- **Split blacklist** (line 246): Cells that fail a burn-in are blacklisted from further split attempts this frame, preventing redundant 500-iteration burn-ins.
 
-1. **Select random cell**: `index = rand() % cells.size()` (line 227)
-2. **Perturb**: `cells[index] = cells[index].getPerturbedCell()` (line 229)
-3. **Overlap check**: If perturbed cell overlaps any other cell → revert immediately (lines 232–238)
-4. **Render**: `generateSynthFrameFast(oldCell, newCell)` — only re-renders affected region (line 243)
-5. **Cost**: `costDiff = newCost - oldCost` (line 244)
-6. **Accept/reject** (lines 248–256):
-   - **Accept** (costDiff < 0): Keep new cell position, update synthetic frame
-   - **Reject** (costDiff ≥ 0): Revert cell to old state
+**Each iteration** (lines 273–360):
+1. **Pick random cell**: uniform random from current cell list
+2. **Decide split or perturb**: roll `uniform01` against `pSplit` for that cell
+3. **If split** (lines 294–331): Call `frame.trySplitCell()` with pre-opt shapes. Accept if `costDiff < -split_cost`. On failure, blacklist the cell.
+4. **If perturb** (lines 332–346): Call `frame.perturbCell()` which applies random offsets, overlap penalty, fast re-render, accept if cost decreased.
 
-### 5.2 `Spheroid::getPerturbedCell()` in `Spheroid.cpp` (lines 198–210)
+**End of frame** (lines 362–377): Compute PCA elongation for each cell on THIS frame's image and store in `previousElongations` for the next frame's P(split).
+
+### 5.2 `Spheroid::getPerturbedCell()` in `Spheroid.cpp`
 
 Creates a copy with random offsets applied to every parameter:
 - **Position**: `x ± N(mu_x, sigma_x)`, same for y, z
@@ -181,67 +278,50 @@ Each offset uses `PerturbParams::getPerturbOffset()`: with probability `prob`, s
 
 The new `Spheroid` constructor clamps radii to `[min, max]` bounds and enforces `minorR ≤ majorR`.
 
-### 5.3 Overlap Detection — `Spheroid::checkIfCellsOverlap()` in `Spheroid.cpp` (lines 575–631)
+### 5.3 Overlap Penalty — `Frame::computeOverlapPenalty()` / `computeOverlapForCell()` in `Frame.cpp` (lines 213–258)
 
-For all pairs of cells `(i, j)`:
+Overlap is now handled via a continuous penalty in the cost function rather than a hard rejection gate:
 ```
-dist = ||center[i] - center[j]||
-majorThresh = (majorR[i] + majorR[j]) × 0.95
-minorThresh = (minorR[i] + minorR[j]) × 0.95
+For all pairs of cells (i, j):
+    dist = ||center[i] - center[j]||
+    combinedR = majorR[i] + majorR[j]
 
-overlap if: dist < majorThresh AND dist < minorThresh
+    if dist < combinedR:
+        overlapRatio = (combinedR - dist) / combinedR
+        penalty += weight * overlapRatio^2
 ```
 
-Both conditions must be true. The 0.95 factor allows slight tangency.
+The penalty is weighted by `config.prob.overlap_penalty_weight` and added to the L2 image cost during both perturbation and split evaluation. This allows cells to be near each other but penalizes physical overlap proportionally.
 
 ---
 
-## 6. Phase 2: Split Detection
+## 6. Split Detection (within unified loop)
 
-### 6.1 `Lineage::optimize()` Phase 2 in `Lineage.cpp` (lines 212–289)
+### 6.1 Split Triggering — `CellUniverse::optimize()` in `CellUniverse.cpp` (lines 294–331)
 
-After Phase 1 settles cells, Phase 2 checks if any cell should split into two daughters.
+Splits are triggered stochastically within the unified optimization loop (Section 5). When a cell is selected for a split attempt:
+1. Look up pre-opt shapes for the cell
+2. Call `frame.trySplitCell()` with pre-opt position, radii, elongation threshold, and overlap weight
+3. Accept if `costDiff < -split_cost`; otherwise blacklist the cell from further attempts this frame
 
-**Key design: independent evaluation.** Each cell is evaluated against the same baseline state. After evaluation, the split is always reverted so the next cell sees the original state.
-
-```
-candidates = []
-
-For each cell (by name):
-    result = frame.trySplitCell(cellIndex)
-    costDiff = result.first
-
-    if costDiff < -split_cost:
-        Record daughters as SplitCandidate
-
-    callback(false)  // Always revert to baseline
-
-// Apply all accepted splits at once
-For each candidate:
-    Remove parent, add both daughters
-
-if any splits applied:
-    frame.regenerateSynthFrame()
-    Run 2 × iterations_per_cell × num_splits post-split perturbations
-```
-
-### 6.2 `Frame::trySplitCell()` in `Frame.cpp` (lines 284–440)
+### 6.2 `Frame::trySplitCell()` in `Frame.cpp` (lines 292–418)
 
 The main split evaluation function. Takes a cell index and returns `{costDiff, callback}`.
 
-#### Step A: Get Split Geometry (lines 284–310)
+#### Step A: Get Split Geometry (lines 292–317)
 
 ```cpp
 // Collect neighbor cell centers (excluding the cell being split)
 neighborCenters = [center of every other cell]
 
-// Call PCA-based split detection
-(child1, child2, valid, elongationRatio) = oldCell.getSplitCells(realFrame, z_scaling, neighborCenters)
+// Call PCA-based split detection with pre-opt shapes
+(child1, child2, valid, elongationRatio) = oldCell.getSplitCells(
+    realFrame, z_scaling, neighborCenters, preOptMajorR, preOptMinorR, preOptX, preOptY, preOptZ)
 ```
 
 If `valid == false` (too few bright pixels or constraint failure), logs `[Split Skip]` and returns.
 
-#### Step A.5: Elongation Ratio Filter (lines 312–317)
+#### Step A.5: Elongation Ratio Filter (lines 319–324)
 
 Before the expensive burn-in, check whether the PCA elongation ratio indicates a likely split:
 
@@ -251,32 +331,17 @@ if splitElongationThreshold > 0.0 AND elongationRatio < splitElongationThreshold
     Return {0.0, no-op}
 ```
 
-- `elongationRatio ≈ 1.0`: Spherical bright pixels → no split signal → skip
-- `elongationRatio > threshold (default 1.3)`: Elongated → proceed to burn-in
-- Setting `split_elongation_threshold: 0` in config disables the filter (old behavior)
+- `elongationRatio ~ 1.0`: Spherical bright pixels -> no split signal -> skip
+- `elongationRatio > threshold`: Elongated -> proceed to burn-in
+- Setting `split_elongation_threshold: 0` in config disables the filter
 
-#### Step B: Overlap Checks (lines 305–358)
+#### Step B: Overlap Handling (lines 326–352)
 
-Remove parent, add both daughters to the cell list, then check:
+Remove parent, add both daughters to the cell list. No hard overlap rejection — overlap penalty in cost handles it. Daughters near other cells get penalized proportionally, not blocked.
 
-**Daughter vs. existing cells** (lines 316–330):
-```
-For each existing cell i, for each daughter d:
-    dist = ||center[i] - center[d]||
-    majorThresh = (majorR[i] + majorR[d]) × 0.95
-    minorThresh = (minorR[i] + minorR[d]) × 0.95
+#### Step C: Burn-in Optimization (lines 357–388)
 
-    if dist < majorThresh AND dist < minorThresh:
-        OVERLAP → log "[Split Overlap] daughter c1/c2 overlaps with <cell>"
-```
-
-**Daughter vs. daughter**: *(removed)* — the cost function handles this naturally. If daughters stack or collapse, the synthetic image won't match the real data and costDiff will be positive, rejecting the split.
-
-If daughter-existing overlap → revert and return `{0.0, no-op}`.
-
-#### Step C: Burn-in Optimization (lines 360–416)
-
-300 iterations of alternating perturbation on daughter 1 and daughter 2:
+500 iterations of alternating perturbation on daughter 1 and daughter 2, using overlap penalty in cost:
 
 ```
 For iter = 0 to 499:
@@ -285,28 +350,28 @@ For iter = 0 to 499:
     saved = cells[dIdx]
     cells[dIdx] = cells[dIdx].getPerturbedCell()
 
-    // Check perturbed daughter against existing cells
-    if overlap with any existing cell → revert
+    // Compute overlap penalty for this cell before and after perturbation
+    oldCellOverlap = computeOverlapForCell(dIdx, overlapWeight)
+    newCellOverlap = computeOverlapForCell(dIdx, overlapWeight)
 
-    // Daughter-daughter check: removed (cost function decides)
-
-    // Evaluate cost
+    // Evaluate cost (image L2 + overlap delta)
     trialFrame = generateSynthFrameFast(saved, cells[dIdx])
-    trialCost = calculateCost(trialFrame)
+    trialImageCost = calculateCost(trialFrame)
+    improvement = (trialImageCost + newCellOverlap) - (bestImageCost + oldCellOverlap)
 
-    if trialCost < bestCost:
+    if improvement < 0:
         Accept perturbation
         accepted++
     else:
         Revert to saved
 ```
 
-Logs: `[Split Burn-in] <name> burn_in_accepted=X/300 oldCost=Y newCost=Z diff=W`
+Logs: `[Split Burn-in] <name> burn_in_accepted=X/500 oldCost=Y newCost=Z diff=W`
 
-#### Step D: Return Result (lines 418–439)
+#### Step D: Return Result (lines 402–418)
 
 ```
-costDiff = bestCost - oldCost
+costDiff = bestTotalCost - oldTotalCost
 callback = function(accept):
     if accept: keep daughters, update synth frame
     if reject: remove daughters, restore parent
@@ -375,7 +440,7 @@ For each pixel (x,y,z) in bounding box:
 - The **bounding box** (3×maxR) sets the computational limit using pre-opt effective radii
 - The **neighbor exclusion** prevents bright pixels from adjacent cells from contaminating the PCA
 
-#### Step 4: PCA with Per-Axis Normalization (lines 346–426)
+#### Step 4: PCA with Isotropic Normalization (by majorRadius)
 
 PCA (Principal Component Analysis) finds the direction of maximum spread in the point cloud. If the cell has split, the bright pixels form two clusters and PCA finds the axis connecting them.
 
@@ -384,33 +449,29 @@ PCA (Principal Component Analysis) finds the direction of maximum spread in the 
 For each point:
     data[i] = (point.x - pcaCenter.x, point.y - pcaCenter.y, point.z - pcaCenter.z)
 
-// Compute per-axis standard deviation
-sx = stddev of all x-values
-sy = stddev of all y-values
-sz = stddev of all z-values
-
-// Normalize each axis to unit variance
-// This prevents one axis from dominating PCA
-// (e.g., z-slices may have different physical spacing)
-data[i].x /= sx
-data[i].y /= sy
-data[i].z /= sz
+// Isotropic normalization: divide ALL axes by majorRadius
+// This preserves true shape. Per-axis stddev normalization was tested
+// and rejected — it suppresses Z-direction splits because small
+// minorRadius inflates Z eigenvalues.
+data[i].x /= majorRadius
+data[i].y /= majorRadius
+data[i].z /= majorRadius
 
 // Run PCA on normalized data
 pca = cv::PCA(data)
-eigenvalues: λ1 ≥ λ2 ≥ λ3
+eigenvalues: L1 >= L2 >= L3
 eigenvector1 = direction of maximum variance (in normalized space)
 
 // Transform eigenvector back to image space
-ev_image = (ev_norm.x × sx, ev_norm.y × sy, ev_norm.z × sz)
+ev_image = (ev_norm.x * majorRadius, ev_norm.y * majorRadius, ev_norm.z * majorRadius)
 split_axis = normalize(ev_image)
 
-elongation_ratio = λ1 / λ2
+elongation_ratio = L1 / L2
 ```
 
 **Interpreting the results:**
-- `elongation_ratio ≈ 1.0`: Point cloud is spherical → no clear split direction
-- `elongation_ratio > 1.5`: Point cloud is elongated → likely two clusters (split)
+- `elongation_ratio ~ 1.0`: Point cloud is spherical -> no clear split direction
+- `elongation_ratio > 1.5`: Point cloud is elongated -> likely two clusters (split)
 - `split_axis`: The direction connecting the two clusters
 
 #### Step 5: Centroid-Based Daughter Placement (lines 428–487)
@@ -465,40 +526,26 @@ Logs: `[Split Placement] centroid-based: c1=(x,y,z) c2=(x,y,z) sep=D`
 
 ## 8. Post-Split & Frame Transition
 
-### 8.1 Applying Splits — `Lineage::optimize()` (lines 262–289)
+### 8.1 Applying Splits — within `CellUniverse::optimize()` (lines 294–331)
 
-After all cells are evaluated independently:
+Splits are accepted or rejected inline during the unified loop (Section 5). When `costDiff < -split_cost`, the callback is invoked with `true`, which keeps the daughters and updates the synthetic frame. No separate "apply all splits" phase exists.
 
-```
-For each accepted candidate:
-    Find parent by name in cell list
-    Remove parent
-    Add daughter0 and daughter1
-    Log "[Split Accepted]"
+On rejection, the callback reverts to the parent cell and the cell is added to the split blacklist.
 
-if any splits were applied:
-    frame.regenerateSynthFrame()  // Full re-render with new daughters
-
-    // Post-split perturbation: let daughters settle
-    postIters = 2 × iterations_per_cell × num_splits
-    For i in 0..postIters:
-        frame.perturb()  // Same as Phase 1
-```
-
-### 8.2 Copy Forward — `Lineage::copyCellsForward()` (lines 376–384)
+### 8.2 Copy Forward — `CellUniverse::copyCellsForward()` in `CellUniverse.cpp` (lines 464–472)
 
 After optimizing frame N, copy all cells to frame N+1 as the initial guess:
 ```
 frames[N+1].cells = frames[N].cells  // Deep copy
 ```
 
-The next frame's Phase 1 will then optimize these positions for the new image.
+The next frame's optimization loop will then optimize these positions for the new image.
 
-### 8.3 Save Outputs — `Lineage::saveImages()` (lines 292–329) & `saveCells()` (lines 331–374)
+### 8.3 Save Outputs — `CellUniverse::saveImages()` (lines 380–417) & `saveCells()` (lines 419–462)
 
-**Images**: For each z-slice (0–224):
-- `output/real/{frame}/0.png` ... `224.png` — Real image with green cell outlines
-- `output/synth/{frame}/0.png` ... `224.png` — Synthetic rendering
+**Images**: For each z-slice (0-224):
+- `output/real/{frame}/0.png` ... `224.png` -- Real image with green cell outlines
+- `output/synth/{frame}/0.png` ... `224.png` -- Synthetic rendering
 
 **Cells**: Append to `output/cells.csv`:
 ```
@@ -511,85 +558,84 @@ file, name, x, y, z, majorRadius, minorRadius, theta_x, theta_y, theta_z
 
 ```
 1. STARTUP
-   main.cpp:147-207
+   main.cpp
    ├── Parse 6 command-line arguments
-   ├── Load YAML config → BaseConfig
+   ├── Load YAML config -> BaseConfig
    ├── Auto-detect z-slices from TIFF metadata
    ├── Load image file paths for frame range
-   ├── Create cells from initial CSV (CellFactory)
-   └── Initialize Lineage with cells + images
+   ├── Create cells from initial CSV (CellFactory, takes firstFrameFile)
+   └── Initialize CellUniverse with cells + images
 
 2. FOR EACH FRAME (e.g., frames 1-10):
 
-   2a. LOAD IMAGE (first time only)
-       Lineage::loadFrame() [Lineage.cpp:55-135]
+   2a. LOAD IMAGE (during CellUniverse construction)
+       loadFrame() [CellUniverse.cpp:64-177]
        ├── Read multi-page TIFF (33 z-slices)
        ├── Convert to grayscale, blur, normalize to [0,1]
-       └── Z-interpolate: 33 → 225 slices (linear, z_scaling=7)
+       ├── Calibrate sigmoid center from background zone
+       ├── Apply sigmoid: cells -> ~1.0, background -> ~0.0
+       └── Z-interpolate: 33 -> 225 slices (linear, z_scaling=7)
 
-   2b. PHASE 1: PERTURBATION OPTIMIZATION
-       Lineage::optimize() [Lineage.cpp:179-209]
+   2b. UNIFIED STOCHASTIC OPTIMIZATION LOOP
+       CellUniverse::optimize() [CellUniverse.cpp:209-378]
        │
-       │   iterations = num_cells × iterations_per_cell
-       │   (e.g., 6 cells × 350 = 2,100 iterations)
+       │   iterations = num_cells * iterations_per_cell
+       │   P(split) driven by PREVIOUS frame's PCA elongation
+       │   Pre-opt shapes saved before any iterations
+       │   Split blacklist prevents redundant burn-ins
        │
-       └── For each iteration:
-           Frame::perturb() [Frame.cpp:219-267]
-           ├── Pick random cell
+       └── For each iteration: pick random cell, then either:
+
+           PERTURBATION (most iterations):
+           Frame::perturbCell() [Frame.cpp:178-211]
            ├── Apply random perturbation (position, radii, rotation)
-           │   Spheroid::getPerturbedCell() [Spheroid.cpp:198-210]
-           ├── Check overlaps
-           │   Spheroid::checkIfCellsOverlap() [Spheroid.cpp:575-631]
+           │   Spheroid::getPerturbedCell()
+           ├── Compute overlap penalty for this cell
+           │   Frame::computeOverlapForCell() [Frame.cpp:237-258]
            ├── Render changed region only
-           │   Frame::generateSynthFrameFast() [Frame.cpp:115-154]
-           │   └── Spheroid::draw() [Spheroid.cpp:113-157]
-           ├── Compute cost (L2 norm)
-           │   Frame::calculateCost() [Frame.cpp:100-113]
-           └── Accept if cost decreased, else revert
+           │   Frame::generateSynthFrameFast() [Frame.cpp:78-117]
+           │   └── Spheroid::draw() [Spheroid.cpp:191-211]
+           ├── Compute cost (L2 norm + overlap penalty)
+           │   Frame::calculateCost() [Frame.cpp:63-76]
+           └── Accept if total cost decreased, else revert
 
-   2c. PHASE 2: SPLIT DETECTION
-       Lineage::optimize() [Lineage.cpp:212-289]
-       │
-       └── For each cell independently:
-           Frame::trySplitCell() [Frame.cpp:278-440]
+           SPLIT ATTEMPT (stochastic, P(split) from prev frame):
+           Frame::trySplitCell() [Frame.cpp:292-418]
            │
            ├── PCA SPLIT DETECTION
-           │   Spheroid::getSplitCells() [Spheroid.cpp:249-499]
-           │   ├── Compute mean brightness inside cell boundary
+           │   Spheroid::getSplitCells() [Spheroid.cpp]
+           │   ├── Compute brightness threshold in search region
            │   ├── Collect bright pixels in bounding box
-           │   │   (3×maxR radius, brightness + neighbor filtering)
-           │   ├── PCA with per-axis normalization
-           │   │   → split_axis, elongation_ratio
-           │   ├── Partition pixels by split axis → two groups
-           │   ├── Compute 3D centroids → daughter positions
-           │   └── Create daughter spheroids (0.794× parent radii)
+           │   │   (3*maxR radius, brightness + neighbor filtering)
+           │   ├── PCA with isotropic normalization (by majorRadius)
+           │   │   -> split_axis, elongation_ratio
+           │   ├── Partition pixels by split axis -> two groups
+           │   ├── Compute 3D centroids -> daughter positions
+           │   └── Create daughter spheroids (0.794* parent radii)
            │
-           ├── OVERLAP CHECKS
-           │   ├── Each daughter vs. all existing cells
-           │   │   (threshold: 0.95 × sum of radii)
-           │   └── Daughter vs. daughter: removed (cost function decides)
+           ├── OVERLAP: continuous penalty (no hard rejection)
            │
-           ├── BURN-IN (300 iterations)
+           ├── BURN-IN (500 iterations)
            │   ├── Alternate perturbing daughter 1 and daughter 2
-           │   ├── Check overlaps after each perturbation
+           │   ├── Cost = L2 image cost + overlap penalty delta
            │   ├── Accept only cost-reducing moves
            │   └── Track best configuration
            │
-           ├── EVALUATE: costDiff = bestCost - preSplitCost
-           │   if costDiff < -split_cost → add to candidates
+           ├── EVALUATE: costDiff = bestTotalCost - oldTotalCost
+           │   if costDiff < -split_cost -> accept inline
            │
-           └── ALWAYS REVERT (independent evaluation)
+           └── On rejection: blacklist cell from further attempts
 
-       Apply all accepted splits at once
-       Post-split perturbation (2 × iters × num_splits)
+       End of frame: compute PCA elongation for each cell,
+       store in previousElongations for next frame's P(split)
 
-   2d. SAVE & ADVANCE
+   2c. SAVE & ADVANCE
        ├── Copy cells to next frame
-       │   Lineage::copyCellsForward() [Lineage.cpp:376-384]
+       │   CellUniverse::copyCellsForward() [CellUniverse.cpp:464-472]
        ├── Save real+synth images as PNGs
-       │   Lineage::saveImages() [Lineage.cpp:292-329]
+       │   CellUniverse::saveImages() [CellUniverse.cpp:380-417]
        └── Append cell states to CSV
-           Lineage::saveCells() [Lineage.cpp:331-374]
+           CellUniverse::saveCells() [CellUniverse.cpp:419-462]
 ```
 
 ---
@@ -598,31 +644,42 @@ file, name, x, y, z, majorRadius, minorRadius, theta_x, theta_y, theta_z
 
 | Constant | Value | Location | Purpose |
 |----------|-------|----------|---------|
-| `BURN_IN_ITERATIONS` | 500 | Frame.cpp:363 | Perturbations per daughter after split placement |
-| `z_scaling` | 7 | config.yaml | Z-interpolation factor (33 → 225 slices) |
-| Daughter volume scale | ∛0.5 ≈ 0.794 | Spheroid.cpp:436 | Each daughter has ~half the parent volume |
-| Existing-cell overlap | 0.95 × sum | Frame.cpp:322 | Max overlap allowed with neighbors |
-| Daughter-daughter min sep | *(removed)* | — | Removed: cost function handles this naturally |
-| Split search radius | 3×maxR (effective) | Spheroid.cpp:360 | PCA pixel collection bounding box (uses pre-opt radii) |
-| Expanded boundary | *(removed)* | — | Removed: bounding box + neighbor exclusion handle this |
-| Split elongation threshold | 1.3 (config) | Frame.cpp:312 | PCA elongation ratio below which burn-in is skipped |
-| Surface outline band | 0.95–1.05 | Spheroid.cpp:186 | Pixels drawn as cell outline |
+| `split_burn_in_iterations` | 1000 (config) / 500 (code default) | config.yaml / ConfigTypes.hpp | Perturbations per daughter after split placement — **default mismatch noted in 2026-04-07 review** |
+| `z_scaling` | 7 | config/config.yaml | Z-interpolation factor (33 -> 225 slices) |
+| `sigmoid_k` | 75 (commonly tuned to ~60) | config/config.yaml | Sigmoid steepness for contrast enhancement |
+| `sigmoid_center_percentile` | tuned | config/config.yaml | **Active**: percentile of calibration ROI used as sigmoid center |
+| `background_color` | 0.0 | `Frame::_backgroundValue` | **NO LONGER CONFIG** — runtime-mutable Frame member, updated by adaptive-bg path |
+| `cell_color` | 1.0 | `CellFactory::CellFactory()` literal | **NO LONGER CONFIG** — frame-1 seed for per-cell `_brightness` only |
+| `brightnessUpdateBlend` | tuned | config/config.yaml | EMA factor for per-frame per-cell brightness update |
+| `brightnessMeanAmplification` | 1.0 | config/config.yaml | Multiplier applied to measured mean brightness before EMA blend |
+| `splitBrightestFraction` | 0.055 | config/config.yaml | Top fraction of bright in-cell pixels kept for split PCA |
+| Daughter volume scale | cbrt(0.5) ~ 0.794 | Spheroid.cpp | Each daughter has ~half the parent volume |
+| Bridge cylinder volume factor | 0.5 (hardcoded) | Frame.cpp:668-669 | **Stray hardcoded value — scheduled for configurization** |
+| Overlap penalty | continuous | Frame.cpp:213-258 | Proportional penalty replaces hard overlap gate |
+| `size_reduction_penalty_weight` | 2.0 | config/config.yaml | Soft quadratic penalty on radius shrinkage during perturbation. No growth penalty. |
+| Split search radius | 3*maxR (effective) | Spheroid.cpp | PCA pixel collection bounding box (uses pre-opt radii) |
+| Split elongation threshold | 1.5 (often tuned to 1.1) | config/config.yaml | PCA elongation ratio below which burn-in is skipped |
+| Split fake-guard thresholds | configurable | config/config.yaml | `split_fake_overlap_volume_fraction_threshold` (~0.15), `split_fake_radius_ratio_threshold` (~1.6), `split_fake_bridge_brightness_similarity_threshold` (~0.9) |
+| Minor-axis steering | DEGREES | config/config.yaml | `split_minor_axis_alignment_tolerance_degrees` — note degree units, not radians |
+| Post-burn-in large-recenter gate | 0.85 / -40.0 | config/config.yaml | `split_post_burn_in_large_recenter_min_drift_over_major` × majorR drift threshold + `split_post_burn_in_large_recenter_max_cost_diff` |
+| Surface outline intensity | 0.25 (all RGB) | Spheroid.cpp | Outline now drawn on all channels at 0.25 (was 0.4 earlier) |
+| Surface outline band | 0.95-1.05 | Spheroid.cpp:234 | Pixels drawn as cell outline |
 
 ---
 
 ## 11. File Reference
 
-| File | Role |
-|------|------|
-| `C++/src/main.cpp` | Entry point, argument parsing, image loading |
-| `C++/src/Lineage.cpp` | Frame management, Phase 1 + Phase 2 optimization, I/O |
-| `C++/src/Frame.cpp` | Synthetic rendering, cost function, perturbation, split evaluation |
-| `C++/src/Cells/Spheroid.cpp` | Cell geometry, drawing, PCA split detection, perturbation |
-| `C++/src/CellFactory.cpp` | CSV parsing, cell initialization |
-| `C++/includes/Lineage.hpp` | Lineage class declaration |
-| `C++/includes/Frame.hpp` | Frame class declaration |
-| `C++/includes/Spheroid.hpp` | Spheroid class + SpheroidParams declaration |
-| `C++/includes/ConfigTypes.hpp` | All config structs, YAML parsing |
-| `C++/includes/types.hpp` | Type aliases (Cost, CostCallbackPair, etc.) |
-| `C++/examples/config.yaml` | Runtime configuration |
-| `C++/examples/initial.csv` | Initial cell positions and shapes |
+| File | Lines | Role |
+|------|-------|------|
+| `C++/src/main.cpp` | ~236 | Entry point, argument parsing, image loading |
+| `C++/src/CellUniverse.cpp` | ~498 | Frame loading, preprocessing (sigmoid), unified optimization loop, I/O |
+| `C++/src/Frame.cpp` | ~423 | Synthetic rendering, cost function, perturbation, split evaluation |
+| `C++/src/Spheroid.cpp` | ~658 | Cell geometry, drawing, PCA split detection, perturbation |
+| `C++/src/CellFactory.cpp` | ~117 | CSV parsing (7-col and 4-col formats), cell initialization |
+| `C++/includes/CellUniverse.hpp` | | CellUniverse class declaration |
+| `C++/includes/Frame.hpp` | | Frame class declaration |
+| `C++/includes/Spheroid.hpp` | | Spheroid class + SpheroidParams declaration |
+| `C++/includes/ConfigTypes.hpp` | | All config structs, YAML parsing |
+| `C++/includes/types.hpp` | | Type aliases (Cost, CostCallbackPair, etc.) |
+| `C++/config/config.yaml` | | Runtime configuration |
+| `C++/config/initial.csv` | | Initial cell positions and shapes |

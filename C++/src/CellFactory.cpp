@@ -2,20 +2,22 @@
 
 CellFactory::CellFactory(const BaseConfig &config) {
     std::string cellType = config.cellType;
+    // Frame-1 seed for per-cell _brightness. After frame 1, the per-cell EMA
+    // update (measureMeanBrightness * brightnessMeanAmplification blended via
+    // brightnessUpdateBlend) takes over.
+    initialBrightness = config.cell ? config.cell->initialBrightness : 0.2f;
+    initialRadiusScale = config.cell ? config.cell->initialRadiusScale : 1.0f;
     // TODO: add more else if branches for more cell Types
-    if (cellType == "sphere") {
-        // Sphere::cellConfig = *config.cell; // this is ideal, but entire code base must be changed to run it this way
+    if (cellType == "spheroid") {
         Spheroid::cellConfig = *config.cell;
-    } if (cellType == "spheroid") {
-        Spheroid::cellConfig = *config.cell;
-    }
-    else {
+    } else {
         throw std::invalid_argument("Invalid cell type: " + config.cellType);
     }
 }
 
 // TODO: use abstract base class in the future to handle different cell types
-std::map<Path, std::vector<Spheroid>> CellFactory::createCells(const Path &init_params_path, int z_offset, float z_scaling) {
+std::map<Path, std::vector<Spheroid>> CellFactory::createCells(const Path &init_params_path, int z_offset, float z_scaling,
+                                                               const std::string& firstFrameFile) {
     std::ifstream file(init_params_path);
     std::string line;
     std::string firstLine;
@@ -44,6 +46,11 @@ while (std::getline(file, line)) {
     // ----------------------------
     // Case A: Original 7-column format:
     // filePath, cellName, x, y, z, majorRadius, minorRadius
+    //
+    // Triaxial extension (2026-04-11): optional 8-column format adds bRadius
+    // between majorRadius and minorRadius:
+    // filePath, cellName, x, y, z, majorRadius, bRadius, minorRadius
+    // If absent, bRadius defaults to majorRadius (oblate-compatible fallback).
     // ----------------------------
     if (tokens.size() >= 7) {
         std::string filePath = tokens[0];
@@ -52,14 +59,25 @@ while (std::getline(file, line)) {
         float x = std::stof(tokens[2]);
         float y = std::stof(tokens[3]);
         float z = std::stof(tokens[4]);
-        float majorRadius = std::stof(tokens[5]);
-        float minorRadius = std::stof(tokens[6]);
+        float majorRadius = std::stof(tokens[5]) * initialRadiusScale;
+        float bRadius;
+        float minorRadius;
+        if (tokens.size() >= 8) {
+            bRadius     = std::stof(tokens[6]) * initialRadiusScale;
+            minorRadius = std::stof(tokens[7]) * initialRadiusScale;
+        } else {
+            bRadius     = majorRadius; // oblate fallback
+            minorRadius = std::stof(tokens[6]) * initialRadiusScale;
+        }
+
+        float brightness = initialBrightness;
 
         z *= z_scaling;
 
-        initialCells[filePath].push_back(
-            Spheroid(SpheroidParams(cellName, x, y, z, majorRadius, minorRadius))
-        );
+        SpheroidParams params(cellName, x, y, z, majorRadius, minorRadius,
+                              0.0f, 0.0f, 0.0f, brightness);
+        params.bRadius = bRadius;
+        initialCells[filePath].push_back(Spheroid(params));
 
         ++line_cnt;
         continue;
@@ -69,11 +87,10 @@ while (std::getline(file, line)) {
     // Case B: 4-column Napari format:
     // cell_type, z, y, x
     // We must attach cells to a frame key, e.g., "t000.tif".
-    // main.cpp sets it via env var: CELLUNIVERSE_INITIAL_FRAME_FILE
+    // main.cpp passes firstFrameFile as a parameter.
     // ----------------------------
     if (tokens.size() == 4) {
-        const char* envFrame = std::getenv("CELLUNIVERSE_INITIAL_FRAME_FILE");
-        std::string filePath = (envFrame && std::string(envFrame).size() > 0) ? std::string(envFrame) : std::string("t000.tif");
+        std::string filePath = !firstFrameFile.empty() ? firstFrameFile : std::string("t000.tif");
 
         const std::string cellType = tokens[0];
 
@@ -85,30 +102,30 @@ while (std::getline(file, line)) {
         z *= z_scaling;
 
         // Default radii for embryo initial points (tunable)
-        // You can adjust these later if needed.
-        const float defaultMajorRadius = 10.0f;
-        const float defaultMinorRadius = 10.0f;
+        const float defaultMajorRadius = 10.0f * initialRadiusScale;
+        const float defaultMinorRadius = 10.0f * initialRadiusScale;
 
         // Generate a stable name
         const std::string cellName = cellType + "_" + std::to_string(line_cnt + 1);
 
-        initialCells[filePath].push_back(
-            Spheroid(SpheroidParams(cellName, x, y, z, defaultMajorRadius, defaultMinorRadius))
-        );
+        SpheroidParams params(cellName, x, y, z, defaultMajorRadius, defaultMinorRadius,
+                              0.0f, 0.0f, 0.0f, initialBrightness);
+        params.bRadius = defaultMajorRadius; // oblate fallback for Napari format
+        initialCells[filePath].push_back(Spheroid(params));
 
         ++line_cnt;
         continue;
     }
 
     // Unknown/invalid line
-    std::cerr << "[WARN] Skipping invalid initial CSV row (expected 7 or 4 columns): " << line << std::endl;
+    std::cerr << "[WARN] Skipping invalid initial CSV row (expected 7 or 4 columns): " << line << '\n';
 }
 
-    std::cout << "Input Line Count : " << line_cnt << std::endl;
-    std::cout << "Initial frame keys loaded : " << initialCells.size() << std::endl;
+    std::cout << "Input Line Count : " << line_cnt << '\n';
+    std::cout << "Initial frame keys loaded : " << initialCells.size() << '\n';
     if (!initialCells.empty()) {
         const auto& firstKey = initialCells.begin()->first;
-        std::cout << "Example key : " << firstKey << "  cell count : " << initialCells.begin()->second.size() << std::endl;
+        std::cout << "Example key : " << firstKey << "  cell count : " << initialCells.begin()->second.size() << '\n';
     }
     return initialCells;
 }

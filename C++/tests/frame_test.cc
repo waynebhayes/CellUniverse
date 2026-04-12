@@ -10,8 +10,6 @@ SimulationConfig MakeFrameConfig(int zSlices, float background) {
     SimulationConfig cfg;
     cfg.z_slices = zSlices;
     cfg.background_color = background;
-    cfg.cell_color = 1.0f;
-    cfg.padding = 0;
     cfg.z_scaling = 1.0f;
     return cfg;
 }
