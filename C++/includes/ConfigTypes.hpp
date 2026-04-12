@@ -179,15 +179,6 @@ public:
     float bio_combined_volume_min_fraction = 0.6f;
     float bio_combined_volume_max_fraction = 1.3f;
 
-    // Post-burn-in drift gate. The best candidate's final daughter centers
-    // must not have drifted more than `max(bio_max_drift_parent_fraction *
-    // parent_maxR, bio_max_drift_daughter_fraction * daughter_maxR)` from
-    // their initial seed positions. Catches daughters escaping the parent
-    // footprint during burn-in (the f4/f5 false-split pathology where one
-    // daughter wanders to absorb a neighbor cell).
-    float bio_max_drift_parent_fraction = 0.4f;
-    float bio_max_drift_daughter_fraction = 0.8f;
-
     // Midpoint-near-parent gate. Reject when the daughter midpoint lies
     // further than `bio_max_midpoint_parent_fraction * srcMaxR` from the
     // snapshot parent center. Uses SNAPSHOT (last-frame) position, not
@@ -267,8 +258,6 @@ public:
         if (node["bio_daughter_size_ratio_max"]) bio_daughter_size_ratio_max = node["bio_daughter_size_ratio_max"].as<float>();
         if (node["bio_combined_volume_min_fraction"]) bio_combined_volume_min_fraction = node["bio_combined_volume_min_fraction"].as<float>();
         if (node["bio_combined_volume_max_fraction"]) bio_combined_volume_max_fraction = node["bio_combined_volume_max_fraction"].as<float>();
-        if (node["bio_max_drift_parent_fraction"]) bio_max_drift_parent_fraction = node["bio_max_drift_parent_fraction"].as<float>();
-        if (node["bio_max_drift_daughter_fraction"]) bio_max_drift_daughter_fraction = node["bio_max_drift_daughter_fraction"].as<float>();
         if (node["bio_max_midpoint_parent_fraction"]) bio_max_midpoint_parent_fraction = node["bio_max_midpoint_parent_fraction"].as<float>();
         if (node["bio_max_single_daughter_volume_fraction"]) bio_max_single_daughter_volume_fraction = node["bio_max_single_daughter_volume_fraction"].as<float>();
         if (node["bio_bridge_max_gap_density"]) bio_bridge_max_gap_density = node["bio_bridge_max_gap_density"].as<float>();

@@ -184,13 +184,6 @@ prob:
   bio_daughter_size_ratio_max: 1.5
   bio_combined_volume_min_fraction: 0.6
   bio_combined_volume_max_fraction: 1.3
-  # Drift-from-seed bio gate (2026-04-11). Rejects a split when the best
-  # candidate's post-burn-in daughter center has wandered more than
-  # max(parent_frac * parent_maxR, daughter_frac * daughter_maxR) from the
-  # seed position. Catches daughters escaping the parent footprint during
-  # burn-in (f4/f5 false-split pathology).
-  bio_max_drift_parent_fraction: 999.0
-  bio_max_drift_daughter_fraction: 999.0
   # Midpoint-near-snapshot-parent gate (2026-04-11). Rejects a split
   # when the daughter midpoint is more than 0.95 * parent_maxR from the
   # snapshot (last-frame) parent center. Catches parent drift and
