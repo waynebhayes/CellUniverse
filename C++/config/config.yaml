@@ -60,7 +60,11 @@ cell:
 
 
   
-  initialBrightness: 0.22
+  
+
+  initialRadiusScale: 1.0 # means how much to expend the initial value, not helping for this version 11/04/2026
+
+  initialBrightness: 0.22 
   initialABRatio: 1.05
   maxABRatio: 1.2
   backgroundColor: 0.05

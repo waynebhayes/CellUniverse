@@ -6,6 +6,7 @@ CellFactory::CellFactory(const BaseConfig &config) {
     // update (measureMeanBrightness * brightnessMeanAmplification blended via
     // brightnessUpdateBlend) takes over.
     initialBrightness = config.cell ? config.cell->initialBrightness : 0.2f;
+    initialRadiusScale = config.cell ? config.cell->initialRadiusScale : 1.0f;
     initialABRatio = config.cell ? config.cell->initialABRatio : 1.2f;
     // TODO: add more else if branches for more cell Types
     if (cellType == "spheroid") {
@@ -54,8 +55,8 @@ while (std::getline(file, line)) {
         float x = std::stof(tokens[2]);
         float y = std::stof(tokens[3]);
         float z = std::stof(tokens[4]);
-        float majorRadius = std::stof(tokens[5]);
-        float minorRadius = std::stof(tokens[6]);
+        float majorRadius = std::stof(tokens[5]) * initialRadiusScale;
+        float minorRadius = std::stof(tokens[6]) * initialRadiusScale;
 
         float brightness = initialBrightness;
 
@@ -90,8 +91,8 @@ while (std::getline(file, line)) {
 
         // Default radii for embryo initial points (tunable)
         // You can adjust these later if needed.
-        const float defaultMajorRadius = 10.0f;
-        const float defaultMinorRadius = 10.0f;
+        const float defaultMajorRadius = 10.0f * initialRadiusScale;
+        const float defaultMinorRadius = 10.0f * initialRadiusScale;
 
         // Generate a stable name
         const std::string cellName = cellType + "_" + std::to_string(line_cnt + 1);

@@ -412,6 +412,7 @@ public:
     double minMinorRadius{};
     double maxMinorRadius{};
     float initialBrightness{0.2f};
+    float initialRadiusScale{1.0f};
     float initialABRatio{1.2f};
     float maxABRatio{1.6f};
     float backgroundColor{0.0f};
@@ -466,6 +467,7 @@ public:
         minMinorRadius = node["minMinorRadius"].as<double>();
         maxMinorRadius = node["maxMinorRadius"].as<double>();
         if (node["initialBrightness"]) initialBrightness = node["initialBrightness"].as<float>();
+        if (node["initialRadiusScale"]) initialRadiusScale = node["initialRadiusScale"].as<float>();
         if (node["initialABRatio"]) initialABRatio = node["initialABRatio"].as<float>();
         if (node["maxABRatio"]) maxABRatio = node["maxABRatio"].as<float>();
         if (node["backgroundColor"]) backgroundColor = node["backgroundColor"].as<float>();
