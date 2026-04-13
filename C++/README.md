@@ -30,13 +30,13 @@
   ```
 - Run the bash script in the examples folder
   ``` zsh
-   cd ../../examples
+   cd ../../scripts
   # quick test run
   ./run_cell_universe.sh user_input_configurations.ini default 
   ```
 - If want to select the configuration profile through the Cli UI, run it without parameters
   ``` zsh
-   cd ../../examples
+   cd ../../scripts
   # select the configuration through cil UI
   ./run_cell_universe.sh
   ```
@@ -74,15 +74,15 @@
   ``` 
 
 
-- Run the bash script in the examples folder
+- Run the bash script in the scripts folder
   ``` zsh
-   cd ../../examples
+  cd ../../scripts
   # quick test run
   ./run_cell_universe.sh user_input_configurations.ini default 
   ```
 - If want to select the configuration profile through the Cli UI, run it without parameters
   ``` zsh
-   cd ../../examples
+  cd ../../scripts
   # select the configuration through cil UI
   ./run_cell_universe.sh -i
   ```
@@ -91,5 +91,4 @@
   chmod 755 runcpp.sh
   ```
 
-- Wait for celluniverse to finish executing and you can check the result in the `output/` folder inside the current
-  example
+- Wait for celluniverse to finish executing and you can check the result in the `outputs/` folder
