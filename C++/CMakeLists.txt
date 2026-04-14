@@ -35,7 +35,7 @@ add_executable(${PROJECT_NAME}
         ${cwd}/src/Frame.cpp
         ${cwd}/src/ImageHandler.cpp
         ${cwd}/src/LineageViewer.cpp
-        ${cwd}/src/Spheroid.cpp
+        ${cwd}/src/Ellipsoid.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE

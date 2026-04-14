@@ -8,7 +8,7 @@
 #include "ConfigTypes.hpp"
 #include "CellFactory.hpp"
 #include "yaml-cpp/yaml.h"
-#include "Spheroid.hpp"
+#include "Ellipsoid.hpp"
 #include "CellUniverse.hpp"
 #include "ImageHandler.hpp"
 #include <chrono>
@@ -106,7 +106,7 @@ int main(int argc, char *argv[])
 
     // load cells here
     CellFactory cellFactory(config);
-    std::map<Path, std::vector<Spheroid>> cells = cellFactory.createCells(args.initial, config.simulation.z_slices / 2,
+    std::map<Path, std::vector<Ellipsoid>> cells = cellFactory.createCells(args.initial, config.simulation.z_slices / 2,
                                                                         config.simulation.z_scaling, firstFrameFile);
     // create lineage
     CellUniverse lineage = CellUniverse(cells, imageFilePaths, config, args.output, args.firstFrame, args.continueFrom);

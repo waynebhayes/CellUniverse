@@ -204,13 +204,13 @@ cv::Mat ImageHandler::boxMean(const cv::Mat &image, int windowSize)
 
 float ImageHandler::evaluateSequenceContrastScore(const ImageStack &sequence, const BaseConfig &config)
 {
-    const float majorRadius =
-        (config.cell ? static_cast<float>(config.cell->maxMajorRadius) : 40.0f);
-    const float minorRadius =
-        (config.cell ? static_cast<float>(config.cell->maxMinorRadius) : 35.0f);
+    const float aRadius =
+        (config.cell ? static_cast<float>(config.cell->maxARadius) : 40.0f);
+    const float cRadius =
+        (config.cell ? static_cast<float>(config.cell->maxCRadius) : 35.0f);
     const std::array<float, 2> radii = {
-        std::max(1.0f, majorRadius),
-        std::max(1.0f, minorRadius)
+        std::max(1.0f, aRadius),
+        std::max(1.0f, cRadius)
     };
 
     std::vector<float> scaleScores;

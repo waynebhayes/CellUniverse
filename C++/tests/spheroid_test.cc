@@ -1,46 +1,46 @@
 #include <gtest/gtest.h>
 
-#include "Spheroid.hpp"
+#include "Ellipsoid.hpp"
 
 namespace {
-void ConfigureSpheroidBounds() {
-    Spheroid::cellConfig.minMajorRadius = 1.0;
-    Spheroid::cellConfig.maxMajorRadius = 10.0;
-    Spheroid::cellConfig.minMinorRadius = 0.5;
-    Spheroid::cellConfig.maxMinorRadius = 8.0;
+void ConfigureEllipsoidBounds() {
+    Ellipsoid::cellConfig.minARadius = 1.0;
+    Ellipsoid::cellConfig.maxARadius = 10.0;
+    Ellipsoid::cellConfig.minCRadius = 0.5;
+    Ellipsoid::cellConfig.maxCRadius = 8.0;
 }
 }
 
-TEST(SpheroidTest, ConstructorClampsRadiiToConfiguredBounds) {
-    ConfigureSpheroidBounds();
+TEST(EllipsoidTest, ConstructorClampsRadiiToConfiguredBounds) {
+    ConfigureEllipsoidBounds();
 
-    Spheroid spheroid(SpheroidParams("cellA", 0.0f, 0.0f, 0.0f, 20.0f, 0.1f));
-    SpheroidParams params = spheroid.getCellParams();
+    Ellipsoid spheroid(EllipsoidParams("cellA", 0.0f, 0.0f, 0.0f, 20.0f, 0.1f));
+    EllipsoidParams params = spheroid.getCellParams();
 
-    EXPECT_DOUBLE_EQ(params.majorRadius, 10.0);
-    EXPECT_DOUBLE_EQ(params.minorRadius, 0.5);
+    EXPECT_DOUBLE_EQ(params.aRadius, 10.0);
+    EXPECT_DOUBLE_EQ(params.cRadius, 0.5);
     EXPECT_TRUE(spheroid.checkConstraints());
 }
 
-TEST(SpheroidTest, ConstructorEnforcesMinorRadiusNotGreaterThanMajor) {
-    ConfigureSpheroidBounds();
+TEST(EllipsoidTest, ConstructorEnforcesMinorRadiusNotGreaterThanMajor) {
+    ConfigureEllipsoidBounds();
 
-    Spheroid spheroid(SpheroidParams("cellB", 0.0f, 0.0f, 0.0f, 2.0f, 5.0f));
-    SpheroidParams params = spheroid.getCellParams();
+    Ellipsoid spheroid(EllipsoidParams("cellB", 0.0f, 0.0f, 0.0f, 2.0f, 5.0f));
+    EllipsoidParams params = spheroid.getCellParams();
 
-    EXPECT_DOUBLE_EQ(params.majorRadius, 2.0);
-    EXPECT_DOUBLE_EQ(params.minorRadius, 2.0);
+    EXPECT_DOUBLE_EQ(params.aRadius, 2.0);
+    EXPECT_DOUBLE_EQ(params.cRadius, 2.0);
 }
 
-TEST(SpheroidTest, DrawColorsCenterPixelAndLeavesFarPixelUnchanged) {
-    ConfigureSpheroidBounds();
+TEST(EllipsoidTest, DrawColorsCenterPixelAndLeavesFarPixelUnchanged) {
+    ConfigureEllipsoidBounds();
 
     SimulationConfig simulationConfig;
     simulationConfig.cell_color = 0.9f;
     simulationConfig.background_color = 0.1f;
 
     cv::Mat image(21, 21, CV_32F, cv::Scalar(simulationConfig.background_color));
-    Spheroid spheroid(SpheroidParams("cellC", 10.0f, 10.0f, 0.0f, 3.0f, 3.0f));
+    Ellipsoid spheroid(EllipsoidParams("cellC", 10.0f, 10.0f, 0.0f, 3.0f, 3.0f));
 
     spheroid.draw(image, simulationConfig, 0.0f);
 

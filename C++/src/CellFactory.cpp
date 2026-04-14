@@ -8,21 +8,21 @@ CellFactory::CellFactory(const BaseConfig &config) {
     initialBrightness = config.cell ? config.cell->initialBrightness : 0.2f;
     initialRadiusScale = config.cell ? config.cell->initialRadiusScale : 1.0f;
     // TODO: add more else if branches for more cell Types
-    if (cellType == "spheroid") {
-        Spheroid::cellConfig = *config.cell;
+    if (cellType == "ellipsoid") {
+        Ellipsoid::cellConfig = *config.cell;
     } else {
         throw std::invalid_argument("Invalid cell type: " + config.cellType);
     }
 }
 
 // TODO: use abstract base class in the future to handle different cell types
-std::map<Path, std::vector<Spheroid>> CellFactory::createCells(const Path &init_params_path, int z_offset, float z_scaling,
+std::map<Path, std::vector<Ellipsoid>> CellFactory::createCells(const Path &init_params_path, int z_offset, float z_scaling,
                                                                const std::string& firstFrameFile) {
     std::ifstream file(init_params_path);
     std::string line;
     std::string firstLine;
     std::getline(file, firstLine); // remove the header
-    std::map<Path, std::vector<Spheroid>> initialCells;
+    std::map<Path, std::vector<Ellipsoid>> initialCells;
     int line_cnt = 0;
 
 while (std::getline(file, line)) {
@@ -45,12 +45,12 @@ while (std::getline(file, line)) {
 
     // ----------------------------
     // Case A: Original 7-column format:
-    // filePath, cellName, x, y, z, majorRadius, minorRadius
+    // filePath, cellName, x, y, z, aRadius, cRadius
     //
     // Triaxial extension (2026-04-11): optional 8-column format adds bRadius
-    // between majorRadius and minorRadius:
-    // filePath, cellName, x, y, z, majorRadius, bRadius, minorRadius
-    // If absent, bRadius defaults to majorRadius (oblate-compatible fallback).
+    // between aRadius and cRadius:
+    // filePath, cellName, x, y, z, aRadius, bRadius, cRadius
+    // If absent, bRadius defaults to aRadius (oblate-compatible fallback).
     // ----------------------------
     if (tokens.size() >= 7) {
         std::string filePath = tokens[0];
@@ -59,25 +59,25 @@ while (std::getline(file, line)) {
         float x = std::stof(tokens[2]);
         float y = std::stof(tokens[3]);
         float z = std::stof(tokens[4]);
-        float majorRadius = std::stof(tokens[5]) * initialRadiusScale;
+        float aRadius = std::stof(tokens[5]) * initialRadiusScale;
         float bRadius;
-        float minorRadius;
+        float cRadius;
         if (tokens.size() >= 8) {
             bRadius     = std::stof(tokens[6]) * initialRadiusScale;
-            minorRadius = std::stof(tokens[7]) * initialRadiusScale;
+            cRadius = std::stof(tokens[7]) * initialRadiusScale;
         } else {
-            bRadius     = majorRadius; // oblate fallback
-            minorRadius = std::stof(tokens[6]) * initialRadiusScale;
+            bRadius     = aRadius; // oblate fallback
+            cRadius = std::stof(tokens[6]) * initialRadiusScale;
         }
 
         float brightness = initialBrightness;
 
         z *= z_scaling;
 
-        SpheroidParams params(cellName, x, y, z, majorRadius, minorRadius,
+        EllipsoidParams params(cellName, x, y, z, aRadius, cRadius,
                               0.0f, 0.0f, 0.0f, brightness);
         params.bRadius = bRadius;
-        initialCells[filePath].push_back(Spheroid(params));
+        initialCells[filePath].push_back(Ellipsoid(params));
 
         ++line_cnt;
         continue;
@@ -108,10 +108,10 @@ while (std::getline(file, line)) {
         // Generate a stable name
         const std::string cellName = cellType + "_" + std::to_string(line_cnt + 1);
 
-        SpheroidParams params(cellName, x, y, z, defaultMajorRadius, defaultMinorRadius,
+        EllipsoidParams params(cellName, x, y, z, defaultMajorRadius, defaultMinorRadius,
                               0.0f, 0.0f, 0.0f, initialBrightness);
         params.bRadius = defaultMajorRadius; // oblate fallback for Napari format
-        initialCells[filePath].push_back(Spheroid(params));
+        initialCells[filePath].push_back(Ellipsoid(params));
 
         ++line_cnt;
         continue;

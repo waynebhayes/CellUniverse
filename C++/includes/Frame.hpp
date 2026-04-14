@@ -9,7 +9,7 @@
 #include "ConfigTypes.hpp"
 #include <random>
 #include <functional>
-#include "Spheroid.hpp"
+#include "Ellipsoid.hpp"
 #include <opencv2/core/mat.hpp>
 
 void interpolateSlices(const cv::Mat& slice1, const cv::Mat& slice2, std::vector<cv::Mat>& processedSlices, int numInterpolations);
@@ -20,11 +20,11 @@ public:
     // Single-pipeline constructor — the analysis-frame / dual-pipeline
     // variant was removed on 2026-04-11 when the new ImageHandler preprocessing
     // replaced the sigmoid-first / raw-analysis split.
-    Frame(const std::vector<cv::Mat> &realFrame, const SimulationConfig &simulationConfig, const std::vector<Spheroid> &cells, const Path &outputPath, const std::string &imageName);
+    Frame(const std::vector<cv::Mat> &realFrame, const SimulationConfig &simulationConfig, const std::vector<Ellipsoid> &cells, const Path &outputPath, const std::string &imageName);
 
     // Rendering
     std::vector<cv::Mat> generateSynthFrame();
-    std::vector<cv::Mat> generateSynthFrameFast(Spheroid &oldCell, Spheroid &newCell,
+    std::vector<cv::Mat> generateSynthFrameFast(Ellipsoid &oldCell, Ellipsoid &newCell,
                                                 int *outAffectedZMin = nullptr,
                                                 int *outAffectedZMax = nullptr);
     std::vector<cv::Mat> generateOutputFrame();
@@ -33,8 +33,7 @@ public:
     // Cost and optimization
     Cost calculateCost(const std::vector<cv::Mat> &synthFrame);
     size_t length() const;
-    CostCallbackPair perturbCell(size_t index, float overlapWeight = 1000.0f,
-                                 float sizeReductionWeight = 0.0f);
+    CostCallbackPair perturbCell(size_t index, float overlapWeight = 1000.0f);
     double computeOverlapPenalty(float weight) const;
     double computeOverlapForCell(size_t cellIdx, float weight) const;
 
@@ -89,6 +88,32 @@ public:
         const PreviousFrameSnapshot &snapshot,
         const ClaimSet &otherCellsClaimSets);
 
+    // Iteratively fit a cell's SHAPE (rotation + 3 radii, and optionally
+    // centroid position) to the bright pixel cloud around it. Each iteration:
+    //   1. Gather bright pixels inside (maskScale * current ellipsoid),
+    //      Voronoi-filtered against otherCellsClaimSets.
+    //   2. Weighted 3D PCA → centroid, 3 eigenvectors, 3 eigenvalues.
+    //   3. Greedy-match eigenvectors to current a/b/c axes (identity-stable),
+    //      enforce proper rotation (det=+1), decompose to Euler (R=Rz·Ry·Rx).
+    //   4. Target radii = radiusScale * sqrt(eigenvalue).
+    //   5. If updatePosition, shift centroid toward PCA centroid capped by
+    //      maxPosShiftFraction * maxR.
+    //   6. Apply directly (no EMA). Stop when radius delta < convergeRadius
+    //      AND max axis rotation < convergeAngleDeg.
+    // Skips rotation update on eigenvalue degeneracy (λ1/λ3 < 1.1).
+    // Returns true iff at least one iteration applied an update.
+    bool calibrateCellShapeViaPca(
+        size_t cellIndex,
+        const ClaimSet &otherCellsClaimSets,
+        int maxIters,
+        float radiusScale,
+        int minPixels,
+        float maskScale,
+        float convergeRadius,
+        float convergeAngleDeg,
+        bool  updatePosition,
+        float maxPosShiftFraction);
+
 
     std::vector<cv::Mat> getSynthFrame();
     const std::vector<cv::Mat>& getRealFrame() const { return _realFrame; }
@@ -96,7 +121,7 @@ public:
     float getBackgroundValue() const { return _backgroundValue; }
     void regenerateSynthFrame() { _synthFrame = generateSynthFrame(); refreshFullCostCache(); }
     std::string getImageName() const { return imageName; }
-    std::vector<Spheroid> cells;
+    std::vector<Ellipsoid> cells;
 
 private:
     std::vector<double> z_slices;

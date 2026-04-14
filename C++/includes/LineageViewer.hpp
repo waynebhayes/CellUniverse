@@ -10,7 +10,7 @@ class LineageViewer
 public:
     struct CellViz
     {
-        std::string rawName; // original long name (from SpheroidParams.name)
+        std::string rawName; // original long name (from EllipsoidParams.name)
         float x = 0.0f;
         float y = 0.0f;
     };

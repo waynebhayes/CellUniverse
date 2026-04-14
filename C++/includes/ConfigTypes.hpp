@@ -146,7 +146,6 @@ public:
     float shape_elongation_classify_threshold = 1.20f;
 
     float overlap_penalty_weight = 500.0f;
-    float size_reduction_penalty_weight = 30.0f;
     float split_cost = 80.0f;
 
     float split_direction_agreement_degrees = 20.0f;
@@ -220,7 +219,7 @@ public:
     float bio_bridge_max_gap_density = 0.18f;
     float bio_bridge_max_valley_ratio = 0.85f;
 
-    // Multiplier applied to the Spheroid x/y/z perturbation sigmas during
+    // Multiplier applied to the Ellipsoid x/y/z perturbation sigmas during
     // candidate burn-in. The main-loop sigmas (x=5, y=5, z=8) let daughters
     // wander 15-25 voxels across a 20-iter burn-in, enough to leave the
     // parent footprint. 0.4 scales them to (2, 2, 3.2), limiting drift to
@@ -228,7 +227,7 @@ public:
     // settle to the local image optimum.
     float split_burn_in_pos_sigma_scale = 0.4f;
 
-    // Multiplier applied to the Spheroid majorRadius/bRadius/minorRadius
+    // Multiplier applied to the Ellipsoid aRadius/bRadius/cRadius
     // perturbation sigmas during candidate burn-in. At 0.1, radii can
     // only drift ~10% of their configured sigma per iteration, preserving
     // the snapshot-based daughter sizing (`0.794 * src`) through burn-in
@@ -245,7 +244,6 @@ public:
         if (node["P_split_max"]) P_split_max = node["P_split_max"].as<float>();
         if (node["shape_elongation_classify_threshold"]) shape_elongation_classify_threshold = node["shape_elongation_classify_threshold"].as<float>();
         if (node["overlap_penalty_weight"]) overlap_penalty_weight = node["overlap_penalty_weight"].as<float>();
-        if (node["size_reduction_penalty_weight"]) size_reduction_penalty_weight = node["size_reduction_penalty_weight"].as<float>();
         if (node["split_cost"]) split_cost = node["split_cost"].as<float>();
         if (node["split_direction_agreement_degrees"]) split_direction_agreement_degrees = node["split_direction_agreement_degrees"].as<float>();
         if (node["expected_daughter_pre_pass_iterations"]) expected_daughter_pre_pass_iterations = node["expected_daughter_pre_pass_iterations"].as<int>();
@@ -277,7 +275,6 @@ public:
         std::cout << "shape_elongation_classify_threshold: " << shape_elongation_classify_threshold << '\n';
         std::cout << "split_cost: " << split_cost << '\n';
         std::cout << "overlap_penalty_weight: " << overlap_penalty_weight << '\n';
-        std::cout << "size_reduction_penalty_weight: " << size_reduction_penalty_weight << '\n';
         std::cout << "split_candidates_per_attempt: " << split_candidates_per_attempt << '\n';
         std::cout << "split_candidate_burn_in_iterations: " << split_candidate_burn_in_iterations << '\n';
         std::cout << "bio_daughter_size_ratio_max: " << bio_daughter_size_ratio_max << std::endl;
@@ -364,25 +361,24 @@ public:
     }
 };
 
-class SpheroidConfig {
+class EllipsoidConfig {
 public:
     PerturbParams x{};
     PerturbParams y{};
     PerturbParams z{};
-    PerturbParams majorRadius{};
+    PerturbParams aRadius{};
     PerturbParams bRadius{};
-    PerturbParams minorRadius{};
-    PerturbParams abRatio{};
+    PerturbParams cRadius{};
     PerturbParams thetaX{};
     PerturbParams thetaY{};
     PerturbParams thetaZ{};
     PerturbParams brightness{};
-    double minMajorRadius{};
-    double maxMajorRadius{};
+    double minARadius{};
+    double maxARadius{};
     double minBRadius{};
     double maxBRadius{};
-    double minMinorRadius{};
-    double maxMinorRadius{};
+    double minCRadius{};
+    double maxCRadius{};
     float initialBrightness{0.2f};
     float initialRadiusScale{1.0f};
     float backgroundColor{0.0f};
@@ -390,41 +386,64 @@ public:
     double maxBrightness{1.0};
     float brightnessProbabilityStep{0.02f};
     float brightnessProbabilityTrust{1.0f};
-    float majorRadiusProbabilityStep{0.02f};
-    float majorRadiusProbabilityTrust{1.0f};
-    float minorRadiusProbabilityStep{0.02f};
-    float minorRadiusProbabilityTrust{1.0f};
-    float abRatioProbabilityStep{0.02f};
-    float abRatioProbabilityTrust{1.0f};
+    float aRadiusProbabilityStep{0.02f};
+    float aRadiusProbabilityTrust{1.0f};
+    float bRadiusProbabilityStep{0.02f};
+    float bRadiusProbabilityTrust{1.0f};
+    float cRadiusProbabilityStep{0.02f};
+    float cRadiusProbabilityTrust{1.0f};
     float brightnessUpdateBlend{0.2f};
     float brightnessMeanAmplification{1.0f};
-    // Maximum valid z position (interpolated z-space). Used to clamp Spheroid
+    float brightnessMeasurementTopPercentile{0.3f};
+    // Iterative PCA shape fit (per frame). Converges rotation + radii +
+    // optional centroid position to the bright-pixel cloud inside a
+    // Voronoi-filtered ellipsoid mask. See Frame::calibrateCellShapeViaPca.
+    // Disabled when pcaShapeMaxIters <= 0.
+    int pcaShapeMaxIters{15};
+    // Scale factor: radius = pcaShapeRadiusScale * sqrt(eigenvalue).
+    // sqrt(5) ≈ 2.236 matches variance of a uniformly-filled ellipsoid.
+    float pcaShapeRadiusScale{2.236f};
+    // Minimum pixel count before accepting a PCA iteration. Below this, stop.
+    int pcaShapeMinPixels{50};
+    // Ellipsoid-mask scale-up: bright pixels inside (scale * current ellipsoid)
+    // are candidates. 1.3 allows modest growth between iterations.
+    float pcaShapeMaskScale{1.3f};
+    // Per-iter convergence thresholds. Iteration stops when the max radius
+    // change is below this AND the max axis rotation is below the angle
+    // tolerance (degrees).
+    float pcaShapeConvergeRadius{0.3f};
+    float pcaShapeConvergeAngleDeg{2.0f};
+    // When true, PCA centroid drives the cell's position (capped per iter).
+    bool  pcaShapeUpdatePosition{true};
+    float pcaShapeMaxPosShiftFraction{0.5f}; // cap per-iter shift at fraction * maxR
+    // Maximum valid z position (interpolated z-space). Used to clamp Ellipsoid
     // center z in the constructor, preventing cells from drifting off the z-stack.
     // Default 224 = (z_slices=225) - 1. Runtime-updated by CellUniverse::loadFrame
     // to the actual interpolated slice count - 1. Not parsed from YAML.
     float maxZ{224.0f};
-    ~SpheroidConfig() = default;
+    ~EllipsoidConfig() = default;
 
     void explodeConfig(const YAML::Node& node)
     {
         x.explodeParams(node["x"]);
         y.explodeParams(node["y"]);
         z.explodeParams(node["z"]);
-        majorRadius.explodeParams(node["majorRadius"]);
-        if (node["bRadius"]) bRadius.explodeParams(node["bRadius"]);
-        minorRadius.explodeParams(node["minorRadius"]);
-        if (node["abRatio"]) abRatio.explodeParams(node["abRatio"]);
         thetaX.explodeParams(node["thetaX"]);
         thetaY.explodeParams(node["thetaY"]);
         thetaZ.explodeParams(node["thetaZ"]);
+        // Radius + brightness perturbation blocks are optional: PCA drives
+        // shape and brightness is EMA-driven.
+        if (node["aRadius"]) aRadius.explodeParams(node["aRadius"]);
+        if (node["bRadius"]) bRadius.explodeParams(node["bRadius"]);
+        if (node["cRadius"]) cRadius.explodeParams(node["cRadius"]);
         if (node["brightness"]) brightness.explodeParams(node["brightness"]);
 
-        minMajorRadius = node["minMajorRadius"].as<double>();
-        maxMajorRadius = node["maxMajorRadius"].as<double>();
+        minARadius = node["minARadius"].as<double>();
+        maxARadius = node["maxARadius"].as<double>();
         if (node["minBRadius"]) minBRadius = node["minBRadius"].as<double>();
         if (node["maxBRadius"]) maxBRadius = node["maxBRadius"].as<double>();
-        minMinorRadius = node["minMinorRadius"].as<double>();
-        maxMinorRadius = node["maxMinorRadius"].as<double>();
+        minCRadius = node["minCRadius"].as<double>();
+        maxCRadius = node["maxCRadius"].as<double>();
         if (node["initialBrightness"]) initialBrightness = node["initialBrightness"].as<float>();
         if (node["initialRadiusScale"]) initialRadiusScale = node["initialRadiusScale"].as<float>();
         if (node["backgroundColor"]) backgroundColor = node["backgroundColor"].as<float>();
@@ -432,27 +451,36 @@ public:
         if (node["maxBrightness"]) maxBrightness = node["maxBrightness"].as<double>();
         if (node["brightnessProbabilityStep"]) brightnessProbabilityStep = node["brightnessProbabilityStep"].as<float>();
         if (node["brightnessProbabilityTrust"]) brightnessProbabilityTrust = node["brightnessProbabilityTrust"].as<float>();
-        majorRadiusProbabilityStep = brightnessProbabilityStep;
-        majorRadiusProbabilityTrust = brightnessProbabilityTrust;
-        minorRadiusProbabilityStep = brightnessProbabilityStep;
-        minorRadiusProbabilityTrust = brightnessProbabilityTrust;
-        abRatioProbabilityStep = brightnessProbabilityStep;
-        abRatioProbabilityTrust = brightnessProbabilityTrust;
-        if (node["majorRadiusProbabilityStep"]) majorRadiusProbabilityStep = node["majorRadiusProbabilityStep"].as<float>();
-        if (node["majorRadiusProbabilityTrust"]) majorRadiusProbabilityTrust = node["majorRadiusProbabilityTrust"].as<float>();
-        if (node["minorRadiusProbabilityStep"]) minorRadiusProbabilityStep = node["minorRadiusProbabilityStep"].as<float>();
-        if (node["minorRadiusProbabilityTrust"]) minorRadiusProbabilityTrust = node["minorRadiusProbabilityTrust"].as<float>();
-        if (node["abRatioProbabilityStep"]) abRatioProbabilityStep = node["abRatioProbabilityStep"].as<float>();
-        if (node["abRatioProbabilityTrust"]) abRatioProbabilityTrust = node["abRatioProbabilityTrust"].as<float>();
+        aRadiusProbabilityStep = brightnessProbabilityStep;
+        aRadiusProbabilityTrust = brightnessProbabilityTrust;
+        bRadiusProbabilityStep = brightnessProbabilityStep;
+        bRadiusProbabilityTrust = brightnessProbabilityTrust;
+        cRadiusProbabilityStep = brightnessProbabilityStep;
+        cRadiusProbabilityTrust = brightnessProbabilityTrust;
+        if (node["aRadiusProbabilityStep"]) aRadiusProbabilityStep = node["aRadiusProbabilityStep"].as<float>();
+        if (node["aRadiusProbabilityTrust"]) aRadiusProbabilityTrust = node["aRadiusProbabilityTrust"].as<float>();
+        if (node["bRadiusProbabilityStep"]) bRadiusProbabilityStep = node["bRadiusProbabilityStep"].as<float>();
+        if (node["bRadiusProbabilityTrust"]) bRadiusProbabilityTrust = node["bRadiusProbabilityTrust"].as<float>();
+        if (node["cRadiusProbabilityStep"]) cRadiusProbabilityStep = node["cRadiusProbabilityStep"].as<float>();
+        if (node["cRadiusProbabilityTrust"]) cRadiusProbabilityTrust = node["cRadiusProbabilityTrust"].as<float>();
         if (node["brightnessUpdateBlend"]) brightnessUpdateBlend = node["brightnessUpdateBlend"].as<float>();
         if (node["brightnessMeanAmplification"]) brightnessMeanAmplification = node["brightnessMeanAmplification"].as<float>();
+        if (node["brightnessMeasurementTopPercentile"]) brightnessMeasurementTopPercentile = node["brightnessMeasurementTopPercentile"].as<float>();
+        if (node["pcaShapeMaxIters"]) pcaShapeMaxIters = node["pcaShapeMaxIters"].as<int>();
+        if (node["pcaShapeRadiusScale"]) pcaShapeRadiusScale = node["pcaShapeRadiusScale"].as<float>();
+        if (node["pcaShapeMinPixels"]) pcaShapeMinPixels = node["pcaShapeMinPixels"].as<int>();
+        if (node["pcaShapeMaskScale"]) pcaShapeMaskScale = node["pcaShapeMaskScale"].as<float>();
+        if (node["pcaShapeConvergeRadius"]) pcaShapeConvergeRadius = node["pcaShapeConvergeRadius"].as<float>();
+        if (node["pcaShapeConvergeAngleDeg"]) pcaShapeConvergeAngleDeg = node["pcaShapeConvergeAngleDeg"].as<float>();
+        if (node["pcaShapeUpdatePosition"]) pcaShapeUpdatePosition = node["pcaShapeUpdatePosition"].as<bool>();
+        if (node["pcaShapeMaxPosShiftFraction"]) pcaShapeMaxPosShiftFraction = node["pcaShapeMaxPosShiftFraction"].as<float>();
     }
 };
 
 class BaseConfig {
 public:
     std::string cellType;
-    std::unique_ptr<SpheroidConfig> cell;
+    std::unique_ptr<EllipsoidConfig> cell;
     SimulationConfig simulation;
     ProbabilityConfig prob;
 
@@ -462,14 +490,14 @@ public:
     // Deep copy (unique_ptr requires explicit copy)
     BaseConfig(const BaseConfig& other)
         : cellType(other.cellType),
-          cell(other.cell ? std::make_unique<SpheroidConfig>(*other.cell) : nullptr),
+          cell(other.cell ? std::make_unique<EllipsoidConfig>(*other.cell) : nullptr),
           simulation(other.simulation),
           prob(other.prob) {}
 
     BaseConfig& operator=(const BaseConfig& other) {
         if (this != &other) {
             cellType = other.cellType;
-            cell = other.cell ? std::make_unique<SpheroidConfig>(*other.cell) : nullptr;
+            cell = other.cell ? std::make_unique<EllipsoidConfig>(*other.cell) : nullptr;
             simulation = other.simulation;
             prob = other.prob;
         }
@@ -482,7 +510,7 @@ public:
 
     void explodeConfig(const YAML::Node& node) {
         cellType = node["cellType"].as<std::string>();
-        cell = std::make_unique<SpheroidConfig>();
+        cell = std::make_unique<EllipsoidConfig>();
         cell->explodeConfig(node["cell"]);
         simulation.explodeConfig(node["simulation"]);
         prob.explodeConfig(node["prob"]);

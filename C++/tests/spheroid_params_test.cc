@@ -1,13 +1,13 @@
 #include <gtest/gtest.h>
 
-#include "Spheroid.hpp"
+#include "Ellipsoid.hpp"
 
 namespace {
-void ConfigureSpheroidBounds() {
-    Spheroid::cellConfig.minMajorRadius = 1.0;
-    Spheroid::cellConfig.maxMajorRadius = 10.0;
-    Spheroid::cellConfig.minMinorRadius = 1.0;
-    Spheroid::cellConfig.maxMinorRadius = 8.0;
+void ConfigureEllipsoidBounds() {
+    Ellipsoid::cellConfig.minARadius = 1.0;
+    Ellipsoid::cellConfig.maxARadius = 10.0;
+    Ellipsoid::cellConfig.minCRadius = 1.0;
+    Ellipsoid::cellConfig.maxCRadius = 8.0;
 }
 
 void ExpectNear(float a, float b) {
@@ -15,9 +15,9 @@ void ExpectNear(float a, float b) {
 }
 }
 
-TEST(SpheroidParamsTest, CalculateCornersUsesMaxRadiusAroundCenter) {
-    ConfigureSpheroidBounds();
-    Spheroid spheroid(SpheroidParams("p3", 10.0f, 20.0f, 30.0f, 5.0f, 2.0f));
+TEST(EllipsoidParamsTest, CalculateCornersUsesMaxRadiusAroundCenter) {
+    ConfigureEllipsoidBounds();
+    Ellipsoid spheroid(EllipsoidParams("p3", 10.0f, 20.0f, 30.0f, 5.0f, 2.0f));
 
     auto [minCorner, maxCorner] = spheroid.calculateCorners();
 
@@ -33,10 +33,10 @@ TEST(SpheroidParamsTest, CalculateCornersUsesMaxRadiusAroundCenter) {
     ExpectNear(maxCorner[2], 35.0f);
 }
 
-TEST(SpheroidParamsTest, CalculateMinimumBoxContainsBothCells) {
-    ConfigureSpheroidBounds();
-    Spheroid a(SpheroidParams("a", 10.0f, 20.0f, 30.0f, 5.0f, 2.0f));
-    Spheroid b(SpheroidParams("b", 20.0f, 10.0f, 40.0f, 3.0f, 1.0f));
+TEST(EllipsoidParamsTest, CalculateMinimumBoxContainsBothCells) {
+    ConfigureEllipsoidBounds();
+    Ellipsoid a(EllipsoidParams("a", 10.0f, 20.0f, 30.0f, 5.0f, 2.0f));
+    Ellipsoid b(EllipsoidParams("b", 20.0f, 10.0f, 40.0f, 3.0f, 1.0f));
 
     auto [minCorner, maxCorner] = a.calculateMinimumBox(b);
 

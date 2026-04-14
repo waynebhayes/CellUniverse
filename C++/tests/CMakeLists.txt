@@ -28,7 +28,7 @@ add_executable(core_unit_test
         ${CMAKE_SOURCE_DIR}/src/Frame.cpp
         ${CMAKE_SOURCE_DIR}/src/CellUniverse.cpp
         ${CMAKE_SOURCE_DIR}/src/ImageHandler.cpp
-        ${CMAKE_SOURCE_DIR}/src/Spheroid.cpp
+        ${CMAKE_SOURCE_DIR}/src/Ellipsoid.cpp
 )
 
 target_include_directories(core_unit_test PRIVATE

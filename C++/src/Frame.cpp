@@ -2,28 +2,6 @@
 
 #include <sstream>
 
-namespace {
-double computeSizeReductionPenalty(const Spheroid &oldCell, const Spheroid &newCell, float weight)
-{
-    if (weight <= 0.0f) {
-        return 0.0;
-    }
-
-    const auto accumulateReductionPenalty = [weight](float oldRadius, float newRadius) {
-        if (oldRadius <= 0.0f || newRadius >= oldRadius) {
-            return 0.0;
-        }
-        const double reductionRatio = static_cast<double>(oldRadius - newRadius) / oldRadius;
-        return static_cast<double>(weight) * reductionRatio * reductionRatio;
-    };
-
-    return accumulateReductionPenalty(oldCell.getMajorRadius(), newCell.getMajorRadius())
-         + accumulateReductionPenalty(oldCell.getBRadius(),     newCell.getBRadius())
-         + accumulateReductionPenalty(oldCell.getMinorRadius(), newCell.getMinorRadius());
-}
-// Vincent's old split helpers (computeEquivalentSphereRadius,
-} // namespace
-
 // Function to interpolate between two slices
 void interpolateSlices(const cv::Mat& slice1, const cv::Mat& slice2, 
                        std::vector<cv::Mat>& processedSlices, int numInterpolations) {
@@ -40,7 +18,7 @@ void interpolateSlices(const cv::Mat& slice1, const cv::Mat& slice2,
     }
 }
 
-Frame::Frame(const std::vector<cv::Mat> &realFrame, const SimulationConfig &simulationConfig, const std::vector<Spheroid> &cells,
+Frame::Frame(const std::vector<cv::Mat> &realFrame, const SimulationConfig &simulationConfig, const std::vector<Ellipsoid> &cells,
              const Path &outputPath, const std::string &imageName)
     : cells(cells),
       simulationConfig(simulationConfig),
@@ -154,7 +132,7 @@ Cost Frame::calculateCost(const std::vector<cv::Mat> &synthFrame)
     return totalCost;
 }
 
-std::vector<cv::Mat> Frame::generateSynthFrameFast(Spheroid &oldCell, Spheroid &newCell,
+std::vector<cv::Mat> Frame::generateSynthFrameFast(Ellipsoid &oldCell, Ellipsoid &newCell,
                                                    int *outAffectedZMin, int *outAffectedZMax)
 {
     if (cells.empty())
@@ -267,13 +245,13 @@ size_t Frame::length() const
     return cells.size();
 }
 
-CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight, float sizeReductionWeight)
+CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight)
 {
     if (index >= cells.size()) {
         return {0.0, [](bool) {}};
     }
 
-    Spheroid oldCell = cells[index];
+    Ellipsoid oldCell = cells[index];
     PerturbDirections perturbDirections;
 
     // O(n) overlap for just this cell before perturbation
@@ -282,8 +260,8 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight, float siz
     cells[index] = cells[index].getPerturbedCell(&perturbDirections);
 
     // Min-radius hard clamp (2026-04-09): prevent cells from ratcheting down to
-    // minimum radius bounds via unconstrained perturbation. The Spheroid ctor
-    // silently clamps majorRadius/minorRadius to minMajorRadius/minMinorRadius,
+    // minimum radius bounds via unconstrained perturbation. The Ellipsoid ctor
+    // silently clamps a/b/c radii to their configured minima,
     // so a decrease-biased perturbation sequence parks cells at the floor where
     // the L2 cost rewards the tiny footprint (see 12345...3400 at (10,5) in
     // run 074740 f22 — the degenerate crumpled ellipse visible in the f8
@@ -293,18 +271,30 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight, float siz
     // (those cells are already parked there and need a different recovery
     // path — see the deferred volume recovery work in config).
     {
-        const float newMajorR = cells[index].getMajorRadius();
+        const float newAR = cells[index].getARadius();
+        const float newBR = cells[index].getBRadius();
+        const float newCR = cells[index].getCRadius();
+        const float oldAR = oldCell.getARadius();
+        const float oldBR = oldCell.getBRadius();
+        const float oldCR = oldCell.getCRadius();
         const float newMinorR = cells[index].getMinorRadius();
-        const float oldMajorR = oldCell.getMajorRadius();
         const float oldMinorR = oldCell.getMinorRadius();
-        const float minMajorR = static_cast<float>(Spheroid::cellConfig.minMajorRadius);
-        const float minMinorR = static_cast<float>(Spheroid::cellConfig.minMinorRadius);
+        const float minAR = static_cast<float>(Ellipsoid::cellConfig.minARadius);
+        const float minBR = static_cast<float>(
+            Ellipsoid::cellConfig.maxBRadius > 0.0 ? Ellipsoid::cellConfig.minBRadius
+                                                   : Ellipsoid::cellConfig.minARadius);
+        const float minCR = static_cast<float>(Ellipsoid::cellConfig.minCRadius);
+        const float minMinorR = std::min({minAR, minBR, minCR});
         constexpr float kClampEpsilon = 1e-3f;
-        const bool hitMajorFloor = (newMajorR <= minMajorR + kClampEpsilon) &&
-                                   (oldMajorR  >  minMajorR + kClampEpsilon);
+        const bool hitAFloor = (newAR <= minAR + kClampEpsilon) &&
+                               (oldAR >  minAR + kClampEpsilon);
+        const bool hitBFloor = (newBR <= minBR + kClampEpsilon) &&
+                               (oldBR >  minBR + kClampEpsilon);
+        const bool hitCFloor = (newCR <= minCR + kClampEpsilon) &&
+                               (oldCR >  minCR + kClampEpsilon);
         const bool hitMinorFloor = (newMinorR <= minMinorR + kClampEpsilon) &&
-                                   (oldMinorR  >  minMinorR + kClampEpsilon);
-        if (hitMajorFloor || hitMinorFloor) {
+                                   (oldMinorR >  minMinorR + kClampEpsilon);
+        if (hitAFloor || hitBFloor || hitCFloor || hitMinorFloor) {
             cells[index] = oldCell;
             return {0.0, [](bool) {}};
         }
@@ -312,7 +302,6 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight, float siz
 
     // O(n) overlap for this cell after perturbation
     double newOverlapCell = computeOverlapForCell(index, overlapWeight);
-    double sizeReductionPenalty = computeSizeReductionPenalty(oldCell, cells[index], sizeReductionWeight);
 
     // Render only the affected z-slice range; generateSynthFrameFast writes
     // [affectedMin, affectedMax] (inclusive) for us to drive incremental
@@ -329,30 +318,30 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight, float siz
     // Use cached cost instead of recalculating L2 over all 225 slices
     double oldImageCost = _currentCost;
 
-    double costDiff = (newImageCost + newOverlapCell + sizeReductionPenalty)
+    double costDiff = (newImageCost + newOverlapCell)
                     - (oldImageCost + oldOverlapCell);
 
     CallBackFunc callback = [this, newSynthFrame, newCostPerSlice,
                              oldCell, index, newImageCost, perturbDirections](bool accept)
     {
-        const float brightnessStep = std::max(0.0f, Spheroid::cellConfig.brightnessProbabilityStep);
-        const float majorRadiusStep = std::max(0.0f, Spheroid::cellConfig.majorRadiusProbabilityStep);
-        const float minorRadiusStep = std::max(0.0f, Spheroid::cellConfig.minorRadiusProbabilityStep);
-        const float abRatioStep = std::max(0.0f, Spheroid::cellConfig.abRatioProbabilityStep);
+        const float brightnessStep = std::max(0.0f, Ellipsoid::cellConfig.brightnessProbabilityStep);
+        const float aRadiusStep = std::max(0.0f, Ellipsoid::cellConfig.aRadiusProbabilityStep);
+        const float bRadiusStep = std::max(0.0f, Ellipsoid::cellConfig.bRadiusProbabilityStep);
+        const float cRadiusStep = std::max(0.0f, Ellipsoid::cellConfig.cRadiusProbabilityStep);
         if (accept) {
             if (perturbDirections.brightness != 0) this->cells[index].adjustBrightnessPerturbProbability(perturbDirections.brightness, brightnessStep);
-            if (perturbDirections.majorRadius != 0) this->cells[index].adjustMajorRadiusPerturbProbability(perturbDirections.majorRadius, majorRadiusStep);
-            if (perturbDirections.minorRadius != 0) this->cells[index].adjustMinorRadiusPerturbProbability(perturbDirections.minorRadius, minorRadiusStep);
-            if (perturbDirections.abRatio != 0) this->cells[index].adjustABRatioPerturbProbability(perturbDirections.abRatio, abRatioStep);
+            if (perturbDirections.aRadius != 0) this->cells[index].adjustARadiusPerturbProbability(perturbDirections.aRadius, aRadiusStep);
+            if (perturbDirections.bRadius != 0) this->cells[index].adjustBRadiusPerturbProbability(perturbDirections.bRadius, bRadiusStep);
+            if (perturbDirections.cRadius != 0) this->cells[index].adjustCRadiusPerturbProbability(perturbDirections.cRadius, cRadiusStep);
             this->_synthFrame = newSynthFrame;
             this->_currentCost = newImageCost;
             this->_currentCostPerSlice = newCostPerSlice;
         } else {
-            Spheroid revertedCell = oldCell;
+            Ellipsoid revertedCell = oldCell;
             if (perturbDirections.brightness != 0) revertedCell.adjustBrightnessPerturbProbability(perturbDirections.brightness, -brightnessStep);
-            if (perturbDirections.majorRadius != 0) revertedCell.adjustMajorRadiusPerturbProbability(perturbDirections.majorRadius, -majorRadiusStep);
-            if (perturbDirections.minorRadius != 0) revertedCell.adjustMinorRadiusPerturbProbability(perturbDirections.minorRadius, -minorRadiusStep);
-            if (perturbDirections.abRatio != 0) revertedCell.adjustABRatioPerturbProbability(perturbDirections.abRatio, -abRatioStep);
+            if (perturbDirections.aRadius != 0) revertedCell.adjustARadiusPerturbProbability(perturbDirections.aRadius, -aRadiusStep);
+            if (perturbDirections.bRadius != 0) revertedCell.adjustBRadiusPerturbProbability(perturbDirections.bRadius, -bRadiusStep);
+            if (perturbDirections.cRadius != 0) revertedCell.adjustCRadiusPerturbProbability(perturbDirections.cRadius, -cRadiusStep);
             this->cells[index] = revertedCell;
         }
     };
@@ -364,9 +353,9 @@ namespace {
 // detection: treats the cell as the smallest enclosing sphere so no pair of
 // touching cells is missed. Trades some over-penalization of non-overlapping
 // but elongated cells for correctness. Runtime cost is one std::max.
-inline float boundingSphereRadius(const Spheroid &cell)
+inline float boundingSphereRadius(const Ellipsoid &cell)
 {
-    return std::max({cell.getMajorRadius(), cell.getBRadius(), cell.getMinorRadius()});
+    return std::max({cell.getARadius(), cell.getBRadius(), cell.getCRadius()});
 }
 }
 
@@ -548,18 +537,31 @@ std::vector<BrightPixel> gatherBrightPixelsVoronoi(
     return kept;
 }
 
-// PCA on weighted 3D points. Returns the principal eigenvector (longest
-// direction) and fills D1/D2 with the centroids of the two halves obtained
-// by projecting onto the eigenvector and splitting at the median.
+// PCA on weighted 3D points in the CELL'S LOCAL FRAME. Transforms world-
+// space pixel positions into the cell's local coordinate system (inverse
+// rotation + normalization by radii a, b, c) before computing PCA. This
+// makes the analysis invariant to cell orientation and shape — the PCA sees
+// brightness distribution relative to the cell, not absolute image geometry.
+// The resulting eigenvector is rotated back to world space. D1/D2 centroids
+// are returned in world space (computed from the original world positions).
+//
+// When cellCenter is null or radii are zero, falls back to world-frame PCA
+// with isotropic normalization (divide all axes by maxR).
 bool pca3DWithCentroids(
     const std::vector<BrightPixel> &points,
     cv::Point3f &eigvec1Out,
     cv::Point3f &d1Out,
-    cv::Point3f &d2Out)
+    cv::Point3f &d2Out,
+    const cv::Point3f *cellCenter = nullptr,
+    const std::array<double, 9> *invRotation = nullptr,
+    float radiusA = 0.0f, float radiusB = 0.0f, float radiusC = 0.0f)
 {
     if (points.size() < 8) return false;
 
-    // Weighted mean.
+    const bool useLocalFrame = cellCenter && invRotation
+        && radiusA > 1e-3f && radiusB > 1e-3f && radiusC > 1e-3f;
+
+    // Weighted mean in world space.
     cv::Point3f mean{0.0f, 0.0f, 0.0f};
     double wsum = 0.0;
     for (const auto &bp : points) {
@@ -573,19 +575,44 @@ bool pca3DWithCentroids(
     mean.y /= static_cast<float>(wsum);
     mean.z /= static_cast<float>(wsum);
 
-    // Weighted covariance.
+    // Normalization factors.
+    const double invA = useLocalFrame ? (1.0 / radiusA) : 1.0;
+    const double invB = useLocalFrame ? (1.0 / radiusB) : 1.0;
+    const double invC = useLocalFrame ? (1.0 / radiusC) : 1.0;
+    const auto &R = invRotation; // R_T: inverse rotation (world→local)
+
+    // Helper: transform a world-space displacement into the normalized local
+    // frame. If not using local frame, just returns the displacement as-is.
+    auto toLocal = [&](double wx, double wy, double wz,
+                       double &lx, double &ly, double &lz) {
+        if (useLocalFrame) {
+            // Inverse rotation: world → local
+            const auto &M = *R;
+            const double rx = M[0] * wx + M[1] * wy + M[2] * wz;
+            const double ry = M[3] * wx + M[4] * wy + M[5] * wz;
+            const double rz = M[6] * wx + M[7] * wy + M[8] * wz;
+            // Normalize by radii
+            lx = rx * invA;
+            ly = ry * invB;
+            lz = rz * invC;
+        } else {
+            lx = wx; ly = wy; lz = wz;
+        }
+    };
+
+    // Weighted covariance in local (or world) frame.
     double cxx = 0, cxy = 0, cxz = 0, cyy = 0, cyz = 0, czz = 0;
     for (const auto &bp : points) {
-        const double dx = bp.pos.x - mean.x;
-        const double dy = bp.pos.y - mean.y;
-        const double dz = bp.pos.z - mean.z;
+        double lx, ly, lz;
+        toLocal(bp.pos.x - mean.x, bp.pos.y - mean.y, bp.pos.z - mean.z,
+                lx, ly, lz);
         const double w = bp.weight;
-        cxx += w * dx * dx;
-        cxy += w * dx * dy;
-        cxz += w * dx * dz;
-        cyy += w * dy * dy;
-        cyz += w * dy * dz;
-        czz += w * dz * dz;
+        cxx += w * lx * lx;
+        cxy += w * lx * ly;
+        cxz += w * lx * lz;
+        cyy += w * ly * ly;
+        cyz += w * ly * lz;
+        czz += w * lz * lz;
     }
     cxx /= wsum; cxy /= wsum; cxz /= wsum;
     cyy /= wsum; cyz /= wsum; czz /= wsum;
@@ -600,26 +627,60 @@ bool pca3DWithCentroids(
     cv::eigen(cov, eigvals, eigvecs);
     // cv::eigen returns eigenvectors as rows of `eigvecs`, sorted by
     // descending eigenvalue. Row 0 is the principal direction.
-    cv::Point3f ev1(
+    // This eigenvector is in LOCAL frame (or world if not using local).
+    cv::Point3f ev1Local(
         static_cast<float>(eigvecs(0, 0)),
         static_cast<float>(eigvecs(0, 1)),
         static_cast<float>(eigvecs(0, 2)));
-    const double n = std::sqrt(ev1.x * ev1.x + ev1.y * ev1.y + ev1.z * ev1.z);
-    if (n < 1e-9) return false;
-    ev1.x = static_cast<float>(ev1.x / n);
-    ev1.y = static_cast<float>(ev1.y / n);
-    ev1.z = static_cast<float>(ev1.z / n);
-    eigvec1Out = ev1;
 
-    // Project every pixel onto ev1, find the median projection, partition
-    // points into two groups, compute weighted centroid of each group.
+    // Rotate eigenvector back to world space if using local frame.
+    // Forward rotation R maps local→world. R_T is R^T stored row-major,
+    // so column i of R = (R_T[i], R_T[3+i], R_T[6+i]).
+    // R * v = (col0*vx + col1*vy + col2*vz).
+    cv::Point3f ev1World;
+    if (useLocalFrame) {
+        const auto &M = *R;
+        // Un-normalize: scale eigenvector by radii to undo the 1/r normalization
+        // before rotating back. This ensures the world-space direction reflects
+        // actual spatial extent, not the normalized unit-sphere.
+        const double sx = ev1Local.x * radiusA;
+        const double sy = ev1Local.y * radiusB;
+        const double sz = ev1Local.z * radiusC;
+        // Forward rotation (local→world): columns of R = rows of R^T transposed
+        // R * v = (R_T[0]*sx + R_T[1]*sy + R_T[2]*sz, ...)
+        // Wait — R_T is R^T row-major. R = (R_T)^T. So R[i][j] = R_T[j][i].
+        // R * v:  row i of R = column i of R_T = (R_T[i], R_T[i+3], R_T[i+6])? No.
+        // R_T stored row-major: R_T[row*3+col]. R_T[row][col] = R^T[row][col] = R[col][row].
+        // So R[i][j] = R_T[j*3+i].
+        // R*v: (R*v)_i = sum_j R[i][j]*v_j = sum_j R_T[j*3+i]*v_j
+        //             = R_T[0*3+i]*vx + R_T[1*3+i]*vy + R_T[2*3+i]*vz
+        //             = R_T[i]*vx + R_T[3+i]*vy + R_T[6+i]*vz
+        ev1World.x = static_cast<float>(M[0]*sx + M[3]*sy + M[6]*sz);
+        ev1World.y = static_cast<float>(M[1]*sx + M[4]*sy + M[7]*sz);
+        ev1World.z = static_cast<float>(M[2]*sx + M[5]*sy + M[8]*sz);
+    } else {
+        ev1World = ev1Local;
+    }
+
+    const double n = std::sqrt(ev1World.x * ev1World.x +
+                               ev1World.y * ev1World.y +
+                               ev1World.z * ev1World.z);
+    if (n < 1e-9) return false;
+    ev1World.x = static_cast<float>(ev1World.x / n);
+    ev1World.y = static_cast<float>(ev1World.y / n);
+    ev1World.z = static_cast<float>(ev1World.z / n);
+    eigvec1Out = ev1World;
+
+    // Project every pixel onto the WORLD-SPACE eigenvector, find the median,
+    // partition into two groups, compute weighted centroid of each group.
+    // Centroids are returned in world space.
     std::vector<float> projections;
     projections.reserve(points.size());
     for (const auto &bp : points) {
         const float px = bp.pos.x - mean.x;
         const float py = bp.pos.y - mean.y;
         const float pz = bp.pos.z - mean.z;
-        projections.push_back(px * ev1.x + py * ev1.y + pz * ev1.z);
+        projections.push_back(px * ev1World.x + py * ev1World.y + pz * ev1World.z);
     }
 
     std::vector<float> sortedProj = projections;
@@ -658,6 +719,66 @@ bool pca3DWithCentroids(
     return true;
 }
 
+// Project bright pixels onto a given direction, split at the median, and
+// return the weighted centroid of each half. This gives a data-driven
+// midpoint and separation for any candidate split axis without relying on
+// PCA to choose the direction.
+bool centroidsAlongAxis(
+    const std::vector<BrightPixel> &points,
+    const cv::Point3f &axis,
+    cv::Point3f &d1Out,
+    cv::Point3f &d2Out)
+{
+    if (points.size() < 8) return false;
+
+    // Weighted mean for centering.
+    cv::Point3f mean{0, 0, 0};
+    double wsum = 0.0;
+    for (const auto &bp : points) {
+        mean.x += bp.pos.x * bp.weight;
+        mean.y += bp.pos.y * bp.weight;
+        mean.z += bp.pos.z * bp.weight;
+        wsum += bp.weight;
+    }
+    if (wsum < 1e-6) return false;
+    mean.x /= static_cast<float>(wsum);
+    mean.y /= static_cast<float>(wsum);
+    mean.z /= static_cast<float>(wsum);
+
+    // Project onto axis.
+    std::vector<float> proj;
+    proj.reserve(points.size());
+    for (const auto &bp : points) {
+        proj.push_back(
+            (bp.pos.x - mean.x) * axis.x +
+            (bp.pos.y - mean.y) * axis.y +
+            (bp.pos.z - mean.z) * axis.z);
+    }
+
+    // Median split.
+    std::vector<float> sorted = proj;
+    std::nth_element(sorted.begin(), sorted.begin() + sorted.size() / 2, sorted.end());
+    const float median = sorted[sorted.size() / 2];
+
+    cv::Point3f sumLo{0, 0, 0}, sumHi{0, 0, 0};
+    double wLo = 0.0, wHi = 0.0;
+    for (size_t i = 0; i < points.size(); ++i) {
+        const auto &bp = points[i];
+        if (proj[i] < median) {
+            sumLo += cv::Point3f(bp.pos.x * bp.weight, bp.pos.y * bp.weight, bp.pos.z * bp.weight);
+            wLo += bp.weight;
+        } else {
+            sumHi += cv::Point3f(bp.pos.x * bp.weight, bp.pos.y * bp.weight, bp.pos.z * bp.weight);
+            wHi += bp.weight;
+        }
+    }
+    if (wLo < 1e-6 || wHi < 1e-6) return false;
+
+    d1Out = sumLo * (1.0f / static_cast<float>(wLo));
+    d2Out = sumHi * (1.0f / static_cast<float>(wHi));
+    return true;
+}
+
 // Rotate a unit vector by `angleRad` around `axis` (Rodrigues' formula).
 cv::Point3f rotateAroundAxis(const cv::Point3f &v, const cv::Point3f &axis, float angleRad)
 {
@@ -692,27 +813,27 @@ void orthonormalFrame(const cv::Point3f &primary, cv::Point3f &u, cv::Point3f &v
 // Bio check — generic sphere-like geometric sanity. Called before cost check.
 // Returns true if the split is geometrically plausible, false to reject.
 bool bioCheckDaughters(
-    const Spheroid &daughter1,
-    const Spheroid &daughter2,
+    const Ellipsoid &daughter1,
+    const Ellipsoid &daughter2,
     double refParentVolume,
-    const std::vector<Spheroid> &allCells,
+    const std::vector<Ellipsoid> &allCells,
     size_t d1Idx,
     size_t d2Idx,
     const ProbabilityConfig &probConfig,
     std::string &reasonOut)
 {
-    const auto cellVolume = [](const Spheroid &c) {
-        return static_cast<double>(c.getMajorRadius()) *
+    const auto cellVolume = [](const Ellipsoid &c) {
+        return static_cast<double>(c.getARadius()) *
                static_cast<double>(c.getBRadius()) *
-               static_cast<double>(c.getMinorRadius());
+               static_cast<double>(c.getCRadius());
     };
 
-    const float d1R = std::max({daughter1.getMajorRadius(),
+    const float d1R = std::max({daughter1.getARadius(),
                                  daughter1.getBRadius(),
-                                 daughter1.getMinorRadius()});
-    const float d2R = std::max({daughter2.getMajorRadius(),
+                                 daughter1.getCRadius()});
+    const float d2R = std::max({daughter2.getARadius(),
                                  daughter2.getBRadius(),
-                                 daughter2.getMinorRadius()});
+                                 daughter2.getCRadius()});
 
     // 1. Size ratio check (catches shrink-grow degenerate splits).
     if (d1R < 1e-3f || d2R < 1e-3f) {
@@ -756,7 +877,7 @@ bool bioCheckDaughters(
     // 3. Daughters not buried in each other or in any other cell.
     for (size_t i = 0; i < allCells.size(); ++i) {
         if (i == d1Idx || i == d2Idx) continue;
-        const Spheroid &other = allCells[i];
+        const Ellipsoid &other = allCells[i];
         if (other.isPointInsideEllipsoid(cv::Point3f(
                 daughter1.getX(), daughter1.getY(), daughter1.getZ()), 1.0f)) {
             reasonOut = "d1_buried_in_" + other.getName();
@@ -783,36 +904,36 @@ bool bioCheckDaughters(
     return true;
 }
 
-// Build a daughter Spheroid at position `center` with radii scaled from the
+// Build a daughter Ellipsoid at position `center` with radii scaled from the
 // given source radii by `volumeScale` and clamped to the config bounds.
 // `srcMajor/srcB/srcMinor` are the reference dimensions the daughter should
 // inherit from — typically the parent's last-frame snapshot values, so that
 // Phase B perturbations that shrink the live parent do not also shrink the
 // daughters below what the image actually supports.
-Spheroid buildDaughter(
+Ellipsoid buildDaughter(
     const std::string &name,
     const cv::Point3f &center,
-    const Spheroid &parent,
+    const Ellipsoid &parent,
     float volumeScale,
     float srcMajor,
     float srcB,
     float srcMinor)
 {
-    const auto &cfg = Spheroid::cellConfig;
+    const auto &cfg = Ellipsoid::cellConfig;
     const float dMajor = std::clamp(
         srcMajor * volumeScale,
-        static_cast<float>(cfg.minMajorRadius),
-        static_cast<float>(cfg.maxMajorRadius));
+        static_cast<float>(cfg.minARadius),
+        static_cast<float>(cfg.maxARadius));
     const float dB = std::clamp(
         srcB * volumeScale,
-        static_cast<float>(cfg.maxBRadius > 0.0 ? cfg.minBRadius : cfg.minMajorRadius),
-        static_cast<float>(cfg.maxBRadius > 0.0 ? cfg.maxBRadius : cfg.maxMajorRadius));
+        static_cast<float>(cfg.maxBRadius > 0.0 ? cfg.minBRadius : cfg.minARadius),
+        static_cast<float>(cfg.maxBRadius > 0.0 ? cfg.maxBRadius : cfg.maxARadius));
     const float dMinor = std::clamp(
         srcMinor * volumeScale,
-        static_cast<float>(cfg.minMinorRadius),
-        static_cast<float>(cfg.maxMinorRadius));
+        static_cast<float>(cfg.minCRadius),
+        static_cast<float>(cfg.maxCRadius));
 
-    SpheroidParams dp(
+    EllipsoidParams dp(
         name,
         center.x, center.y, center.z,
         dMajor, dMinor,
@@ -821,7 +942,7 @@ Spheroid buildDaughter(
         parent.getCellParams().theta_z,
         parent.getBrightness());
     dp.bRadius = dB;
-    return Spheroid(dp);
+    return Ellipsoid(dp);
 }
 
 } // namespace
@@ -844,19 +965,19 @@ bool Frame::imageGroundExpectedDaughters(
     if (!snapshot.valid) return false;
 
     // Self claim points: same two-seed pattern as trySplitCellPhased uses.
-    //   D1_seed = snapshot.center - 0.5 * longAxisLength * longAxisDir
-    //   D2_seed = snapshot.center + 0.5 * longAxisLength * longAxisDir
+    //   D1_seed = snapshot.center - 0.5 * splitAxisLength * splitAxisDir
+    //   D2_seed = snapshot.center + 0.5 * splitAxisLength * splitAxisDir
     std::vector<cv::Point3f> selfClaim;
-    if (snapshot.longAxisLength > 1e-3f) {
-        const float half = 0.5f * snapshot.longAxisLength;
+    if (snapshot.splitAxisLength > 1e-3f) {
+        const float half = 0.5f * snapshot.splitAxisLength;
         selfClaim.push_back(cv::Point3f(
-            snapshot.position.x - half * snapshot.longAxisDir.x,
-            snapshot.position.y - half * snapshot.longAxisDir.y,
-            snapshot.position.z - half * snapshot.longAxisDir.z));
+            snapshot.position.x - half * snapshot.splitAxisDir.x,
+            snapshot.position.y - half * snapshot.splitAxisDir.y,
+            snapshot.position.z - half * snapshot.splitAxisDir.z));
         selfClaim.push_back(cv::Point3f(
-            snapshot.position.x + half * snapshot.longAxisDir.x,
-            snapshot.position.y + half * snapshot.longAxisDir.y,
-            snapshot.position.z + half * snapshot.longAxisDir.z));
+            snapshot.position.x + half * snapshot.splitAxisDir.x,
+            snapshot.position.y + half * snapshot.splitAxisDir.y,
+            snapshot.position.z + half * snapshot.splitAxisDir.z));
     } else {
         selfClaim.push_back(snapshot.position);
     }
@@ -865,9 +986,9 @@ bool Frame::imageGroundExpectedDaughters(
     // split path's box radius. Uses snapshot (not live) radii so the
     // pre-pass sees the same region of space regardless of how Phase A
     // has since moved the parent.
-    const float srcMajor = snapshot.majorRadius;
-    const float srcB = (snapshot.bRadius > 1e-3f) ? snapshot.bRadius : snapshot.majorRadius;
-    const float srcMinor = snapshot.minorRadius;
+    const float srcMajor = snapshot.aRadius;
+    const float srcB = (snapshot.bRadius > 1e-3f) ? snapshot.bRadius : snapshot.aRadius;
+    const float srcMinor = snapshot.cRadius;
     const float boxRadius = 3.0f * std::max({srcMajor, srcB, srcMinor});
 
     GatherStats gstats;
@@ -883,8 +1004,17 @@ bool Frame::imageGroundExpectedDaughters(
     if (outKeptPixels) *outKeptPixels = gstats.voronoiKept;
     if (pixels.size() < 20) return false;
 
+    // PCA in cell's local frame using snapshot rotation + radii.
+    const Ellipsoid &cell = cells[cellIndex];
+    std::array<double, 9> R_T;
+    cell.generateInverseRotationMatrix(R_T);
+    const cv::Point3f center(cell.getX(), cell.getY(), cell.getZ());
+
     cv::Point3f dirPca;
-    if (!pca3DWithCentroids(pixels, dirPca, outD1, outD2)) return false;
+    if (!pca3DWithCentroids(pixels, dirPca, outD1, outD2,
+                            &center, &R_T,
+                            cell.getARadius(), cell.getBRadius(), cell.getCRadius()))
+        return false;
     return true;
 }
 
@@ -903,23 +1033,23 @@ bool Frame::calibrateCellPositionViaCentroid(
 
     // Self claim points — same two-seed pattern as the split path.
     std::vector<cv::Point3f> selfClaim;
-    if (snapshot.longAxisLength > 1e-3f) {
-        const float half = 0.5f * snapshot.longAxisLength;
+    if (snapshot.splitAxisLength > 1e-3f) {
+        const float half = 0.5f * snapshot.splitAxisLength;
         selfClaim.push_back(cv::Point3f(
-            snapshot.position.x - half * snapshot.longAxisDir.x,
-            snapshot.position.y - half * snapshot.longAxisDir.y,
-            snapshot.position.z - half * snapshot.longAxisDir.z));
+            snapshot.position.x - half * snapshot.splitAxisDir.x,
+            snapshot.position.y - half * snapshot.splitAxisDir.y,
+            snapshot.position.z - half * snapshot.splitAxisDir.z));
         selfClaim.push_back(cv::Point3f(
-            snapshot.position.x + half * snapshot.longAxisDir.x,
-            snapshot.position.y + half * snapshot.longAxisDir.y,
-            snapshot.position.z + half * snapshot.longAxisDir.z));
+            snapshot.position.x + half * snapshot.splitAxisDir.x,
+            snapshot.position.y + half * snapshot.splitAxisDir.y,
+            snapshot.position.z + half * snapshot.splitAxisDir.z));
     } else {
         selfClaim.push_back(snapshot.position);
     }
 
-    const float srcMajor = snapshot.majorRadius;
-    const float srcB = (snapshot.bRadius > 1e-3f) ? snapshot.bRadius : snapshot.majorRadius;
-    const float srcMinor = snapshot.minorRadius;
+    const float srcMajor = snapshot.aRadius;
+    const float srcB = (snapshot.bRadius > 1e-3f) ? snapshot.bRadius : snapshot.aRadius;
+    const float srcMinor = snapshot.cRadius;
     const float boxRadius = 3.0f * std::max({srcMajor, srcB, srcMinor});
 
     GatherStats gstats;
@@ -956,7 +1086,7 @@ bool Frame::calibrateCellPositionViaCentroid(
         static_cast<float>(sumWy / sumW),
         static_cast<float>(sumWz / sumW));
 
-    const Spheroid savedCell = cells[cellIndex];
+    const Ellipsoid savedCell = cells[cellIndex];
     const cv::Point3f currentPos(savedCell.getX(), savedCell.getY(), savedCell.getZ());
     const float moveDist = static_cast<float>(cv::norm(centroid - currentPos));
 
@@ -973,11 +1103,11 @@ bool Frame::calibrateCellPositionViaCentroid(
 
     // Build candidate at centroid position — radii/rotation/brightness
     // inherited from the current cell (only position changes).
-    SpheroidParams cp = savedCell.getCellParams();
+    EllipsoidParams cp = savedCell.getCellParams();
     cp.x = centroid.x;
     cp.y = centroid.y;
     cp.z = centroid.z;
-    Spheroid candidate(cp);
+    Ellipsoid candidate(cp);
 
     const double savedCost = _currentCost;
     const std::vector<cv::Mat> savedSynth = _synthFrame;
@@ -986,8 +1116,8 @@ bool Frame::calibrateCellPositionViaCentroid(
     // Install candidate and compute incremental cost
     cells[cellIndex] = candidate;
     int affMin = -1, affMax = -1;
-    Spheroid savedMutable = savedCell;
-    Spheroid candidateMutable = candidate;
+    Ellipsoid savedMutable = savedCell;
+    Ellipsoid candidateMutable = candidate;
     auto newSynth = generateSynthFrameFast(savedMutable, candidateMutable, &affMin, &affMax);
     std::vector<double> newPerSlice;
     const double newCost = calculateIncrementalCost(newSynth, affMin, affMax, newPerSlice);
@@ -1022,6 +1152,245 @@ bool Frame::calibrateCellPositionViaCentroid(
     return false;
 }
 
+// ----- PCA shape-from-image helpers -----
+//
+// Decompose a proper-rotation matrix R (world <- local columns) into Euler
+// angles with convention R = Rz(tz) * Ry(ty) * Rx(tx). Matches
+// Ellipsoid::generateInverseRotationMatrix. Handles gimbal lock.
+static void rotationMatrixToEulerZYX(const cv::Matx33d &R,
+                                     double &tx, double &ty, double &tz)
+{
+    const double s = std::clamp(-R(2, 0), -1.0, 1.0);
+    ty = std::asin(s);
+    const double c = std::cos(ty);
+    if (std::abs(c) > 1e-6) {
+        tx = std::atan2(R(2, 1), R(2, 2));
+        tz = std::atan2(R(1, 0), R(0, 0));
+    } else {
+        tx = std::atan2(-R(1, 2), R(1, 1));
+        tz = 0.0;
+    }
+}
+
+bool Frame::calibrateCellShapeViaPca(
+    size_t cellIndex,
+    const ClaimSet &otherCellsClaimSets,
+    int maxIters,
+    float radiusScale,
+    int minPixels,
+    float maskScale,
+    float convergeRadius,
+    float convergeAngleDeg,
+    bool  updatePosition,
+    float maxPosShiftFraction)
+{
+    if (cellIndex >= cells.size()) return false;
+    if (maxIters <= 0) return false;
+    Ellipsoid &cell = cells[cellIndex];
+
+    const float convergeAngleRad =
+        convergeAngleDeg * static_cast<float>(M_PI) / 180.0f;
+
+    bool anyUpdate = false;
+
+    for (int iter = 0; iter < maxIters; ++iter) {
+        const cv::Point3f center(cell.getX(), cell.getY(), cell.getZ());
+        const float curA = cell.getARadius();
+        const float curB = cell.getBRadius();
+        const float curC = cell.getCRadius();
+        const float maxR = std::max({curA, curB, curC});
+        if (maxR <= 1e-3f) break;
+
+        // Sphere that contains the scaled ellipsoid. Voronoi + brightness
+        // filter happens inside gatherBrightPixelsVoronoi.
+        const float sphereR = maskScale * maxR;
+
+        std::vector<cv::Point3f> selfClaim{center};
+        GatherStats gstats;
+        auto raw = gatherBrightPixelsVoronoi(
+            _realFrame, _backgroundValue, center, sphereR,
+            selfClaim, otherCellsClaimSets, &gstats);
+
+        // Tighten to the cell's own ellipsoid (maskScale * radii) so we
+        // reject background pixels that pass the Voronoi sphere but lie
+        // well off-axis from this cell's current belief.
+        std::array<double, 9> R_T;
+        cell.generateInverseRotationMatrix(R_T);
+        const double invA2 = 1.0 / (maskScale * curA * maskScale * curA);
+        const double invB2 = 1.0 / (maskScale * curB * maskScale * curB);
+        const double invC2 = 1.0 / (maskScale * curC * maskScale * curC);
+
+        std::vector<BrightPixel> pixels;
+        pixels.reserve(raw.size());
+        for (const auto &bp : raw) {
+            const double dx = bp.pos.x - center.x;
+            const double dy = bp.pos.y - center.y;
+            const double dz = bp.pos.z - center.z;
+            const double lx = R_T[0] * dx + R_T[1] * dy + R_T[2] * dz;
+            const double ly = R_T[3] * dx + R_T[4] * dy + R_T[5] * dz;
+            const double lz = R_T[6] * dx + R_T[7] * dy + R_T[8] * dz;
+            const double val = lx * lx * invA2 + ly * ly * invB2 + lz * lz * invC2;
+            if (val <= 1.0) pixels.push_back(bp);
+        }
+
+        if (static_cast<int>(pixels.size()) < minPixels) {
+            std::cout << "  [PCA Shape] cell=" << cell.getName()
+                      << " iter=" << iter
+                      << " stop_too_few pixels=" << pixels.size()
+                      << " min=" << minPixels << std::endl;
+            break;
+        }
+
+        // Weighted centroid + covariance in world frame.
+        double sx = 0, sy = 0, sz = 0, wsum = 0;
+        for (const auto &bp : pixels) {
+            sx += bp.pos.x * bp.weight;
+            sy += bp.pos.y * bp.weight;
+            sz += bp.pos.z * bp.weight;
+            wsum += bp.weight;
+        }
+        if (wsum < 1e-6) break;
+        const double mx = sx / wsum, my = sy / wsum, mz = sz / wsum;
+
+        double cxx = 0, cxy = 0, cxz = 0, cyy = 0, cyz = 0, czz = 0;
+        for (const auto &bp : pixels) {
+            const double dx = bp.pos.x - mx;
+            const double dy = bp.pos.y - my;
+            const double dz = bp.pos.z - mz;
+            const double w = bp.weight;
+            cxx += w * dx * dx; cxy += w * dx * dy; cxz += w * dx * dz;
+            cyy += w * dy * dy; cyz += w * dy * dz;
+            czz += w * dz * dz;
+        }
+        cxx /= wsum; cxy /= wsum; cxz /= wsum;
+        cyy /= wsum; cyz /= wsum; czz /= wsum;
+
+        cv::Matx33d cov(cxx, cxy, cxz, cxy, cyy, cyz, cxz, cyz, czz);
+        cv::Matx33d eigvecs;
+        cv::Vec3d eigvals;
+        cv::eigen(cov, eigvals, eigvecs);
+
+        cv::Point3f pcaAxis[3];
+        double pcaVariance[3];
+        for (int i = 0; i < 3; ++i) {
+            pcaAxis[i] = cv::Point3f(
+                static_cast<float>(eigvecs(i, 0)),
+                static_cast<float>(eigvecs(i, 1)),
+                static_cast<float>(eigvecs(i, 2)));
+            pcaVariance[i] = std::max(0.0, eigvals[i]);
+        }
+
+        // Eigenvalue degeneracy: cell is near-spherical. PCA rotation is
+        // noisy. Skip rotation update and only refresh radii/position.
+        const double maxVar = std::max({pcaVariance[0], pcaVariance[1], pcaVariance[2]});
+        const double minVar = std::min({pcaVariance[0], pcaVariance[1], pcaVariance[2]});
+        const bool degenerate = (minVar <= 1e-6) || (maxVar / minVar < 1.1);
+
+        // Current cell axes (columns of R) in world frame.
+        cv::Point3f curAxis[3];
+        for (int i = 0; i < 3; ++i) {
+            curAxis[i] = cv::Point3f(
+                static_cast<float>(R_T[i]),
+                static_cast<float>(R_T[3 + i]),
+                static_cast<float>(R_T[6 + i]));
+        }
+
+        // Strict eigenvalue-rank assignment: a = largest variance, b = middle,
+        // c = smallest. Greedy |dot| matching oscillated when eigenvalue
+        // ordering differed from current slot labeling, because matched
+        // variances cycled between slots each iteration. Rank assignment is
+        // stable — physical variance ranks are invariant to the label rotation.
+        cv::Point3f matchedAxis[3];
+        double matchedVariance[3];
+        double maxAxisAngle = 0.0;
+        for (int ci = 0; ci < 3; ++ci) {
+            cv::Point3f v = pcaAxis[ci];
+            // Sign-align with current slot direction for rotation continuity.
+            const double dot = curAxis[ci].x * v.x + curAxis[ci].y * v.y + curAxis[ci].z * v.z;
+            if (dot < 0.0) { v.x = -v.x; v.y = -v.y; v.z = -v.z; }
+            matchedAxis[ci] = v;
+            matchedVariance[ci] = pcaVariance[ci];
+            const double ang = std::acos(std::clamp(std::abs(dot), 0.0, 1.0));
+            if (ang > maxAxisAngle) maxAxisAngle = ang;
+        }
+
+        double targetTx = cell.getThetaX();
+        double targetTy = cell.getThetaY();
+        double targetTz = cell.getThetaZ();
+        if (!degenerate) {
+            cv::Matx33d R(
+                matchedAxis[0].x, matchedAxis[1].x, matchedAxis[2].x,
+                matchedAxis[0].y, matchedAxis[1].y, matchedAxis[2].y,
+                matchedAxis[0].z, matchedAxis[1].z, matchedAxis[2].z);
+            if (cv::determinant(R) < 0.0) {
+                R(0, 2) = -R(0, 2); R(1, 2) = -R(1, 2); R(2, 2) = -R(2, 2);
+            }
+            rotationMatrixToEulerZYX(R, targetTx, targetTy, targetTz);
+        } else {
+            maxAxisAngle = 0.0;
+        }
+
+        const float targetA = radiusScale * std::sqrt(static_cast<float>(matchedVariance[0]));
+        const float targetB = radiusScale * std::sqrt(static_cast<float>(matchedVariance[1]));
+        const float targetC = radiusScale * std::sqrt(static_cast<float>(matchedVariance[2]));
+
+        // Position update: centroid, capped.
+        cv::Point3f newCenter = center;
+        if (updatePosition) {
+            const float dx = static_cast<float>(mx) - center.x;
+            const float dy = static_cast<float>(my) - center.y;
+            const float dz = static_cast<float>(mz) - center.z;
+            const float shift = std::sqrt(dx * dx + dy * dy + dz * dz);
+            const float cap = maxPosShiftFraction * maxR;
+            if (shift > cap && shift > 1e-6f) {
+                const float s = cap / shift;
+                newCenter = cv::Point3f(center.x + s * dx,
+                                        center.y + s * dy,
+                                        center.z + s * dz);
+            } else {
+                newCenter = cv::Point3f(static_cast<float>(mx),
+                                        static_cast<float>(my),
+                                        static_cast<float>(mz));
+            }
+        }
+
+        // Apply.
+        cell.setRadii(targetA, targetB, targetC);
+        cell.setRotation(static_cast<float>(targetTx),
+                         static_cast<float>(targetTy),
+                         static_cast<float>(targetTz));
+        if (updatePosition) {
+            EllipsoidParams p = cell.getCellParams();
+            p.x = newCenter.x; p.y = newCenter.y; p.z = newCenter.z;
+            cell = Ellipsoid(p);
+        }
+        anyUpdate = true;
+
+        // Convergence check.
+        const float dA = std::abs(targetA - curA);
+        const float dB = std::abs(targetB - curB);
+        const float dC = std::abs(targetC - curC);
+        const float maxDR = std::max({dA, dB, dC});
+
+        std::cout << "  [PCA Shape] cell=" << cell.getName()
+                  << " iter=" << iter
+                  << " n=" << pixels.size()
+                  << " degen=" << degenerate
+                  << " R=(" << targetA << "," << targetB << "," << targetC << ")"
+                  << " dR=" << maxDR
+                  << " axisAng=" << (maxAxisAngle * 180.0 / M_PI)
+                  << " posShift=" << cv::norm(newCenter - center)
+                  << std::endl;
+
+        if (maxDR < convergeRadius &&
+            maxAxisAngle < convergeAngleRad) {
+            break;
+        }
+    }
+
+    return anyUpdate;
+}
+
 // Triaxial split attempt with candidate refinement + bio/cost gates.
 // Implements the Phase A/B split-attempt flow from the plan. Caller supplies
 // the Voronoi claim-sets for all OTHER cells (not this one) and whether to
@@ -1043,43 +1412,43 @@ CostCallbackPair Frame::trySplitCellPhased(
     // live parent. Otherwise the cost delta is dominated by "daughters vs
     // already-collapsed parent" which is small even for real divisions.
     //
-    // Strategy: save the live parent, construct a snapshot-state Spheroid,
+    // Strategy: save the live parent, construct a snapshot-state Ellipsoid,
     // install it at cells[cellIndex], update _synthFrame + _currentCost
     // incrementally via generateSynthFrameFast. Everything downstream
     // (parent local, baseline cost, savedCells, candidate loop) then sees
     // the snapshot-state parent. On rejection we restore the live parent
     // to keep Phase B's perturbation progress.
-    const Spheroid liveParent = cells[cellIndex];
+    const Ellipsoid liveParent = cells[cellIndex];
     const std::string parentName = liveParent.getName();
 
     const bool snapshotValid = snapshot.valid &&
-        snapshot.majorRadius > 1e-3f &&
-        snapshot.minorRadius > 1e-3f;
-    const float srcMajor = snapshotValid ? snapshot.majorRadius : liveParent.getMajorRadius();
+        snapshot.aRadius > 1e-3f &&
+        snapshot.cRadius > 1e-3f;
+    const float srcMajor = snapshotValid ? snapshot.aRadius : liveParent.getARadius();
     const float srcB     = (snapshotValid && snapshot.bRadius > 1e-3f)
         ? snapshot.bRadius : liveParent.getBRadius();
-    const float srcMinor = snapshotValid ? snapshot.minorRadius : liveParent.getMinorRadius();
+    const float srcMinor = snapshotValid ? snapshot.cRadius : liveParent.getCRadius();
 
     // Build the snapshot-state parent: position, radii, rotation, and
     // brightness all come from the snapshot (falling back to live values
     // when snapshot is missing a field).
-    Spheroid snapshotParent = liveParent;
+    Ellipsoid snapshotParent = liveParent;
     if (snapshotValid) {
-        SpheroidParams snapParams(parentName,
+        EllipsoidParams snapParams(parentName,
                                   snapshot.position.x, snapshot.position.y, snapshot.position.z,
                                   srcMajor, srcMinor,
                                   snapshot.thetaX, snapshot.thetaY, snapshot.thetaZ,
                                   snapshot.brightness > 0.0f ? snapshot.brightness
                                                              : liveParent.getBrightness());
         snapParams.bRadius = srcB;
-        snapshotParent = Spheroid(snapParams);
+        snapshotParent = Ellipsoid(snapParams);
 
         const double liveCostBeforeSwap = _currentCost;
 
         cells[cellIndex] = snapshotParent;
         int affMinS = -1, affMaxS = -1;
-        Spheroid liveMutable = liveParent;
-        Spheroid snapshotMutable = snapshotParent;
+        Ellipsoid liveMutable = liveParent;
+        Ellipsoid snapshotMutable = snapshotParent;
         auto swappedSynth = generateSynthFrameFast(liveMutable, snapshotMutable,
                                                     &affMinS, &affMaxS);
         std::vector<double> swappedPerSlice;
@@ -1106,7 +1475,7 @@ CostCallbackPair Frame::trySplitCellPhased(
         std::cout << "  [Split Snapshot Parent] " << parentName
                   << " livePos=(" << liveParent.getX() << "," << liveParent.getY() << "," << liveParent.getZ() << ")"
                   << " snapPos=(" << snapshot.position.x << "," << snapshot.position.y << "," << snapshot.position.z << ")"
-                  << " liveR=(" << liveParent.getMajorRadius() << "," << liveParent.getBRadius() << "," << liveParent.getMinorRadius() << ")"
+                  << " liveR=(" << liveParent.getARadius() << "," << liveParent.getBRadius() << "," << liveParent.getCRadius() << ")"
                   << " snapR=(" << srcMajor << "," << srcB << "," << srcMinor << ")"
                   << " liveCost=" << liveCostBeforeSwap
                   << " snapCost=" << swappedImageCost
@@ -1123,7 +1492,7 @@ CostCallbackPair Frame::trySplitCellPhased(
     // parent now reflects the installed snapshot-state (or live fallback
     // when snapshot is invalid). Everything downstream treats this as the
     // baseline parent.
-    Spheroid parent = cells[cellIndex];
+    Ellipsoid parent = cells[cellIndex];
 
     // Restore-live-parent helper. Used on every rejection path (early
     // returns inside this function AND the callback's reject branch) to
@@ -1134,8 +1503,8 @@ CostCallbackPair Frame::trySplitCellPhased(
         if (cellIndex >= cells.size()) return;
         cells[cellIndex] = liveParent;
         int affMinR = -1, affMaxR = -1;
-        Spheroid snapshotMutable = snapshotParent;
-        Spheroid liveMutable = liveParent;
+        Ellipsoid snapshotMutable = snapshotParent;
+        Ellipsoid liveMutable = liveParent;
         auto revertedSynth = generateSynthFrameFast(snapshotMutable, liveMutable,
                                                      &affMinR, &affMaxR);
         std::vector<double> revertedPerSlice;
@@ -1149,9 +1518,9 @@ CostCallbackPair Frame::trySplitCellPhased(
 
     // --- 1. Gather bright pixels in a snapshot-centered bounding box ---
 
-    const float parentMajor = std::max(srcMajor, parent.getMajorRadius());
+    const float parentMajor = std::max(srcMajor, parent.getARadius());
     const float parentB     = std::max(srcB,     parent.getBRadius());
-    const float parentMinor = std::max(srcMinor, parent.getMinorRadius());
+    const float parentMinor = std::max(srcMinor, parent.getCRadius());
     const float boxRadius = 3.0f * std::max({parentMajor, parentB, parentMinor});
 
     // Reference parent volume used by the bio volume-fraction check and by
@@ -1167,11 +1536,11 @@ CostCallbackPair Frame::trySplitCellPhased(
               << " useSnapshotDir=" << (useSnapshotDirection ? 1 : 0)
               << " snapValid=" << (snapshotValid ? 1 : 0)
               << " snapElong=" << snapshot.shapeElongation
-              << " snapLongLen=" << snapshot.longAxisLength
+              << " snapLongLen=" << snapshot.splitAxisLength
               << " src=(" << srcMajor << "," << srcB << "," << srcMinor << ")"
-              << " liveR=(" << liveParent.getMajorRadius() << "," << liveParent.getBRadius() << "," << liveParent.getMinorRadius() << ")"
+              << " liveR=(" << liveParent.getARadius() << "," << liveParent.getBRadius() << "," << liveParent.getCRadius() << ")"
               << " livePos=(" << liveParent.getX() << "," << liveParent.getY() << "," << liveParent.getZ() << ")"
-              << " parentNow=(" << parent.getMajorRadius() << "," << parent.getBRadius() << "," << parent.getMinorRadius() << ")"
+              << " parentNow=(" << parent.getARadius() << "," << parent.getBRadius() << "," << parent.getCRadius() << ")"
               << " parentPos=(" << parent.getX() << "," << parent.getY() << "," << parent.getZ() << ")"
               << std::endl;
 
@@ -1179,23 +1548,23 @@ CostCallbackPair Frame::trySplitCellPhased(
     // along the snapshot long axis (if we have one) or just the snapshot
     // center (for round cells).
     //
-    //   D1_seed = snapshot.center - 0.5 * longAxisLength * longAxisDir
-    //   D2_seed = snapshot.center + 0.5 * longAxisLength * longAxisDir
+    //   D1_seed = snapshot.center - 0.5 * splitAxisLength * splitAxisDir
+    //   D2_seed = snapshot.center + 0.5 * splitAxisLength * splitAxisDir
     std::vector<cv::Point3f> selfClaim;
-    if (snapshot.longAxisLength > 1e-3f) {
-        const float half = 0.5f * snapshot.longAxisLength;
+    if (snapshot.splitAxisLength > 1e-3f) {
+        const float half = 0.5f * snapshot.splitAxisLength;
         selfClaim.push_back(cv::Point3f(
-            snapshot.position.x - half * snapshot.longAxisDir.x,
-            snapshot.position.y - half * snapshot.longAxisDir.y,
-            snapshot.position.z - half * snapshot.longAxisDir.z));
+            snapshot.position.x - half * snapshot.splitAxisDir.x,
+            snapshot.position.y - half * snapshot.splitAxisDir.y,
+            snapshot.position.z - half * snapshot.splitAxisDir.z));
         selfClaim.push_back(cv::Point3f(
-            snapshot.position.x + half * snapshot.longAxisDir.x,
-            snapshot.position.y + half * snapshot.longAxisDir.y,
-            snapshot.position.z + half * snapshot.longAxisDir.z));
+            snapshot.position.x + half * snapshot.splitAxisDir.x,
+            snapshot.position.y + half * snapshot.splitAxisDir.y,
+            snapshot.position.z + half * snapshot.splitAxisDir.z));
         std::cout << "  [Split Seeds] " << parentName
                   << " snapCenter=(" << snapshot.position.x << "," << snapshot.position.y << "," << snapshot.position.z << ")"
-                  << " longAxisDir=(" << snapshot.longAxisDir.x << "," << snapshot.longAxisDir.y << "," << snapshot.longAxisDir.z << ")"
-                  << " longAxisLen=" << snapshot.longAxisLength
+                  << " splitAxisDir=(" << snapshot.splitAxisDir.x << "," << snapshot.splitAxisDir.y << "," << snapshot.splitAxisDir.z << ")"
+                  << " splitAxisLen=" << snapshot.splitAxisLength
                   << " D1_seed=(" << selfClaim[0].x << "," << selfClaim[0].y << "," << selfClaim[0].z << ")"
                   << " D2_seed=(" << selfClaim[1].x << "," << selfClaim[1].y << "," << selfClaim[1].z << ")"
                   << " boxRadius=" << boxRadius
@@ -1204,7 +1573,7 @@ CostCallbackPair Frame::trySplitCellPhased(
         selfClaim.push_back(snapshot.position);
         std::cout << "  [Split Seeds] " << parentName
                   << " snapCenter=(" << snapshot.position.x << "," << snapshot.position.y << "," << snapshot.position.z << ")"
-                  << " longAxisLen=0 (round cell, single seed = snapCenter)"
+                  << " splitAxisLen=0 (round cell, single seed = snapCenter)"
                   << " boxRadius=" << boxRadius
                   << std::endl;
     }
@@ -1252,73 +1621,100 @@ CostCallbackPair Frame::trySplitCellPhased(
         return {0.0, noop};
     }
 
-    // --- 2. Primary placement: PCA direction + centroids ---
-    //   D1_exp = centroid of group 1 (pixels below projection median on dirPca)
-    //   D2_exp = centroid of group 2 (pixels above projection median on dirPca)
-    cv::Point3f dirPca, d1Pca, d2Pca;
-    if (!pca3DWithCentroids(pixels, dirPca, d1Pca, d2Pca)) {
-        std::cout << "[Split Reject] " << parentName << " pca_failed" << std::endl;
-        restoreLiveParent();
-        return {0.0, noop};
-    }
+    // --- 2. Local-axis directions + data-driven daughter placement ---
+    //   Instead of PCA (whose direction is dominated by the z-brightness
+    //   gradient for flat cells), try ALL THREE cell-local axes (a, b, c)
+    //   rotated to world frame. For each axis, project bright pixels onto
+    //   that direction and compute the centroid of each half — this gives a
+    //   data-driven midpoint and separation. Cost picks the winning axis.
+    std::array<double, 9> parentR_T;
+    parent.generateInverseRotationMatrix(parentR_T);
+    const cv::Point3f parentCenter(parent.getX(), parent.getY(), parent.getZ());
 
-    std::cout << "  [Split PCA] " << parentName
-              << " dirPca=(" << dirPca.x << "," << dirPca.y << "," << dirPca.z << ")"
-              << " D1_exp=(" << d1Pca.x << "," << d1Pca.y << "," << d1Pca.z << ")"
-              << " D2_exp=(" << d2Pca.x << "," << d2Pca.y << "," << d2Pca.z << ")"
-              << " expSep=" << cv::norm(d1Pca - d2Pca)
-              << std::endl;
+    // Extract all three local axes in world frame from the inverse rotation
+    // matrix. R_T is R^T stored row-major, so column i of R (the forward
+    // rotation that maps local axis i to world) is (R_T[i], R_T[3+i], R_T[6+i]).
+    auto extractWorldAxis = [&](int axisIdx) -> cv::Point3f {
+        const double dx = parentR_T[axisIdx];
+        const double dy = parentR_T[3 + axisIdx];
+        const double dz = parentR_T[6 + axisIdx];
+        const double norm = std::sqrt(dx*dx + dy*dy + dz*dz);
+        if (norm < 1e-9) return {0.0f, 0.0f, 1.0f};
+        return cv::Point3f(
+            static_cast<float>(dx / norm),
+            static_cast<float>(dy / norm),
+            static_cast<float>(dz / norm));
+    };
+    const cv::Point3f axisA = extractWorldAxis(0); // local x (a-axis) in world
+    const cv::Point3f axisB = extractWorldAxis(1); // local y (b-axis) in world
+    const cv::Point3f axisC = extractWorldAxis(2); // local z (c-axis) in world
 
-    // Choose primary direction(s). Always try PCA direction. If a valid
-    // snapshot direction exists, try it too — cost picks the winner.
-    // This avoids the classify-threshold problem where a correct snapshot
-    // direction (e.g. 1f2ed f10: y-dominant) is discarded because
-    // snapElong barely misses the threshold while PCA gives a wrong
-    // z-dominant axis.
+    // Only try axes that are close to the shortest radius. Cells split
+    // through their thin dimension. Axes much longer than the shortest
+    // create false splits by placing daughters end-to-end along a long
+    // direction, matching the z-brightness gradient instead of a real
+    // division (e3d03 false splits at f2 via axA and axC).
+    //
+    // An axis is included if its radius is within 20% of the shortest.
+    // For a=c cells (1f2ed: 32.3/30.0/32.3), minR=30.0, threshold=36.0,
+    // so all three are included. For e3d03 (27.1/21.3/25.6), minR=21.3,
+    // threshold=25.6, so only axB(21.3) is included.
+    const float rA = parent.getARadius();
+    const float rB = parent.getBRadius();
+    const float rC = parent.getCRadius();
+    const float radii3[] = {rA, rB, rC};
+    const cv::Point3f axes3[] = {axisA, axisB, axisC};
+    const std::string names3[] = {"axA", "axB", "axC"};
+
+    const float minR = std::min({rA, rB, rC});
+    const float maxR = std::max({rA, rB, rC});
+    const float shortAxisThreshold = minR * 1.2f;
+
     std::vector<cv::Point3f> primaryDirs;
-    const char *dirMode = "pca_only";
-    float dirAngleDeg = 0.0f;
-    primaryDirs.push_back(dirPca);
-    if (snapshotValid && snapshot.longAxisLength > 1e-3f) {
-        const float cosAngle = std::clamp(
-            snapshot.longAxisDir.x * dirPca.x +
-            snapshot.longAxisDir.y * dirPca.y +
-            snapshot.longAxisDir.z * dirPca.z, -1.0f, 1.0f);
-        const float angle = std::acos(std::abs(cosAngle)); // axis is undirected
-        dirAngleDeg = angle * 180.0f / static_cast<float>(M_PI);
-        // Only add snapshot as a separate direction if it differs enough
-        // from PCA (>10°). When they agree, the extra candidates are
-        // near-duplicates and waste burn-in iterations.
-        if (dirAngleDeg > 10.0f) {
-            primaryDirs.push_back(snapshot.longAxisDir);
-            dirMode = "pca+snapshot";
+    std::vector<std::string> primaryNames;
+    for (int i = 0; i < 3; ++i) {
+        if (radii3[i] <= shortAxisThreshold) {
+            primaryDirs.push_back(axes3[i]);
+            primaryNames.push_back(names3[i]);
         }
     }
-    std::cout << "  [Split Dirs] " << parentName
-              << " mode=" << dirMode
-              << " snapDir=(" << snapshot.longAxisDir.x << "," << snapshot.longAxisDir.y << "," << snapshot.longAxisDir.z << ")"
-              << " pcaDir=(" << dirPca.x << "," << dirPca.y << "," << dirPca.z << ")"
-              << " angleDeg=" << dirAngleDeg
-              << " agreeThresh=" << probConfig.split_direction_agreement_degrees
-              << " nPrimaries=" << primaryDirs.size()
-              << " nPixels=" << pixels.size()
-              << std::endl;
+    // Safety: if nothing qualifies (shouldn't happen), try shortest only.
+    if (primaryDirs.empty()) {
+        int shortIdx = 0;
+        for (int i = 1; i < 3; ++i) {
+            if (radii3[i] < radii3[shortIdx]) shortIdx = i;
+        }
+        primaryDirs.push_back(axes3[shortIdx]);
+        primaryNames.push_back(names3[shortIdx]);
+    }
+
+    {
+        std::ostringstream selAxes;
+        for (size_t i = 0; i < primaryNames.size(); ++i) {
+            if (i > 0) selAxes << ",";
+            selAxes << primaryNames[i];
+        }
+        std::cout << "  [Split Dirs] " << parentName
+                  << " mode=local_axes_short"
+                  << " radii=(" << rA << "," << rB << "," << rC << ")"
+                  << " minR=" << minR
+                  << " thresh=" << shortAxisThreshold
+                  << " selected=[" << selAxes.str() << "]"
+                  << " nPrimaries=" << primaryDirs.size()
+                  << " nPixels=" << pixels.size()
+                  << std::endl;
+    }
 
     // --- 3. Generate K candidate placements around each (midpoint, direction) pair ---
     //
-    // Two midpoint options, each with its own length:
-    //   pca_mid  = 0.5 * (d1Pca + d2Pca)         ← analytic image midpoint
-    //   snap_mid = snapshot.position             ← last-frame cell center
-    //
-    // And one or two directions from the earlier direction-agreement logic.
-    // For each (midpoint, direction) pair we generate a primary candidate
-    // plus rotation and translation variants. Both midpoints are tried and
-    // burn-in / cost evaluation picks the winner. If pca_mid and snap_mid
-    // are essentially the same point (<0.5 voxels apart), we only use one.
+    // For each axis, centroidsAlongAxis projects bright pixels onto that
+    // direction and splits at the median to get two daughter centroids.
+    // This gives a data-driven midpoint and separation per axis. Snapshot
+    // center is also tried as an alternative midpoint if it differs.
     struct Candidate {
         cv::Point3f d1Pos;
         cv::Point3f d2Pos;
-        std::string label; // "pca_mid" / "snap_mid" with direction suffix
+        std::string label;
     };
 
     const float volumeScale = std::cbrt(0.5f);
@@ -1328,42 +1724,66 @@ CostCallbackPair Frame::trySplitCellPhased(
     const float transDelta =
         probConfig.split_candidate_translation_delta_fraction * daughterR;
 
-    const cv::Point3f pcaMidpoint(
-        0.5f * (d1Pca.x + d2Pca.x),
-        0.5f * (d1Pca.y + d2Pca.y),
-        0.5f * (d1Pca.z + d2Pca.z));
-    const float pcaSep = static_cast<float>(cv::norm(d1Pca - d2Pca));
-
-    struct MidpointOption {
-        cv::Point3f center;
+    // For each axis direction, project bright pixels onto that axis and
+    // compute centroids of the two halves. This gives a data-driven midpoint
+    // and separation tuned to where the brightness actually is along each
+    // axis, rather than using a fixed radius as the initial separation.
+    struct AxisPlacement {
+        cv::Point3f d1, d2;     // data-driven daughter centroids
+        cv::Point3f midpoint;
         float separation;
-        std::string label;
+        bool valid;
     };
-    std::vector<MidpointOption> midpoints;
-    midpoints.push_back({pcaMidpoint, pcaSep, "pca_mid"});
-
-    if (snapshotValid && snapshot.longAxisLength > 1e-3f) {
-        const cv::Point3f snapMid = snapshot.position;
-        const float midpointDist = static_cast<float>(cv::norm(pcaMidpoint - snapMid));
-        if (midpointDist > 0.5f) {
-            midpoints.push_back({snapMid, snapshot.longAxisLength, "snap_mid"});
+    const size_t nDirs = primaryDirs.size();
+    std::vector<AxisPlacement> axisPlace(nDirs);
+    // Fallback separation: use the minimum radius as a conservative default.
+    const float fallbackSep = std::min({rA, rB, rC});
+    for (size_t i = 0; i < nDirs; ++i) {
+        axisPlace[i].valid = centroidsAlongAxis(
+            pixels, primaryDirs[i], axisPlace[i].d1, axisPlace[i].d2);
+        if (axisPlace[i].valid) {
+            axisPlace[i].separation = static_cast<float>(
+                cv::norm(axisPlace[i].d1 - axisPlace[i].d2));
+            axisPlace[i].midpoint = 0.5f * (axisPlace[i].d1 + axisPlace[i].d2);
+        } else {
+            axisPlace[i].separation = fallbackSep;
+            axisPlace[i].midpoint = parentCenter;
         }
+        std::cout << "  [Split AxisPlace] " << parentName
+                  << " axis=" << primaryNames[i]
+                  << " sep=" << axisPlace[i].separation
+                  << " mid=(" << axisPlace[i].midpoint.x << "," << axisPlace[i].midpoint.y << "," << axisPlace[i].midpoint.z << ")"
+                  << " valid=" << axisPlace[i].valid
+                  << std::endl;
     }
 
-    std::cout << "  [Split Midpoints] " << parentName
-              << " pcaMid=(" << pcaMidpoint.x << "," << pcaMidpoint.y << "," << pcaMidpoint.z << ")"
-              << " pcaSep=" << pcaSep
-              << " snapMid=(" << snapshot.position.x << "," << snapshot.position.y << "," << snapshot.position.z << ")"
-              << " snapLen=" << snapshot.longAxisLength
-              << " nMidpoints=" << midpoints.size()
-              << std::endl;
-
     std::vector<Candidate> candidates;
-    for (const auto &dir0 : primaryDirs) {
+    for (size_t di = 0; di < nDirs; ++di) {
+        const auto &dir0 = primaryDirs[di];
+        const std::string &axLabel = primaryNames[di];
         cv::Point3f perpU, perpV;
         orthonormalFrame(dir0, perpU, perpV);
 
-        for (const auto &mp : midpoints) {
+        // Two midpoint options for this axis:
+        // 1. Data-driven: centroid midpoint from projecting pixels onto this axis
+        // 2. Snapshot center (if available and different)
+        struct AxisMidOption {
+            cv::Point3f center;
+            float separation;
+            std::string label;
+        };
+        std::vector<AxisMidOption> axisMids;
+        const auto &ap = axisPlace[di];
+        axisMids.push_back({ap.midpoint, ap.separation, "data_" + axLabel});
+
+        if (snapshotValid && snapshot.splitAxisLength > 1e-3f) {
+            const float dist = static_cast<float>(cv::norm(ap.midpoint - snapshot.position));
+            if (dist > 0.5f) {
+                axisMids.push_back({snapshot.position, ap.separation, "snap_" + axLabel});
+            }
+        }
+
+        for (const auto &mp : axisMids) {
             const cv::Point3f midpoint = mp.center;
             const float sep = mp.separation;
             const float half = 0.5f * sep;
@@ -1419,7 +1839,7 @@ CostCallbackPair Frame::trySplitCellPhased(
     const std::vector<cv::Mat> savedSynth = _synthFrame;
     const std::vector<double> savedPerSlice = _currentCostPerSlice;
     const double savedCost = _currentCost;
-    const std::vector<Spheroid> savedCells = cells;
+    const std::vector<Ellipsoid> savedCells = cells;
 
     std::cout << "  [Split Baseline] " << parentName
               << " imageCost=" << baselineImageCost
@@ -1432,7 +1852,7 @@ CostCallbackPair Frame::trySplitCellPhased(
 
     int bestIdx = -1;
     double bestTotal = std::numeric_limits<double>::infinity();
-    std::vector<Spheroid> bestCells;
+    std::vector<Ellipsoid> bestCells;
     std::vector<cv::Mat> bestSynth;
     std::vector<double> bestPerSlice;
     double bestImageCost = 0.0;
@@ -1460,35 +1880,35 @@ CostCallbackPair Frame::trySplitCellPhased(
     // optimizer, restored on every exit path below.
     const float posScale = std::max(0.0f, probConfig.split_burn_in_pos_sigma_scale);
     const float radiusScale = std::max(0.0f, probConfig.split_burn_in_radius_sigma_scale);
-    PerturbParams savedPerturbX = Spheroid::cellConfig.x;
-    PerturbParams savedPerturbY = Spheroid::cellConfig.y;
-    PerturbParams savedPerturbZ = Spheroid::cellConfig.z;
-    PerturbParams savedPerturbMajor = Spheroid::cellConfig.majorRadius;
-    PerturbParams savedPerturbB = Spheroid::cellConfig.bRadius;
-    PerturbParams savedPerturbMinor = Spheroid::cellConfig.minorRadius;
-    Spheroid::cellConfig.x.sigma = savedPerturbX.sigma * posScale;
-    Spheroid::cellConfig.y.sigma = savedPerturbY.sigma * posScale;
-    Spheroid::cellConfig.z.sigma = savedPerturbZ.sigma * posScale;
-    Spheroid::cellConfig.majorRadius.sigma = savedPerturbMajor.sigma * radiusScale;
-    Spheroid::cellConfig.bRadius.sigma     = savedPerturbB.sigma     * radiusScale;
-    Spheroid::cellConfig.minorRadius.sigma = savedPerturbMinor.sigma * radiusScale;
+    PerturbParams savedPerturbX = Ellipsoid::cellConfig.x;
+    PerturbParams savedPerturbY = Ellipsoid::cellConfig.y;
+    PerturbParams savedPerturbZ = Ellipsoid::cellConfig.z;
+    PerturbParams savedPerturbMajor = Ellipsoid::cellConfig.aRadius;
+    PerturbParams savedPerturbB = Ellipsoid::cellConfig.bRadius;
+    PerturbParams savedPerturbMinor = Ellipsoid::cellConfig.cRadius;
+    Ellipsoid::cellConfig.x.sigma = savedPerturbX.sigma * posScale;
+    Ellipsoid::cellConfig.y.sigma = savedPerturbY.sigma * posScale;
+    Ellipsoid::cellConfig.z.sigma = savedPerturbZ.sigma * posScale;
+    Ellipsoid::cellConfig.aRadius.sigma = savedPerturbMajor.sigma * radiusScale;
+    Ellipsoid::cellConfig.bRadius.sigma     = savedPerturbB.sigma     * radiusScale;
+    Ellipsoid::cellConfig.cRadius.sigma = savedPerturbMinor.sigma * radiusScale;
 
     std::cout << "  [Split Sigmas] " << parentName
               << " posScale=" << posScale
-              << " xSigma=" << savedPerturbX.sigma << "->" << Spheroid::cellConfig.x.sigma
-              << " ySigma=" << savedPerturbY.sigma << "->" << Spheroid::cellConfig.y.sigma
-              << " zSigma=" << savedPerturbZ.sigma << "->" << Spheroid::cellConfig.z.sigma
+              << " xSigma=" << savedPerturbX.sigma << "->" << Ellipsoid::cellConfig.x.sigma
+              << " ySigma=" << savedPerturbY.sigma << "->" << Ellipsoid::cellConfig.y.sigma
+              << " zSigma=" << savedPerturbZ.sigma << "->" << Ellipsoid::cellConfig.z.sigma
               << " radiusScale=" << radiusScale
-              << " majorSigma=" << savedPerturbMajor.sigma << "->" << Spheroid::cellConfig.majorRadius.sigma
-              << " bSigma=" << savedPerturbB.sigma << "->" << Spheroid::cellConfig.bRadius.sigma
-              << " minorSigma=" << savedPerturbMinor.sigma << "->" << Spheroid::cellConfig.minorRadius.sigma
+              << " majorSigma=" << savedPerturbMajor.sigma << "->" << Ellipsoid::cellConfig.aRadius.sigma
+              << " bSigma=" << savedPerturbB.sigma << "->" << Ellipsoid::cellConfig.bRadius.sigma
+              << " minorSigma=" << savedPerturbMinor.sigma << "->" << Ellipsoid::cellConfig.cRadius.sigma
               << std::endl;
 
     for (size_t ci = 0; ci < candidates.size(); ++ci) {
         const auto &cand = candidates[ci];
-        Spheroid child1 = buildDaughter(parentName + "0", cand.d1Pos, parent,
+        Ellipsoid child1 = buildDaughter(parentName + "0", cand.d1Pos, parent,
                                          volumeScale, srcMajor, srcB, srcMinor);
-        Spheroid child2 = buildDaughter(parentName + "1", cand.d2Pos, parent,
+        Ellipsoid child2 = buildDaughter(parentName + "1", cand.d2Pos, parent,
                                          volumeScale, srcMajor, srcB, srcMinor);
 
         // Replace parent with daughters.
@@ -1506,8 +1926,7 @@ CostCallbackPair Frame::trySplitCellPhased(
         for (int it = 0; it < burnIters; ++it) {
             const size_t target = (it % 2 == 0) ? d1Idx : d2Idx;
             CostCallbackPair cp = perturbCell(target,
-                                              probConfig.overlap_penalty_weight,
-                                              probConfig.size_reduction_penalty_weight);
+                                              probConfig.overlap_penalty_weight);
             const bool accept = cp.first < 0.0;
             cp.second(accept);
         }
@@ -1516,8 +1935,8 @@ CostCallbackPair Frame::trySplitCellPhased(
         const double candOverlap = computeOverlapPenalty(probConfig.overlap_penalty_weight);
         const double candTotal = candImageCost + candOverlap;
 
-        const Spheroid &candD1 = cells[d1Idx];
-        const Spheroid &candD2 = cells[d2Idx];
+        const Ellipsoid &candD1 = cells[d1Idx];
+        const Ellipsoid &candD2 = cells[d2Idx];
         const float candDrift1 = static_cast<float>(cv::norm(
             cv::Point3f(candD1.getX(), candD1.getY(), candD1.getZ()) - cand.d1Pos));
         const float candDrift2 = static_cast<float>(cv::norm(
@@ -1555,16 +1974,27 @@ CostCallbackPair Frame::trySplitCellPhased(
     }
 
     if (bestIdx < 0) {
-        // Restore main-loop perturbation sigmas before the early return.
-        Spheroid::cellConfig.x = savedPerturbX;
-        Spheroid::cellConfig.y = savedPerturbY;
-        Spheroid::cellConfig.z = savedPerturbZ;
-        Spheroid::cellConfig.majorRadius = savedPerturbMajor;
-        Spheroid::cellConfig.bRadius     = savedPerturbB;
-        Spheroid::cellConfig.minorRadius = savedPerturbMinor;
+        Ellipsoid::cellConfig.x = savedPerturbX;
+        Ellipsoid::cellConfig.y = savedPerturbY;
+        Ellipsoid::cellConfig.z = savedPerturbZ;
+        Ellipsoid::cellConfig.aRadius = savedPerturbMajor;
+        Ellipsoid::cellConfig.bRadius     = savedPerturbB;
+        Ellipsoid::cellConfig.cRadius = savedPerturbMinor;
         restoreLiveParent();
         return {0.0, noop};
     }
+
+    // Log which candidate won the burn-in competition.
+    const double preCostDiff = bestTotal - baselineTotal;
+    std::cout << "  [Split Winner] " << parentName
+              << " bestIdx=" << bestIdx << "/" << candidates.size()
+              << " label=" << bestLabel
+              << " preCostDiff=" << preCostDiff
+              << " bestTotal=" << bestTotal
+              << " baseline=" << baselineTotal
+              << " seed1=(" << bestSeedD1.x << "," << bestSeedD1.y << "," << bestSeedD1.z << ")"
+              << " seed2=(" << bestSeedD2.x << "," << bestSeedD2.y << "," << bestSeedD2.z << ")"
+              << std::endl;
 
     // --- 4b. Final refine burn-in on the winning candidate ---
     // The candidate loop runs a short (~20 iter) burn-in per candidate so
@@ -1596,8 +2026,7 @@ CostCallbackPair Frame::trySplitCellPhased(
         for (int it = 0; it < refineIters; ++it) {
             const size_t target = (it % 2 == 0) ? d1IdxRefine : d2IdxRefine;
             CostCallbackPair cp = perturbCell(target,
-                                              probConfig.overlap_penalty_weight,
-                                              probConfig.size_reduction_penalty_weight);
+                                              probConfig.overlap_penalty_weight);
             const bool accept = cp.first < 0.0;
             if (accept) ++refineAccepts;
             cp.second(accept);
@@ -1622,8 +2051,8 @@ CostCallbackPair Frame::trySplitCellPhased(
         // split_burn_in_radius_sigma_scale freezes them. If a daughter's
         // minor/b radius has drifted more than a few voxels from the
         // built-in, the radius sigma lock isn't working as intended.
-        const Spheroid &refinedD1 = cells[d1IdxRefine];
-        const Spheroid &refinedD2 = cells[d2IdxRefine];
+        const Ellipsoid &refinedD1 = cells[d1IdxRefine];
+        const Ellipsoid &refinedD2 = cells[d2IdxRefine];
         const float builtMajor = volumeScale * srcMajor;
         const float builtB     = volumeScale * srcB;
         const float builtMinor = volumeScale * srcMinor;
@@ -1638,8 +2067,8 @@ CostCallbackPair Frame::trySplitCellPhased(
                   << " d1=(" << postRefineD1.x << "," << postRefineD1.y << "," << postRefineD1.z << ")"
                   << " d2=(" << postRefineD2.x << "," << postRefineD2.y << "," << postRefineD2.z << ")"
                   << " builtR=(" << builtMajor << "," << builtB << "," << builtMinor << ")"
-                  << " d1R=(" << refinedD1.getMajorRadius() << "," << refinedD1.getBRadius() << "," << refinedD1.getMinorRadius() << ")"
-                  << " d2R=(" << refinedD2.getMajorRadius() << "," << refinedD2.getBRadius() << "," << refinedD2.getMinorRadius() << ")"
+                  << " d1R=(" << refinedD1.getARadius() << "," << refinedD1.getBRadius() << "," << refinedD1.getCRadius() << ")"
+                  << " d2R=(" << refinedD2.getARadius() << "," << refinedD2.getBRadius() << "," << refinedD2.getCRadius() << ")"
                   << std::endl;
 
         // Revert to pre-split state — gates run on savedCells baseline
@@ -1651,12 +2080,12 @@ CostCallbackPair Frame::trySplitCellPhased(
     }
 
     // Restore main-loop perturbation sigmas before the gate sequence.
-    Spheroid::cellConfig.x = savedPerturbX;
-    Spheroid::cellConfig.y = savedPerturbY;
-    Spheroid::cellConfig.z = savedPerturbZ;
-    Spheroid::cellConfig.majorRadius = savedPerturbMajor;
-    Spheroid::cellConfig.bRadius     = savedPerturbB;
-    Spheroid::cellConfig.minorRadius = savedPerturbMinor;
+    Ellipsoid::cellConfig.x = savedPerturbX;
+    Ellipsoid::cellConfig.y = savedPerturbY;
+    Ellipsoid::cellConfig.z = savedPerturbZ;
+    Ellipsoid::cellConfig.aRadius = savedPerturbMajor;
+    Ellipsoid::cellConfig.bRadius     = savedPerturbB;
+    Ellipsoid::cellConfig.cRadius = savedPerturbMinor;
 
     // --- 5. Bio checks on the best candidate's final state ---
     // Rebuild daughter indices from bestCells (parent was at cellIndex,
@@ -1664,8 +2093,8 @@ CostCallbackPair Frame::trySplitCellPhased(
     // replaced them during evaluation).
     const size_t d1IdxBest = bestCells.size() - 2;
     const size_t d2IdxBest = bestCells.size() - 1;
-    const Spheroid &bestD1 = bestCells[d1IdxBest];
-    const Spheroid &bestD2 = bestCells[d2IdxBest];
+    const Ellipsoid &bestD1 = bestCells[d1IdxBest];
+    const Ellipsoid &bestD2 = bestCells[d2IdxBest];
 
     // Drift from seed (diagnostic only, no rejection gate).
     const float drift1 = static_cast<float>(cv::norm(
@@ -1711,6 +2140,13 @@ CostCallbackPair Frame::trySplitCellPhased(
     //
     // This deliberately requires both to fire so real divisions with
     // only partial grooves still pass.
+    // Adaptive bridge gate: measure brightness in the actual gap between
+    // the two daughters' surfaces, not a fixed fraction of the axis.
+    //
+    // For each daughter, compute the ellipsoid radius along the split axis
+    // (how far the surface extends toward the other daughter). The gap is
+    // the region between those two surfaces. Edge zones are the regions
+    // inside each daughter, away from the gap.
     {
         const cv::Point3f bestD1Pos(bestD1.getX(), bestD1.getY(), bestD1.getZ());
         const cv::Point3f bestD2Pos(bestD2.getX(), bestD2.getY(), bestD2.getZ());
@@ -1723,36 +2159,86 @@ CostCallbackPair Frame::trySplitCellPhased(
                 axisVec.x / axisLen,
                 axisVec.y / axisLen,
                 axisVec.z / axisLen);
+
+            // Ellipsoid radius along an arbitrary direction: for an ellipsoid
+            // with semi-axes (a,b,c) and rotation R, the support distance
+            // along world direction d is ||diag(a,b,c) * R^T * d||.
+            auto ellipsoidRadiusAlongDir = [](const Ellipsoid &e,
+                                              const cv::Point3f &dir) -> float {
+                std::array<double, 9> RT;
+                e.generateInverseRotationMatrix(RT);
+                // R^T * dir (world → local)
+                const double lx = RT[0]*dir.x + RT[1]*dir.y + RT[2]*dir.z;
+                const double ly = RT[3]*dir.x + RT[4]*dir.y + RT[5]*dir.z;
+                const double lz = RT[6]*dir.x + RT[7]*dir.y + RT[8]*dir.z;
+                // Scale by semi-axes
+                const double sa = e.getARadius() * lx;
+                const double sb = e.getBRadius() * ly;
+                const double sc = e.getCRadius() * lz;
+                return static_cast<float>(std::sqrt(sa*sa + sb*sb + sc*sc));
+            };
+
+            const float r1Along = ellipsoidRadiusAlongDir(bestD1, axisDir);
+            const float r2Along = ellipsoidRadiusAlongDir(bestD2, axisDir);
+            const float gapWidth = axisLen - r1Along - r2Along;
+
+            // Coordinate system: project onto axisDir, origin at midpoint.
+            // d1 is at -halfLen, d2 is at +halfLen.
             const float halfLen = 0.5f * axisLen;
+
+            // ALWAYS measure the central region between daughters, even
+            // when they geometrically overlap (gapWidth <= 0). A real split
+            // produces a brightness valley at the midpoint; a false split
+            // on a non-dividing cell has continuous brightness through the
+            // center. The minimum gap half-width of 15% of halfLen
+            // guarantees we sample enough pixels to detect this.
+            const float minGapHalf = 0.30f * halfLen;
+            const float surfaceGapHalf = 0.5f * gapWidth; // negative if overlapping
+            const float effectiveGapHalf = std::max(minGapHalf, surfaceGapHalf);
+            const float gapLo = -effectiveGapHalf;
+            const float gapHi =  effectiveGapHalf;
+
+            // Edge zones: near each daughter center, outside the gap.
+            // d1 is at -halfLen, so its edge zone is [-halfLen-r1Along, gapLo]
+            // d2 is at +halfLen, so its edge zone is [gapHi, halfLen+r2Along]
+            const float edge1Lo = -halfLen - r1Along;
+            const float edge1Hi = gapLo;
+            const float edge2Lo = gapHi;
+            const float edge2Hi = halfLen + r2Along;
 
             int totalInRange = 0;
             int gapCount = 0;
-            int edgeCount = 0;
+            int edge1Count = 0, edge2Count = 0;
             double gapBrightSum = 0.0;
-            double edgeBrightSum = 0.0;
+            double edge1BrightSum = 0.0, edge2BrightSum = 0.0;
 
             for (const auto &bp : pixels) {
                 const cv::Point3f delta(
                     bp.pos.x - daughterMidpoint.x,
                     bp.pos.y - daughterMidpoint.y,
                     bp.pos.z - daughterMidpoint.z);
-                const float signedProj =
+                const float proj =
                     delta.x * axisDir.x +
                     delta.y * axisDir.y +
                     delta.z * axisDir.z;
-                const float t = signedProj / halfLen;
-                const float absT = std::abs(t);
-                if (absT > 1.5f) continue;
+
+                if (proj < edge1Lo || proj > edge2Hi) continue;
                 ++totalInRange;
 
-                if (absT < 0.3f) {
+                if (proj >= gapLo && proj <= gapHi) {
                     ++gapCount;
                     gapBrightSum += bp.weight;
-                } else if (absT > 0.6f && absT < 1.1f) {
-                    ++edgeCount;
-                    edgeBrightSum += bp.weight;
+                } else if (proj >= edge1Lo && proj <= edge1Hi) {
+                    ++edge1Count;
+                    edge1BrightSum += bp.weight;
+                } else if (proj >= edge2Lo && proj <= edge2Hi) {
+                    ++edge2Count;
+                    edge2BrightSum += bp.weight;
                 }
             }
+
+            const int edgeCount = edge1Count + edge2Count;
+            const double edgeBrightSum = edge1BrightSum + edge2BrightSum;
 
             const float gapDensity = (totalInRange > 0)
                 ? static_cast<float>(gapCount) / static_cast<float>(totalInRange)
@@ -1763,20 +2249,58 @@ CostCallbackPair Frame::trySplitCellPhased(
             const float edgeBright = (edgeCount > 0)
                 ? static_cast<float>(edgeBrightSum / edgeCount)
                 : 0.0f;
+            const float edge1Bright = (edge1Count > 0)
+                ? static_cast<float>(edge1BrightSum / edge1Count)
+                : 0.0f;
+            const float edge2Bright = (edge2Count > 0)
+                ? static_cast<float>(edge2BrightSum / edge2Count)
+                : 0.0f;
             const float valleyRatio = (edgeBright > 1e-6f)
                 ? (gapBright / edgeBright)
                 : 0.0f;
+            // Asymmetry ratio: smaller edge brightness / larger edge brightness.
+            // For a real split, both daughters cover bright cells → symmetric (ratio ~1).
+            // For a false split where one daughter is in empty space → asymmetric (ratio ~0).
+            const float edgeAsymmetry = (std::max(edge1Bright, edge2Bright) > 1e-6f)
+                ? (std::min(edge1Bright, edge2Bright) / std::max(edge1Bright, edge2Bright))
+                : 0.0f;
 
             std::cout << "  [Split Bridge] " << parentName
+                      << " axisLen=" << axisLen
+                      << " r1Along=" << r1Along
+                      << " r2Along=" << r2Along
+                      << " gapWidth=" << gapWidth
+                      << " effGapHalf=" << effectiveGapHalf
                       << " totalInRange=" << totalInRange
                       << " gapCount=" << gapCount
                       << " edgeCount=" << edgeCount
                       << " gapDensity=" << gapDensity
                       << " gapBright=" << gapBright
+                      << " edge1Bright=" << edge1Bright
+                      << " edge2Bright=" << edge2Bright
                       << " edgeBright=" << edgeBright
+                      << " edgeAsym=" << edgeAsymmetry
                       << " valleyRatio=" << valleyRatio
                       << std::endl;
 
+            // Asymmetric edge rejection: one daughter is in empty space.
+            // A real split has both daughters covering bright cells → edgeAsym > 0.4.
+            // A false split with one empty daughter → edgeAsym < 0.4 → reject.
+            if (edgeAsymmetry < 0.4f && edge1Count > 0 && edge2Count > 0) {
+                std::cout << "[Split Reject bio] " << parentName
+                          << " reason=asymmetric_edges"
+                          << " edge1Bright=" << edge1Bright
+                          << " edge2Bright=" << edge2Bright
+                          << " edgeAsym=" << edgeAsymmetry
+                          << " threshold=0.4"
+                          << std::endl;
+                restoreLiveParent();
+                return {0.0, noop};
+            }
+
+            // Bridge gate ALWAYS fires. The minimum gap zone guarantees
+            // we sample the central region between daughters regardless
+            // of geometric overlap.
             const bool densityFlat = gapDensity > probConfig.bio_bridge_max_gap_density;
             const bool brightnessFlat = valleyRatio > probConfig.bio_bridge_max_valley_ratio;
             if (densityFlat && brightnessFlat && edgeCount > 0) {
@@ -1784,6 +2308,8 @@ CostCallbackPair Frame::trySplitCellPhased(
                           << " reason=bridge_flat"
                           << " gapDensity=" << gapDensity
                           << " valleyRatio=" << valleyRatio
+                          << " gapWidth=" << gapWidth
+                          << " effGapHalf=" << effectiveGapHalf
                           << " densityLimit=" << probConfig.bio_bridge_max_gap_density
                           << " valleyLimit=" << probConfig.bio_bridge_max_valley_ratio
                           << std::endl;
@@ -1800,9 +2326,9 @@ CostCallbackPair Frame::trySplitCellPhased(
         std::cout << "[Split Reject bio] " << parentName
                   << " reason=" << bioReason
                   << " d1=(" << bestD1.getX() << "," << bestD1.getY() << "," << bestD1.getZ() << ")"
-                  << " r1=(" << bestD1.getMajorRadius() << "," << bestD1.getBRadius() << "," << bestD1.getMinorRadius() << ")"
+                  << " r1=(" << bestD1.getARadius() << "," << bestD1.getBRadius() << "," << bestD1.getCRadius() << ")"
                   << " d2=(" << bestD2.getX() << "," << bestD2.getY() << "," << bestD2.getZ() << ")"
-                  << " r2=(" << bestD2.getMajorRadius() << "," << bestD2.getBRadius() << "," << bestD2.getMinorRadius() << ")"
+                  << " r2=(" << bestD2.getARadius() << "," << bestD2.getBRadius() << "," << bestD2.getCRadius() << ")"
                   << " refParentVolume=" << refParentVolume
                   << std::endl;
         restoreLiveParent();
@@ -1818,10 +2344,10 @@ CostCallbackPair Frame::trySplitCellPhased(
                   << " bestIdx=" << bestIdx
                   << " bestLabel=" << bestLabel
                   << " d1=(" << bestD1.getX() << "," << bestD1.getY() << "," << bestD1.getZ() << ")"
-                  << " r1=(" << bestD1.getMajorRadius() << "," << bestD1.getBRadius() << "," << bestD1.getMinorRadius() << ")"
+                  << " r1=(" << bestD1.getARadius() << "," << bestD1.getBRadius() << "," << bestD1.getCRadius() << ")"
                   << " drift1=" << drift1
                   << " d2=(" << bestD2.getX() << "," << bestD2.getY() << "," << bestD2.getZ() << ")"
-                  << " r2=(" << bestD2.getMajorRadius() << "," << bestD2.getBRadius() << "," << bestD2.getMinorRadius() << ")"
+                  << " r2=(" << bestD2.getARadius() << "," << bestD2.getBRadius() << "," << bestD2.getCRadius() << ")"
                   << " drift2=" << drift2
                   << std::endl;
         restoreLiveParent();
@@ -1839,8 +2365,8 @@ CostCallbackPair Frame::trySplitCellPhased(
 
     const cv::Point3f acceptedD1Pos(bestD1.getX(), bestD1.getY(), bestD1.getZ());
     const cv::Point3f acceptedD2Pos(bestD2.getX(), bestD2.getY(), bestD2.getZ());
-    const cv::Point3f acceptedD1R(bestD1.getMajorRadius(), bestD1.getBRadius(), bestD1.getMinorRadius());
-    const cv::Point3f acceptedD2R(bestD2.getMajorRadius(), bestD2.getBRadius(), bestD2.getMinorRadius());
+    const cv::Point3f acceptedD1R(bestD1.getARadius(), bestD1.getBRadius(), bestD1.getCRadius());
+    const cv::Point3f acceptedD2R(bestD2.getARadius(), bestD2.getBRadius(), bestD2.getCRadius());
     const float acceptedDrift1 = drift1;
     const float acceptedDrift2 = drift2;
     const cv::Point3f acceptedSeed1 = bestSeedD1;
@@ -1848,8 +2374,8 @@ CostCallbackPair Frame::trySplitCellPhased(
 
     // Capture extras for the callback's reject branch — it needs to
     // undo the snapshot-state install so Phase B's live state is restored.
-    const Spheroid liveParentCopy = liveParent;
-    const Spheroid snapshotParentCopy = snapshotParent;
+    const Ellipsoid liveParentCopy = liveParent;
+    const Ellipsoid snapshotParentCopy = snapshotParent;
     const size_t cellIndexCopy = cellIndex;
     const bool snapshotValidCopy = snapshotValid;
 
@@ -1892,8 +2418,8 @@ CostCallbackPair Frame::trySplitCellPhased(
             if (snapshotValidCopy && cellIndexCopy < this->cells.size()) {
                 this->cells[cellIndexCopy] = liveParentCopy;
                 int affMinR = -1, affMaxR = -1;
-                Spheroid snapshotMutable = snapshotParentCopy;
-                Spheroid liveMutable = liveParentCopy;
+                Ellipsoid snapshotMutable = snapshotParentCopy;
+                Ellipsoid liveMutable = liveParentCopy;
                 auto revertedSynth = this->generateSynthFrameFast(snapshotMutable, liveMutable,
                                                                     &affMinR, &affMaxR);
                 std::vector<double> revertedPerSlice;

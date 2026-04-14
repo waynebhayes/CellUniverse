@@ -5,7 +5,7 @@
 #include "ConfigTypes.hpp"
 #include "Frame.hpp"
 #include "types.hpp"
-#include "Spheroid.hpp"
+#include "Ellipsoid.hpp"
 
 #include <iostream>
 #include <map>
@@ -21,7 +21,7 @@ namespace fs = std::filesystem;
 class CellUniverse
 {
 public:
-    CellUniverse(std::map<std::string, std::vector<Spheroid>> initialCells,
+    CellUniverse(std::map<std::string, std::vector<Ellipsoid>> initialCells,
                  PathVec imagePaths,
                  BaseConfig &config,
                  std::string outputPath,
@@ -35,7 +35,7 @@ public:
     unsigned int length();
 
     // ---- Added for realtime viewer ----
-    const std::vector<Spheroid> &getCells(int frameIndex) const;
+    const std::vector<Ellipsoid> &getCells(int frameIndex) const;
     std::vector<std::string> getCellNames(int frameIndex) const;
 
 private:

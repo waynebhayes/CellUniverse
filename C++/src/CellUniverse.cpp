@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <limits>
 #include <numeric>
+#include <sstream>
 
 namespace utils
 {
@@ -132,10 +133,10 @@ static float estimateAdaptiveBackgroundFromFrame(const Frame &frame,
 
     for (const auto &cell : frame.cells) {
         auto params = cell.getCellParams();
-        params.majorRadius *= expandFactor;
+        params.aRadius *= expandFactor;
         params.bRadius     *= expandFactor;
-        params.minorRadius *= expandFactor;
-        Spheroid expandedCell(params);
+        params.cRadius *= expandFactor;
+        Ellipsoid expandedCell(params);
         for (size_t z = 0; z < exclusionMask.size(); ++z) {
             expandedCell.draw(exclusionMask[z], simulationConfig, static_cast<float>(z));
         }
@@ -165,7 +166,7 @@ static float estimateAdaptiveBackgroundFromFrame(const Frame &frame,
 
 // Preprocessing moved to ImageHandler. Single preprocessed stack via
 // ImageHandler::loadFrame.
-CellUniverse::CellUniverse(std::map<std::string, std::vector<Spheroid>> initialCells,
+CellUniverse::CellUniverse(std::map<std::string, std::vector<Ellipsoid>> initialCells,
                            PathVec imagePaths,
                            BaseConfig &config,
                            std::string outputPath,
@@ -217,22 +218,22 @@ CellUniverse::CellUniverse(std::map<std::string, std::vector<Spheroid>> initialC
 
         // loadFrame interpolates frames; update config to the new slice count.
         config.simulation.z_slices = real_frame.size();
-        // Propagate the interpolated-z upper bound into Spheroid::cellConfig so
-        // the Spheroid constructor's z clamp uses the actual stack height.
+        // Propagate the interpolated-z upper bound into Ellipsoid::cellConfig so
+        // the Ellipsoid constructor's z clamp uses the actual stack height.
         // Without this, cells could drift off the top/bottom of the z-stack.
-        Spheroid::cellConfig.maxZ = static_cast<float>(real_frame.size()) - 1.0f;
+        Ellipsoid::cellConfig.maxZ = static_cast<float>(real_frame.size()) - 1.0f;
 
         fs::path path(imagePaths[i]);
         std::string file_name = path.filename();
 
         if ((continueFrom == -1 || i < continueFrom) && initialCells.find(file_name) != initialCells.end())
         {
-            const std::vector<Spheroid> &cells = initialCells.at(file_name);
+            const std::vector<Ellipsoid> &cells = initialCells.at(file_name);
             frames.emplace_back(real_frame, config.simulation, cells, outputPath, file_name);
         }
         else
         {
-            frames.emplace_back(real_frame, config.simulation, std::vector<Spheroid>(), outputPath, file_name);
+            frames.emplace_back(real_frame, config.simulation, std::vector<Ellipsoid>(), outputPath, file_name);
         }
 
         if (config.cell) {
@@ -282,7 +283,7 @@ void CellUniverse::optimize(int frameIndex)
             auto p = cell.getCellParams();
             std::cout << "  " << p.name
                       << " pos=(" << p.x << "," << p.y << "," << p.z << ")"
-                      << " R=(" << p.majorRadius << "," << p.minorRadius << ")"
+                      << " R=(" << p.aRadius << "," << p.cRadius << ")"
                       << " theta=(" << p.theta_x << "," << p.theta_y << "," << p.theta_z << ")"
                       << " brightness=" << p.brightness
                       << std::endl;
@@ -294,7 +295,6 @@ void CellUniverse::optimize(int frameIndex)
     std::uniform_real_distribution<float> uniform01(0.0f, 1.0f);
 
     const float overlapWeight = config.prob.overlap_penalty_weight;
-    const float sizeReductionWeight = config.prob.size_reduction_penalty_weight;
     const float baseSplitProb = config.prob.P_split_base;
 
     // No splits on the first frame — cells can't divide before any time has passed
@@ -398,19 +398,165 @@ void CellUniverse::optimize(int frameIndex)
               << " non=" << nonClassifiedNames.size()
               << " T=" << T_classify << std::endl;
 
+    // ---- Per-cell position calibration pass (runs BEFORE pre-pass) ----
+    // Refine each cell's position FIRST so Voronoi claim points in the
+    // pre-pass use calibrated positions, not raw snapshot positions.
+    // This makes neighbor exclusion more accurate.
+    const int calibrationIters = std::max(0, config.prob.split_calibration_iterations_per_cell);
+    if (calibrationIters > 0 && !frame.cells.empty()) {
+        const float posScale = std::max(0.0f, config.prob.split_burn_in_pos_sigma_scale);
+
+        PerturbParams savedCalX = Ellipsoid::cellConfig.x;
+        PerturbParams savedCalY = Ellipsoid::cellConfig.y;
+        PerturbParams savedCalZ = Ellipsoid::cellConfig.z;
+        PerturbParams savedCalMajor = Ellipsoid::cellConfig.aRadius;
+        PerturbParams savedCalB = Ellipsoid::cellConfig.bRadius;
+        PerturbParams savedCalMinor = Ellipsoid::cellConfig.cRadius;
+
+        Ellipsoid::cellConfig.x.sigma = savedCalX.sigma * posScale;
+        Ellipsoid::cellConfig.y.sigma = savedCalY.sigma * posScale;
+        Ellipsoid::cellConfig.z.sigma = savedCalZ.sigma * posScale;
+        Ellipsoid::cellConfig.aRadius.sigma = 0.0f;
+        Ellipsoid::cellConfig.bRadius.sigma     = 0.0f;
+        Ellipsoid::cellConfig.cRadius.sigma = 0.0f;
+
+        std::cout << "[Calibration] frame " << displayFrame
+                  << " cells=" << frame.cells.size()
+                  << " itersPerCell=" << calibrationIters
+                  << " posScale=" << posScale
+                  << " radiusSigma=0 (frozen)"
+                  << std::endl;
+
+        // Claim set uses snapshot positions only (pre-pass hasn't run yet).
+        auto buildCalibrationClaimSet = [&](const std::string &selfName) -> Frame::ClaimSet {
+            Frame::ClaimSet others;
+            for (const auto &other : frame.cells) {
+                const std::string otherName = other.getName();
+                if (otherName == selfName) continue;
+                auto otherSnap = previousSnapshots.find(otherName);
+                if (otherSnap != previousSnapshots.end() && otherSnap->second.valid) {
+                    others[otherName].push_back(otherSnap->second.position);
+                } else {
+                    others[otherName].push_back(cv::Point3f(
+                        other.getX(), other.getY(), other.getZ()));
+                }
+            }
+            return others;
+        };
+
+        for (size_t ci = 0; ci < frame.cells.size(); ++ci) {
+            const std::string calName = frame.cells[ci].getName();
+            const cv::Point3f preCalPos(
+                frame.cells[ci].getX(),
+                frame.cells[ci].getY(),
+                frame.cells[ci].getZ());
+
+            // Step 1: analytic centroid calibration
+            auto calSnapIt = previousSnapshots.find(calName);
+            if (calSnapIt != previousSnapshots.end() && calSnapIt->second.valid) {
+                Frame::ClaimSet calOthers = buildCalibrationClaimSet(calName);
+                frame.calibrateCellPositionViaCentroid(ci, calSnapIt->second, calOthers);
+            }
+
+            const cv::Point3f postCentroidPos(
+                frame.cells[ci].getX(),
+                frame.cells[ci].getY(),
+                frame.cells[ci].getZ());
+
+            // Step 2: perturbation refinement
+            int calAccepts = 0;
+            for (int it = 0; it < calibrationIters; ++it) {
+                auto calResult = frame.perturbCell(ci, overlapWeight);
+                const bool calAccept = calResult.first < 0.0;
+                if (calAccept) ++calAccepts;
+                calResult.second(calAccept);
+            }
+            const cv::Point3f postCalPos(
+                frame.cells[ci].getX(),
+                frame.cells[ci].getY(),
+                frame.cells[ci].getZ());
+            const float centroidShift = static_cast<float>(cv::norm(postCentroidPos - preCalPos));
+            const float perturbDrift = static_cast<float>(cv::norm(postCalPos - postCentroidPos));
+            const float totalDrift = static_cast<float>(cv::norm(postCalPos - preCalPos));
+            std::cout << "  [Calibration] cell=" << calName
+                      << " iters=" << calibrationIters
+                      << " accepts=" << calAccepts
+                      << " pre=(" << preCalPos.x << "," << preCalPos.y << "," << preCalPos.z << ")"
+                      << " postCentroid=(" << postCentroidPos.x << "," << postCentroidPos.y << "," << postCentroidPos.z << ")"
+                      << " post=(" << postCalPos.x << "," << postCalPos.y << "," << postCalPos.z << ")"
+                      << " centroidShift=" << centroidShift
+                      << " perturbDrift=" << perturbDrift
+                      << " totalDrift=" << totalDrift
+                      << std::endl;
+        }
+
+        Ellipsoid::cellConfig.x = savedCalX;
+        Ellipsoid::cellConfig.y = savedCalY;
+        Ellipsoid::cellConfig.z = savedCalZ;
+        Ellipsoid::cellConfig.aRadius = savedCalMajor;
+        Ellipsoid::cellConfig.bRadius     = savedCalB;
+        Ellipsoid::cellConfig.cRadius = savedCalMinor;
+    }
+
+    // ---- Per-cell iterative PCA shape fit ----
+    // Runs AFTER position calibration so Voronoi neighbor exclusion uses
+    // refined positions. PCA on the Voronoi-filtered bright pixels inside
+    // (maskScale * current ellipsoid) drives rotation, all 3 radii, and
+    // centroid. Iterates until shape converges (or maxIters reached).
+    const int pcaMaxIters = config.cell ? config.cell->pcaShapeMaxIters : 0;
+    if (pcaMaxIters > 0 && !frame.cells.empty()) {
+        const float pcaScale    = config.cell->pcaShapeRadiusScale;
+        const int   pcaMin      = config.cell->pcaShapeMinPixels;
+        const float maskScale   = config.cell->pcaShapeMaskScale;
+        const float convR       = config.cell->pcaShapeConvergeRadius;
+        const float convAng     = config.cell->pcaShapeConvergeAngleDeg;
+        const bool  updatePos   = config.cell->pcaShapeUpdatePosition;
+        const float posShiftCap = config.cell->pcaShapeMaxPosShiftFraction;
+
+        std::cout << "[PCA Shape] frame " << displayFrame
+                  << " cells=" << frame.cells.size()
+                  << " maxIters=" << pcaMaxIters
+                  << " scale=" << pcaScale
+                  << " minPixels=" << pcaMin
+                  << " maskScale=" << maskScale
+                  << " updatePos=" << updatePos
+                  << std::endl;
+
+        auto buildShapeClaimSet = [&](const std::string &selfName) -> Frame::ClaimSet {
+            Frame::ClaimSet others;
+            for (const auto &other : frame.cells) {
+                const std::string otherName = other.getName();
+                if (otherName == selfName) continue;
+                others[otherName].push_back(cv::Point3f(
+                    other.getX(), other.getY(), other.getZ()));
+            }
+            return others;
+        };
+
+        for (size_t ci = 0; ci < frame.cells.size(); ++ci) {
+            const std::string sname = frame.cells[ci].getName();
+            Frame::ClaimSet others = buildShapeClaimSet(sname);
+            frame.calibrateCellShapeViaPca(ci, others,
+                                           pcaMaxIters, pcaScale, pcaMin,
+                                           maskScale, convR, convAng,
+                                           updatePos, posShiftCap);
+        }
+        frame.regenerateSynthFrame();
+    }
+
     // Seed expected-daughter positions for pre_classified cells.
     std::map<std::string, std::pair<cv::Point3f, cv::Point3f>> expectedDaughters;
     for (const auto &name : preClassifiedNames) {
         const auto &snap = previousSnapshots[name];
-        const float half = 0.5f * snap.longAxisLength;
+        const float half = 0.5f * snap.splitAxisLength;
         const cv::Point3f seed1(
-            snap.position.x - half * snap.longAxisDir.x,
-            snap.position.y - half * snap.longAxisDir.y,
-            snap.position.z - half * snap.longAxisDir.z);
+            snap.position.x - half * snap.splitAxisDir.x,
+            snap.position.y - half * snap.splitAxisDir.y,
+            snap.position.z - half * snap.splitAxisDir.z);
         const cv::Point3f seed2(
-            snap.position.x + half * snap.longAxisDir.x,
-            snap.position.y + half * snap.longAxisDir.y,
-            snap.position.z + half * snap.longAxisDir.z);
+            snap.position.x + half * snap.splitAxisDir.x,
+            snap.position.y + half * snap.splitAxisDir.y,
+            snap.position.z + half * snap.splitAxisDir.z);
         expectedDaughters[name] = {seed1, seed2};
     }
 
@@ -429,19 +575,17 @@ void CellUniverse::optimize(int frameIndex)
     for (int round = 0; round < prePassRounds; ++round) {
         for (const auto &name : preClassifiedNames) {
             auto it = std::find_if(frame.cells.begin(), frame.cells.end(),
-                [&](const Spheroid &c) { return c.getName() == name; });
+                [&](const Ellipsoid &c) { return c.getName() == name; });
             if (it == frame.cells.end()) continue;
             size_t ci = static_cast<size_t>(std::distance(frame.cells.begin(), it));
 
             const auto &snap = previousSnapshots[name];
             const auto &seedsBefore = expectedDaughters[name];
 
-            // Build claim-set for all OTHER cells at pre-pass time: each
-            // non_classified contributes its snapshot.center (or live
-            // position if no snapshot), each pre_classified contributes its
-            // current D1_exp/D2_exp (seed on round 0, image-grounded on
-            // later rounds). This matches the plan's neighbor-exclusion
-            // table for the pre-pass rows.
+            // Build claim-set for all OTHER cells at pre-pass time.
+            // Calibration has already refined positions, so non-classified
+            // cells use their calibrated live positions (more accurate than
+            // raw snapshot). Pre-classified cells use their D1_exp/D2_exp.
             Frame::ClaimSet others;
             for (const auto &other : frame.cells) {
                 const std::string otherName = other.getName();
@@ -453,14 +597,28 @@ void CellUniverse::optimize(int frameIndex)
                         others[otherName].push_back(itD->second.second);
                     }
                 } else {
-                    auto otherSnap = previousSnapshots.find(otherName);
-                    if (otherSnap != previousSnapshots.end() && otherSnap->second.valid) {
-                        others[otherName].push_back(otherSnap->second.position);
+                    // Use calibrated live position (not snapshot).
+                    others[otherName].push_back(cv::Point3f(
+                        other.getX(), other.getY(), other.getZ()));
+                }
+            }
+
+            // Log claim set sources for this cell.
+            {
+                int nLive = 0, nSeed = 0;
+                std::ostringstream claimLog;
+                for (const auto &kv : others) {
+                    if (preClassifiedNames.count(kv.first)) {
+                        nSeed++;
+                        claimLog << " " << kv.first.substr(0,8) << "[seed]";
                     } else {
-                        others[otherName].push_back(cv::Point3f(
-                            other.getX(), other.getY(), other.getZ()));
+                        nLive++;
+                        claimLog << " " << kv.first.substr(0,8) << "[live]";
                     }
                 }
+                std::cout << "  [Pre-Pass Claims] " << name.substr(0,8)
+                          << " nLive=" << nLive << " nSeed=" << nSeed
+                          << " neighbors:" << claimLog.str() << std::endl;
             }
 
             // Run the image-grounded PCA helper on Frame.
@@ -503,133 +661,6 @@ void CellUniverse::optimize(int frameIndex)
                           << std::endl;
             }
         }
-    }
-
-    // ---- Per-cell position calibration pass ----
-    // Refine each cell's position with tight position sigmas and frozen
-    // radii BEFORE Phase A/B runs. Purpose: prevent the "Phase A parks
-    // parent on one incipient daughter" pathology where radii shrink and
-    // position drifts onto the stronger bright region, leaving the split
-    // attempt with a half-collapsed baseline parent that only weakly
-    // improves cost when replaced by daughters.
-    //
-    // Tight position sigmas (reuse split_burn_in_pos_sigma_scale) let the
-    // cell refine its center by a few voxels per iteration but not escape
-    // the snapshot footprint. Radius sigmas forced to 0 — cell cannot
-    // shrink or grow during calibration. After calibration, Phase A/B runs
-    // at normal sigmas and may still drift, but by then the calibrated
-    // state is used as the starting point.
-    const int calibrationIters = std::max(0, config.prob.split_calibration_iterations_per_cell);
-    if (calibrationIters > 0 && !frame.cells.empty()) {
-        const float posScale = std::max(0.0f, config.prob.split_burn_in_pos_sigma_scale);
-
-        PerturbParams savedCalX = Spheroid::cellConfig.x;
-        PerturbParams savedCalY = Spheroid::cellConfig.y;
-        PerturbParams savedCalZ = Spheroid::cellConfig.z;
-        PerturbParams savedCalMajor = Spheroid::cellConfig.majorRadius;
-        PerturbParams savedCalB = Spheroid::cellConfig.bRadius;
-        PerturbParams savedCalMinor = Spheroid::cellConfig.minorRadius;
-
-        Spheroid::cellConfig.x.sigma = savedCalX.sigma * posScale;
-        Spheroid::cellConfig.y.sigma = savedCalY.sigma * posScale;
-        Spheroid::cellConfig.z.sigma = savedCalZ.sigma * posScale;
-        Spheroid::cellConfig.majorRadius.sigma = 0.0f;
-        Spheroid::cellConfig.bRadius.sigma     = 0.0f;
-        Spheroid::cellConfig.minorRadius.sigma = 0.0f;
-
-        std::cout << "[Calibration] frame " << displayFrame
-                  << " cells=" << frame.cells.size()
-                  << " itersPerCell=" << calibrationIters
-                  << " posScale=" << posScale
-                  << " radiusSigma=0 (frozen)"
-                  << std::endl;
-
-        // Helper to build the frame-start claim set for a given cell.
-        // Used both for the centroid calibration step and the existing
-        // pre-pass loop. For every OTHER cell: pre-classified contribute
-        // their image-grounded expected-daughter pair (from pre-pass),
-        // non-classified contribute their raw snapshot center.
-        auto buildCalibrationClaimSet = [&](const std::string &selfName) -> Frame::ClaimSet {
-            Frame::ClaimSet others;
-            for (const auto &other : frame.cells) {
-                const std::string otherName = other.getName();
-                if (otherName == selfName) continue;
-                if (preClassifiedNames.count(otherName)) {
-                    auto itD = expectedDaughters.find(otherName);
-                    if (itD != expectedDaughters.end()) {
-                        others[otherName].push_back(itD->second.first);
-                        others[otherName].push_back(itD->second.second);
-                    }
-                } else {
-                    auto otherSnap = previousSnapshots.find(otherName);
-                    if (otherSnap != previousSnapshots.end() && otherSnap->second.valid) {
-                        others[otherName].push_back(otherSnap->second.position);
-                    } else {
-                        others[otherName].push_back(cv::Point3f(
-                            other.getX(), other.getY(), other.getZ()));
-                    }
-                }
-            }
-            return others;
-        };
-
-        for (size_t ci = 0; ci < frame.cells.size(); ++ci) {
-            const std::string calName = frame.cells[ci].getName();
-            const cv::Point3f preCalPos(
-                frame.cells[ci].getX(),
-                frame.cells[ci].getY(),
-                frame.cells[ci].getZ());
-
-            // Step 1: analytic centroid calibration — try the bright-pixel
-            // weighted mean as a candidate position, keep it if it gives
-            // lower L2 cost than the current (snapshot-inherited) position.
-            // This is a one-shot move, not an iterative refinement.
-            auto calSnapIt = previousSnapshots.find(calName);
-            if (calSnapIt != previousSnapshots.end() && calSnapIt->second.valid) {
-                Frame::ClaimSet calOthers = buildCalibrationClaimSet(calName);
-                frame.calibrateCellPositionViaCentroid(ci, calSnapIt->second, calOthers);
-            }
-
-            const cv::Point3f postCentroidPos(
-                frame.cells[ci].getX(),
-                frame.cells[ci].getY(),
-                frame.cells[ci].getZ());
-
-            // Step 2: perturbation refinement around whatever starting
-            // position the centroid step chose (either the original snapshot
-            // position or the centroid, whichever was better).
-            int calAccepts = 0;
-            for (int it = 0; it < calibrationIters; ++it) {
-                auto calResult = frame.perturbCell(ci, overlapWeight, sizeReductionWeight);
-                const bool calAccept = calResult.first < 0.0;
-                if (calAccept) ++calAccepts;
-                calResult.second(calAccept);
-            }
-            const cv::Point3f postCalPos(
-                frame.cells[ci].getX(),
-                frame.cells[ci].getY(),
-                frame.cells[ci].getZ());
-            const float centroidShift = static_cast<float>(cv::norm(postCentroidPos - preCalPos));
-            const float perturbDrift = static_cast<float>(cv::norm(postCalPos - postCentroidPos));
-            const float totalDrift = static_cast<float>(cv::norm(postCalPos - preCalPos));
-            std::cout << "  [Calibration] cell=" << calName
-                      << " iters=" << calibrationIters
-                      << " accepts=" << calAccepts
-                      << " pre=(" << preCalPos.x << "," << preCalPos.y << "," << preCalPos.z << ")"
-                      << " postCentroid=(" << postCentroidPos.x << "," << postCentroidPos.y << "," << postCentroidPos.z << ")"
-                      << " post=(" << postCalPos.x << "," << postCalPos.y << "," << postCalPos.z << ")"
-                      << " centroidShift=" << centroidShift
-                      << " perturbDrift=" << perturbDrift
-                      << " totalDrift=" << totalDrift
-                      << std::endl;
-        }
-
-        Spheroid::cellConfig.x = savedCalX;
-        Spheroid::cellConfig.y = savedCalY;
-        Spheroid::cellConfig.z = savedCalZ;
-        Spheroid::cellConfig.majorRadius = savedCalMajor;
-        Spheroid::cellConfig.bRadius     = savedCalB;
-        Spheroid::cellConfig.minorRadius = savedCalMinor;
     }
 
     // ---- Helper: build claim-set for other cells during a split attempt ----
@@ -751,7 +782,7 @@ void CellUniverse::optimize(int frameIndex)
                 // / position reflect the image-grounded {D1_exp, D2_exp}
                 // from the pre-pass (when available). Without this override,
                 // `trySplitCellPhased` would rebuild its self-claim from the
-                // raw snapshot.longAxisDir/longAxisLength and miss the
+                // raw snapshot.splitAxisDir/splitAxisLength and miss the
                 // grounded positions the pre-pass computed. Non-pre-classified
                 // cells have no entry in `expectedDaughters`, so they pass
                 // the original snapshot through unchanged.
@@ -769,9 +800,9 @@ void CellUniverse::optimize(int frameIndex)
                         const float len = static_cast<float>(cv::norm(delta));
                         if (len > 1e-3f) {
                             splitSnapshot.position = mid;
-                            splitSnapshot.longAxisDir = cv::Point3f(
+                            splitSnapshot.splitAxisDir = cv::Point3f(
                                 delta.x / len, delta.y / len, delta.z / len);
-                            splitSnapshot.longAxisLength = len;
+                            splitSnapshot.splitAxisLength = len;
                         }
                     }
                 }
@@ -799,12 +830,12 @@ void CellUniverse::optimize(int frameIndex)
                     // because the cells vector is untouched by revert but
                     // cellIdx is only cheap-safe immediately after the revert.
                     auto parentIt = std::find_if(frame.cells.begin(), frame.cells.end(),
-                        [&](const Spheroid &c) { return c.getName() == cellName; });
+                        [&](const Ellipsoid &c) { return c.getName() == cellName; });
                     if (parentIt != frame.cells.end()) {
                         const size_t parentIdx = static_cast<size_t>(
                             std::distance(frame.cells.begin(), parentIt));
                         auto compResult = frame.perturbCell(
-                            parentIdx, overlapWeight, sizeReductionWeight);
+                            parentIdx, overlapWeight);
                         const bool compAccept = compResult.first < 0.0;
                         compResult.second(compAccept);
                         if (compAccept) {
@@ -817,7 +848,7 @@ void CellUniverse::optimize(int frameIndex)
                 }
             } else {
                 // --- Perturbation ---
-                auto result = frame.perturbCell(cellIdx, overlapWeight, sizeReductionWeight);
+                auto result = frame.perturbCell(cellIdx, overlapWeight);
                 double costDiff = result.first;
                 auto callback = result.second;
                 if (costDiff < 0) {
@@ -882,20 +913,20 @@ void CellUniverse::optimize(int frameIndex)
         // max(a,b,c)/min(a,b,c) from the fit, plus the world-space direction
         // and length of the longest axis. No image-PCA anymore.
         const float fitShapeElong = frame.cells[ci].shapeElongation();
-        cv::Point3f fitLongAxisDir;
-        float fitLongAxisLength = 0.0f;
-        frame.cells[ci].worldLongAxis(fitLongAxisDir, fitLongAxisLength);
+        cv::Point3f fitSplitAxisDir;
+        float fitSplitAxisLength = 0.0f;
+        frame.cells[ci].worldSplitAxis(fitSplitAxisDir, fitSplitAxisLength);
 
         PreviousFrameSnapshot snap;
         snap.valid = true;
         snap.shapeElongation = fitShapeElong;
-        snap.longAxisDir = fitLongAxisDir;
-        snap.longAxisLength = fitLongAxisLength;
+        snap.splitAxisDir = fitSplitAxisDir;
+        snap.splitAxisLength = fitSplitAxisLength;
 
         snap.position = cv::Point3f(p.x, p.y, p.z);
-        snap.majorRadius = p.majorRadius;
+        snap.aRadius = p.aRadius;
         snap.bRadius     = p.bRadius;
-        snap.minorRadius = p.minorRadius;
+        snap.cRadius = p.cRadius;
         snap.thetaX = p.theta_x;
         snap.thetaY = p.theta_y;
         snap.thetaZ = p.theta_z;
@@ -905,7 +936,7 @@ void CellUniverse::optimize(int frameIndex)
 
         std::cout << "  " << p.name
                   << " shapeElong=" << snap.shapeElongation
-                  << " longAxisLen=" << snap.longAxisLength
+                  << " splitAxisLen=" << snap.splitAxisLength
                   << " pos=(" << snap.position.x
                   << "," << snap.position.y
                   << "," << snap.position.z << ")"
@@ -916,8 +947,11 @@ void CellUniverse::optimize(int frameIndex)
     if (brightnessBlend > 0.0f && config.cell) {
         const auto &realFrame = frame.getRealFrame();
         const float brightnessAmplification = std::max(0.0f, config.cell->brightnessMeanAmplification);
+        const float brightnessMeasurementTopPercentile =
+            std::clamp(config.cell->brightnessMeasurementTopPercentile, 0.0f, 1.0f);
         for (auto &cell : frame.cells) {
-            const float observedBrightness = cell.measureMeanBrightness(realFrame);
+            const float observedBrightness =
+                cell.measureMeanBrightness(realFrame, brightnessMeasurementTopPercentile);
             const float amplifiedObservedBrightness = observedBrightness * brightnessAmplification;
             const float updatedBrightness =
                 cell.getBrightness() * (1.0f - brightnessBlend) + amplifiedObservedBrightness * brightnessBlend;
@@ -991,23 +1025,23 @@ void CellUniverse::saveCells(int frameIndex)
             file.close();
             file.open(cellsPath, std::ios::trunc);
         }
-        file << "file,name,x,y,z,majorRadius,bRadius,minorRadius,theta_x,theta_y,theta_z" << '\n';
+        file << "file,name,x,y,z,aRadius,bRadius,cRadius,theta_x,theta_y,theta_z" << '\n';
     }
 
     Frame &frame = frames[frameIndex];
     std::string imageName = frame.getImageName();
 
     for (const auto &cell : frame.cells) {
-        SpheroidParams params = cell.getCellParams();
+        EllipsoidParams params = cell.getCellParams();
         cell.printCellInfo();
         file << imageName << ","
              << params.name << ","
              << params.x << ","
              << params.y << ","
              << params.z << ","
-             << params.majorRadius << ","
+             << params.aRadius << ","
              << params.bRadius << ","
-             << params.minorRadius << ","
+             << params.cRadius << ","
              << params.theta_x << ","
              << params.theta_y << ","
              << params.theta_z
@@ -1030,9 +1064,9 @@ void CellUniverse::copyCellsForward(size_t to)
         for (auto &cell : frames[to].cells) {
             cell.blendAdaptivePerturbProbabilitiesWithConfig(
                 config.cell->brightnessProbabilityTrust,
-                config.cell->majorRadiusProbabilityTrust,
-                config.cell->minorRadiusProbabilityTrust,
-                config.cell->abRatioProbabilityTrust);
+                config.cell->aRadiusProbabilityTrust,
+                config.cell->cRadiusProbabilityTrust,
+                config.cell->bRadiusProbabilityTrust);
         }
     }
 }
@@ -1042,7 +1076,7 @@ unsigned int CellUniverse::length()
     return frames.size();
 }
 
-const std::vector<Spheroid> &CellUniverse::getCells(int frameIndex) const
+const std::vector<Ellipsoid> &CellUniverse::getCells(int frameIndex) const
 {
     if (frameIndex < 0 || static_cast<size_t>(frameIndex) >= frames.size())
     {
