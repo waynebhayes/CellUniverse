@@ -2,7 +2,23 @@
 
 ## Overview
 
-CellUniverse tracks 3D cells across time-lapse microscopy frames. For each frame, it fits 3D spheroid models to real image data using Monte Carlo perturbation, then detects cell divisions (splits) using PCA on bright pixels + a stack of soft fake-guards. The pipeline runs frame-by-frame: load + preprocess → update per-cell brightness → optimize cell positions → copy cells forward → save results.
+CellUniverse tracks 3D cells across time-lapse microscopy frames. For each frame, it fits triaxial ellipsoid models to real image data. **Shape (rotation + 3 radii + centroid) is fit by an iterative PCA pass each frame**; stochastic perturbation refines position and rotation only. Splits are detected per cell via a phased pipeline with bio + cost gates.
+
+---
+
+## 0.2. 2026-04-14 Update Pointer (read this first)
+
+The shape-fitting machinery was overhauled on 2026-04-14. Everything below that references radius EMA, radius gradient, `size_reduction_penalty_weight`, `_birthFrame`, or `_birthVolume` is obsolete — those code paths and config fields were deleted.
+
+Canonical current pipeline: **`docs/pipeline.md`** (new). Read it first for the end-to-end flow.
+
+Key changes since 2026-04-13:
+
+- **New pipeline stage (between position calibration and pre-pass):** `Frame::calibrateCellShapeViaPca` iterates PCA on Voronoi-filtered bright pixels inside `maskScale × current ellipsoid` until rotation + radii + centroid converge.
+- **Axis assignment by eigenvalue rank** (`a ← λ₀`, `b ← λ₁`, `c ← λ₂`). Greedy `|dot|` matching was replaced because it caused period-3 oscillation.
+- **Deleted:** `measureRadiiFromImage`, `measureRadiusGradient`, `_birthFrame` + age-gate, `_birthVolume` + 85% ratchet, `computeSizeReductionPenalty`, `size_reduction_penalty_weight`, `min_frames_before_split`. Matching YAML keys removed; radius/brightness perturbation blocks optional.
+- **New config block (under `cell:`):** `pcaShapeMaxIters`, `pcaShapeRadiusScale`, `pcaShapeMinPixels`, `pcaShapeMaskScale`, `pcaShapeConvergeRadius`, `pcaShapeConvergeAngleDeg`, `pcaShapeUpdatePosition`, `pcaShapeMaxPosShiftFraction`.
+- **Changelogs:** `docs/changelogs/changelogv5.md` closes with the rewrite entry; `changelogv6.md` opens with the rank-assignment fix.
 
 ---
 

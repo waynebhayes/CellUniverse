@@ -1,8 +1,15 @@
 # Triaxial Split Pipeline — Current Design
 
 **Created:** 2026-04-10
-**Last updated:** 2026-04-12 (evening)
-**Branch:** `jl_triaxial_pipeline_yp_preprocess_merge_04112026`
+**Last updated:** 2026-04-14 (shape-fit update)
+**Branch:** `jl_triaxial_pipeline_yp_preprocess_merge_04112026` (shape work on a sub-branch)
+
+> **2026-04-14 update:** Added the **iterative PCA shape fit** pass, which now owns shape
+> (rotation + 3 radii + center). It runs between the position calibration and the pre-pass.
+> Deleted code paths: radius EMA, radius gradient, size-reduction penalty, `_birthFrame`
+> (age gate), `_birthVolume` ratchet, `min_frames_before_split`. See section
+> [Iterative PCA Shape Fit](#iterative-pca-shape-fit-2026-04-14) below and
+> `docs/pipeline.md` for the authoritative current pipeline.
 
 ---
 
@@ -17,6 +24,7 @@ Key invariants:
 - Split axis = shortest fitted axis in local frame, rotated to world.
 - Neighbor exclusion is phased: non-split cells settle in Phase A before split attempts in Phase B.
 - Bio gates AND cost gate must both pass for a split to be accepted.
+- **Per-frame shape is fit by iterative PCA BEFORE any perturbation or split attempt** (2026-04-14). Stochastic perturbation no longer touches radii.
 
 ---
 
@@ -57,6 +65,49 @@ Key invariants:
           D2_seed = snapshot.center + 0.5 * splitAxisLen * splitAxisDir
 
 =================================================================
+         CALIBRATION — per-cell position refinement
+=================================================================
+                             |
+                             v
+        For EVERY cell:
+          Step 1 — centroid jump:
+            Voronoi-filtered bright pixel weighted mean
+            Accept if cost improves (position only)
+          Step 2 — perturbation refinement:
+            Tight position sigmas (0.4x), frozen radii
+            50 iterations, accept if cost improves
+            Restore main-loop sigmas
+
+=================================================================
+         ITERATIVE PCA SHAPE FIT  (added 2026-04-14)
+=================================================================
+                             |
+                             v
+        For EVERY cell, run up to pcaShapeMaxIters passes:
+          1. Collect bright pixels in sphere(maskScale * maxR),
+             Voronoi-filter vs other cell centers,
+             tighten to (maskScale * current ellipsoid).
+          2. If |pixels| < pcaShapeMinPixels: stop.
+          3. Weighted centroid + 3x3 world-frame covariance.
+          4. cv::eigen -> lambda0 >= lambda1 >= lambda2, e0, e1, e2.
+          5. Degeneracy: if lambda0/lambda2 < 1.1 skip rotation update.
+          6. RANK ASSIGNMENT:
+                slot a <- e0, r_a = scale*sqrt(lambda0)
+                slot b <- e1, r_b = scale*sqrt(lambda1)
+                slot c <- e2, r_c = scale*sqrt(lambda2)
+             Sign-align each e_i with current slot direction.
+          7. Compose R = [e0|e1|e2], force det=+1, decompose to
+             Euler angles (R = Rz*Ry*Rx).
+          8. Shift center toward centroid, cap per-iter at
+             pcaShapeMaxPosShiftFraction * maxR.
+          9. Apply directly (no EMA). Check convergence:
+             max|dR| < pcaShapeConvergeRadius AND
+             max axis angle < pcaShapeConvergeAngleDeg.
+
+        Output: rotation + 3 radii + center fit to the bright
+        cloud before any perturbation / split attempt runs.
+
+=================================================================
          PRE-PASS — ground expected daughters in the image
 =================================================================
                              |
@@ -72,20 +123,6 @@ Key invariants:
             PCA eigenvector rotated back to world
           D1_exp, D2_exp = world-space centroids of two PCA halves
           (overwrites seeds with image-grounded estimates)
-
-=================================================================
-         CALIBRATION — per-cell position refinement
-=================================================================
-                             |
-                             v
-        For EVERY cell:
-          Step 1 — centroid jump:
-            Voronoi-filtered bright pixel weighted mean
-            Accept if cost improves (position only)
-          Step 2 — perturbation refinement:
-            Tight position sigmas (0.4x), frozen radii
-            50 iterations, accept if cost improves
-            Restore main-loop sigmas
 
 =================================================================
          PHASE A — non_classified cells
@@ -276,13 +313,14 @@ This covers all cases: cells where PCA and snapshot agree, cells where they disa
 | `split_candidate_translation_delta_fraction` | 0.2 | Translation variant as fraction of daughterR |
 | `split_final_refine_iterations` | 30 | Refine iterations on winning candidate |
 
-### Perturbation (from Vincent's rename commit)
+### Perturbation
 
 | Field | Value | Purpose |
 |-------|-------|---------|
 | Position sigma (x/y/z) | 5/5/8 | Gaussian offset per perturbation step |
-| Radius sigma (a/b/c) | 5/5/5 | Independent axis perturbation (was 2, abRatio removed) |
 | Rotation sigma | 0.05 | Radians per step |
+
+Radius perturbation is no longer used — radii are owned by the iterative PCA shape fit.
 
 ### Bio gates
 
@@ -301,7 +339,19 @@ This covers all cases: cells where PCA and snapshot agree, cells where they disa
 |-------|-------|---------|
 | `split_cost` | 15 | Minimum cost improvement to accept split |
 | `overlap_penalty_weight` | 500 | Quadratic overlap penalty weight |
-| `size_reduction_penalty_weight` | 30 | Shrinkage penalty during perturbation |
+
+### Iterative PCA shape fit (added 2026-04-14)
+
+| Field | Value | Purpose |
+|-------|-------|---------|
+| `pcaShapeMaxIters` | 15 | Maximum per-frame, per-cell iterations |
+| `pcaShapeRadiusScale` | 2.236 | `r = scale * sqrt(eigenvalue)` (sqrt(5) uniform-ellipsoid) |
+| `pcaShapeMinPixels` | 50 | Stop iter if mask below this count |
+| `pcaShapeMaskScale` | 1.3 | Ellipsoid mask scale-up (× current radii) |
+| `pcaShapeConvergeRadius` | 0.3 | Per-iter max radius delta for convergence (voxels) |
+| `pcaShapeConvergeAngleDeg` | 2.0 | Per-iter max axis-rotation for convergence (degrees) |
+| `pcaShapeUpdatePosition` | true | Use PCA centroid to drive center (capped) |
+| `pcaShapeMaxPosShiftFraction` | 0.5 | Per-iter center-shift cap (× maxR) |
 
 ### Brightness
 
@@ -313,14 +363,57 @@ This covers all cases: cells where PCA and snapshot agree, cells where they disa
 
 ---
 
-## Removed Gates
+## Removed Gates & Code Paths
 
-| Gate | Reason for removal |
+| Item | Reason for removal |
 |------|-------------------|
 | **Drift-from-seed** | All false splits it caught were also caught by cost gate. Blocked real splits for spherical cells with poor PCA seed placement. Code and config fully removed. |
-| **Shape EMA** | PCA inside a single undivided cell sees symmetric pixels — can't detect pre-division elongation. Chicken-and-egg problem. Vincent's independent-axis perturbation (sigma=5, abRatio removed) is the correct approach. |
+| **Shape EMA** | PCA inside a single undivided cell sees symmetric pixels — can't detect pre-division elongation. Replaced by iterative PCA shape fit (2026-04-14). |
+| **Radius gradient** (2-pole sampling per axis) | Symmetric-shrink when rotation was wrong; no mechanism to elongate. Deleted 2026-04-14. |
+| **Radius EMA** (percentile-based observed-radius blend) | Biased by 3D sampling distribution. Deleted 2026-04-14. |
+| **`size_reduction_penalty_weight`** | Dim cells froze solid. Deleted 2026-04-14. |
+| **`_birthFrame` / age gate** | Never fired. Deleted 2026-04-14. |
+| **`_birthVolume` ratchet** | One-way growth lock prevented legitimate shrinkage. Deleted 2026-04-14. |
+| **`min_frames_before_split`** | Declared, parsed, never read. Deleted 2026-04-14. |
 | **Midpoint-near-parent** | Pre-pass grounding undermines it. |
-| **10-degree direction threshold** | Replaced by always-dual-direction. No reason to skip snapshot candidates when they agree with PCA — they use different midpoints and burn-in finds different optima. |
+| **10-degree direction threshold** | Replaced by always-dual-direction. |
+
+---
+
+## Iterative PCA Shape Fit (2026-04-14)
+
+Shape (rotation + 3 radii + optional center) is now fit directly from the bright-pixel cloud each frame, before any perturbation or split attempt. Replaces radius EMA and radius gradient (both deleted).
+
+**Why:** stochastic perturbation and gradient-based updates cannot reliably align a thin/elongated bright streak inside a round-initialized ellipsoid. L2 cost provides weak signal for dim cells. PCA reads shape directly from the variance of bright pixels.
+
+**Per-iteration algorithm** (see `Frame::calibrateCellShapeViaPca` in `src/Frame.cpp`):
+
+1. Collect pixels in a sphere of radius `maskScale * max(a,b,c)` around cell center; Voronoi-filter against all other cells' centers; tighten to `maskScale * current ellipsoid` via local-frame test.
+2. Stop if fewer than `pcaShapeMinPixels` remain.
+3. Compute weighted centroid and 3×3 covariance (weight = brightness − background).
+4. `cv::eigen` returns eigenvalues `λ₀ ≥ λ₁ ≥ λ₂` and eigenvectors `e₀, e₁, e₂`.
+5. **Degeneracy check:** if `λ₀/λ₂ < 1.1` the cell is near-spherical; skip rotation update.
+6. **Rank assignment (stable):** `a ← e₀`, `b ← e₁`, `c ← e₂` (no greedy matching). Sign-flip each `eᵢ` so its dot with current slot-i direction is ≥ 0.
+7. `rᵢ = pcaShapeRadiusScale · √λᵢ`.
+8. Compose `R = [e₀ | e₁ | e₂]`, force `det = +1`, decompose to Euler `(θx, θy, θz)` under `R = Rz·Ry·Rx`.
+9. Shift center toward centroid; cap shift at `pcaShapeMaxPosShiftFraction · maxR`.
+10. Apply directly (no EMA). Converged when `max|Δr| < pcaShapeConvergeRadius` AND max axis angle < `pcaShapeConvergeAngleDeg`.
+
+**Rank assignment vs greedy match:** the first iteration of the rewrite used greedy `|dot|` matching between PCA axes and current slot axes. On near-degenerate cells the label assignment flipped each iter, producing period-3 oscillation (15 iters without convergence). Rank assignment is invariant: the largest eigenvalue always lands in slot a. Physical tracking across frames is via rotation + radii, not slot labels — splits still target `axC` (shortest) correctly.
+
+**Biology:** cells divide along the short axis = smallest eigenvalue direction = slot c. Shape fit and split geometry share this convention.
+
+**Diagnostic logs:**
+
+- `[PCA Shape] frame N cells=M maxIters=K scale=S minPixels=P maskScale=X updatePos=B`
+- `[PCA Shape] cell=... iter=i n=N degen=0/1 R=(a,b,c) dR=Δ axisAng=deg posShift=S`
+- `[PCA Shape] cell=... iter=i stop_too_few pixels=N min=P`
+
+**Effect:**
+
+- Cells cannot inflate past their real bright extent — PCA reads actual variance.
+- Thin streaks in round-initialized cells converge to elongated ellipsoids within ~3–6 iters instead of ~10 frames of stochastic drift.
+- Rotation locks onto bright axis direction in the first iteration for non-degenerate cells.
 
 ---
 
