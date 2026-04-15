@@ -52,6 +52,16 @@ public:
     float adaptive_background_expand_factor = 1.1f;
     float adaptive_background_top_fraction = 0.4f;
 
+    // Asymmetric L2 cost weight (Fix E). Per-voxel squared error is
+    // multiplied by this factor when synth > real (cell covers darker
+    // image region). When synth < real (cell undershoots bright region),
+    // the unweighted squared error is used. 1.0 = symmetric L2 (disabled).
+    // Typical: 2.0 - 4.0. Makes "parent covering dark valley between two
+    // daughters" always cost more than "two daughters covering bright
+    // blobs," so split-vs-no-split cost comparison is deterministic on
+    // bright-coverage geometry.
+    float asymmetric_cost_weight = 1.0f;
+
     // Constructor with default values
     SimulationConfig() : iterations_per_cell(0),
                          z_scaling(1.0), blur_sigma(0.0f), z_slices(-1) {
@@ -95,6 +105,7 @@ public:
         if (node["quit_after_preprocessing"]) quit_after_preprocessing = node["quit_after_preprocessing"].as<bool>();
         if (node["adaptive_background_expand_factor"]) adaptive_background_expand_factor = node["adaptive_background_expand_factor"].as<float>();
         if (node["adaptive_background_top_fraction"]) adaptive_background_top_fraction = node["adaptive_background_top_fraction"].as<float>();
+        if (node["asymmetric_cost_weight"]) asymmetric_cost_weight = node["asymmetric_cost_weight"].as<float>();
     }
     void printConfig() const {
         std::cout << "Simulation Config\n";
@@ -143,12 +154,10 @@ public:
     // ---- Triaxial pipeline fields (2026-04-11 redesign) ----
     float P_split_base = 0.03f;
     float P_split_max = 0.5f;
-    float shape_elongation_classify_threshold = 1.20f;
 
     float overlap_penalty_weight = 500.0f;
     float split_cost = 80.0f;
 
-    float split_direction_agreement_degrees = 20.0f;
     int expected_daughter_pre_pass_iterations = 1;
 
     // Number of candidate placements per split attempt. With two midpoint
@@ -177,16 +186,6 @@ public:
     float bio_daughter_size_ratio_max = 1.5f;
     float bio_combined_volume_min_fraction = 0.6f;
     float bio_combined_volume_max_fraction = 1.3f;
-
-    // Midpoint-near-parent gate. Reject when the daughter midpoint lies
-    // further than `bio_max_midpoint_parent_fraction * srcMaxR` from the
-    // snapshot parent center. Uses SNAPSHOT (last-frame) position, not
-    // live — live drifts during Phase A and can park on one daughter
-    // rather than between them. A real division happens at the cell's
-    // previous-frame location; if PCA finds a bright region 1+ parent-
-    // diameters away, it's parent drift (e3d03 run 072416 f5: midpoint
-    // 1.36 x parent maxR) or inflation (1f2ed f4: 1.04), not a real split.
-    float bio_max_midpoint_parent_fraction = 0.95f;
 
     // Single-daughter volume gate. Reject when either daughter's volume
     // exceeds `bio_max_single_daughter_volume_fraction * refParentVolume`.
@@ -227,25 +226,25 @@ public:
     // settle to the local image optimum.
     float split_burn_in_pos_sigma_scale = 0.4f;
 
-    // Multiplier applied to the Ellipsoid aRadius/bRadius/cRadius
-    // perturbation sigmas during candidate burn-in. At 0.1, radii can
-    // only drift ~10% of their configured sigma per iteration, preserving
-    // the snapshot-based daughter sizing (`0.794 * src`) through burn-in
-    // instead of letting burn-in collapse one daughter to the radius
-    // floor. Fixes the "real daughter + collapsed sliver" false-split
-    // pattern where one daughter shrinks to (~r_min) at a distant image
-    // spot while the other stays near the parent.
-    float split_burn_in_radius_sigma_scale = 0.1f;
+    // Per-daughter PCA radius refit in the split refine phase (A1).
+    // After positional refine settles both daughters, each daughter runs
+    // a short PCA shape fit (using its own built-in radii as the mask)
+    // so its aRadius/bRadius/cRadius match the actual blob it covers.
+    // Real daughters tighten → lower image cost, widening the cost gap
+    // vs false splits where a phantom daughter has no compact cloud
+    // to fit. Clamped at `split_daughter_refit_min_radius_fraction *
+    // built_radius` to prevent the collapsed-sliver regression.
+    // Set to 0 to disable.
+    int split_daughter_refit_iterations = 3;
+    float split_daughter_refit_min_radius_fraction = 0.6f;
 
     ProbabilityConfig() = default;
 
     void explodeConfig(const YAML::Node& node) {
         if (node["P_split_base"]) P_split_base = node["P_split_base"].as<float>();
         if (node["P_split_max"]) P_split_max = node["P_split_max"].as<float>();
-        if (node["shape_elongation_classify_threshold"]) shape_elongation_classify_threshold = node["shape_elongation_classify_threshold"].as<float>();
         if (node["overlap_penalty_weight"]) overlap_penalty_weight = node["overlap_penalty_weight"].as<float>();
         if (node["split_cost"]) split_cost = node["split_cost"].as<float>();
-        if (node["split_direction_agreement_degrees"]) split_direction_agreement_degrees = node["split_direction_agreement_degrees"].as<float>();
         if (node["expected_daughter_pre_pass_iterations"]) expected_daughter_pre_pass_iterations = node["expected_daughter_pre_pass_iterations"].as<int>();
         if (node["split_candidates_per_attempt"]) split_candidates_per_attempt = node["split_candidates_per_attempt"].as<int>();
         if (node["split_candidate_burn_in_iterations"]) split_candidate_burn_in_iterations = node["split_candidate_burn_in_iterations"].as<int>();
@@ -256,12 +255,12 @@ public:
         if (node["bio_daughter_size_ratio_max"]) bio_daughter_size_ratio_max = node["bio_daughter_size_ratio_max"].as<float>();
         if (node["bio_combined_volume_min_fraction"]) bio_combined_volume_min_fraction = node["bio_combined_volume_min_fraction"].as<float>();
         if (node["bio_combined_volume_max_fraction"]) bio_combined_volume_max_fraction = node["bio_combined_volume_max_fraction"].as<float>();
-        if (node["bio_max_midpoint_parent_fraction"]) bio_max_midpoint_parent_fraction = node["bio_max_midpoint_parent_fraction"].as<float>();
         if (node["bio_max_single_daughter_volume_fraction"]) bio_max_single_daughter_volume_fraction = node["bio_max_single_daughter_volume_fraction"].as<float>();
         if (node["bio_bridge_max_gap_density"]) bio_bridge_max_gap_density = node["bio_bridge_max_gap_density"].as<float>();
         if (node["bio_bridge_max_valley_ratio"]) bio_bridge_max_valley_ratio = node["bio_bridge_max_valley_ratio"].as<float>();
         if (node["split_burn_in_pos_sigma_scale"]) split_burn_in_pos_sigma_scale = node["split_burn_in_pos_sigma_scale"].as<float>();
-        if (node["split_burn_in_radius_sigma_scale"]) split_burn_in_radius_sigma_scale = node["split_burn_in_radius_sigma_scale"].as<float>();
+        if (node["split_daughter_refit_iterations"]) split_daughter_refit_iterations = node["split_daughter_refit_iterations"].as<int>();
+        if (node["split_daughter_refit_min_radius_fraction"]) split_daughter_refit_min_radius_fraction = node["split_daughter_refit_min_radius_fraction"].as<float>();
 
         // Legacy YAML aliases — silently map to the new names.
         if (node["split"]) P_split_base = node["split"].as<float>();
@@ -272,7 +271,6 @@ public:
         std::cout << "Probability Config\n";
         std::cout << "P_split_base: " << P_split_base << '\n';
         std::cout << "P_split_max: " << P_split_max << '\n';
-        std::cout << "shape_elongation_classify_threshold: " << shape_elongation_classify_threshold << '\n';
         std::cout << "split_cost: " << split_cost << '\n';
         std::cout << "overlap_penalty_weight: " << overlap_penalty_weight << '\n';
         std::cout << "split_candidates_per_attempt: " << split_candidates_per_attempt << '\n';

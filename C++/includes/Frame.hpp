@@ -102,6 +102,13 @@ public:
     //      AND max axis rotation < convergeAngleDeg.
     // Skips rotation update on eigenvalue degeneracy (λ1/λ3 < 1.1).
     // Returns true iff at least one iteration applied an update.
+    // maskA/B/C: fixed radii used to build the pixel-collection mask (sphere
+    //   + ellipsoid) each iteration. Keeping this fixed across iterations
+    //   prevents the mask-feedback collapse where shrinking fitted radii
+    //   tighten the mask, reveal less of the bright cloud, feed smaller
+    //   fitted radii, etc. Pass snapshot radii (previous frame's fit) so
+    //   the mask always covers the true bright extent. If any is <=0, the
+    //   caller's current cell radii are used as fallback.
     bool calibrateCellShapeViaPca(
         size_t cellIndex,
         const ClaimSet &otherCellsClaimSets,
@@ -112,7 +119,10 @@ public:
         float convergeRadius,
         float convergeAngleDeg,
         bool  updatePosition,
-        float maxPosShiftFraction);
+        float maxPosShiftFraction,
+        float maskA = 0.0f,
+        float maskB = 0.0f,
+        float maskC = 0.0f);
 
 
     std::vector<cv::Mat> getSynthFrame();

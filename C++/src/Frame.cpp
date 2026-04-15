@@ -2,6 +2,46 @@
 
 #include <sstream>
 
+// Asymmetric-L2 per-slice cost (Fix E).
+// Returns sqrt(sum(w_i * (synth_i - real_i)^2)) where w_i = k when synth>real
+// and w_i = 1 when synth<=real. With k=1.0 this is identical to
+// cv::norm(real, synth, NORM_L2). Penalizes a cell covering a dark image
+// region more heavily than a cell undershooting a bright image region —
+// forces split-vs-no-split cost comparison to prefer daughters that cover
+// only bright blobs over a parent that also covers the inter-daughter valley.
+//
+// Uses SIMD-optimized OpenCV primitives (subtract, multiply, compare, sum)
+// to stay close to cv::norm performance. Decomposition:
+//   sumSq       = sum(diff^2)              (all pixels)
+//   posSumSq    = sum(diff^2 where diff>0) (overshoot pixels only)
+//   asymSumSq   = sumSq + (k-1) * posSumSq
+static double asymmetricL2Slice(const cv::Mat &real, const cv::Mat &synth, float k)
+{
+    if (k <= 1.0f + 1e-6f) {
+        return cv::norm(real, synth, cv::NORM_L2);
+    }
+    CV_Assert(real.type() == CV_32F && synth.type() == CV_32F);
+    CV_Assert(real.size() == synth.size());
+
+    cv::Mat diff;
+    cv::subtract(synth, real, diff);
+    cv::Mat diffSq;
+    cv::multiply(diff, diff, diffSq);
+    const double sumSq = cv::sum(diffSq)[0];
+
+    // Mask of pixels where diff > 0 (synth overshoots real).
+    cv::Mat posMask;
+    cv::compare(diff, 0.0f, posMask, cv::CMP_GT);   // 8U mask, 255 or 0
+
+    // Copy squared diffs only at overshoot pixels; sum those.
+    cv::Mat posSq = cv::Mat::zeros(diffSq.size(), diffSq.type());
+    diffSq.copyTo(posSq, posMask);
+    const double posSumSq = cv::sum(posSq)[0];
+
+    const double asymSumSq = sumSq + static_cast<double>(k - 1.0f) * posSumSq;
+    return std::sqrt(std::max(0.0, asymSumSq));
+}
+
 // Function to interpolate between two slices
 void interpolateSlices(const cv::Mat& slice1, const cv::Mat& slice2, 
                        std::vector<cv::Mat>& processedSlices, int numInterpolations) {
@@ -44,10 +84,11 @@ void Frame::refreshFullCostCache()
     }
 
     _currentCostPerSlice.assign(_realFrame.size(), 0.0);
+    const float asymK = simulationConfig.asymmetric_cost_weight;
     double totalCost = 0.0;
     for (size_t i = 0; i < _realFrame.size(); ++i)
     {
-        const double sliceCost = cv::norm(_realFrame[i], _synthFrame[i], cv::NORM_L2);
+        const double sliceCost = asymmetricL2Slice(_realFrame[i], _synthFrame[i], asymK);
         _currentCostPerSlice[i] = sliceCost;
         totalCost += sliceCost;
     }
@@ -74,9 +115,10 @@ double Frame::calculateIncrementalCost(const std::vector<cv::Mat> &newSynthFrame
         const int nSlices = static_cast<int>(_realFrame.size());
         const int zMin = std::max(0, affectedZMin);
         const int zMax = std::min(nSlices - 1, affectedZMax);
+        const float asymK = simulationConfig.asymmetric_cost_weight;
         for (int i = zMin; i <= zMax; ++i)
         {
-            outNewPerSlice[i] = cv::norm(_realFrame[i], newSynthFrame[i], cv::NORM_L2);
+            outNewPerSlice[i] = asymmetricL2Slice(_realFrame[i], newSynthFrame[i], asymK);
         }
     }
 
@@ -124,10 +166,11 @@ Cost Frame::calculateCost(const std::vector<cv::Mat> &synthFrame)
         throw std::runtime_error("Mismatch in image stack sizes");
     }
 
+    const float asymK = simulationConfig.asymmetric_cost_weight;
     double totalCost = 0.0;
     for (size_t i = 0; i < _realFrame.size(); ++i)
     {
-        totalCost += cv::norm(_realFrame[i], synthFrame[i], cv::NORM_L2);
+        totalCost += asymmetricL2Slice(_realFrame[i], synthFrame[i], asymK);
     }
     return totalCost;
 }
@@ -1182,7 +1225,10 @@ bool Frame::calibrateCellShapeViaPca(
     float convergeRadius,
     float convergeAngleDeg,
     bool  updatePosition,
-    float maxPosShiftFraction)
+    float maxPosShiftFraction,
+    float maskA,
+    float maskB,
+    float maskC)
 {
     if (cellIndex >= cells.size()) return false;
     if (maxIters <= 0) return false;
@@ -1190,6 +1236,20 @@ bool Frame::calibrateCellShapeViaPca(
 
     const float convergeAngleRad =
         convergeAngleDeg * static_cast<float>(M_PI) / 180.0f;
+
+    // Fixed mask radii (typically previous-frame snapshot). These stay
+    // constant across iterations so the pixel-collection scope does not
+    // collapse as the fitted radii shrink — preventing the mask-feedback
+    // collapse where a shrinking cell latches onto one emerging daughter.
+    // Fall back to entry-time live radii if any mask axis was not provided.
+    const float effMaskA = (maskA > 0.0f) ? maskA : cell.getARadius();
+    const float effMaskB = (maskB > 0.0f) ? maskB : cell.getBRadius();
+    const float effMaskC = (maskC > 0.0f) ? maskC : cell.getCRadius();
+    const float maskMaxR = std::max({effMaskA, effMaskB, effMaskC});
+    const float sphereR = maskScale * maskMaxR;
+    const double invA2Fixed = 1.0 / (maskScale * effMaskA * maskScale * effMaskA);
+    const double invB2Fixed = 1.0 / (maskScale * effMaskB * maskScale * effMaskB);
+    const double invC2Fixed = 1.0 / (maskScale * effMaskC * maskScale * effMaskC);
 
     bool anyUpdate = false;
 
@@ -1201,24 +1261,21 @@ bool Frame::calibrateCellShapeViaPca(
         const float maxR = std::max({curA, curB, curC});
         if (maxR <= 1e-3f) break;
 
-        // Sphere that contains the scaled ellipsoid. Voronoi + brightness
-        // filter happens inside gatherBrightPixelsVoronoi.
-        const float sphereR = maskScale * maxR;
-
         std::vector<cv::Point3f> selfClaim{center};
         GatherStats gstats;
         auto raw = gatherBrightPixelsVoronoi(
             _realFrame, _backgroundValue, center, sphereR,
             selfClaim, otherCellsClaimSets, &gstats);
 
-        // Tighten to the cell's own ellipsoid (maskScale * radii) so we
-        // reject background pixels that pass the Voronoi sphere but lie
-        // well off-axis from this cell's current belief.
+        // Ellipsoid mask uses FIXED radii (snap), not live, so it cannot
+        // tighten between iterations — prevents mask-feedback collapse.
+        // Rotation still uses the cell's CURRENT rotation so the mask
+        // orientation follows the fit as it converges.
         std::array<double, 9> R_T;
         cell.generateInverseRotationMatrix(R_T);
-        const double invA2 = 1.0 / (maskScale * curA * maskScale * curA);
-        const double invB2 = 1.0 / (maskScale * curB * maskScale * curB);
-        const double invC2 = 1.0 / (maskScale * curC * maskScale * curC);
+        const double invA2 = invA2Fixed;
+        const double invB2 = invB2Fixed;
+        const double invC2 = invC2Fixed;
 
         std::vector<BrightPixel> pixels;
         pixels.reserve(raw.size());
@@ -1333,6 +1390,8 @@ bool Frame::calibrateCellShapeViaPca(
         const float targetA = radiusScale * std::sqrt(static_cast<float>(matchedVariance[0]));
         const float targetB = radiusScale * std::sqrt(static_cast<float>(matchedVariance[1]));
         const float targetC = radiusScale * std::sqrt(static_cast<float>(matchedVariance[2]));
+        // No floor. Collapse was prevented by moving mask to snap radii
+        // (above); radii are now free to reach true image extent.
 
         // Position update: centroid, capped.
         cv::Point3f newCenter = center;
@@ -1688,19 +1747,52 @@ CostCallbackPair Frame::trySplitCellPhased(
         primaryNames.push_back(names3[shortIdx]);
     }
 
+    // Add the image-PCA direction (from pre-pass, supplied via
+    // snapshot.splitAxisDir) as an additional primary axis. For near-round
+    // snap cells, parent-rotation axes are arbitrary — pre-pass finds the
+    // real direction connecting the two bright blobs in the current frame.
+    // Only add if it's sufficiently different from the existing axes
+    // (|dot| < 0.95 against all).
+    if (useSnapshotDirection && snapshotValid) {
+        const cv::Point3f pcaDir = snapshot.splitAxisDir;
+        const double pcaNorm = cv::norm(pcaDir);
+        if (pcaNorm > 1e-3) {
+            const cv::Point3f pcaUnit(
+                static_cast<float>(pcaDir.x / pcaNorm),
+                static_cast<float>(pcaDir.y / pcaNorm),
+                static_cast<float>(pcaDir.z / pcaNorm));
+            bool duplicate = false;
+            for (const auto &existing : primaryDirs) {
+                const double dot = std::abs(
+                    static_cast<double>(existing.x) * pcaUnit.x +
+                    static_cast<double>(existing.y) * pcaUnit.y +
+                    static_cast<double>(existing.z) * pcaUnit.z);
+                if (dot > 0.95) { duplicate = true; break; }
+            }
+            if (!duplicate) {
+                primaryDirs.push_back(pcaUnit);
+                primaryNames.push_back("imgPca");
+            }
+        }
+    }
+
     {
         std::ostringstream selAxes;
         for (size_t i = 0; i < primaryNames.size(); ++i) {
             if (i > 0) selAxes << ",";
             selAxes << primaryNames[i];
+            selAxes << "=(" << primaryDirs[i].x << "," << primaryDirs[i].y
+                    << "," << primaryDirs[i].z << ")";
         }
         std::cout << "  [Split Dirs] " << parentName
-                  << " mode=local_axes_short"
+                  << " mode=local_axes_short+imgPca"
                   << " radii=(" << rA << "," << rB << "," << rC << ")"
                   << " minR=" << minR
                   << " thresh=" << shortAxisThreshold
                   << " selected=[" << selAxes.str() << "]"
                   << " nPrimaries=" << primaryDirs.size()
+                  << " (expect 2 midpoints × 5 variants each = "
+                  << (primaryDirs.size() * 10) << " candidates before cap)"
                   << " nPixels=" << pixels.size()
                   << std::endl;
     }
@@ -1862,46 +1954,32 @@ CostCallbackPair Frame::trySplitCellPhased(
 
     const int burnIters = std::max(0, probConfig.split_candidate_burn_in_iterations);
 
-    // Install tight position AND radius sigmas for candidate burn-in.
+    // Install tight position sigmas for candidate burn-in.
     //
     // Main-loop position sigmas (x=5, y=5, z=8) let a daughter drift
     // 15-25 voxels across 20 iters, far enough to escape the parent
     // footprint. Scaling by split_burn_in_pos_sigma_scale (0.4 default)
     // restricts burn-in to refinement distances (<10 voxels).
     //
-    // Main-loop radius sigmas (~2 per axis) let a daughter's minorR
-    // collapse 10+ voxels over 50 iters of burn-in + refine, producing
-    // the "collapsed sliver" pattern where one daughter drops to the
-    // radius floor and hides at a distant image spot. Scaling by
-    // split_burn_in_radius_sigma_scale (0.1 default) freezes the
-    // snapshot-based daughter sizing through burn-in.
+    // Radii are not perturbed anywhere (config sigmas are zero; radii
+    // are fit by iterative PCA each frame), so there is no radius-sigma
+    // scaling here.
     //
     // Global static state mutation is safe here — single-threaded
     // optimizer, restored on every exit path below.
     const float posScale = std::max(0.0f, probConfig.split_burn_in_pos_sigma_scale);
-    const float radiusScale = std::max(0.0f, probConfig.split_burn_in_radius_sigma_scale);
     PerturbParams savedPerturbX = Ellipsoid::cellConfig.x;
     PerturbParams savedPerturbY = Ellipsoid::cellConfig.y;
     PerturbParams savedPerturbZ = Ellipsoid::cellConfig.z;
-    PerturbParams savedPerturbMajor = Ellipsoid::cellConfig.aRadius;
-    PerturbParams savedPerturbB = Ellipsoid::cellConfig.bRadius;
-    PerturbParams savedPerturbMinor = Ellipsoid::cellConfig.cRadius;
     Ellipsoid::cellConfig.x.sigma = savedPerturbX.sigma * posScale;
     Ellipsoid::cellConfig.y.sigma = savedPerturbY.sigma * posScale;
     Ellipsoid::cellConfig.z.sigma = savedPerturbZ.sigma * posScale;
-    Ellipsoid::cellConfig.aRadius.sigma = savedPerturbMajor.sigma * radiusScale;
-    Ellipsoid::cellConfig.bRadius.sigma     = savedPerturbB.sigma     * radiusScale;
-    Ellipsoid::cellConfig.cRadius.sigma = savedPerturbMinor.sigma * radiusScale;
 
     std::cout << "  [Split Sigmas] " << parentName
               << " posScale=" << posScale
               << " xSigma=" << savedPerturbX.sigma << "->" << Ellipsoid::cellConfig.x.sigma
               << " ySigma=" << savedPerturbY.sigma << "->" << Ellipsoid::cellConfig.y.sigma
               << " zSigma=" << savedPerturbZ.sigma << "->" << Ellipsoid::cellConfig.z.sigma
-              << " radiusScale=" << radiusScale
-              << " majorSigma=" << savedPerturbMajor.sigma << "->" << Ellipsoid::cellConfig.aRadius.sigma
-              << " bSigma=" << savedPerturbB.sigma << "->" << Ellipsoid::cellConfig.bRadius.sigma
-              << " minorSigma=" << savedPerturbMinor.sigma << "->" << Ellipsoid::cellConfig.cRadius.sigma
               << std::endl;
 
     for (size_t ci = 0; ci < candidates.size(); ++ci) {
@@ -1977,9 +2055,6 @@ CostCallbackPair Frame::trySplitCellPhased(
         Ellipsoid::cellConfig.x = savedPerturbX;
         Ellipsoid::cellConfig.y = savedPerturbY;
         Ellipsoid::cellConfig.z = savedPerturbZ;
-        Ellipsoid::cellConfig.aRadius = savedPerturbMajor;
-        Ellipsoid::cellConfig.bRadius     = savedPerturbB;
-        Ellipsoid::cellConfig.cRadius = savedPerturbMinor;
         restoreLiveParent();
         return {0.0, noop};
     }
@@ -2032,6 +2107,78 @@ CostCallbackPair Frame::trySplitCellPhased(
             cp.second(accept);
         }
 
+        // --- A1: per-daughter PCA radius refit ---
+        // After burn-in + positional refine pins daughter centers, each
+        // daughter's radii (inherited from parent as 0.794 * src) are
+        // still generic — a real daughter is usually smaller and may have
+        // different aspect. Run a short PCA shape fit on each daughter,
+        // using its built-in radii as the FIXED mask (same snap-mask
+        // pattern as the per-frame shape fit), with Voronoi exclusion so
+        // the sibling daughter and every other cell are claimants.
+        //
+        // Clamp fitted radii at split_daughter_refit_min_radius_fraction
+        // of built radii so a phantom daughter can't collapse to a sliver
+        // and hide in background.
+        const int daughterRefitIters = std::max(0, probConfig.split_daughter_refit_iterations);
+        if (daughterRefitIters > 0) {
+            const float minFrac = std::max(0.0f, std::min(1.0f,
+                probConfig.split_daughter_refit_min_radius_fraction));
+            const float dBuiltA = volumeScale * srcMajor;
+            const float dBuiltB = volumeScale * srcB;
+            const float dBuiltC = volumeScale * srcMinor;
+            const float floorA = minFrac * dBuiltA;
+            const float floorB = minFrac * dBuiltB;
+            const float floorC = minFrac * dBuiltC;
+
+            auto buildRefitClaimSet = [&](size_t selfIdx) -> ClaimSet {
+                ClaimSet others;
+                for (size_t oi = 0; oi < cells.size(); ++oi) {
+                    if (oi == selfIdx) continue;
+                    const std::string oname = cells[oi].getName();
+                    others[oname].push_back(cv::Point3f(
+                        cells[oi].getX(), cells[oi].getY(), cells[oi].getZ()));
+                }
+                return others;
+            };
+
+            auto refitOne = [&](size_t idx, const char *label) {
+                const float preA = cells[idx].getARadius();
+                const float preB = cells[idx].getBRadius();
+                const float preC = cells[idx].getCRadius();
+                ClaimSet others = buildRefitClaimSet(idx);
+                calibrateCellShapeViaPca(
+                    idx, others,
+                    daughterRefitIters,
+                    Ellipsoid::cellConfig.pcaShapeRadiusScale,
+                    Ellipsoid::cellConfig.pcaShapeMinPixels,
+                    Ellipsoid::cellConfig.pcaShapeMaskScale,
+                    Ellipsoid::cellConfig.pcaShapeConvergeRadius,
+                    Ellipsoid::cellConfig.pcaShapeConvergeAngleDeg,
+                    /*updatePosition=*/false,
+                    Ellipsoid::cellConfig.pcaShapeMaxPosShiftFraction,
+                    dBuiltA, dBuiltB, dBuiltC);
+                const float fitA = std::max(cells[idx].getARadius(), floorA);
+                const float fitB = std::max(cells[idx].getBRadius(), floorB);
+                const float fitC = std::max(cells[idx].getCRadius(), floorC);
+                cells[idx].setRadii(fitA, fitB, fitC);
+                std::cout << "  [Split Daughter Refit] " << parentName
+                          << " " << label
+                          << " iters=" << daughterRefitIters
+                          << " built=(" << dBuiltA << "," << dBuiltB << "," << dBuiltC << ")"
+                          << " floor=(" << floorA << "," << floorB << "," << floorC << ")"
+                          << " pre=(" << preA << "," << preB << "," << preC << ")"
+                          << " post=(" << fitA << "," << fitB << "," << fitC << ")"
+                          << std::endl;
+            };
+
+            refitOne(d1IdxRefine, "d1");
+            refitOne(d2IdxRefine, "d2");
+
+            // Radii changed → regenerate synth + refresh cost cache.
+            _synthFrame = generateSynthFrame();
+            refreshFullCostCache();
+        }
+
         // Re-capture refined state as new best.
         bestCells = cells;
         bestSynth = _synthFrame;
@@ -2045,12 +2192,9 @@ CostCallbackPair Frame::trySplitCellPhased(
         const cv::Point3f postRefineD2(cells[d2IdxRefine].getX(),
                                          cells[d2IdxRefine].getY(),
                                          cells[d2IdxRefine].getZ());
-        // Capture daughter radii for the radius-drift diagnostic. Built-in
-        // radii from buildDaughter are `0.794 * src`; after burn-in +
-        // refine these should stay near the built-in values because
-        // split_burn_in_radius_sigma_scale freezes them. If a daughter's
-        // minor/b radius has drifted more than a few voxels from the
-        // built-in, the radius sigma lock isn't working as intended.
+        // Daughter radii diagnostic. Built = 0.794 * src; post-refit radii
+        // reflect the PCA fit on each daughter's pixel cloud, clamped at
+        // the configured floor fraction.
         const Ellipsoid &refinedD1 = cells[d1IdxRefine];
         const Ellipsoid &refinedD2 = cells[d2IdxRefine];
         const float builtMajor = volumeScale * srcMajor;
@@ -2083,9 +2227,6 @@ CostCallbackPair Frame::trySplitCellPhased(
     Ellipsoid::cellConfig.x = savedPerturbX;
     Ellipsoid::cellConfig.y = savedPerturbY;
     Ellipsoid::cellConfig.z = savedPerturbZ;
-    Ellipsoid::cellConfig.aRadius = savedPerturbMajor;
-    Ellipsoid::cellConfig.bRadius     = savedPerturbB;
-    Ellipsoid::cellConfig.cRadius = savedPerturbMinor;
 
     // --- 5. Bio checks on the best candidate's final state ---
     // Rebuild daughter indices from bestCells (parent was at cellIndex,
@@ -2255,14 +2396,22 @@ CostCallbackPair Frame::trySplitCellPhased(
             const float edge2Bright = (edge2Count > 0)
                 ? static_cast<float>(edge2BrightSum / edge2Count)
                 : 0.0f;
+            // Per-daughter valley ratios. Pooling edges (gap/edgeAvg)
+            // hides asymmetry — a bright real daughter averages with a
+            // dim phantom daughter and the gap still looks like a valley.
+            // Checking gap against EACH edge independently catches the
+            // phantom case: if gap >= edge on one side, that daughter is
+            // in near-empty space, not a real cell body.
+            const float valleyRatio1 = (edge1Bright > 1e-6f)
+                ? (gapBright / edge1Bright)
+                : 1.0f;
+            const float valleyRatio2 = (edge2Bright > 1e-6f)
+                ? (gapBright / edge2Bright)
+                : 1.0f;
+            const float worstValleyRatio = std::max(valleyRatio1, valleyRatio2);
+            // Pooled ratio kept for logging only (diagnostic continuity).
             const float valleyRatio = (edgeBright > 1e-6f)
                 ? (gapBright / edgeBright)
-                : 0.0f;
-            // Asymmetry ratio: smaller edge brightness / larger edge brightness.
-            // For a real split, both daughters cover bright cells → symmetric (ratio ~1).
-            // For a false split where one daughter is in empty space → asymmetric (ratio ~0).
-            const float edgeAsymmetry = (std::max(edge1Bright, edge2Bright) > 1e-6f)
-                ? (std::min(edge1Bright, edge2Bright) / std::max(edge1Bright, edge2Bright))
                 : 0.0f;
 
             std::cout << "  [Split Bridge] " << parentName
@@ -2279,39 +2428,65 @@ CostCallbackPair Frame::trySplitCellPhased(
                       << " edge1Bright=" << edge1Bright
                       << " edge2Bright=" << edge2Bright
                       << " edgeBright=" << edgeBright
-                      << " edgeAsym=" << edgeAsymmetry
-                      << " valleyRatio=" << valleyRatio
+                      << " valleyRatio1=" << valleyRatio1
+                      << " valleyRatio2=" << valleyRatio2
+                      << " worstValleyRatio=" << worstValleyRatio
+                      << " valleyRatioPooled=" << valleyRatio
                       << std::endl;
 
-            // Asymmetric edge rejection: one daughter is in empty space.
-            // A real split has both daughters covering bright cells → edgeAsym > 0.4.
-            // A false split with one empty daughter → edgeAsym < 0.4 → reject.
-            if (edgeAsymmetry < 0.4f && edge1Count > 0 && edge2Count > 0) {
+            // Absolute edge-brightness gate: a daughter whose edge zone
+            // is at or near background is sitting in empty space, even
+            // if the other edge is bright enough to make a favorable
+            // cost delta. Measured in the same real-image units as the
+            // sigmoid-calibrated background (~0.0), so 0.05 is ~5% above
+            // background — well below any real cell body (~0.1-0.3).
+            constexpr float kMinEdgeBrightAbsolute = 0.05f;
+            if (edge1Count > 0 && edge2Count > 0 &&
+                std::min(edge1Bright, edge2Bright) < kMinEdgeBrightAbsolute) {
                 std::cout << "[Split Reject bio] " << parentName
-                          << " reason=asymmetric_edges"
+                          << " reason=edge_too_dim"
                           << " edge1Bright=" << edge1Bright
                           << " edge2Bright=" << edge2Bright
-                          << " edgeAsym=" << edgeAsymmetry
-                          << " threshold=0.4"
+                          << " minEdgeBright=" << std::min(edge1Bright, edge2Bright)
+                          << " threshold=" << kMinEdgeBrightAbsolute
                           << std::endl;
                 restoreLiveParent();
                 return {0.0, noop};
             }
 
-            // Bridge gate ALWAYS fires. The minimum gap zone guarantees
-            // we sample the central region between daughters regardless
-            // of geometric overlap.
+            // Per-daughter valley gate. Rejects when the bright-pixel
+            // profile along the split axis does not dip below EITHER
+            // edge — i.e., at least one proposed daughter sits in a
+            // region no brighter than the gap. Two tiers:
+            //
+            //   Tier 1 (hard): worstValleyRatio >= 0.95. Gap is as
+            //     bright or brighter than one edge — clear phantom
+            //     daughter.
+            //
+            //   Tier 2 (AND): gapDensity > limit AND
+            //     worstValleyRatio > limit. Catches subtler cases
+            //     where the valley is weak on one side.
+            //
+            // A real split has valleys on BOTH sides (edges > gap), so
+            // worstValleyRatio stays below limit. A phantom split has
+            // valley on one side only (the real-daughter side),
+            // worstValleyRatio >= 1.0 on the phantom side.
             const bool densityFlat = gapDensity > probConfig.bio_bridge_max_gap_density;
-            const bool brightnessFlat = valleyRatio > probConfig.bio_bridge_max_valley_ratio;
-            if (densityFlat && brightnessFlat && edgeCount > 0) {
+            const bool brightnessFlat = worstValleyRatio > probConfig.bio_bridge_max_valley_ratio;
+            constexpr float kNoValleyHardThreshold = 0.95f;
+            const bool noValleyAtAll = (worstValleyRatio >= kNoValleyHardThreshold);
+            if (edgeCount > 0 && (noValleyAtAll || (densityFlat && brightnessFlat))) {
                 std::cout << "[Split Reject bio] " << parentName
                           << " reason=bridge_flat"
                           << " gapDensity=" << gapDensity
-                          << " valleyRatio=" << valleyRatio
+                          << " valleyRatio1=" << valleyRatio1
+                          << " valleyRatio2=" << valleyRatio2
+                          << " worstValleyRatio=" << worstValleyRatio
                           << " gapWidth=" << gapWidth
                           << " effGapHalf=" << effectiveGapHalf
                           << " densityLimit=" << probConfig.bio_bridge_max_gap_density
                           << " valleyLimit=" << probConfig.bio_bridge_max_valley_ratio
+                          << " noValleyTier=" << noValleyAtAll
                           << std::endl;
                 restoreLiveParent();
                 return {0.0, noop};

@@ -2,7 +2,7 @@
 
 **Created:** 2026-04-10
 **Last updated:** 2026-04-14 (shape-fit update)
-**Branch:** `jl_triaxial_pipeline_yp_preprocess_merge_04112026` (shape work on a sub-branch)
+**Branch:** `jl_iterative_pca_shape_fix_04142026` (shape/split rework; previously `jl_triaxial_pipeline_yp_preprocess_merge_04112026`)
 
 > **2026-04-14 update:** Added the **iterative PCA shape fit** pass, which now owns shape
 > (rotation + 3 radii + center). It runs between the position calibration and the pre-pass.

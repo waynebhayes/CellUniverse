@@ -303,53 +303,43 @@ void CellUniverse::optimize(int frameIndex)
     // Cells that already failed a burn-in this frame — skip all further split attempts.
     std::set<std::string> splitBlacklist;
 
-    // PR-B (2026-04-09): P(split) now reads from previousSnapshots (the
-    // snapshot-driven architecture) instead of previousElongations. The
-    // snapshot's shapeElongation is the max of (running max during
-    // the previous frame, end-of-previous-frame) — capturing transient
-    // elongation peaks that the optimizer flattens out before end-of-frame.
+    // P(split) is a LINEAR ramp on snapshot elongation from P_split_base
+    // at elong=1.0 to P_split_max at elong=2.0. Clamped to [P_split_base,
+    // P_split_max]. No classification threshold — every cell gets a split
+    // probability proportional to how elongated its snapshot was.
     //
-    // Hard cutoff: cells whose snapshot elongation is below
-    // MIN_TRIGGER_ELONGATION get P(split) = 0, blocking split attempts
-    // Per-cell P(split) using the plan's formula:
-    //   rawP_i     = P_split_base + max(0, 1 - 1 / snapshot.shapeElongation_i)
-    //   P(split)_i = rawP_i * (P_split_max / max_i rawP_i)
-    // All cells get at least `P_split_base` so missed-split recovery works.
-    std::map<std::string, float> rawSplitProbabilities;
+    //   elong = 1.0 → P(split) = P_split_base (e.g., 0.03)
+    //   elong = 2.0 → P(split) = P_split_max  (e.g., 0.5)
+    //   elong > 2.0 → P(split) = P_split_max  (clamped)
+    //
+    // Elongated cells (likely to be dividing) get tried often; round cells
+    // still get a small base chance because snapshot elongation isn't a
+    // perfect signal (first-gen splits often have near-round snaps).
+    constexpr float kElongRefLow  = 1.0f;
+    constexpr float kElongRefHigh = 2.0f;
+    const float pMax = config.prob.P_split_max;
     std::map<std::string, float> splitProbabilities;
-    float maxRawSplitProbability = 0.0f;
-
-    for (const auto &cell : frame.cells) {
-        auto p = cell.getCellParams();
-        float prevElong = 1.0f;
-        auto snapIt = previousSnapshots.find(p.name);
-        if (snapIt != previousSnapshots.end() && snapIt->second.valid) {
-            prevElong = snapIt->second.shapeElongation;
-        }
-        const float rawProbability = allowSplits
-            ? (baseSplitProb + std::max(0.0f, 1.0f - 1.0f / prevElong))
-            : 0.0f;
-        rawSplitProbabilities[p.name] = rawProbability;
-        maxRawSplitProbability = std::max(maxRawSplitProbability, rawProbability);
-    }
-
-    const float probabilityScale =
-        (allowSplits && maxRawSplitProbability > 1e-6f)
-            ? (config.prob.P_split_max / maxRawSplitProbability)
-            : 0.0f;
 
     std::cout << "[P(split)] frame " << displayFrame
-              << (allowSplits ? " (from snapshot)" : " (splits disabled)") << std::endl;
+              << (allowSplits ? " (linear elong ramp)" : " (splits disabled)")
+              << std::endl;
     for (const auto &cell : frame.cells) {
         auto p = cell.getCellParams();
-        float prevElong = 1.0f;
+        float snapElong = 1.0f;
         auto snapIt = previousSnapshots.find(p.name);
         if (snapIt != previousSnapshots.end() && snapIt->second.valid) {
-            prevElong = snapIt->second.shapeElongation;
+            snapElong = snapIt->second.shapeElongation;
         }
-        const float ps = allowSplits ? (rawSplitProbabilities[p.name] * probabilityScale) : 0.0f;
+        float ps = 0.0f;
+        if (allowSplits) {
+            const float t = std::clamp(
+                (snapElong - kElongRefLow) / (kElongRefHigh - kElongRefLow),
+                0.0f, 1.0f);
+            ps = baseSplitProb + t * (pMax - baseSplitProb);
+        }
         splitProbabilities[p.name] = ps;
-        std::cout << "  " << p.name << " shapeElong=" << prevElong << " P(split)=" << ps << std::endl;
+        std::cout << "  " << p.name << " shapeElong=" << snapElong
+                  << " P(split)=" << ps << std::endl;
     }
 
     double residSum = 0;
@@ -360,43 +350,20 @@ void CellUniverse::optimize(int frameIndex)
     int perturbAccepted = 0;
 
     // ===============================================================
-    // Triaxial phased pipeline (2026-04-11 redesign):
-    //   1. Classify cells into pre_classified and non_classified using
-    //      snapshot.shapeElongation.
-    //   2. Compute seed D1_exp/D2_exp for every pre_classified cell from
-    //      the snapshot long axis.
-    //   3. Run a pre-pass: for each pre_classified cell, gather bright
-    //      pixels in the snapshot-centered box, PCA split, overwrite the
-    //      seed with image-grounded centroids.
-    //   4. Phase A — iterate non_classified cells. Split attempts use
-    //      snapshot-only claim sets for other cells.
-    //   5. Phase B — iterate pre_classified cells. Non_classified cells
-    //      are settled, so their live positions drive the claim set.
-    //      Other pre_classified cells contribute their pre-pass D1_exp/
-    //      D2_exp (or live positions if they've already been processed).
+    // Unified pipeline (2026-04-14 — classification removed):
+    //   1. Per-cell position calibration.
+    //   2. PCA shape fit with snap-mask.
+    //   3. Pre-pass for every cell: image-grounded D1/D2 centroids of
+    //      bright pixels. Pre-pass direction + midpoint become candidates
+    //      for the split attempt, alongside parent-rotation axes and the
+    //      true snap center. Cost + bio + bridge gates decide acceptance.
+    //   4. Unified perturb + split loop over all cells. Split attempts
+    //      are gated only by P(split) which scales linearly with elong.
+    //      Cells that aren't really splitting get filtered by:
+    //        - bridge gate (valleyRatio ≥ 0.95 → no valley, reject)
+    //        - bio gates (volume fraction, daughter size ratio, buried)
+    //        - cost gate (must improve by ≥ split_cost)
     // ===============================================================
-
-    const float T_classify = config.prob.shape_elongation_classify_threshold;
-
-    // Classify by snapshot.shapeElongation. Cells with no snapshot (frame 1,
-    // or just-split daughters) default to non_classified.
-    std::set<std::string> preClassifiedNames;
-    std::set<std::string> nonClassifiedNames;
-    for (const auto &cell : frame.cells) {
-        const std::string name = cell.getName();
-        auto snapIt = previousSnapshots.find(name);
-        const bool isPre = allowSplits
-                        && snapIt != previousSnapshots.end()
-                        && snapIt->second.valid
-                        && snapIt->second.shapeElongation > T_classify;
-        if (isPre) preClassifiedNames.insert(name);
-        else       nonClassifiedNames.insert(name);
-    }
-
-    std::cout << "[Classify] frame " << displayFrame
-              << " pre=" << preClassifiedNames.size()
-              << " non=" << nonClassifiedNames.size()
-              << " T=" << T_classify << std::endl;
 
     // ---- Per-cell position calibration pass (runs BEFORE pre-pass) ----
     // Refine each cell's position FIRST so Voronoi claim points in the
@@ -409,22 +376,15 @@ void CellUniverse::optimize(int frameIndex)
         PerturbParams savedCalX = Ellipsoid::cellConfig.x;
         PerturbParams savedCalY = Ellipsoid::cellConfig.y;
         PerturbParams savedCalZ = Ellipsoid::cellConfig.z;
-        PerturbParams savedCalMajor = Ellipsoid::cellConfig.aRadius;
-        PerturbParams savedCalB = Ellipsoid::cellConfig.bRadius;
-        PerturbParams savedCalMinor = Ellipsoid::cellConfig.cRadius;
 
         Ellipsoid::cellConfig.x.sigma = savedCalX.sigma * posScale;
         Ellipsoid::cellConfig.y.sigma = savedCalY.sigma * posScale;
         Ellipsoid::cellConfig.z.sigma = savedCalZ.sigma * posScale;
-        Ellipsoid::cellConfig.aRadius.sigma = 0.0f;
-        Ellipsoid::cellConfig.bRadius.sigma     = 0.0f;
-        Ellipsoid::cellConfig.cRadius.sigma = 0.0f;
 
         std::cout << "[Calibration] frame " << displayFrame
                   << " cells=" << frame.cells.size()
                   << " itersPerCell=" << calibrationIters
                   << " posScale=" << posScale
-                  << " radiusSigma=0 (frozen)"
                   << std::endl;
 
         // Claim set uses snapshot positions only (pre-pass hasn't run yet).
@@ -493,9 +453,6 @@ void CellUniverse::optimize(int frameIndex)
         Ellipsoid::cellConfig.x = savedCalX;
         Ellipsoid::cellConfig.y = savedCalY;
         Ellipsoid::cellConfig.z = savedCalZ;
-        Ellipsoid::cellConfig.aRadius = savedCalMajor;
-        Ellipsoid::cellConfig.bRadius     = savedCalB;
-        Ellipsoid::cellConfig.cRadius = savedCalMinor;
     }
 
     // ---- Per-cell iterative PCA shape fit ----
@@ -533,21 +490,46 @@ void CellUniverse::optimize(int frameIndex)
             return others;
         };
 
+        // Snap-mask shape fit: pass snapshot radii as the FIXED mask.
+        // The mask stays constant across iterations, so the fit cannot
+        // collapse onto one emerging daughter (no mask-feedback loop).
+        // Radii are free to reach true image extent (shrink or grow).
+        // Newly-born cells with no snapshot fall back to their current
+        // live radii inside calibrateCellShapeViaPca.
         for (size_t ci = 0; ci < frame.cells.size(); ++ci) {
             const std::string sname = frame.cells[ci].getName();
             Frame::ClaimSet others = buildShapeClaimSet(sname);
+
+            float maskA = 0.0f, maskB = 0.0f, maskC = 0.0f;
+            auto snapIt = previousSnapshots.find(sname);
+            if (snapIt != previousSnapshots.end() && snapIt->second.valid) {
+                maskA = snapIt->second.aRadius;
+                maskB = snapIt->second.bRadius > 1e-3f
+                        ? snapIt->second.bRadius : maskA;
+                maskC = snapIt->second.cRadius;
+            }
+
             frame.calibrateCellShapeViaPca(ci, others,
                                            pcaMaxIters, pcaScale, pcaMin,
                                            maskScale, convR, convAng,
-                                           updatePos, posShiftCap);
+                                           updatePos, posShiftCap,
+                                           maskA, maskB, maskC);
         }
         frame.regenerateSynthFrame();
     }
 
-    // Seed expected-daughter positions for pre_classified cells.
+    // Seed expected-daughter positions for EVERY cell with a valid
+    // snapshot. The current-frame PCA (pre-pass below) needs a starting
+    // point for Voronoi claims — using the snapshot's split axis is the
+    // natural seed. Classification no longer gates this: non-classified
+    // cells also need image-grounded midpoints when they attempt splits,
+    // because snap axis is unreliable for near-round cells.
     std::map<std::string, std::pair<cv::Point3f, cv::Point3f>> expectedDaughters;
-    for (const auto &name : preClassifiedNames) {
-        const auto &snap = previousSnapshots[name];
+    for (const auto &cell : frame.cells) {
+        const std::string &name = cell.getName();
+        auto snapIt = previousSnapshots.find(name);
+        if (snapIt == previousSnapshots.end() || !snapIt->second.valid) continue;
+        const auto &snap = snapIt->second;
         const float half = 0.5f * snap.splitAxisLength;
         const cv::Point3f seed1(
             snap.position.x - half * snap.splitAxisDir.x,
@@ -560,20 +542,24 @@ void CellUniverse::optimize(int frameIndex)
         expectedDaughters[name] = {seed1, seed2};
     }
 
-    // ---- Pre-pass: image-ground the seeds ----
-    // For each pre_classified cell, gather bright pixels in the snapshot
-    // bounding box using the current seed claim sets, run PCA, overwrite
-    // D1_exp/D2_exp with the image-grounded centroids. Optionally iterate —
-    // round k+1 uses the D1_exp/D2_exp from round k to build the claim sets.
+    // ---- Pre-pass: image-ground the seeds for ALL cells ----
+    // Runs PCA on current-frame bright pixels around each cell to find the
+    // midpoint + direction connecting the two bright blobs (if any). This
+    // image-grounded direction is the primary signal when snap axis is
+    // unreliable (near-round snap = arbitrary axC direction). For single-
+    // blob cells, PCA returns the blob's principal direction — harmless,
+    // cost gate still rejects because there's no valley.
     const int prePassRounds = std::max(1, config.prob.expected_daughter_pre_pass_iterations);
-    if (!preClassifiedNames.empty()) {
+    if (!frame.cells.empty()) {
         std::cout << "[Pre-Pass] frame " << displayFrame
                   << " rounds=" << prePassRounds
-                  << " preClassified=" << preClassifiedNames.size()
+                  << " allCells=" << frame.cells.size()
                   << " mode=image_grounded_pca" << std::endl;
     }
     for (int round = 0; round < prePassRounds; ++round) {
-        for (const auto &name : preClassifiedNames) {
+        for (const auto &cellRef : frame.cells) {
+            const std::string name = cellRef.getName();
+            if (expectedDaughters.find(name) == expectedDaughters.end()) continue;
             auto it = std::find_if(frame.cells.begin(), frame.cells.end(),
                 [&](const Ellipsoid &c) { return c.getName() == name; });
             if (it == frame.cells.end()) continue;
@@ -583,42 +569,36 @@ void CellUniverse::optimize(int frameIndex)
             const auto &seedsBefore = expectedDaughters[name];
 
             // Build claim-set for all OTHER cells at pre-pass time.
-            // Calibration has already refined positions, so non-classified
-            // cells use their calibrated live positions (more accurate than
-            // raw snapshot). Pre-classified cells use their D1_exp/D2_exp.
+            // Every cell contributes BOTH its D1/D2 seed (from the seed
+            // map initialized upstream — even non-splitting cells get a
+            // snap-based seed) so Voronoi correctly partitions pixels
+            // around dumbbell neighbors. Cells without a seed entry fall
+            // back to live position. Calibration has already refined
+            // positions, so live is accurate.
             Frame::ClaimSet others;
             for (const auto &other : frame.cells) {
                 const std::string otherName = other.getName();
                 if (otherName == name) continue;
-                if (preClassifiedNames.count(otherName)) {
-                    auto itD = expectedDaughters.find(otherName);
-                    if (itD != expectedDaughters.end()) {
-                        others[otherName].push_back(itD->second.first);
-                        others[otherName].push_back(itD->second.second);
-                    }
+                auto itD = expectedDaughters.find(otherName);
+                if (itD != expectedDaughters.end()) {
+                    others[otherName].push_back(itD->second.first);
+                    others[otherName].push_back(itD->second.second);
                 } else {
-                    // Use calibrated live position (not snapshot).
                     others[otherName].push_back(cv::Point3f(
                         other.getX(), other.getY(), other.getZ()));
                 }
             }
 
-            // Log claim set sources for this cell.
+            // Log claim set size for this cell.
             {
-                int nLive = 0, nSeed = 0;
                 std::ostringstream claimLog;
                 for (const auto &kv : others) {
-                    if (preClassifiedNames.count(kv.first)) {
-                        nSeed++;
-                        claimLog << " " << kv.first.substr(0,8) << "[seed]";
-                    } else {
-                        nLive++;
-                        claimLog << " " << kv.first.substr(0,8) << "[live]";
-                    }
+                    claimLog << " " << kv.first.substr(0,8)
+                             << "[" << kv.second.size() << "]";
                 }
                 std::cout << "  [Pre-Pass Claims] " << name.substr(0,8)
-                          << " nLive=" << nLive << " nSeed=" << nSeed
-                          << " neighbors:" << claimLog.str() << std::endl;
+                          << " nNeighbors=" << others.size()
+                          << " claims:" << claimLog.str() << std::endl;
             }
 
             // Run the image-grounded PCA helper on Frame.
@@ -673,53 +653,37 @@ void CellUniverse::optimize(int frameIndex)
             const std::string otherName = other.getName();
             if (otherName == selfName) continue;
 
-            const bool isOtherPre = preClassifiedNames.count(otherName) > 0;
+            // If this neighbor already split-accepted this frame, its
+            // daughters are the relevant Voronoi claims.
+            if (alreadySplitInB.count(otherName) > 0) {
+                const std::string d1n = otherName + "0";
+                const std::string d2n = otherName + "1";
+                for (const auto &c : frame.cells) {
+                    if (c.getName() == d1n || c.getName() == d2n) {
+                        others[c.getName()].push_back(cv::Point3f(
+                            c.getX(), c.getY(), c.getZ()));
+                    }
+                }
+                continue;
+            }
 
-            if (phaseB) {
-                if (isOtherPre) {
-                    // If already split-accepted in B → use the daughters'
-                    // live positions. If rejected → use parent live position.
-                    // Otherwise → use expected daughters seed.
-                    if (alreadySplitInB.count(otherName) > 0) {
-                        // Daughters are new cells with names like otherName+"0"/"1".
-                        // They will appear in frame.cells with current live pos.
-                        // Find them by name prefix.
-                        const std::string d1n = otherName + "0";
-                        const std::string d2n = otherName + "1";
-                        for (const auto &c : frame.cells) {
-                            if (c.getName() == d1n || c.getName() == d2n) {
-                                others[c.getName()].push_back(cv::Point3f(c.getX(), c.getY(), c.getZ()));
-                            }
-                        }
-                    } else if (splitRejectedInB.count(otherName) > 0) {
-                        others[otherName].push_back(cv::Point3f(other.getX(), other.getY(), other.getZ()));
-                    } else {
-                        auto itD = expectedDaughters.find(otherName);
-                        if (itD != expectedDaughters.end()) {
-                            others[otherName].push_back(itD->second.first);
-                            others[otherName].push_back(itD->second.second);
-                        }
-                    }
-                } else {
-                    // non_classified: Phase A settled them — use live pos.
-                    others[otherName].push_back(cv::Point3f(other.getX(), other.getY(), other.getZ()));
-                }
+            // If this neighbor's split was rejected this frame OR it has no
+            // D1/D2 seed, use its (calibrated) live position.
+            if (splitRejectedInB.count(otherName) > 0) {
+                others[otherName].push_back(cv::Point3f(
+                    other.getX(), other.getY(), other.getZ()));
+                continue;
+            }
+
+            // Default: use pre-pass D1/D2 if available (covers dumbbell
+            // neighbors), else live position.
+            auto itD = expectedDaughters.find(otherName);
+            if (itD != expectedDaughters.end()) {
+                others[otherName].push_back(itD->second.first);
+                others[otherName].push_back(itD->second.second);
             } else {
-                // Phase A: snapshot-only.
-                if (isOtherPre) {
-                    auto itD = expectedDaughters.find(otherName);
-                    if (itD != expectedDaughters.end()) {
-                        others[otherName].push_back(itD->second.first);
-                        others[otherName].push_back(itD->second.second);
-                    }
-                } else {
-                    auto otherSnap = previousSnapshots.find(otherName);
-                    if (otherSnap != previousSnapshots.end() && otherSnap->second.valid) {
-                        others[otherName].push_back(otherSnap->second.position);
-                    } else {
-                        others[otherName].push_back(cv::Point3f(other.getX(), other.getY(), other.getZ()));
-                    }
-                }
+                others[otherName].push_back(cv::Point3f(
+                    other.getX(), other.getY(), other.getZ()));
             }
         }
         return others;
@@ -735,26 +699,30 @@ void CellUniverse::optimize(int frameIndex)
         const size_t perCellIters = static_cast<size_t>(config.simulation.iterations_per_cell);
         const size_t totalPhaseIters = perCellIters * phaseNames.size();
 
-        for (size_t i = 0; i < totalPhaseIters; ++i) {
-            if (frame.cells.empty()) break;
-
-            // Find all live cells whose name is in phaseNames and not blacklisted.
-            std::vector<size_t> eligible;
-            eligible.reserve(phaseNames.size());
+        // Maintain eligibility incrementally. Only changes when a split
+        // accepts (parent replaced by two daughters) — no cell is ever
+        // removed without replacement, and daughters inherit eligibility.
+        // Splits that fail blacklist the cell for future SPLIT attempts but
+        // leave it eligible for perturbation, so no index maintenance is
+        // needed on rejection.
+        std::vector<size_t> eligible;
+        eligible.reserve(frame.cells.size());
+        const auto rebuildEligible = [&]() {
+            eligible.clear();
             for (size_t ci = 0; ci < frame.cells.size(); ++ci) {
-                const std::string cname = frame.cells[ci].getName();
+                const std::string &cname = frame.cells[ci].getName();
                 if (phaseNames.count(cname) == 0) continue;
-                if (splitBlacklist.count(cname) > 0) {
-                    // Still eligible for perturbation — the blacklist gates
-                    // split attempts, not perturbation.
-                }
                 eligible.push_back(ci);
             }
+        };
+        rebuildEligible();
+
+        for (size_t i = 0; i < totalPhaseIters; ++i) {
             if (eligible.empty()) break;
 
             std::uniform_int_distribution<size_t> cellDist(0, eligible.size() - 1);
             const size_t cellIdx = eligible[cellDist(gen)];
-            const std::string cellName = frame.cells[cellIdx].getName();
+            const std::string &cellName = frame.cells[cellIdx].getName();
 
             const float pSplit = allowSplits ? splitProbabilities[cellName] : 0.0f;
             const bool canSplit = pSplit > 0.0f
@@ -769,8 +737,11 @@ void CellUniverse::optimize(int frameIndex)
                     continue;
                 }
 
-                const bool isPre = preClassifiedNames.count(cellName) > 0;
-                const bool useSnapDir = isPre;
+                // useSnapDir=true adds snapshot-axis candidates alongside
+                // image-PCA candidates inside trySplitCellPhased — cost picks
+                // the winner. Always true now so every split attempt tries
+                // both direction sources.
+                const bool useSnapDir = true;
 
                 Frame::ClaimSet others = buildOtherClaimSet(
                     cellName,
@@ -778,32 +749,25 @@ void CellUniverse::optimize(int frameIndex)
                     splitRejectedInPhase,
                     phaseB);
 
-                // Pass a snapshot copy whose long-axis direction / length
-                // / position reflect the image-grounded {D1_exp, D2_exp}
-                // from the pre-pass (when available). Without this override,
-                // `trySplitCellPhased` would rebuild its self-claim from the
-                // raw snapshot.splitAxisDir/splitAxisLength and miss the
-                // grounded positions the pre-pass computed. Non-pre-classified
-                // cells have no entry in `expectedDaughters`, so they pass
-                // the original snapshot through unchanged.
+                // Pass pre-pass direction + length via splitSnapshot so
+                // trySplitCellPhased can add it as an extra primary axis
+                // (labeled "imgPca"). We KEEP splitSnapshot.position at
+                // the snap center so the split attempt tries BOTH midpoints:
+                //   - snap_* candidates: midpoint = true snap center
+                //   - data_* candidates: midpoint = pixel-projection centroid
+                //     (which for the imgPca axis equals the pre-pass midpoint)
+                // Snap radii preserved for daughter sizing.
                 PreviousFrameSnapshot splitSnapshot = snapIt->second;
-                if (isPre) {
-                    auto itD = expectedDaughters.find(cellName);
-                    if (itD != expectedDaughters.end()) {
-                        const cv::Point3f &gd1 = itD->second.first;
-                        const cv::Point3f &gd2 = itD->second.second;
-                        const cv::Point3f mid(
-                            0.5f * (gd1.x + gd2.x),
-                            0.5f * (gd1.y + gd2.y),
-                            0.5f * (gd1.z + gd2.z));
-                        const cv::Point3f delta = gd2 - gd1;
-                        const float len = static_cast<float>(cv::norm(delta));
-                        if (len > 1e-3f) {
-                            splitSnapshot.position = mid;
-                            splitSnapshot.splitAxisDir = cv::Point3f(
-                                delta.x / len, delta.y / len, delta.z / len);
-                            splitSnapshot.splitAxisLength = len;
-                        }
+                auto itD = expectedDaughters.find(cellName);
+                if (itD != expectedDaughters.end()) {
+                    const cv::Point3f &gd1 = itD->second.first;
+                    const cv::Point3f &gd2 = itD->second.second;
+                    const cv::Point3f delta = gd2 - gd1;
+                    const float len = static_cast<float>(cv::norm(delta));
+                    if (len > 1e-3f) {
+                        splitSnapshot.splitAxisDir = cv::Point3f(
+                            delta.x / len, delta.y / len, delta.z / len);
+                        splitSnapshot.splitAxisLength = len;
                     }
                 }
 
@@ -814,36 +778,31 @@ void CellUniverse::optimize(int frameIndex)
                 auto callback = result.second;
 
                 const bool accept = (costDiff < 0.0);
+                // Snapshot cellName before callback() invalidates the
+                // const-ref (accept replaces cells[cellIdx] with daughters).
+                const std::string cellNameCopy(cellName);
                 callback(accept);
                 if (accept) {
                     splitAccepted++;
-                    splitAcceptedInPhase.insert(cellName);
-                    previousSnapshots.erase(cellName);
+                    splitAcceptedInPhase.insert(cellNameCopy);
+                    previousSnapshots.erase(cellNameCopy);
+                    // Rebuild eligible: the parent cell at cellIdx was replaced
+                    // by two daughters appended to the cells vector.
+                    rebuildEligible();
                 } else {
-                    splitBlacklist.insert(cellName);
-                    splitRejectedInPhase.insert(cellName);
+                    splitBlacklist.insert(cellNameCopy);
+                    splitRejectedInPhase.insert(cellNameCopy);
 
-                    // Plan compensation: "revert; blacklist i; perturb i once".
-                    // Run a single perturbation on the (now-reverted) parent
-                    // so a rejected split doesn't waste the whole iteration
-                    // budget for this cell. Re-lookup the cell index by name
-                    // because the cells vector is untouched by revert but
-                    // cellIdx is only cheap-safe immediately after the revert.
-                    auto parentIt = std::find_if(frame.cells.begin(), frame.cells.end(),
-                        [&](const Ellipsoid &c) { return c.getName() == cellName; });
-                    if (parentIt != frame.cells.end()) {
-                        const size_t parentIdx = static_cast<size_t>(
-                            std::distance(frame.cells.begin(), parentIt));
-                        auto compResult = frame.perturbCell(
-                            parentIdx, overlapWeight);
-                        const bool compAccept = compResult.first < 0.0;
-                        compResult.second(compAccept);
-                        if (compAccept) {
-                            perturbAccepted++;
-                            residSum += compResult.first;
-                            absResidSum += std::abs(compResult.first);
-                            residCount++;
-                        }
+                    // Compensation perturb. The revert left cells[cellIdx]
+                    // as the parent (in place), so no find_if needed.
+                    auto compResult = frame.perturbCell(cellIdx, overlapWeight);
+                    const bool compAccept = compResult.first < 0.0;
+                    compResult.second(compAccept);
+                    if (compAccept) {
+                        perturbAccepted++;
+                        residSum += compResult.first;
+                        absResidSum += std::abs(compResult.first);
+                        residCount++;
                     }
                 }
             } else {
@@ -864,8 +823,7 @@ void CellUniverse::optimize(int frameIndex)
 
             if ((i + 1) % 500 == 0) {
                 std::cout << "Frame " << displayFrame
-                          << (phaseB ? " PhaseB " : " PhaseA ")
-                          << "iter=" << i
+                          << " iter=" << i
                           << " perturb_accepted=" << perturbAccepted
                           << " split_attempts=" << splitAttempted
                           << " split_accepted=" << splitAccepted
@@ -874,13 +832,16 @@ void CellUniverse::optimize(int frameIndex)
         }
     };
 
-    std::set<std::string> phaseASplitAccepted;
-    std::set<std::string> phaseASplitRejected;
-    runPhase(nonClassifiedNames, /* phaseB */ false, phaseASplitAccepted, phaseASplitRejected);
-
-    std::set<std::string> phaseBSplitAccepted;
-    std::set<std::string> phaseBSplitRejected;
-    runPhase(preClassifiedNames, /* phaseB */ true, phaseBSplitAccepted, phaseBSplitRejected);
+    // Unified loop over ALL cells. Classification removed; all cells share
+    // the same perturb+split iteration budget, and the split attempt gets
+    // both snap-axis and image-PCA candidates regardless of snap elongation.
+    std::set<std::string> allNames;
+    for (const auto &cell : frame.cells) {
+        allNames.insert(cell.getName());
+    }
+    std::set<std::string> splitAcceptedInLoop;
+    std::set<std::string> splitRejectedInLoop;
+    runPhase(allNames, /* phaseB */ true, splitAcceptedInLoop, splitRejectedInLoop);
 
     // End of frame: build PreviousFrameSnapshot for each cell, combining the
     // in-frame running max (from the periodic sampling above) with the
