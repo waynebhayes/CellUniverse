@@ -4,6 +4,8 @@
 
 #include <vector>
 #include <string>
+#include <ostream>
+#include <unordered_map>
 #include <opencv2/opencv.hpp>
 #include "types.hpp"
 #include "ConfigTypes.hpp"
@@ -13,6 +15,28 @@
 #include <opencv2/core/mat.hpp>
 
 void interpolateSlices(const cv::Mat& slice1, const cv::Mat& slice2, std::vector<cv::Mat>& processedSlices, int numInterpolations);
+
+// Axis-aligned 3D bounding box in pixel coordinates (inclusive bounds).
+// Used for per-cell bbox cost evaluation: cost is measured over voxels
+// inside the bbox, with Voronoi neighbor exclusion applied via a mask of
+// matching size. See Frame::computeCellBbox / calculateBboxCost.
+struct BoundingBox3D
+{
+    int xMin = 0, xMax = -1;
+    int yMin = 0, yMax = -1;
+    int zMin = 0, zMax = -1;
+
+    bool isValid() const {
+        return xMin <= xMax && yMin <= yMax && zMin <= zMax;
+    }
+    int nx() const { return xMax - xMin + 1; }
+    int ny() const { return yMax - yMin + 1; }
+    int nz() const { return zMax - zMin + 1; }
+    size_t volume() const {
+        if (!isValid()) return 0;
+        return static_cast<size_t>(nx()) * ny() * nz();
+    }
+};
 
 class Frame
 {
@@ -44,6 +68,57 @@ public:
     // split attempt, a pixel is kept only if its nearest claim point across
     // ALL cells belongs to the cell being split.
     using ClaimSet = std::map<std::string, std::vector<cv::Point3f>>;
+
+    // ---- Bounding-box cost infrastructure (Universal Bbox Plan) ----
+    //
+    // Per-cell cost computation over a finite 3D bbox with Voronoi-based
+    // neighbor exclusion. Replaces full-image L2 for per-cell decisions
+    // (perturbation, split). See plans/2026-04-14-universal-bbox-cost.md.
+    //
+    // Bbox half-extent per axis = marginScale * max(a,b,c) of the cell.
+    // marginScale=3.0 matches existing boxRadius convention in
+    // gatherBrightPixelsVoronoi and trySplitCellPhased.
+    BoundingBox3D computeCellBbox(size_t cellIdx, float marginScale) const;
+
+    // Generic bbox centered at an arbitrary (center, radius) pair. Used to
+    // build snap-anchored bboxes from PreviousFrameSnapshot{position, maxR}.
+    // Half-extent per axis = marginScale * radius, clamped to image bounds.
+    BoundingBox3D computeBboxAtPoint(const cv::Point3f &center,
+                                     float radius,
+                                     float marginScale) const;
+
+    // Union of per-cell bboxes for a list of cells. Used for split where
+    // parent + both daughter candidates share a single voxel set for
+    // apples-to-apples baseline vs candidate comparison.
+    BoundingBox3D computeUnionBbox(const std::vector<size_t> &cellIndices,
+                                    float marginScale) const;
+
+    // Union that includes extra explicit points (e.g. daughter seeds that
+    // don't yet exist as cells) each contributing a sphere of pointRadius.
+    BoundingBox3D computeUnionBboxWithPoints(
+        const std::vector<size_t> &cellIndices,
+        float marginScale,
+        const std::vector<cv::Point3f> &extraPoints,
+        float pointRadius) const;
+
+    // Build a Voronoi exclusion mask for the bbox: mask[v]=1 if voxel v's
+    // nearest claim point across (selfClaimPoints ∪ otherClaimSets) belongs
+    // to self, otherwise 0. Mask is linearized in (z, y, x) order with
+    // stride (nx*ny, nx, 1). Same claim-point rule as gatherBrightPixelsVoronoi.
+    std::vector<uint8_t> buildExclusionMask(
+        const BoundingBox3D &bbox,
+        const std::vector<cv::Point3f> &selfClaimPoints,
+        const ClaimSet &otherClaimSets) const;
+
+    // Asymmetric L2 cost over bbox voxels where mask[v]=1. Uses the same
+    // asymmetric_cost_weight as calculateCost. synthFrame must be the same
+    // size as _realFrame. Inlined voxel loop (no SIMD) is acceptable because
+    // a typical bbox is ~5M voxels (6× smaller than full image) and masked
+    // skipping is irregular.
+    double calculateBboxCost(
+        const BoundingBox3D &bbox,
+        const std::vector<cv::Mat> &synthFrame,
+        const std::vector<uint8_t> &mask) const;
 
     // Split-attempt result: callback pair that either commits the split
     // (daughters replace parent) or reverts (parent restored). Returns the
@@ -122,13 +197,59 @@ public:
         float maxPosShiftFraction,
         float maskA = 0.0f,
         float maskB = 0.0f,
-        float maskC = 0.0f);
+        float maskC = 0.0f,
+        // Optional log sink — when non-null, all per-iter log lines are
+        // appended here instead of std::cout. Used by the parallelized
+        // shape-fit caller to accumulate per-cell logs and emit them in
+        // deterministic cell-index order after the parallel region.
+        std::ostream *logSink = nullptr);
 
 
     std::vector<cv::Mat> getSynthFrame();
     const std::vector<cv::Mat>& getRealFrame() const { return _realFrame; }
     void setBackgroundColor(float backgroundColor) { _backgroundValue = backgroundColor; }
     float getBackgroundValue() const { return _backgroundValue; }
+    // Bbox-cost mode: perturb/split use a per-cell bbox with Voronoi
+    // neighbor exclusion instead of full-image L2. Set at frame start
+    // from ProbabilityConfig.use_bbox_cost; forwarded to per-cell paths.
+    void setUseBboxCost(bool enable, float marginScale, float overlapWeight) {
+        _useBboxCost = enable;
+        _bboxMarginScale = marginScale;
+        _bboxOverlapWeight = overlapWeight;
+    }
+    bool getUseBboxCost() const { return _useBboxCost; }
+    float getBboxMarginScale() const { return _bboxMarginScale; }
+
+    // Snap-anchored bbox installation. One bbox per cell-name, fixed for
+    // the whole frame, centered on the snapshot position. Restores the
+    // position anchor lost when a follow-the-cell bbox dropped voxels at
+    // the abandoned snap position (see 2026-04-15 Option A). Cells without
+    // a snap (frame 1, newborn daughters post-split) fall back to the
+    // legacy live pre/post-union bbox.
+    void setSnapBbox(const std::string &name, const BoundingBox3D &bbox) {
+        _snapBboxes[name] = bbox;
+    }
+    void clearSnapBboxes() { _snapBboxes.clear(); }
+    bool hasSnapBbox(const std::string &name) const {
+        return _snapBboxes.find(name) != _snapBboxes.end();
+    }
+
+    // Shared per-cell Voronoi exclusion mask. Installed during a split
+    // attempt so BOTH daughter candidates score cost over the parent's
+    // original territory (parent-self, real neighbors as otherClaims —
+    // sibling is NOT an otherClaim). Without this, each daughter's
+    // perturbCell rebuilds a mask that DOES exclude the sibling, and the
+    // mask shifts with each daughter — allowing both to drift toward a
+    // shared bright region at zero abandonment cost. See 2026-04-15
+    // daughter-collapse analysis.
+    void setSharedMask(const std::string &name,
+                       const std::vector<uint8_t> &mask) {
+        _sharedMasks[name] = mask;
+    }
+    void clearSharedMasks() { _sharedMasks.clear(); }
+    bool hasSharedMask(const std::string &name) const {
+        return _sharedMasks.find(name) != _sharedMasks.end();
+    }
     void regenerateSynthFrame() { _synthFrame = generateSynthFrame(); refreshFullCostCache(); }
     std::string getImageName() const { return imageName; }
     std::vector<Ellipsoid> cells;
@@ -151,6 +272,23 @@ private:
     // background invariant). Updated per-frame by the adaptive background path in
     // CellUniverse::optimize via setBackgroundColor().
     float _backgroundValue = 0.0f;
+    // Universal bbox cost mode — set once per frame via setUseBboxCost().
+    bool  _useBboxCost = false;
+    float _bboxMarginScale = 3.0f;
+    float _bboxOverlapWeight = 0.0f;  // optional cached overlap weight for bbox path
+    // Snap-anchored bboxes keyed by cell name. Installed once per frame by
+    // CellUniverse::optimize from PreviousFrameSnapshot{position,maxRadius}.
+    // When present, perturbCell uses the stored bbox as a fixed evaluation
+    // window for the whole frame, so voxels at the snap position are always
+    // included in the cost sum — drifting away from snap pays an undershoot
+    // cost, anchoring the cell to its real-cell location. Missing entry
+    // (frame 1, newborn daughters) → legacy live pre/post-union bbox.
+    std::unordered_map<std::string, BoundingBox3D> _snapBboxes;
+    // Pre-built Voronoi exclusion masks, keyed by cell name. When present
+    // for the cell being perturbed, perturbCell uses the stored mask
+    // instead of rebuilding one from live claim sets. Used during split
+    // daughter burn-in to avoid mutual-exclusion between sibling daughters.
+    std::unordered_map<std::string, std::vector<uint8_t>> _sharedMasks;
     cv::Size getImageShape();
 
     // Rebuild _currentCostPerSlice and _currentCost from scratch by walking

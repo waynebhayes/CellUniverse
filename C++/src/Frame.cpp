@@ -2,6 +2,10 @@
 
 #include <sstream>
 
+// OpenMP pragmas are parsed by the compiler when -fopenmp is passed;
+// no header include needed unless runtime functions (omp_get_thread_num, etc.)
+// are used. The #pragma directives below become no-ops without -fopenmp.
+
 // Asymmetric-L2 per-slice cost (Fix E).
 // Returns sqrt(sum(w_i * (synth_i - real_i)^2)) where w_i = k when synth>real
 // and w_i = 1 when synth<=real. With k=1.0 this is identical to
@@ -85,8 +89,10 @@ void Frame::refreshFullCostCache()
 
     _currentCostPerSlice.assign(_realFrame.size(), 0.0);
     const float asymK = simulationConfig.asymmetric_cost_weight;
+    const int nSlices = static_cast<int>(_realFrame.size());
     double totalCost = 0.0;
-    for (size_t i = 0; i < _realFrame.size(); ++i)
+    #pragma omp parallel for reduction(+:totalCost) schedule(static)
+    for (int i = 0; i < nSlices; ++i)
     {
         const double sliceCost = asymmetricL2Slice(_realFrame[i], _synthFrame[i], asymK);
         _currentCostPerSlice[i] = sliceCost;
@@ -167,10 +173,209 @@ Cost Frame::calculateCost(const std::vector<cv::Mat> &synthFrame)
     }
 
     const float asymK = simulationConfig.asymmetric_cost_weight;
+    const int nSlices = static_cast<int>(_realFrame.size());
     double totalCost = 0.0;
-    for (size_t i = 0; i < _realFrame.size(); ++i)
+    #pragma omp parallel for reduction(+:totalCost) schedule(static)
+    for (int i = 0; i < nSlices; ++i)
     {
         totalCost += asymmetricL2Slice(_realFrame[i], synthFrame[i], asymK);
+    }
+    return totalCost;
+}
+
+// =============================================================================
+// Bounding-box cost infrastructure
+// =============================================================================
+//
+// Per-cell bbox cost is computed as asymmetric-L2 over voxels inside a 3D
+// box around the cell, with voxels claimed by other cells (Voronoi) excluded.
+// This concentrates the cost signal on the cell's own territory and makes
+// split / perturbation decisions independent of unrelated image regions.
+
+BoundingBox3D Frame::computeCellBbox(size_t cellIdx, float marginScale) const
+{
+    BoundingBox3D bbox;
+    if (cellIdx >= cells.size() || _realFrame.empty()) return bbox;
+    const Ellipsoid &cell = cells[cellIdx];
+    const float maxR = std::max({cell.getARadius(), cell.getBRadius(), cell.getCRadius()});
+    const float r = marginScale * maxR;
+    const int cols = _realFrame[0].cols;
+    const int rows = _realFrame[0].rows;
+    const int slices = static_cast<int>(_realFrame.size());
+    bbox.xMin = std::max(0,        static_cast<int>(std::floor(cell.getX() - r)));
+    bbox.xMax = std::min(cols - 1, static_cast<int>(std::ceil (cell.getX() + r)));
+    bbox.yMin = std::max(0,        static_cast<int>(std::floor(cell.getY() - r)));
+    bbox.yMax = std::min(rows - 1, static_cast<int>(std::ceil (cell.getY() + r)));
+    bbox.zMin = std::max(0,          static_cast<int>(std::floor(cell.getZ() - r)));
+    bbox.zMax = std::min(slices - 1, static_cast<int>(std::ceil (cell.getZ() + r)));
+    return bbox;
+}
+
+BoundingBox3D Frame::computeBboxAtPoint(const cv::Point3f &center,
+                                         float radius,
+                                         float marginScale) const
+{
+    BoundingBox3D bbox;
+    if (_realFrame.empty() || radius <= 0.0f) return bbox;
+    const float r = marginScale * radius;
+    const int cols = _realFrame[0].cols;
+    const int rows = _realFrame[0].rows;
+    const int slices = static_cast<int>(_realFrame.size());
+    bbox.xMin = std::max(0,        static_cast<int>(std::floor(center.x - r)));
+    bbox.xMax = std::min(cols - 1, static_cast<int>(std::ceil (center.x + r)));
+    bbox.yMin = std::max(0,        static_cast<int>(std::floor(center.y - r)));
+    bbox.yMax = std::min(rows - 1, static_cast<int>(std::ceil (center.y + r)));
+    bbox.zMin = std::max(0,          static_cast<int>(std::floor(center.z - r)));
+    bbox.zMax = std::min(slices - 1, static_cast<int>(std::ceil (center.z + r)));
+    return bbox;
+}
+
+BoundingBox3D Frame::computeUnionBbox(const std::vector<size_t> &cellIndices,
+                                       float marginScale) const
+{
+    BoundingBox3D result;
+    bool first = true;
+    for (size_t idx : cellIndices) {
+        BoundingBox3D b = computeCellBbox(idx, marginScale);
+        if (!b.isValid()) continue;
+        if (first) { result = b; first = false; continue; }
+        result.xMin = std::min(result.xMin, b.xMin);
+        result.xMax = std::max(result.xMax, b.xMax);
+        result.yMin = std::min(result.yMin, b.yMin);
+        result.yMax = std::max(result.yMax, b.yMax);
+        result.zMin = std::min(result.zMin, b.zMin);
+        result.zMax = std::max(result.zMax, b.zMax);
+    }
+    return result;
+}
+
+BoundingBox3D Frame::computeUnionBboxWithPoints(
+    const std::vector<size_t> &cellIndices,
+    float marginScale,
+    const std::vector<cv::Point3f> &extraPoints,
+    float pointRadius) const
+{
+    BoundingBox3D result = computeUnionBbox(cellIndices, marginScale);
+    if (_realFrame.empty()) return result;
+    const int cols = _realFrame[0].cols;
+    const int rows = _realFrame[0].rows;
+    const int slices = static_cast<int>(_realFrame.size());
+    bool first = !result.isValid();
+    for (const auto &p : extraPoints) {
+        const int px0 = std::max(0,        static_cast<int>(std::floor(p.x - pointRadius)));
+        const int px1 = std::min(cols - 1, static_cast<int>(std::ceil (p.x + pointRadius)));
+        const int py0 = std::max(0,        static_cast<int>(std::floor(p.y - pointRadius)));
+        const int py1 = std::min(rows - 1, static_cast<int>(std::ceil (p.y + pointRadius)));
+        const int pz0 = std::max(0,          static_cast<int>(std::floor(p.z - pointRadius)));
+        const int pz1 = std::min(slices - 1, static_cast<int>(std::ceil (p.z + pointRadius)));
+        if (px0 > px1 || py0 > py1 || pz0 > pz1) continue;
+        if (first) {
+            result.xMin = px0; result.xMax = px1;
+            result.yMin = py0; result.yMax = py1;
+            result.zMin = pz0; result.zMax = pz1;
+            first = false;
+            continue;
+        }
+        result.xMin = std::min(result.xMin, px0);
+        result.xMax = std::max(result.xMax, px1);
+        result.yMin = std::min(result.yMin, py0);
+        result.yMax = std::max(result.yMax, py1);
+        result.zMin = std::min(result.zMin, pz0);
+        result.zMax = std::max(result.zMax, pz1);
+    }
+    return result;
+}
+
+std::vector<uint8_t> Frame::buildExclusionMask(
+    const BoundingBox3D &bbox,
+    const std::vector<cv::Point3f> &selfClaimPoints,
+    const ClaimSet &otherClaimSets) const
+{
+    std::vector<uint8_t> mask;
+    if (!bbox.isValid() || selfClaimPoints.empty()) return mask;
+    const int nx = bbox.nx();
+    const int ny = bbox.ny();
+    const int nz = bbox.nz();
+    mask.assign(static_cast<size_t>(nx) * ny * nz, 0);
+
+    // Flatten otherClaimSets into a single vector for tight inner-loop access.
+    std::vector<cv::Point3f> otherPoints;
+    otherPoints.reserve(otherClaimSets.size() * 2);
+    for (const auto &kv : otherClaimSets) {
+        for (const auto &p : kv.second) {
+            otherPoints.push_back(p);
+        }
+    }
+
+    #pragma omp parallel for schedule(static)
+    for (int z = bbox.zMin; z <= bbox.zMax; ++z) {
+        const float zf = static_cast<float>(z);
+        const int zOff = (z - bbox.zMin) * nx * ny;
+        for (int y = bbox.yMin; y <= bbox.yMax; ++y) {
+            const float yf = static_cast<float>(y);
+            const int yOff = zOff + (y - bbox.yMin) * nx;
+            for (int x = bbox.xMin; x <= bbox.xMax; ++x) {
+                const float xf = static_cast<float>(x);
+                // Nearest self-claim distance².
+                float selfBest = std::numeric_limits<float>::infinity();
+                for (const auto &sp : selfClaimPoints) {
+                    const float dx = xf - sp.x;
+                    const float dy = yf - sp.y;
+                    const float dz = zf - sp.z;
+                    const float d2 = dx * dx + dy * dy + dz * dz;
+                    if (d2 < selfBest) selfBest = d2;
+                }
+                // Reject if any other claim is closer than self's best.
+                bool keep = true;
+                for (const auto &op : otherPoints) {
+                    const float dx = xf - op.x;
+                    const float dy = yf - op.y;
+                    const float dz = zf - op.z;
+                    const float d2 = dx * dx + dy * dy + dz * dz;
+                    if (d2 < selfBest) { keep = false; break; }
+                }
+                if (keep) mask[yOff + (x - bbox.xMin)] = 1;
+            }
+        }
+    }
+    return mask;
+}
+
+double Frame::calculateBboxCost(
+    const BoundingBox3D &bbox,
+    const std::vector<cv::Mat> &synthFrame,
+    const std::vector<uint8_t> &mask) const
+{
+    if (!bbox.isValid() || mask.empty()) return 0.0;
+    if (synthFrame.size() != _realFrame.size()) {
+        throw std::runtime_error("bbox cost: synth/real stack size mismatch");
+    }
+    const float asymK = simulationConfig.asymmetric_cost_weight;
+    const int nx = bbox.nx();
+    const int ny = bbox.ny();
+    const bool useAsym = asymK > 1.0f + 1e-6f;
+    double totalCost = 0.0;
+
+    #pragma omp parallel for reduction(+:totalCost) schedule(static)
+    for (int z = bbox.zMin; z <= bbox.zMax; ++z) {
+        const cv::Mat &realSlice  = _realFrame[z];
+        const cv::Mat &synthSlice = synthFrame[z];
+        if (realSlice.type() != CV_32F || synthSlice.type() != CV_32F) continue;
+        const int zOff = (z - bbox.zMin) * nx * ny;
+        double sliceCost = 0.0;
+        for (int y = bbox.yMin; y <= bbox.yMax; ++y) {
+            const float *rr = realSlice.ptr<float>(y);
+            const float *ss = synthSlice.ptr<float>(y);
+            const int yOff = zOff + (y - bbox.yMin) * nx;
+            for (int x = bbox.xMin; x <= bbox.xMax; ++x) {
+                if (!mask[yOff + (x - bbox.xMin)]) continue;
+                const float d = ss[x] - rr[x];
+                float d2 = d * d;
+                if (useAsym && d > 0.0f) d2 *= asymK;
+                sliceCost += d2;
+            }
+        }
+        totalCost += sliceCost;
     }
     return totalCost;
 }
@@ -354,18 +559,104 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight)
     int affectedMax = -1;
     auto newSynthFrame = generateSynthFrameFast(oldCell, cells[index],
                                                 &affectedMin, &affectedMax);
+
+    double newImageCost = 0.0;
+    double oldImageCost = 0.0;
     std::vector<double> newCostPerSlice;
-    double newImageCost = calculateIncrementalCost(newSynthFrame,
-                                                   affectedMin, affectedMax,
-                                                   newCostPerSlice);
-    // Use cached cost instead of recalculating L2 over all 225 slices
-    double oldImageCost = _currentCost;
+
+    if (_useBboxCost) {
+        // Bbox cost path: measure asymmetric L2 over a fixed 3D bbox, with
+        // Voronoi exclusion of voxels claimed by any other cell.
+        //
+        // Option A — snap-anchored bbox: if this cell has a snap bbox
+        // installed (CellUniverse::optimize populates once per frame from
+        // PreviousFrameSnapshot.position + maxRadius), use it unchanged for
+        // every perturbation of this cell during the frame. That way, voxels
+        // at the snap position are always scored — if the cell drifts away
+        // from snap, synth at the snap position is empty while real is
+        // bright, producing an undershoot penalty that anchors the cell to
+        // its real-cell location. Without the anchor, the bbox follows the
+        // cell and the abandoned snap voxels drop out of scope entirely.
+        //
+        // Cells without a snap (frame 1, daughters just created by a split
+        // this frame) fall back to the legacy live pre/post-union bbox.
+        BoundingBox3D bboxUnion;
+        const std::string &cellName = cells[index].getName();
+        auto snapIt = _snapBboxes.find(cellName);
+        const bool haveSnapBbox = (snapIt != _snapBboxes.end()
+                                   && snapIt->second.isValid());
+        if (haveSnapBbox) {
+            bboxUnion = snapIt->second;
+        } else {
+            BoundingBox3D bboxPre = computeCellBbox(index, _bboxMarginScale);
+            bboxUnion = bboxPre;
+            // Old-cell bbox derived inline (cell is currently post-perturb).
+            const float maxRold = std::max({oldCell.getARadius(),
+                                            oldCell.getBRadius(),
+                                            oldCell.getCRadius()});
+            const float r = _bboxMarginScale * maxRold;
+            const int cols = _realFrame[0].cols;
+            const int rows = _realFrame[0].rows;
+            const int slices = static_cast<int>(_realFrame.size());
+            BoundingBox3D b;
+            b.xMin = std::max(0,        static_cast<int>(std::floor(oldCell.getX() - r)));
+            b.xMax = std::min(cols - 1, static_cast<int>(std::ceil (oldCell.getX() + r)));
+            b.yMin = std::max(0,        static_cast<int>(std::floor(oldCell.getY() - r)));
+            b.yMax = std::min(rows - 1, static_cast<int>(std::ceil (oldCell.getY() + r)));
+            b.zMin = std::max(0,          static_cast<int>(std::floor(oldCell.getZ() - r)));
+            b.zMax = std::min(slices - 1, static_cast<int>(std::ceil (oldCell.getZ() + r)));
+            if (!bboxUnion.isValid()) {
+                bboxUnion = b;
+            } else {
+                bboxUnion.xMin = std::min(bboxUnion.xMin, b.xMin);
+                bboxUnion.xMax = std::max(bboxUnion.xMax, b.xMax);
+                bboxUnion.yMin = std::min(bboxUnion.yMin, b.yMin);
+                bboxUnion.yMax = std::max(bboxUnion.yMax, b.yMax);
+                bboxUnion.zMin = std::min(bboxUnion.zMin, b.zMin);
+                bboxUnion.zMax = std::max(bboxUnion.zMax, b.zMax);
+            }
+        }
+
+        // Voronoi exclusion mask: normally built LIVE from current cell
+        // positions (self + all others). But if this cell has a shared
+        // mask installed (split daughter burn-in case), use it directly
+        // so the sibling daughter is NOT treated as an excluding neighbor
+        // — otherwise the mask shifts with daughter motion and allows
+        // mutual drift toward a shared bright region at zero abandonment
+        // cost. See 2026-04-15 daughter-collapse analysis.
+        auto sharedIt = _sharedMasks.find(cellName);
+        std::vector<uint8_t> mask;
+        if (sharedIt != _sharedMasks.end() && !sharedIt->second.empty()) {
+            mask = sharedIt->second;
+        } else {
+            std::vector<cv::Point3f> selfClaims{
+                cv::Point3f(cells[index].getX(), cells[index].getY(), cells[index].getZ())
+            };
+            ClaimSet otherClaims;
+            for (size_t oi = 0; oi < cells.size(); ++oi) {
+                if (oi == index) continue;
+                otherClaims[cells[oi].getName()].push_back(
+                    cv::Point3f(cells[oi].getX(), cells[oi].getY(), cells[oi].getZ()));
+            }
+            mask = buildExclusionMask(bboxUnion, selfClaims, otherClaims);
+        }
+        oldImageCost = calculateBboxCost(bboxUnion, _synthFrame, mask);
+        newImageCost = calculateBboxCost(bboxUnion, newSynthFrame, mask);
+    } else {
+        // Legacy full-image path.
+        newImageCost = calculateIncrementalCost(newSynthFrame,
+                                                affectedMin, affectedMax,
+                                                newCostPerSlice);
+        oldImageCost = _currentCost;
+    }
 
     double costDiff = (newImageCost + newOverlapCell)
                     - (oldImageCost + oldOverlapCell);
 
+    const bool useBboxLocal = _useBboxCost;
     CallBackFunc callback = [this, newSynthFrame, newCostPerSlice,
-                             oldCell, index, newImageCost, perturbDirections](bool accept)
+                             oldCell, index, newImageCost, perturbDirections,
+                             useBboxLocal](bool accept)
     {
         const float brightnessStep = std::max(0.0f, Ellipsoid::cellConfig.brightnessProbabilityStep);
         const float aRadiusStep = std::max(0.0f, Ellipsoid::cellConfig.aRadiusProbabilityStep);
@@ -377,8 +668,13 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight)
             if (perturbDirections.bRadius != 0) this->cells[index].adjustBRadiusPerturbProbability(perturbDirections.bRadius, bRadiusStep);
             if (perturbDirections.cRadius != 0) this->cells[index].adjustCRadiusPerturbProbability(perturbDirections.cRadius, cRadiusStep);
             this->_synthFrame = newSynthFrame;
-            this->_currentCost = newImageCost;
-            this->_currentCostPerSlice = newCostPerSlice;
+            if (!useBboxLocal) {
+                this->_currentCost = newImageCost;
+                this->_currentCostPerSlice = newCostPerSlice;
+            }
+            // Under bbox cost, _currentCost/_currentCostPerSlice are stale
+            // and unused for decisions. They remain populated from the
+            // initial refreshFullCostCache for diagnostic logging only.
         } else {
             Ellipsoid revertedCell = oldCell;
             if (perturbDirections.brightness != 0) revertedCell.adjustBrightnessPerturbProbability(perturbDirections.brightness, -brightnessStep);
@@ -1228,11 +1524,17 @@ bool Frame::calibrateCellShapeViaPca(
     float maxPosShiftFraction,
     float maskA,
     float maskB,
-    float maskC)
+    float maskC,
+    std::ostream *logSink)
 {
     if (cellIndex >= cells.size()) return false;
     if (maxIters <= 0) return false;
     Ellipsoid &cell = cells[cellIndex];
+
+    // Route per-iter logs to the optional sink (per-thread accumulator)
+    // when provided, else to std::cout. Lets the parallelized caller emit
+    // deterministic per-cell log blocks in cell-index order.
+    std::ostream &log = logSink ? *logSink : std::cout;
 
     const float convergeAngleRad =
         convergeAngleDeg * static_cast<float>(M_PI) / 180.0f;
@@ -1253,6 +1555,43 @@ bool Frame::calibrateCellShapeViaPca(
 
     bool anyUpdate = false;
 
+    // P4 — bright-pixel gather cache.
+    //
+    // gatherBrightPixelsVoronoi scans a 3D box of `sphereR` around `center`,
+    // applies brightness cutoff, then Voronoi-filters against neighbor
+    // claim points. The expensive step is the box scan + Voronoi test —
+    // O(boxVolume * nNeighbors). Per shape-fit iteration the gather inputs
+    // are mostly invariant: `_realFrame`, `_backgroundValue`, `sphereR`,
+    // `otherCellsClaimSets` never change; only `center` can change (and
+    // only when `updatePosition=true`). Cache the raw pixel set keyed on
+    // `center`; re-gather only when the centroid moves.
+    cv::Point3f cachedCenter{std::numeric_limits<float>::quiet_NaN(),
+                             std::numeric_limits<float>::quiet_NaN(),
+                             std::numeric_limits<float>::quiet_NaN()};
+    std::vector<BrightPixel> cachedRaw;
+    int cachedHits = 0;
+    int cachedMisses = 0;
+
+    // Adaptive exponent: bright core-dominated cells get a lower exponent
+    // (more halo-inclusive fit, counters core-only shrinkage); dim/uniform
+    // cells keep the default exponent. Recomputed on each cache miss (same
+    // scope as the raw gather — invariant across iterations otherwise).
+    const bool   adaptiveExp = Ellipsoid::cellConfig.pcaShapeAdaptiveExponent;
+    const float  expDim      = std::max(0.0f, Ellipsoid::cellConfig.pcaShapeWeightExponent);
+    const float  expBright   = std::max(0.0f, Ellipsoid::cellConfig.pcaShapeWeightExponentBright);
+    const float  coreT       = Ellipsoid::cellConfig.pcaShapeCoreBrightnessThreshold;
+    const float  coreLo      = Ellipsoid::cellConfig.pcaShapeCoreFractionLow;
+    const float  coreHi      = std::max(coreLo + 1e-6f,
+                                        Ellipsoid::cellConfig.pcaShapeCoreFractionHigh);
+    const float  radInflBright = std::max(1.0f, Ellipsoid::cellConfig.pcaShapeRadiusInflationBright);
+    float cellWeightExponent = expDim;
+    // Per-cell radius inflation multiplier. 1.0 for uniform/dim cells
+    // (PCA variance formula is analytically exact for them); ramps up to
+    // radInflBright for peaked/bright-core cells whose visible halo
+    // extends beyond the 97% containment radius. Driven by the same
+    // pCore metric as adaptive exponent.
+    float cellRadiusInflation = 1.0f;
+
     for (int iter = 0; iter < maxIters; ++iter) {
         const cv::Point3f center(cell.getX(), cell.getY(), cell.getZ());
         const float curA = cell.getARadius();
@@ -1261,11 +1600,49 @@ bool Frame::calibrateCellShapeViaPca(
         const float maxR = std::max({curA, curB, curC});
         if (maxR <= 1e-3f) break;
 
-        std::vector<cv::Point3f> selfClaim{center};
-        GatherStats gstats;
-        auto raw = gatherBrightPixelsVoronoi(
-            _realFrame, _backgroundValue, center, sphereR,
-            selfClaim, otherCellsClaimSets, &gstats);
+        // Cache hit when center hasn't moved since last gather. With
+        // updatePosition=false (recommended), this hits on every iter
+        // after the first → 14× speedup on the gather phase.
+        const bool cacheHit = (cachedRaw.size() > 0)
+            && (std::abs(center.x - cachedCenter.x) < 1e-4f)
+            && (std::abs(center.y - cachedCenter.y) < 1e-4f)
+            && (std::abs(center.z - cachedCenter.z) < 1e-4f);
+        if (!cacheHit) {
+            std::vector<cv::Point3f> selfClaim{center};
+            GatherStats gstats;
+            cachedRaw = gatherBrightPixelsVoronoi(
+                _realFrame, _backgroundValue, center, sphereR,
+                selfClaim, otherCellsClaimSets, &gstats);
+            cachedCenter = center;
+            ++cachedMisses;
+
+            // Adaptive exponent: measure core-dominance on the freshly
+            // gathered raw pixels. Dim cells stay at expDim; bright cells
+            // ramp down toward expBright to give halo a fairer vote in
+            // the weighted moments.
+            if (adaptiveExp && !cachedRaw.empty()) {
+                int coreCount = 0;
+                for (const auto &bp : cachedRaw) {
+                    if (bp.weight > coreT) ++coreCount;
+                }
+                const float pCore = static_cast<float>(coreCount) /
+                                    static_cast<float>(cachedRaw.size());
+                const float t = std::clamp(
+                    (pCore - coreLo) / (coreHi - coreLo), 0.0f, 1.0f);
+                cellWeightExponent = expDim + t * (expBright - expDim);
+                // Same pCore ramp drives radius inflation: 1.0 for uniform
+                // (t=0), radInflBright for peaked (t=1).
+                cellRadiusInflation = 1.0f + t * (radInflBright - 1.0f);
+                log << "  [PCA Shape Exp] cell=" << cell.getName()
+                    << " pCore=" << pCore
+                    << " exp=" << cellWeightExponent
+                    << " radInfl=" << cellRadiusInflation
+                    << std::endl;
+            }
+        } else {
+            ++cachedHits;
+        }
+        const std::vector<BrightPixel> &raw = cachedRaw;
 
         // Ellipsoid mask uses FIXED radii (snap), not live, so it cannot
         // tighten between iterations — prevents mask-feedback collapse.
@@ -1291,20 +1668,38 @@ bool Frame::calibrateCellShapeViaPca(
         }
 
         if (static_cast<int>(pixels.size()) < minPixels) {
-            std::cout << "  [PCA Shape] cell=" << cell.getName()
+            log << "  [PCA Shape] cell=" << cell.getName()
                       << " iter=" << iter
                       << " stop_too_few pixels=" << pixels.size()
                       << " min=" << minPixels << std::endl;
             break;
         }
 
-        // Weighted centroid + covariance in world frame.
+        // Intensity-weighted centroid + covariance with configurable exponent.
+        //   exp=1.0: linear (historical behavior, halo can bloat radii).
+        //   exp=2.0: quadratic (current default; suppresses halo ~25× vs core).
+        //   exp=higher: stronger core emphasis.
+        // Cached per-pixel weight is `weight_eff = pow(bp.weight, exp)`.
+        // Fast paths for exp∈{1, 2} avoid the std::pow call.
+        // `cellWeightExponent` is per-cell adaptive when enabled (set above
+        // on cache miss), else equals `pcaShapeWeightExponent`.
+        const float weightExponent = cellWeightExponent;
+        const bool exp1 = std::abs(weightExponent - 1.0f) < 1e-6f;
+        const bool exp2 = std::abs(weightExponent - 2.0f) < 1e-6f;
+
+        auto effectiveWeight = [&](float w) -> double {
+            if (exp1) return static_cast<double>(w);
+            if (exp2) return static_cast<double>(w) * w;
+            return std::pow(static_cast<double>(w), static_cast<double>(weightExponent));
+        };
+
         double sx = 0, sy = 0, sz = 0, wsum = 0;
         for (const auto &bp : pixels) {
-            sx += bp.pos.x * bp.weight;
-            sy += bp.pos.y * bp.weight;
-            sz += bp.pos.z * bp.weight;
-            wsum += bp.weight;
+            const double we = effectiveWeight(bp.weight);
+            sx += bp.pos.x * we;
+            sy += bp.pos.y * we;
+            sz += bp.pos.z * we;
+            wsum += we;
         }
         if (wsum < 1e-6) break;
         const double mx = sx / wsum, my = sy / wsum, mz = sz / wsum;
@@ -1314,10 +1709,10 @@ bool Frame::calibrateCellShapeViaPca(
             const double dx = bp.pos.x - mx;
             const double dy = bp.pos.y - my;
             const double dz = bp.pos.z - mz;
-            const double w = bp.weight;
-            cxx += w * dx * dx; cxy += w * dx * dy; cxz += w * dx * dz;
-            cyy += w * dy * dy; cyz += w * dy * dz;
-            czz += w * dz * dz;
+            const double we = effectiveWeight(bp.weight);
+            cxx += we * dx * dx; cxy += we * dx * dy; cxz += we * dx * dz;
+            cyy += we * dy * dy; cyz += we * dy * dz;
+            czz += we * dz * dz;
         }
         cxx /= wsum; cxy /= wsum; cxz /= wsum;
         cyy /= wsum; cyz /= wsum; czz /= wsum;
@@ -1387,9 +1782,16 @@ bool Frame::calibrateCellShapeViaPca(
             maxAxisAngle = 0.0;
         }
 
-        const float targetA = radiusScale * std::sqrt(static_cast<float>(matchedVariance[0]));
-        const float targetB = radiusScale * std::sqrt(static_cast<float>(matchedVariance[1]));
-        const float targetC = radiusScale * std::sqrt(static_cast<float>(matchedVariance[2]));
+        // Apply per-cell adaptive inflation (1.0 for uniform, up to
+        // radInflBright for peaked). Compensates PCA's 97%-containment
+        // underestimation for peaked distributions without inflating
+        // uniform cells where the analytic sqrt(5) formula is exact.
+        const float targetA = cellRadiusInflation * radiusScale *
+                              std::sqrt(static_cast<float>(matchedVariance[0]));
+        const float targetB = cellRadiusInflation * radiusScale *
+                              std::sqrt(static_cast<float>(matchedVariance[1]));
+        const float targetC = cellRadiusInflation * radiusScale *
+                              std::sqrt(static_cast<float>(matchedVariance[2]));
         // No floor. Collapse was prevented by moving mask to snap radii
         // (above); radii are now free to reach true image extent.
 
@@ -1431,7 +1833,7 @@ bool Frame::calibrateCellShapeViaPca(
         const float dC = std::abs(targetC - curC);
         const float maxDR = std::max({dA, dB, dC});
 
-        std::cout << "  [PCA Shape] cell=" << cell.getName()
+        log << "  [PCA Shape] cell=" << cell.getName()
                   << " iter=" << iter
                   << " n=" << pixels.size()
                   << " degen=" << degenerate
@@ -1445,6 +1847,16 @@ bool Frame::calibrateCellShapeViaPca(
             maxAxisAngle < convergeAngleRad) {
             break;
         }
+    }
+
+    if (cachedHits + cachedMisses > 0) {
+        log << "  [PCA Shape Cache] cell=" << cell.getName()
+                  << " hits=" << cachedHits
+                  << " misses=" << cachedMisses
+                  << " hitRate="
+                  << (static_cast<float>(cachedHits) /
+                      static_cast<float>(cachedHits + cachedMisses))
+                  << std::endl;
     }
 
     return anyUpdate;
@@ -1558,6 +1970,13 @@ CostCallbackPair Frame::trySplitCellPhased(
     // undo the snapshot-state install so Phase B's live state isn't
     // lost. No-op if snapshot wasn't valid (no install happened).
     auto restoreLiveParent = [&]() {
+        // Cleanup snap-bboxes + shared masks installed for daughter
+        // candidates — safe to erase unconditionally (erase of absent key
+        // is a no-op). Covers every reject path through restoreLiveParent.
+        _snapBboxes.erase(parentName + "0");
+        _snapBboxes.erase(parentName + "1");
+        _sharedMasks.erase(parentName + "0");
+        _sharedMasks.erase(parentName + "1");
         if (!snapshotValid) return;
         if (cellIndex >= cells.size()) return;
         cells[cellIndex] = liveParent;
@@ -1714,10 +2133,24 @@ CostCallbackPair Frame::trySplitCellPhased(
     // direction, matching the z-brightness gradient instead of a real
     // division (e3d03 false splits at f2 via axA and axC).
     //
-    // An axis is included if its radius is within 20% of the shortest.
-    // For a=c cells (1f2ed: 32.3/30.0/32.3), minR=30.0, threshold=36.0,
-    // so all three are included. For e3d03 (27.1/21.3/25.6), minR=21.3,
-    // threshold=25.6, so only axB(21.3) is included.
+    // Include ONLY the single shortest local axis as a primary direction.
+    //
+    // Data analysis from run 002144 (196 split winners across burn-in,
+    // 6 accepted splits):
+    //   Axis   | Wins | Accepts
+    //   -------|------|--------
+    //   axC    | 100  |   1
+    //   imgPca |  75  |   5
+    //   axB    |  19  |   0
+    //   axA    |   2  |   0
+    //
+    // ZERO accepts came from axB or axA — they only competed in near-
+    // round cells (where the 1.2× threshold admitted them) and never
+    // beat axC or imgPca in the final accept. Biologically, cells
+    // divide along their SHORTEST axis; axA and axB were candidate-set
+    // bloat. Dropping them reduces near-round-cell candidates from 3
+    // axes × 10 variants = 30 to 2 axes × 10 = 20 (~33% saving), with
+    // zero accuracy loss.
     const float rA = parent.getARadius();
     const float rB = parent.getBRadius();
     const float rC = parent.getCRadius();
@@ -1725,27 +2158,12 @@ CostCallbackPair Frame::trySplitCellPhased(
     const cv::Point3f axes3[] = {axisA, axisB, axisC};
     const std::string names3[] = {"axA", "axB", "axC"};
 
-    const float minR = std::min({rA, rB, rC});
-    const float maxR = std::max({rA, rB, rC});
-    const float shortAxisThreshold = minR * 1.2f;
-
-    std::vector<cv::Point3f> primaryDirs;
-    std::vector<std::string> primaryNames;
-    for (int i = 0; i < 3; ++i) {
-        if (radii3[i] <= shortAxisThreshold) {
-            primaryDirs.push_back(axes3[i]);
-            primaryNames.push_back(names3[i]);
-        }
+    int shortIdx = 0;
+    for (int i = 1; i < 3; ++i) {
+        if (radii3[i] < radii3[shortIdx]) shortIdx = i;
     }
-    // Safety: if nothing qualifies (shouldn't happen), try shortest only.
-    if (primaryDirs.empty()) {
-        int shortIdx = 0;
-        for (int i = 1; i < 3; ++i) {
-            if (radii3[i] < radii3[shortIdx]) shortIdx = i;
-        }
-        primaryDirs.push_back(axes3[shortIdx]);
-        primaryNames.push_back(names3[shortIdx]);
-    }
+    std::vector<cv::Point3f> primaryDirs{axes3[shortIdx]};
+    std::vector<std::string> primaryNames{names3[shortIdx]};
 
     // Add the image-PCA direction (from pre-pass, supplied via
     // snapshot.splitAxisDir) as an additional primary axis. For near-round
@@ -1785,10 +2203,10 @@ CostCallbackPair Frame::trySplitCellPhased(
                     << "," << primaryDirs[i].z << ")";
         }
         std::cout << "  [Split Dirs] " << parentName
-                  << " mode=local_axes_short+imgPca"
+                  << " mode=shortest_local+imgPca"
                   << " radii=(" << rA << "," << rB << "," << rC << ")"
-                  << " minR=" << minR
-                  << " thresh=" << shortAxisThreshold
+                  << " shortestAxis=" << names3[shortIdx]
+                  << " shortestR=" << radii3[shortIdx]
                   << " selected=[" << selAxes.str() << "]"
                   << " nPrimaries=" << primaryDirs.size()
                   << " (expect 2 midpoints × 5 variants each = "
@@ -1809,7 +2227,13 @@ CostCallbackPair Frame::trySplitCellPhased(
         std::string label;
     };
 
-    const float volumeScale = std::cbrt(0.5f);
+    // Daughter built radii = volumeScale × snapshot parent radii. Default
+    // ∛(0.5) ≈ 0.7937 preserves total cell volume across the split. Tunable
+    // via probConfig.split_daughter_volume_scale — raise toward 1.0 to make
+    // daughters cover more material on first cost eval (helps when parent
+    // PCA fit is tight and undercounts the real cell extent), lower toward
+    // 0.5 to start tight and rely on per-daughter PCA refit to grow back.
+    const float volumeScale = std::max(0.1f, probConfig.split_daughter_volume_scale);
     const float daughterR = std::max(0.5f * parentMajor, 5.0f);
     const float rotDeltaRad =
         probConfig.split_candidate_rotation_delta_degrees * static_cast<float>(M_PI) / 180.0f;
@@ -1923,9 +2347,82 @@ CostCallbackPair Frame::trySplitCellPhased(
     }
 
     // --- 4. Evaluate each candidate via a short burn-in ---
-    // Save the pre-split state to revert cheaply. Use the current _synthFrame
-    // and per-slice cost cache as the baseline.
-    const double baselineImageCost = _currentCost;
+    // Save the pre-split state to revert cheaply.
+    //
+    // When _useBboxCost is true, build a single union bbox + exclusion mask
+    // ONCE here covering parent + all candidate seed positions + drift
+    // margin. All cost evaluations during burn-in / refine / final gate use
+    // this same bbox + mask, so baseline and every candidate are compared on
+    // the same voxel set (apples-to-apples). Neighbor positions don't
+    // change during the split attempt, so the mask stays valid throughout.
+    BoundingBox3D splitBbox;
+    std::vector<uint8_t> splitMask;
+    if (_useBboxCost) {
+        std::vector<cv::Point3f> seedPoints;
+        seedPoints.reserve(candidates.size() * 2);
+        for (const auto &cand : candidates) {
+            seedPoints.push_back(cand.d1Pos);
+            seedPoints.push_back(cand.d2Pos);
+        }
+        const float pointR = _bboxMarginScale * std::max({srcMajor, srcB, srcMinor});
+        splitBbox = computeUnionBboxWithPoints({cellIndex}, _bboxMarginScale,
+                                               seedPoints, pointR);
+
+        std::vector<cv::Point3f> selfClaims{
+            cv::Point3f(cells[cellIndex].getX(),
+                        cells[cellIndex].getY(),
+                        cells[cellIndex].getZ())
+        };
+        ClaimSet otherClaimsForBbox;
+        for (size_t oi = 0; oi < cells.size(); ++oi) {
+            if (oi == cellIndex) continue;
+            otherClaimsForBbox[cells[oi].getName()].push_back(
+                cv::Point3f(cells[oi].getX(),
+                            cells[oi].getY(),
+                            cells[oi].getZ()));
+        }
+        splitMask = buildExclusionMask(splitBbox, selfClaims, otherClaimsForBbox);
+
+        std::cout << "  [Split Bbox Init] " << parentName
+                  << " bboxXYZ=(" << splitBbox.xMin << "-" << splitBbox.xMax
+                  << ", " << splitBbox.yMin << "-" << splitBbox.yMax
+                  << ", " << splitBbox.zMin << "-" << splitBbox.zMax << ")"
+                  << " volume=" << splitBbox.volume()
+                  << " maskSeedPoints=" << seedPoints.size()
+                  << std::endl;
+
+        // --- Daughter snap-bbox + shared-mask install (splits extension) ---
+        // (1) Install the shared split union bbox under each daughter
+        //     candidate name so perturbCell anchors daughters to the SAME
+        //     union bbox covering both lobes.
+        // (2) Install the splitMask (built above with PARENT as self-claim,
+        //     real neighbors as other-claims — SIBLING is NOT a claimant
+        //     because daughters don't exist yet at that point) under each
+        //     daughter candidate name. perturbCell will use the shared mask
+        //     instead of rebuilding one that would exclude the sibling.
+        // Without (2), each daughter's dynamic mask excludes the sibling.
+        // The Voronoi boundary then shifts with the daughters and neither
+        // pays the undershoot cost of abandoning its own lobe — both drift
+        // toward a shared bright region. With (2), abandoning a lobe
+        // registers undershoot regardless of sibling position — porting
+        // 0413's global anchoring into bbox scope. Erased on every return
+        // path via restoreLiveParent + the accept callback.
+        if (splitBbox.isValid()) {
+            _snapBboxes[parentName + "0"] = splitBbox;
+            _snapBboxes[parentName + "1"] = splitBbox;
+            _sharedMasks[parentName + "0"] = splitMask;
+            _sharedMasks[parentName + "1"] = splitMask;
+        }
+    }
+
+    auto evalImageCost = [&](const std::vector<cv::Mat> &synth) -> double {
+        if (_useBboxCost) return calculateBboxCost(splitBbox, synth, splitMask);
+        return _currentCost;  // legacy path: cached after refreshFullCostCache
+    };
+
+    const double baselineImageCost = _useBboxCost
+        ? calculateBboxCost(splitBbox, _synthFrame, splitMask)
+        : _currentCost;
     const double baselineOverlap = computeOverlapPenalty(probConfig.overlap_penalty_weight);
     const double baselineTotal = baselineImageCost + baselineOverlap;
     const std::vector<cv::Mat> savedSynth = _synthFrame;
@@ -1996,9 +2493,12 @@ CostCallbackPair Frame::trySplitCellPhased(
         const size_t d1Idx = cells.size() - 2;
         const size_t d2Idx = cells.size() - 1;
 
-        // Full render + cost refresh (candidate set is small, K<=5).
+        // Full render. Cost cache refresh is needed only by the legacy
+        // (full-image) path; bbox-cost reads the synth directly each time.
         _synthFrame = generateSynthFrame();
-        refreshFullCostCache();
+        if (!_useBboxCost) {
+            refreshFullCostCache();
+        }
 
         // Short alternating burn-in on each daughter.
         for (int it = 0; it < burnIters; ++it) {
@@ -2009,7 +2509,10 @@ CostCallbackPair Frame::trySplitCellPhased(
             cp.second(accept);
         }
 
-        const double candImageCost = _currentCost;
+        // Under bbox flag, _currentCost is stale (perturbCell's bbox path
+        // doesn't update it). Use the cached bbox+mask to score the
+        // candidate's post-burn-in synth on the same voxel set as baseline.
+        const double candImageCost = evalImageCost(_synthFrame);
         const double candOverlap = computeOverlapPenalty(probConfig.overlap_penalty_weight);
         const double candTotal = candImageCost + candOverlap;
 
@@ -2094,7 +2597,10 @@ CostCallbackPair Frame::trySplitCellPhased(
         const cv::Point3f preRefineD2(cells[d2IdxRefine].getX(),
                                         cells[d2IdxRefine].getY(),
                                         cells[d2IdxRefine].getZ());
-        const double preRefineTotal = _currentCost +
+        // Pre-refine baseline: bestImageCost was set from candidate's
+        // post-burn-in cost (bbox or full per flag), reinstalled into
+        // _currentCost above for the legacy path.
+        const double preRefineTotal = bestImageCost +
             computeOverlapPenalty(probConfig.overlap_penalty_weight);
 
         int refineAccepts = 0;
@@ -2116,19 +2622,26 @@ CostCallbackPair Frame::trySplitCellPhased(
         // pattern as the per-frame shape fit), with Voronoi exclusion so
         // the sibling daughter and every other cell are claimants.
         //
-        // Clamp fitted radii at split_daughter_refit_min_radius_fraction
-        // of built radii so a phantom daughter can't collapse to a sliver
-        // and hide in background.
+        // Clamp fitted radii to [min * built, max * built] per axis:
+        //   floor (min_fraction × built) — phantom daughter can't collapse
+        //   ceiling (max_fraction × built) — newborn daughter can't bloat
+        //     past ~1.1× built due to immature sibling-Voronoi boundary
+        //     absorbing neighbor/halo pixels during refit.
         const int daughterRefitIters = std::max(0, probConfig.split_daughter_refit_iterations);
         if (daughterRefitIters > 0) {
             const float minFrac = std::max(0.0f, std::min(1.0f,
                 probConfig.split_daughter_refit_min_radius_fraction));
+            const float maxFrac = std::max(1.0f,
+                probConfig.split_daughter_refit_max_radius_fraction);
             const float dBuiltA = volumeScale * srcMajor;
             const float dBuiltB = volumeScale * srcB;
             const float dBuiltC = volumeScale * srcMinor;
             const float floorA = minFrac * dBuiltA;
             const float floorB = minFrac * dBuiltB;
             const float floorC = minFrac * dBuiltC;
+            const float ceilA  = maxFrac * dBuiltA;
+            const float ceilB  = maxFrac * dBuiltB;
+            const float ceilC  = maxFrac * dBuiltC;
 
             auto buildRefitClaimSet = [&](size_t selfIdx) -> ClaimSet {
                 ClaimSet others;
@@ -2145,7 +2658,16 @@ CostCallbackPair Frame::trySplitCellPhased(
                 const float preA = cells[idx].getARadius();
                 const float preB = cells[idx].getBRadius();
                 const float preC = cells[idx].getCRadius();
+                const cv::Point3f prePos(cells[idx].getX(),
+                                         cells[idx].getY(),
+                                         cells[idx].getZ());
                 ClaimSet others = buildRefitClaimSet(idx);
+                // Position update ENABLED for daughter refit (distinct
+                // from mature cells' shape fit, which keeps it off to
+                // let calibration own position). At birth the daughter's
+                // centroid from burn-in is an estimate — letting the PCA
+                // slide it toward the actual pixel centroid fixes the
+                // "daughter drawn off-center" artifact.
                 calibrateCellShapeViaPca(
                     idx, others,
                     daughterRefitIters,
@@ -2154,37 +2676,47 @@ CostCallbackPair Frame::trySplitCellPhased(
                     Ellipsoid::cellConfig.pcaShapeMaskScale,
                     Ellipsoid::cellConfig.pcaShapeConvergeRadius,
                     Ellipsoid::cellConfig.pcaShapeConvergeAngleDeg,
-                    /*updatePosition=*/false,
+                    /*updatePosition=*/true,
                     Ellipsoid::cellConfig.pcaShapeMaxPosShiftFraction,
                     dBuiltA, dBuiltB, dBuiltC);
-                const float fitA = std::max(cells[idx].getARadius(), floorA);
-                const float fitB = std::max(cells[idx].getBRadius(), floorB);
-                const float fitC = std::max(cells[idx].getCRadius(), floorC);
+                const float fitA = std::clamp(cells[idx].getARadius(), floorA, ceilA);
+                const float fitB = std::clamp(cells[idx].getBRadius(), floorB, ceilB);
+                const float fitC = std::clamp(cells[idx].getCRadius(), floorC, ceilC);
                 cells[idx].setRadii(fitA, fitB, fitC);
+                const cv::Point3f postPos(cells[idx].getX(),
+                                          cells[idx].getY(),
+                                          cells[idx].getZ());
                 std::cout << "  [Split Daughter Refit] " << parentName
                           << " " << label
                           << " iters=" << daughterRefitIters
                           << " built=(" << dBuiltA << "," << dBuiltB << "," << dBuiltC << ")"
                           << " floor=(" << floorA << "," << floorB << "," << floorC << ")"
+                          << " ceil=(" << ceilA << "," << ceilB << "," << ceilC << ")"
                           << " pre=(" << preA << "," << preB << "," << preC << ")"
                           << " post=(" << fitA << "," << fitB << "," << fitC << ")"
+                          << " prePos=(" << prePos.x << "," << prePos.y << "," << prePos.z << ")"
+                          << " postPos=(" << postPos.x << "," << postPos.y << "," << postPos.z << ")"
+                          << " posShift=" << cv::norm(postPos - prePos)
                           << std::endl;
             };
 
             refitOne(d1IdxRefine, "d1");
             refitOne(d2IdxRefine, "d2");
 
-            // Radii changed → regenerate synth + refresh cost cache.
+            // Radii changed → regenerate synth. Cost-cache refresh only
+            // needed for the legacy full-image path.
             _synthFrame = generateSynthFrame();
-            refreshFullCostCache();
+            if (!_useBboxCost) {
+                refreshFullCostCache();
+            }
         }
 
         // Re-capture refined state as new best.
         bestCells = cells;
         bestSynth = _synthFrame;
         bestPerSlice = _currentCostPerSlice;
-        bestImageCost = _currentCost;
-        bestTotal = _currentCost + computeOverlapPenalty(probConfig.overlap_penalty_weight);
+        bestImageCost = evalImageCost(_synthFrame);
+        bestTotal = bestImageCost + computeOverlapPenalty(probConfig.overlap_penalty_weight);
 
         const cv::Point3f postRefineD1(cells[d1IdxRefine].getX(),
                                          cells[d1IdxRefine].getY(),
@@ -2413,6 +2945,30 @@ CostCallbackPair Frame::trySplitCellPhased(
             const float valleyRatio = (edgeBright > 1e-6f)
                 ? (gapBright / edgeBright)
                 : 0.0f;
+            // Valley metric based on the BRIGHTER daughter edge only.
+            //
+            // Asymmetric division (one daughter inherits more cytoplasm
+            // and renders brighter) is biologically normal. The dim-
+            // daughter's edge ≈ gap is expected — it doesn't indicate
+            // "no valley", just that this daughter is small. The signal
+            // that actually matters is whether the brighter daughter
+            // shows a drop from its cell body into the midpoint.
+            //
+            // Taking max(edge1, edge2) as the reference naturally handles
+            // both symmetric and asymmetric cases: for symmetric daughters
+            // the two edges are equal, `gap/max(edges) = gap/either_edge`;
+            // for asymmetric daughters the brighter side drives the
+            // decision and the dim side doesn't punish it.
+            //
+            // Replaces the previous worstValleyRatio-based tiered decision
+            // (2026-04-15). Retires bio_bridge_no_valley_hard_threshold
+            // and bio_bridge_max_gap_density from the decision — both
+            // were compensating for the metric's punishment of asymmetry,
+            // and are no longer needed.
+            const float brighterEdge = std::max(edge1Bright, edge2Bright);
+            const float valleyFromBright = (brighterEdge > 1e-6f)
+                ? (gapBright / brighterEdge)
+                : 1.0f;
 
             std::cout << "  [Split Bridge] " << parentName
                       << " axisLen=" << axisLen
@@ -2432,15 +2988,18 @@ CostCallbackPair Frame::trySplitCellPhased(
                       << " valleyRatio2=" << valleyRatio2
                       << " worstValleyRatio=" << worstValleyRatio
                       << " valleyRatioPooled=" << valleyRatio
+                      << " valleyFromBright=" << valleyFromBright
                       << std::endl;
 
             // Absolute edge-brightness gate: a daughter whose edge zone
             // is at or near background is sitting in empty space, even
             // if the other edge is bright enough to make a favorable
             // cost delta. Measured in the same real-image units as the
-            // sigmoid-calibrated background (~0.0), so 0.05 is ~5% above
+            // sigmoid-calibrated background (~0.0), so ~0.05 is ~5% above
             // background — well below any real cell body (~0.1-0.3).
-            constexpr float kMinEdgeBrightAbsolute = 0.05f;
+            // Tunable via probConfig.bio_bridge_min_edge_brightness_absolute.
+            const float kMinEdgeBrightAbsolute =
+                probConfig.bio_bridge_min_edge_brightness_absolute;
             if (edge1Count > 0 && edge2Count > 0 &&
                 std::min(edge1Bright, edge2Bright) < kMinEdgeBrightAbsolute) {
                 std::cout << "[Split Reject bio] " << parentName
@@ -2454,39 +3013,38 @@ CostCallbackPair Frame::trySplitCellPhased(
                 return {0.0, noop};
             }
 
-            // Per-daughter valley gate. Rejects when the bright-pixel
-            // profile along the split axis does not dip below EITHER
-            // edge — i.e., at least one proposed daughter sits in a
-            // region no brighter than the gap. Two tiers:
+            // Single-metric valley gate (2026-04-15 redesign):
+            //   reject when gap brightness ≥ valleyLimit × max(edge1, edge2)
             //
-            //   Tier 1 (hard): worstValleyRatio >= 0.95. Gap is as
-            //     bright or brighter than one edge — clear phantom
-            //     daughter.
+            // This measures the brightness drop from the brighter daughter
+            // edge into the gap. A real split (symmetric or asymmetric) has
+            // valleyFromBright < 0.85 (gap is clearly darker than the
+            // brighter edge). A phantom split has valleyFromBright ≈ 1 or
+            // above (gap at least as bright as any edge).
             //
-            //   Tier 2 (AND): gapDensity > limit AND
-            //     worstValleyRatio > limit. Catches subtler cases
-            //     where the valley is weak on one side.
+            // Replaces the previous two-tier logic that combined
+            // worstValleyRatio + gapDensity. The old worst-of-two-sides
+            // metric punished legitimate asymmetric division because the
+            // dimmer daughter's edge ≈ gap inflated its ratio. The new
+            // metric ignores that side correctly.
             //
-            // A real split has valleys on BOTH sides (edges > gap), so
-            // worstValleyRatio stays below limit. A phantom split has
-            // valley on one side only (the real-daughter side),
-            // worstValleyRatio >= 1.0 on the phantom side.
-            const bool densityFlat = gapDensity > probConfig.bio_bridge_max_gap_density;
-            const bool brightnessFlat = worstValleyRatio > probConfig.bio_bridge_max_valley_ratio;
-            constexpr float kNoValleyHardThreshold = 0.95f;
-            const bool noValleyAtAll = (worstValleyRatio >= kNoValleyHardThreshold);
-            if (edgeCount > 0 && (noValleyAtAll || (densityFlat && brightnessFlat))) {
+            // bio_bridge_no_valley_hard_threshold and bio_bridge_max_gap_density
+            // are retired from the decision (config fields still parsed for
+            // backward compat, marked deprecated in YAML).
+            const float valleyLimit = probConfig.bio_bridge_max_valley_ratio;
+            const bool bridgeFlat = valleyFromBright > valleyLimit;
+            if (edgeCount > 0 && bridgeFlat) {
                 std::cout << "[Split Reject bio] " << parentName
                           << " reason=bridge_flat"
-                          << " gapDensity=" << gapDensity
+                          << " valleyFromBright=" << valleyFromBright
+                          << " brighterEdge=" << brighterEdge
+                          << " gapBright=" << gapBright
                           << " valleyRatio1=" << valleyRatio1
                           << " valleyRatio2=" << valleyRatio2
-                          << " worstValleyRatio=" << worstValleyRatio
+                          << " gapDensity=" << gapDensity
                           << " gapWidth=" << gapWidth
                           << " effGapHalf=" << effectiveGapHalf
-                          << " densityLimit=" << probConfig.bio_bridge_max_gap_density
-                          << " valleyLimit=" << probConfig.bio_bridge_max_valley_ratio
-                          << " noValleyTier=" << noValleyAtAll
+                          << " valleyLimit=" << valleyLimit
                           << std::endl;
                 restoreLiveParent();
                 return {0.0, noop};
@@ -2511,10 +3069,17 @@ CostCallbackPair Frame::trySplitCellPhased(
     }
 
     // --- 6. Cost check ---
+    // costDiff is bbox-based when _useBboxCost is true (every cost
+    // evaluation in burn-in / refine used the splitBbox + splitMask built
+    // at the top of this function), or full-image L2 otherwise.
+    // Both baseline and candidate were measured on the same voxel set,
+    // so this is an apples-to-apples comparison.
     const double costDiff = bestTotal - baselineTotal;
+
     if (costDiff >= -probConfig.split_cost) {
         std::cout << "[Split Reject cost] " << parentName
                   << " diff=" << costDiff
+                  << " mode=" << (_useBboxCost ? "bbox" : "full")
                   << " threshold=" << -probConfig.split_cost
                   << " bestIdx=" << bestIdx
                   << " bestLabel=" << bestLabel
@@ -2563,6 +3128,18 @@ CostCallbackPair Frame::trySplitCellPhased(
                              acceptedDrift1, acceptedDrift2, acceptedLabel,
                              liveParentCopy, snapshotParentCopy, cellIndexCopy,
                              snapshotValidCopy](bool accept) mutable {
+        // Always erase the daughter snap-bboxes AND shared masks installed
+        // during the split attempt — both branches below. On accept, the
+        // new permanent daughters fall through to the live bbox + live
+        // Voronoi mask for the rest of the frame (they have no real snap,
+        // and sibling mutual-exclusion is actually CORRECT post-split —
+        // they're real cells now, not burn-in candidates). On reject, the
+        // names are stale. Erase-of-absent-key is a no-op, so this is safe
+        // even if restoreLiveParent already ran.
+        this->_snapBboxes.erase(parentName + "0");
+        this->_snapBboxes.erase(parentName + "1");
+        this->_sharedMasks.erase(parentName + "0");
+        this->_sharedMasks.erase(parentName + "1");
         if (accept) {
             this->cells = bestCells;
             this->_synthFrame = bestSynth;

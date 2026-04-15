@@ -217,6 +217,17 @@ public:
     // divisions with a partial groove still pass.
     float bio_bridge_max_gap_density = 0.18f;
     float bio_bridge_max_valley_ratio = 0.85f;
+    // Bridge tier-1: hard rejection threshold on the worst per-daughter
+    // valley ratio (gap / min edge). When gap brightness equals or exceeds
+    // an edge's brightness, there is no valley at all on that daughter's
+    // side and the split is clearly phantom. Applied to
+    // max(valleyRatio1, valleyRatio2).
+    float bio_bridge_no_valley_hard_threshold = 0.95f;
+    // Absolute minimum edge brightness (real-image units above background).
+    // Rejects splits where one daughter's edge zone is near-background —
+    // a phantom daughter sitting in empty space regardless of ratios.
+    // Typical cell cores are 0.1-0.3 above background; 0.05 is ~3× bg noise.
+    float bio_bridge_min_edge_brightness_absolute = 0.05f;
 
     // Multiplier applied to the Ellipsoid x/y/z perturbation sigmas during
     // candidate burn-in. The main-loop sigmas (x=5, y=5, z=8) let daughters
@@ -225,6 +236,15 @@ public:
     // refinement distances (<10 voxels) while still letting daughters
     // settle to the local image optimum.
     float split_burn_in_pos_sigma_scale = 0.4f;
+
+    // When true, every cost evaluation for perturbation and split uses
+    // a per-cell bbox with Voronoi neighbor exclusion instead of
+    // full-image asymmetric L2. Concentrates cost signal, eliminates
+    // cross-cell contamination, and runs faster. See
+    // `C++/docs/plans/2026-04-14-universal-bbox-cost.md`.
+    // Bbox margin = bbox_margin_scale * max(a,b,c) of the cell (D1=3.0).
+    bool use_bbox_cost = false;
+    float bbox_margin_scale = 3.0f;
 
     // Per-daughter PCA radius refit in the split refine phase (A1).
     // After positional refine settles both daughters, each daughter runs
@@ -237,6 +257,29 @@ public:
     // Set to 0 to disable.
     int split_daughter_refit_iterations = 3;
     float split_daughter_refit_min_radius_fraction = 0.6f;
+    // Upper cap on post-refit radii: clamp at max * built_radii per axis.
+    // Prevents newborn-daughter bloat when the sibling Voronoi boundary
+    // is immature and the mask absorbs neighbor/halo pixels. Typically
+    // 1.1 (10% over built).
+    float split_daughter_refit_max_radius_fraction = 1.1f;
+
+    // Built-time per-axis radius scale for newly-spawned daughters.
+    // Daughter radii = scale × snapshot parent radii.
+    //   ∛(0.5) ≈ 0.7937: volume-preserving split (each daughter has half
+    //                    the parent's volume; geometric default).
+    //   1.0:             daughters as large as parent (covers more
+    //                    image material on first cost eval; risk of
+    //                    overlap penalty).
+    //   0.85 - 0.95:     enlarged daughters — useful when the parent
+    //                    PCA fit is tight and you want daughters to
+    //                    cover the full real cell extent immediately
+    //                    (relies on bio gates to reject if too big).
+    //   0.5 - 0.7:       tighter daughters than volume-preserving;
+    //                    relies on per-daughter PCA refit (A1) to grow
+    //                    them back if the real cell is bigger.
+    // Applied per axis equally — daughters keep the parent's aspect ratio
+    // before the per-daughter PCA refit re-shapes them.
+    float split_daughter_volume_scale = 0.7937f;
 
     ProbabilityConfig() = default;
 
@@ -258,9 +301,15 @@ public:
         if (node["bio_max_single_daughter_volume_fraction"]) bio_max_single_daughter_volume_fraction = node["bio_max_single_daughter_volume_fraction"].as<float>();
         if (node["bio_bridge_max_gap_density"]) bio_bridge_max_gap_density = node["bio_bridge_max_gap_density"].as<float>();
         if (node["bio_bridge_max_valley_ratio"]) bio_bridge_max_valley_ratio = node["bio_bridge_max_valley_ratio"].as<float>();
+        if (node["bio_bridge_no_valley_hard_threshold"]) bio_bridge_no_valley_hard_threshold = node["bio_bridge_no_valley_hard_threshold"].as<float>();
+        if (node["bio_bridge_min_edge_brightness_absolute"]) bio_bridge_min_edge_brightness_absolute = node["bio_bridge_min_edge_brightness_absolute"].as<float>();
         if (node["split_burn_in_pos_sigma_scale"]) split_burn_in_pos_sigma_scale = node["split_burn_in_pos_sigma_scale"].as<float>();
+        if (node["use_bbox_cost"]) use_bbox_cost = node["use_bbox_cost"].as<bool>();
+        if (node["bbox_margin_scale"]) bbox_margin_scale = node["bbox_margin_scale"].as<float>();
         if (node["split_daughter_refit_iterations"]) split_daughter_refit_iterations = node["split_daughter_refit_iterations"].as<int>();
         if (node["split_daughter_refit_min_radius_fraction"]) split_daughter_refit_min_radius_fraction = node["split_daughter_refit_min_radius_fraction"].as<float>();
+        if (node["split_daughter_refit_max_radius_fraction"]) split_daughter_refit_max_radius_fraction = node["split_daughter_refit_max_radius_fraction"].as<float>();
+        if (node["split_daughter_volume_scale"]) split_daughter_volume_scale = node["split_daughter_volume_scale"].as<float>();
 
         // Legacy YAML aliases — silently map to the new names.
         if (node["split"]) P_split_base = node["split"].as<float>();
@@ -414,6 +463,44 @@ public:
     // When true, PCA centroid drives the cell's position (capped per iter).
     bool  pcaShapeUpdatePosition{true};
     float pcaShapeMaxPosShiftFraction{0.5f}; // cap per-iter shift at fraction * maxR
+    // Per-pixel intensity exponent in the PCA centroid + covariance moments.
+    // Higher values → stronger emphasis on the bright core, smaller fitted
+    // radii. Lower values → halo pixels contribute more, larger fitted radii.
+    //   exp=1.0: linear (halo-inclusive; bloat).
+    //   exp=1.5: balanced (current default) — cell tracks core+inner halo.
+    //   exp=2.0: quadratic — suppresses halo ~25× vs core; tighter fits.
+    //   exp=3.0+: very strong core emphasis.
+    //   exp=0.5: root weighting — approximates equal per-pixel weight.
+    // Fast paths detected automatically for 1.0 and 2.0; other values use
+    // std::pow per pixel (small overhead).
+    float pcaShapeWeightExponent{1.5f};
+    // Per-cell adaptive exponent. When enabled, each cell picks its own
+    // exponent based on how "core-dominated" its Voronoi-filtered bright
+    // pixel cloud is. Rationale: a uniform `exp=1.3` over-shrinks bright
+    // cells (core pixels swamp halo by ~10×, fit snaps tight to core);
+    // dim cells have near-uniform weights so `exp=1.3` is already correct.
+    // Metric: pCore = fraction of raw pixels with weight > coreThreshold.
+    // Map: pCore ≤ fracLow → expDim (1.3), pCore ≥ fracHigh → expBright
+    // (1.15), linear ramp between. `expDim` is `pcaShapeWeightExponent`.
+    // Floor `expBright` at 1.15 — below ~1.2 halo-dominated regime begins
+    // (cliff observed at exp=1.1 in run 021558).
+    bool pcaShapeAdaptiveExponent{false};
+    float pcaShapeWeightExponentBright{1.15f};
+    float pcaShapeCoreBrightnessThreshold{0.6f};
+    float pcaShapeCoreFractionLow{0.10f};
+    float pcaShapeCoreFractionHigh{0.40f};
+    // Adaptive output-radius inflation for peaked cells. The PCA variance
+    // formula `radii = sqrt(5) * sqrt(variance)` gives the 97% containment
+    // radius for a Gaussian-like (peaked) distribution — but real bright
+    // cells have visible halo extending to ~3σ (99%+ containment), so the
+    // fit looks too tight. Uniform/dim cells are correctly fit by sqrt(5).
+    // When adaptive exponent is enabled, we apply the SAME pCore ramp to
+    // a per-cell radius multiplier: uniform cells get 1.0× (unchanged),
+    // peaked cells get pcaShapeRadiusInflationBright× (e.g. 1.15 for 15%
+    // inflation). Overfitted cells (halo-bleed) typically have LOW pCore
+    // (halo dilutes the core fraction), so they don't get additional
+    // inflation — bounded-growth reference handles their cap separately.
+    float pcaShapeRadiusInflationBright{1.15f};
     // Maximum valid z position (interpolated z-space). Used to clamp Ellipsoid
     // center z in the constructor, preventing cells from drifting off the z-stack.
     // Default 224 = (z_slices=225) - 1. Runtime-updated by CellUniverse::loadFrame
@@ -472,6 +559,13 @@ public:
         if (node["pcaShapeConvergeAngleDeg"]) pcaShapeConvergeAngleDeg = node["pcaShapeConvergeAngleDeg"].as<float>();
         if (node["pcaShapeUpdatePosition"]) pcaShapeUpdatePosition = node["pcaShapeUpdatePosition"].as<bool>();
         if (node["pcaShapeMaxPosShiftFraction"]) pcaShapeMaxPosShiftFraction = node["pcaShapeMaxPosShiftFraction"].as<float>();
+        if (node["pcaShapeWeightExponent"]) pcaShapeWeightExponent = node["pcaShapeWeightExponent"].as<float>();
+        if (node["pcaShapeAdaptiveExponent"]) pcaShapeAdaptiveExponent = node["pcaShapeAdaptiveExponent"].as<bool>();
+        if (node["pcaShapeWeightExponentBright"]) pcaShapeWeightExponentBright = node["pcaShapeWeightExponentBright"].as<float>();
+        if (node["pcaShapeCoreBrightnessThreshold"]) pcaShapeCoreBrightnessThreshold = node["pcaShapeCoreBrightnessThreshold"].as<float>();
+        if (node["pcaShapeCoreFractionLow"]) pcaShapeCoreFractionLow = node["pcaShapeCoreFractionLow"].as<float>();
+        if (node["pcaShapeCoreFractionHigh"]) pcaShapeCoreFractionHigh = node["pcaShapeCoreFractionHigh"].as<float>();
+        if (node["pcaShapeRadiusInflationBright"]) pcaShapeRadiusInflationBright = node["pcaShapeRadiusInflationBright"].as<float>();
     }
 };
 

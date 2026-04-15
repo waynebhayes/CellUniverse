@@ -180,6 +180,11 @@ CellUniverse::CellUniverse(std::map<std::string, std::vector<Ellipsoid>> initial
     frameMeanBrightness.reserve(imagePaths.size());
 
     // Pass 1: load and preprocess every frame, record per-frame mean brightness.
+    // Sequential by design — keeps preprocessing logs ([Preprocess], [LoadFrame],
+    // [PreprocessScores], [IterPreprocess]) in deterministic frame order.
+    // The wall-time win from parallelizing this one-time startup loop is
+    // small (~25 sec out of a ~1 hr run); preserved log readability is
+    // worth more than the perf gain.
     for (size_t i = 0; i < imagePaths.size(); ++i)
     {
         std::vector<cv::Mat> real_frame =
@@ -269,11 +274,31 @@ void CellUniverse::optimize(int frameIndex)
 
     frame.regenerateSynthFrame();
 
+    // Propagate the universal bbox cost flag to the frame for this run.
+    // When enabled, perturbCell and the split cost gate use per-cell bbox
+    // cost (Voronoi-excluded neighbor contribution) instead of full-image L2.
+    //
+    // Frame 1 exception: there are no previous-frame snapshots, so bbox
+    // mode cannot be snap-anchored (Option A fallback would make every
+    // cell use a follow-the-cell bbox and lose the position anchor that's
+    // the whole point of bbox cost). Use full-image L2 for frame 1 instead —
+    // it's slower but gives the correct global anchoring while cells settle
+    // into their initial fit. Frames 2+ use bbox with snap-anchoring.
+    const bool bboxActiveThisFrame = config.prob.use_bbox_cost && (frameIndex > 0);
+    frame.setUseBboxCost(bboxActiveThisFrame,
+                         config.prob.bbox_margin_scale,
+                         config.prob.overlap_penalty_weight);
+
     size_t totalIterations = frame.length() * config.simulation.iterations_per_cell;
     int displayFrame = firstFrame + frameIndex;
 
     std::cout << "[Optimize] frame " << displayFrame
-              << " (" << frame.cells.size() << " cells, " << totalIterations << " iterations)" << std::endl;
+              << " (" << frame.cells.size() << " cells, " << totalIterations << " iterations)"
+              << " useBboxCost=" << (bboxActiveThisFrame ? 1 : 0)
+              << " bboxMarginScale=" << config.prob.bbox_margin_scale
+              << (config.prob.use_bbox_cost && frameIndex == 0
+                  ? " (frame-1 forced full-image)" : "")
+              << std::endl;
 
     if (frame.cells.size() <= 24)
     {
@@ -365,12 +390,30 @@ void CellUniverse::optimize(int frameIndex)
     //        - cost gate (must improve by ≥ split_cost)
     // ===============================================================
 
-    // ---- Per-cell position calibration pass (runs BEFORE pre-pass) ----
-    // Refine each cell's position FIRST so Voronoi claim points in the
-    // pre-pass use calibrated positions, not raw snapshot positions.
-    // This makes neighbor exclusion more accurate.
+    // ---- Per-cell position calibration pass (frame 1 only) ----
+    //
+    // Calibration uses brightness centroid + perturbation refinement to
+    // place each cell at its true image position. It is meaningful only
+    // when no authoritative position exists from the previous frame — i.e.
+    // frame 1, which has only initial CSV positions.
+    //
+    // From frame 2 onward, every cell has a snap from end-of-previous-frame
+    // optimization. Snap is the correct parent center. Running calibration
+    // on a snap-valid cell whose bright pixels span two emerging daughter
+    // blobs (any cell about to divide, or any elongated cell with
+    // asymmetric brightness) drifts the centroid toward the brighter blob,
+    // mis-anchoring the parent for the upcoming split attempt. Empirical
+    // analysis (see changelog 2026-04-14 evening "Snap-anchored parent")
+    // showed snap elongation cannot reliably gate this — e9077 split at
+    // snap elong 1.28 was missed by the threshold approach. Pure skip is
+    // the only safe rule.
+    //
+    // For surviving frame-2+ cells, position adjustments for genuine
+    // motion happen in the unified perturb+split loop, where each move
+    // is gated by `costDiff < 0`.
     const int calibrationIters = std::max(0, config.prob.split_calibration_iterations_per_cell);
-    if (calibrationIters > 0 && !frame.cells.empty()) {
+    const bool runCalibration = (frameIndex == 0) && (calibrationIters > 0) && !frame.cells.empty();
+    if (runCalibration) {
         const float posScale = std::max(0.0f, config.prob.split_burn_in_pos_sigma_scale);
 
         PerturbParams savedCalX = Ellipsoid::cellConfig.x;
@@ -385,21 +428,18 @@ void CellUniverse::optimize(int frameIndex)
                   << " cells=" << frame.cells.size()
                   << " itersPerCell=" << calibrationIters
                   << " posScale=" << posScale
+                  << " (frame-1-only path)"
                   << std::endl;
 
-        // Claim set uses snapshot positions only (pre-pass hasn't run yet).
+        // No previous snapshots exist on frame 1; fall back to live cell
+        // positions for Voronoi claim points.
         auto buildCalibrationClaimSet = [&](const std::string &selfName) -> Frame::ClaimSet {
             Frame::ClaimSet others;
             for (const auto &other : frame.cells) {
                 const std::string otherName = other.getName();
                 if (otherName == selfName) continue;
-                auto otherSnap = previousSnapshots.find(otherName);
-                if (otherSnap != previousSnapshots.end() && otherSnap->second.valid) {
-                    others[otherName].push_back(otherSnap->second.position);
-                } else {
-                    others[otherName].push_back(cv::Point3f(
-                        other.getX(), other.getY(), other.getZ()));
-                }
+                others[otherName].push_back(cv::Point3f(
+                    other.getX(), other.getY(), other.getZ()));
             }
             return others;
         };
@@ -411,12 +451,22 @@ void CellUniverse::optimize(int frameIndex)
                 frame.cells[ci].getY(),
                 frame.cells[ci].getZ());
 
-            // Step 1: analytic centroid calibration
-            auto calSnapIt = previousSnapshots.find(calName);
-            if (calSnapIt != previousSnapshots.end() && calSnapIt->second.valid) {
-                Frame::ClaimSet calOthers = buildCalibrationClaimSet(calName);
-                frame.calibrateCellPositionViaCentroid(ci, calSnapIt->second, calOthers);
-            }
+            // Step 1: analytic centroid calibration. Frame-1 cells have no
+            // snap; build a synthetic snapshot from initial CSV state so
+            // calibrateCellPositionViaCentroid has the position+radii
+            // anchor it expects.
+            PreviousFrameSnapshot bootSnap;
+            bootSnap.valid = true;
+            bootSnap.position = preCalPos;
+            bootSnap.aRadius = frame.cells[ci].getARadius();
+            bootSnap.bRadius = frame.cells[ci].getBRadius();
+            bootSnap.cRadius = frame.cells[ci].getCRadius();
+            bootSnap.thetaX = frame.cells[ci].getThetaX();
+            bootSnap.thetaY = frame.cells[ci].getThetaY();
+            bootSnap.thetaZ = frame.cells[ci].getThetaZ();
+
+            Frame::ClaimSet calOthers = buildCalibrationClaimSet(calName);
+            frame.calibrateCellPositionViaCentroid(ci, bootSnap, calOthers);
 
             const cv::Point3f postCentroidPos(
                 frame.cells[ci].getX(),
@@ -496,26 +546,171 @@ void CellUniverse::optimize(int frameIndex)
         // Radii are free to reach true image extent (shrink or grow).
         // Newly-born cells with no snapshot fall back to their current
         // live radii inside calibrateCellShapeViaPca.
-        for (size_t ci = 0; ci < frame.cells.size(); ++ci) {
+        //
+        // Parallel: cells are independent (_realFrame is read-only, each
+        // thread writes a unique cells[ci]). Per-cell logs are accumulated
+        // into per-cell ostringstreams via the optional logSink parameter,
+        // then emitted in cell-index order during the serial merge below
+        // — log ordering is deterministic regardless of thread count.
+        const int nCells = static_cast<int>(frame.cells.size());
+        std::vector<std::ostringstream> shapeLogs(nCells);
+        #pragma omp parallel for schedule(dynamic)
+        for (int ci = 0; ci < nCells; ++ci) {
             const std::string sname = frame.cells[ci].getName();
             Frame::ClaimSet others = buildShapeClaimSet(sname);
 
+            // Mask radii: prefer the FROZEN per-cell reference (set at cell
+            // birth, never updated) over the snap radii (which reflect the
+            // previous frame's fit and propagate bloat). The reference is
+            // captured post-fit at frame 1 for initial cells and post-refit
+            // at split-accept for daughters. Falling back to snap covers
+            // cells whose reference wasn't registered (shouldn't happen in
+            // steady state; belt and suspenders).
             float maskA = 0.0f, maskB = 0.0f, maskC = 0.0f;
-            auto snapIt = previousSnapshots.find(sname);
-            if (snapIt != previousSnapshots.end() && snapIt->second.valid) {
-                maskA = snapIt->second.aRadius;
-                maskB = snapIt->second.bRadius > 1e-3f
-                        ? snapIt->second.bRadius : maskA;
-                maskC = snapIt->second.cRadius;
+            auto refIt = cellShapeReference.find(sname);
+            if (refIt != cellShapeReference.end()) {
+                maskA = refIt->second[0];
+                maskB = refIt->second[1] > 1e-3f ? refIt->second[1] : maskA;
+                maskC = refIt->second[2];
+            } else {
+                auto snapIt = previousSnapshots.find(sname);
+                if (snapIt != previousSnapshots.end() && snapIt->second.valid) {
+                    maskA = snapIt->second.aRadius;
+                    maskB = snapIt->second.bRadius > 1e-3f
+                            ? snapIt->second.bRadius : maskA;
+                    maskC = snapIt->second.cRadius;
+                }
             }
 
             frame.calibrateCellShapeViaPca(ci, others,
                                            pcaMaxIters, pcaScale, pcaMin,
                                            maskScale, convR, convAng,
                                            updatePos, posShiftCap,
-                                           maskA, maskB, maskC);
+                                           maskA, maskB, maskC,
+                                           &shapeLogs[ci]);
         }
-        frame.regenerateSynthFrame();
+        // Serial merge: emit per-cell log blocks in cell-index order.
+        for (int ci = 0; ci < nCells; ++ci) {
+            const std::string buf = shapeLogs[ci].str();
+            if (!buf.empty()) std::cout << buf;
+        }
+        // ---- Fit-side growth cap (anti-bloat within mask) ----
+        //
+        // Bounded-growth on the REFERENCE (below) caps ref at ±5%/frame,
+        // but the fit can still jump within the mask (mask = ref × 1.6
+        // allows fit to grow up to 60% above ref in a single frame).
+        // Observed in run 091510: e9077..a50 fit jumped aRadius 41.5 →
+        // 65.2 at f20 (+57%) and hit the ceiling, cascading chaos at
+        // f21/f22.
+        //
+        // Clamp the ALREADY-APPLIED fit radii down toward ref at max
+        // fitGrowthCap per frame. For new cells (no reference yet), no
+        // clamp — they get to set their initial radii freely.
+        constexpr float fitGrowthCap = 0.10f;   // 10%/frame max upward fit jump
+        const float fitUpFactor = 1.0f + fitGrowthCap;
+        int fitsClamped = 0;
+        for (size_t ci = 0; ci < frame.cells.size(); ++ci) {
+            const std::string &name = frame.cells[ci].getName();
+            auto it = cellShapeReference.find(name);
+            if (it == cellShapeReference.end()) continue;
+            const auto &ref = it->second;
+            const float fA = frame.cells[ci].getARadius();
+            const float fB = frame.cells[ci].getBRadius();
+            const float fC = frame.cells[ci].getCRadius();
+            const float capA = ref[0] * fitUpFactor;
+            const float capB = ref[1] * fitUpFactor;
+            const float capC = ref[2] * fitUpFactor;
+            const float newA = std::min(fA, capA);
+            const float newB = std::min(fB, capB);
+            const float newC = std::min(fC, capC);
+            if (newA < fA || newB < fB || newC < fC) {
+                frame.cells[ci].setRadii(newA, newB, newC);
+                ++fitsClamped;
+            }
+        }
+        if (fitsClamped > 0) {
+            std::cout << "[Fit Growth Cap] frame " << displayFrame
+                      << " clamped=" << fitsClamped
+                      << " maxUp=" << fitGrowthCap << std::endl;
+            // Re-render with clamped radii so downstream cost eval sees
+            // the capped synth, not the pre-clamp one.
+            frame.regenerateSynthFrame();
+        } else {
+            frame.regenerateSynthFrame();
+        }
+
+        // ---- Reference-side growth cap (anti-compounding mask basis) ----
+        //
+        // Each frame the reference tracks toward the observed fit but is
+        // capped at ±refGrowthCap per frame:
+        //   ref_new[i] = clamp(fit[i], ref_old[i] * (1-cap), ref_old[i] * (1+cap))
+        // This allows legitimate multi-frame growth (daughter cells growing
+        // toward adult size at ~5%/frame passes through unchanged) while
+        // denying instantaneous bloat (20%/frame compounding hits the cap,
+        // mask can't follow, fit can't run away).
+        //
+        // New cells (frame 1 seeds, newly-born daughters): reference is
+        // captured directly from the current fit — they don't have a
+        // "previous" reference to bound against yet.
+        constexpr float refGrowthCap = 0.05f;   // 5%/frame max Δ, up or down
+        const float refLo = 1.0f - refGrowthCap;
+        const float refHi = 1.0f + refGrowthCap;
+        int refsCaptured = 0;
+        int refsUpdated = 0;
+        for (const auto &cell : frame.cells) {
+            const std::string &name = cell.getName();
+            const float fA = cell.getARadius();
+            const float fB = cell.getBRadius();
+            const float fC = cell.getCRadius();
+            auto it = cellShapeReference.find(name);
+            if (it == cellShapeReference.end()) {
+                cellShapeReference[name] = {fA, fB, fC};
+                ++refsCaptured;
+            } else {
+                auto &ref = it->second;
+                ref[0] = std::clamp(fA, ref[0] * refLo, ref[0] * refHi);
+                ref[1] = std::clamp(fB, ref[1] * refLo, ref[1] * refHi);
+                ref[2] = std::clamp(fC, ref[2] * refLo, ref[2] * refHi);
+                ++refsUpdated;
+            }
+        }
+        if (refsCaptured > 0 || refsUpdated > 0) {
+            std::cout << "[Shape Reference] frame " << displayFrame
+                      << " captured=" << refsCaptured
+                      << " updated=" << refsUpdated
+                      << " total=" << cellShapeReference.size()
+                      << " growthCap=" << refGrowthCap << std::endl;
+        }
+    }
+
+    // ---- Install snap-anchored per-cell bboxes (Option A) ----
+    // Each cell with a valid PreviousFrameSnapshot gets a bbox fixed at
+    // the snap position with half-extent = bbox_margin_scale × snapMaxR.
+    // perturbCell then uses this fixed bbox for every iteration in this
+    // frame — so drifting away from snap incurs an undershoot cost at the
+    // abandoned snap voxels. Cells without a snap (frame 1, or newborn
+    // daughters after a split accepts mid-frame) have no entry and fall
+    // back to the legacy live pre/post-union bbox in perturbCell. Always
+    // cleared first so stale names don't leak across frames.
+    frame.clearSnapBboxes();
+    if (bboxActiveThisFrame) {
+        int installed = 0;
+        for (const auto &cell : frame.cells) {
+            const std::string &name = cell.getName();
+            auto snapIt = previousSnapshots.find(name);
+            if (snapIt == previousSnapshots.end() || !snapIt->second.valid) continue;
+            const auto &snap = snapIt->second;
+            const float snapMaxR = std::max({snap.aRadius, snap.bRadius, snap.cRadius});
+            if (snapMaxR <= 1e-3f) continue;
+            BoundingBox3D snapBbox = frame.computeBboxAtPoint(
+                snap.position, snapMaxR, config.prob.bbox_margin_scale);
+            if (!snapBbox.isValid()) continue;
+            frame.setSnapBbox(name, snapBbox);
+            ++installed;
+        }
+        std::cout << "[Snap Bbox] frame " << displayFrame
+                  << " installed=" << installed
+                  << " total=" << frame.cells.size() << std::endl;
     }
 
     // Seed expected-daughter positions for EVERY cell with a valid
@@ -556,31 +751,57 @@ void CellUniverse::optimize(int frameIndex)
                   << " allCells=" << frame.cells.size()
                   << " mode=image_grounded_pca" << std::endl;
     }
+    // Per-cell pre-pass result, accumulated in parallel then merged serially.
+    // Parallelization is safe because:
+    //  - imageGroundExpectedDaughters is const on Frame (read-only)
+    //  - claim set built from `roundSnapshot` (frozen at start of round) and
+    //    `frame.cells` (read-only during the parallel region)
+    //  - results[ci] is uniquely written per thread
+    //  - logs written into thread-local ostringstream; emitted in order
+    //    after the parallel region for deterministic log order
+    struct PrePassResult {
+        bool present = false;
+        bool ok = false;
+        cv::Point3f groundedD1{0, 0, 0};
+        cv::Point3f groundedD2{0, 0, 0};
+        cv::Point3f oldD1{0, 0, 0};
+        cv::Point3f oldD2{0, 0, 0};
+        int keptPixels = 0;
+        std::string claimsLog;
+        std::string resultLog;
+    };
+
     for (int round = 0; round < prePassRounds; ++round) {
-        for (const auto &cellRef : frame.cells) {
-            const std::string name = cellRef.getName();
-            if (expectedDaughters.find(name) == expectedDaughters.end()) continue;
-            auto it = std::find_if(frame.cells.begin(), frame.cells.end(),
-                [&](const Ellipsoid &c) { return c.getName() == name; });
-            if (it == frame.cells.end()) continue;
-            size_t ci = static_cast<size_t>(std::distance(frame.cells.begin(), it));
+        // Snapshot expectedDaughters at start of round so all parallel
+        // readers see consistent neighbor seed positions.
+        const auto roundSnapshot = expectedDaughters;
+        std::vector<PrePassResult> results(frame.cells.size());
 
-            const auto &snap = previousSnapshots[name];
-            const auto &seedsBefore = expectedDaughters[name];
+        const int nCells = static_cast<int>(frame.cells.size());
+        #pragma omp parallel for schedule(dynamic)
+        for (int ci = 0; ci < nCells; ++ci) {
+            const std::string name = frame.cells[ci].getName();
+            auto roundIt = roundSnapshot.find(name);
+            if (roundIt == roundSnapshot.end()) continue;
 
-            // Build claim-set for all OTHER cells at pre-pass time.
-            // Every cell contributes BOTH its D1/D2 seed (from the seed
-            // map initialized upstream — even non-splitting cells get a
-            // snap-based seed) so Voronoi correctly partitions pixels
-            // around dumbbell neighbors. Cells without a seed entry fall
-            // back to live position. Calibration has already refined
-            // positions, so live is accurate.
+            auto snapIt = previousSnapshots.find(name);
+            if (snapIt == previousSnapshots.end()) continue;
+
+            results[ci].present = true;
+            results[ci].oldD1 = roundIt->second.first;
+            results[ci].oldD2 = roundIt->second.second;
+
+            const auto &snap = snapIt->second;
+
+            // Build claim-set from the round snapshot (frozen) and live cells.
+            // Every other cell contributes BOTH its D1/D2 seed when present
+            // (dumbbell-aware Voronoi for dividing neighbors).
             Frame::ClaimSet others;
             for (const auto &other : frame.cells) {
                 const std::string otherName = other.getName();
                 if (otherName == name) continue;
-                auto itD = expectedDaughters.find(otherName);
-                if (itD != expectedDaughters.end()) {
+                auto itD = roundSnapshot.find(otherName);
+                if (itD != roundSnapshot.end()) {
                     others[otherName].push_back(itD->second.first);
                     others[otherName].push_back(itD->second.second);
                 } else {
@@ -589,57 +810,69 @@ void CellUniverse::optimize(int frameIndex)
                 }
             }
 
-            // Log claim set size for this cell.
             {
                 std::ostringstream claimLog;
                 for (const auto &kv : others) {
-                    claimLog << " " << kv.first.substr(0,8)
+                    claimLog << " " << kv.first.substr(0, 8)
                              << "[" << kv.second.size() << "]";
                 }
-                std::cout << "  [Pre-Pass Claims] " << name.substr(0,8)
-                          << " nNeighbors=" << others.size()
-                          << " claims:" << claimLog.str() << std::endl;
+                std::ostringstream line;
+                line << "  [Pre-Pass Claims] " << name.substr(0, 8)
+                     << " nNeighbors=" << others.size()
+                     << " claims:" << claimLog.str() << "\n";
+                results[ci].claimsLog = line.str();
             }
 
-            // Run the image-grounded PCA helper on Frame.
             cv::Point3f groundedD1, groundedD2;
             int keptPixels = 0;
             const bool ok = frame.imageGroundExpectedDaughters(
-                ci, snap, others, groundedD1, groundedD2, &keptPixels);
+                static_cast<size_t>(ci), snap, others, groundedD1, groundedD2, &keptPixels);
 
+            results[ci].ok = ok;
+            results[ci].groundedD1 = groundedD1;
+            results[ci].groundedD2 = groundedD2;
+            results[ci].keptPixels = keptPixels;
+
+            std::ostringstream rlog;
             if (ok) {
-                const cv::Point3f oldD1 = seedsBefore.first;
-                const cv::Point3f oldD2 = seedsBefore.second;
-                expectedDaughters[name] = {groundedD1, groundedD2};
-
-                const cv::Point3f delta1 = groundedD1 - oldD1;
-                const cv::Point3f delta2 = groundedD2 - oldD2;
+                const cv::Point3f delta1 = groundedD1 - results[ci].oldD1;
+                const cv::Point3f delta2 = groundedD2 - results[ci].oldD2;
                 const float shift1 = static_cast<float>(cv::norm(delta1));
                 const float shift2 = static_cast<float>(cv::norm(delta2));
-
-                std::cout << "  [Pre-Pass] round=" << round
-                          << " cell=" << name
-                          << " shapeElong=" << snap.shapeElongation
-                          << " kept=" << keptPixels
-                          << " snapPos=(" << snap.position.x << "," << snap.position.y << "," << snap.position.z << ")"
-                          << " seedD1=(" << oldD1.x << "," << oldD1.y << "," << oldD1.z << ")"
-                          << " expD1=(" << groundedD1.x << "," << groundedD1.y << "," << groundedD1.z << ")"
-                          << " shift1=" << shift1
-                          << " seedD2=(" << oldD2.x << "," << oldD2.y << "," << oldD2.z << ")"
-                          << " expD2=(" << groundedD2.x << "," << groundedD2.y << "," << groundedD2.z << ")"
-                          << " shift2=" << shift2
-                          << std::endl;
+                rlog << "  [Pre-Pass] round=" << round
+                     << " cell=" << name
+                     << " shapeElong=" << snap.shapeElongation
+                     << " kept=" << keptPixels
+                     << " snapPos=(" << snap.position.x << "," << snap.position.y << "," << snap.position.z << ")"
+                     << " seedD1=(" << results[ci].oldD1.x << "," << results[ci].oldD1.y << "," << results[ci].oldD1.z << ")"
+                     << " expD1=(" << groundedD1.x << "," << groundedD1.y << "," << groundedD1.z << ")"
+                     << " shift1=" << shift1
+                     << " seedD2=(" << results[ci].oldD2.x << "," << results[ci].oldD2.y << "," << results[ci].oldD2.z << ")"
+                     << " expD2=(" << groundedD2.x << "," << groundedD2.y << "," << groundedD2.z << ")"
+                     << " shift2=" << shift2
+                     << "\n";
             } else {
-                // PCA failed or too few pixels — keep the snapshot extrapolation.
-                std::cout << "  [Pre-Pass] round=" << round
-                          << " cell=" << name
-                          << " shapeElong=" << snap.shapeElongation
-                          << " kept=" << keptPixels
-                          << " result=pca_failed_keep_snapshot_seeds"
-                          << " seedD1=(" << seedsBefore.first.x << "," << seedsBefore.first.y << "," << seedsBefore.first.z << ")"
-                          << " seedD2=(" << seedsBefore.second.x << "," << seedsBefore.second.y << "," << seedsBefore.second.z << ")"
-                          << std::endl;
+                rlog << "  [Pre-Pass] round=" << round
+                     << " cell=" << name
+                     << " shapeElong=" << snap.shapeElongation
+                     << " kept=" << keptPixels
+                     << " result=pca_failed_keep_snapshot_seeds"
+                     << " seedD1=(" << results[ci].oldD1.x << "," << results[ci].oldD1.y << "," << results[ci].oldD1.z << ")"
+                     << " seedD2=(" << results[ci].oldD2.x << "," << results[ci].oldD2.y << "," << results[ci].oldD2.z << ")"
+                     << "\n";
             }
+            results[ci].resultLog = rlog.str();
+        }
+
+        // Serial merge: apply results to expectedDaughters and emit logs
+        // in cell-index order for deterministic output.
+        for (size_t ci = 0; ci < frame.cells.size(); ++ci) {
+            if (!results[ci].present) continue;
+            if (results[ci].ok) {
+                const std::string &name = frame.cells[ci].getName();
+                expectedDaughters[name] = {results[ci].groundedD1, results[ci].groundedD2};
+            }
+            std::cout << results[ci].claimsLog << results[ci].resultLog;
         }
     }
 
@@ -722,7 +955,16 @@ void CellUniverse::optimize(int frameIndex)
 
             std::uniform_int_distribution<size_t> cellDist(0, eligible.size() - 1);
             const size_t cellIdx = eligible[cellDist(gen)];
-            const std::string &cellName = frame.cells[cellIdx].getName();
+            // VALUE COPY — must not be a reference. trySplitCellPhased and
+            // perturbCell mutate frame.cells (erase/push_back/full reassign
+            // via savedCells), invalidating any reference to the original
+            // ellipsoid's _name string. A dangling cellName silently caused
+            // splitBlacklist to be inserted with garbage content, defeating
+            // the "max one split attempt per cell per frame" invariant —
+            // the same cell would re-attempt because its real name wasn't
+            // found in the blacklist (the blacklist had a corrupted entry).
+            // Observed as the "8cbdf86d gets 2 split attempts" symptom.
+            const std::string cellName = frame.cells[cellIdx].getName();
 
             const float pSplit = allowSplits ? splitProbabilities[cellName] : 0.0f;
             const bool canSplit = pSplit > 0.0f
@@ -778,20 +1020,17 @@ void CellUniverse::optimize(int frameIndex)
                 auto callback = result.second;
 
                 const bool accept = (costDiff < 0.0);
-                // Snapshot cellName before callback() invalidates the
-                // const-ref (accept replaces cells[cellIdx] with daughters).
-                const std::string cellNameCopy(cellName);
                 callback(accept);
                 if (accept) {
                     splitAccepted++;
-                    splitAcceptedInPhase.insert(cellNameCopy);
-                    previousSnapshots.erase(cellNameCopy);
+                    splitAcceptedInPhase.insert(cellName);
+                    previousSnapshots.erase(cellName);
                     // Rebuild eligible: the parent cell at cellIdx was replaced
                     // by two daughters appended to the cells vector.
                     rebuildEligible();
                 } else {
-                    splitBlacklist.insert(cellNameCopy);
-                    splitRejectedInPhase.insert(cellNameCopy);
+                    splitBlacklist.insert(cellName);
+                    splitRejectedInPhase.insert(cellName);
 
                     // Compensation perturb. The revert left cells[cellIdx]
                     // as the parent (in place), so no find_if needed.

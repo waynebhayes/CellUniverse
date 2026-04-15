@@ -13,6 +13,54 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+# Default to Release if caller did not specify a build type.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
+# Link-time optimization (IPO / LTO) for Release.
+include(CheckIPOSupported)
+check_ipo_supported(RESULT IPO_SUPPORTED OUTPUT IPO_ERROR)
+
+# OpenMP (per-cell loop parallelization in CellUniverse + Frame).
+#
+# Linux/GCC: find_package finds system OpenMP out of the box.
+# macOS AppleClang: needs Homebrew libomp and explicit flags. We auto-detect
+# Homebrew's libomp prefix and seed the hints so `find_package(OpenMP)`
+# succeeds without extra cmake -D args.
+#
+# If OpenMP is not found on either platform, the `#pragma omp` directives
+# compile as no-ops and the program runs serially (correct but slower).
+if(APPLE)
+    find_program(BREW_EXECUTABLE brew)
+    if(BREW_EXECUTABLE)
+        execute_process(
+            COMMAND ${BREW_EXECUTABLE} --prefix libomp
+            OUTPUT_VARIABLE LIBOMP_PREFIX
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            RESULT_VARIABLE LIBOMP_BREW_RESULT
+            ERROR_QUIET
+        )
+        if(LIBOMP_BREW_RESULT EQUAL 0 AND EXISTS "${LIBOMP_PREFIX}/lib/libomp.dylib")
+            set(OpenMP_C_FLAGS "-Xpreprocessor -fopenmp -I${LIBOMP_PREFIX}/include" CACHE STRING "")
+            set(OpenMP_CXX_FLAGS "-Xpreprocessor -fopenmp -I${LIBOMP_PREFIX}/include" CACHE STRING "")
+            set(OpenMP_C_LIB_NAMES "omp" CACHE STRING "")
+            set(OpenMP_CXX_LIB_NAMES "omp" CACHE STRING "")
+            set(OpenMP_omp_LIBRARY "${LIBOMP_PREFIX}/lib/libomp.dylib" CACHE FILEPATH "")
+            message(STATUS "macOS: seeded OpenMP hints from Homebrew libomp at ${LIBOMP_PREFIX}")
+        endif()
+    endif()
+endif()
+find_package(OpenMP)
+if(NOT OpenMP_CXX_FOUND)
+    message(STATUS "OpenMP not found — building without parallelization.")
+    if(APPLE)
+        message(STATUS "  macOS: run `brew install libomp` and re-run cmake to enable.")
+    else()
+        message(STATUS "  Linux: install libomp-dev (Debian/Ubuntu) or libgomp (GCC).")
+    endif()
+endif()
+
 find_package(OpenCV QUIET)
 if(NOT OpenCV_FOUND)
     message(FATAL_ERROR
@@ -46,7 +94,19 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 
 target_link_libraries(${PROJECT_NAME} ${OpenCV_LIBS})
 target_link_libraries(${PROJECT_NAME} yaml-cpp)
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(${PROJECT_NAME} OpenMP::OpenMP_CXX)
+endif()
 target_include_directories(${PROJECT_NAME} PRIVATE lib/yaml-cpp/include)
+
+# Release optimization flags.
+target_compile_options(${PROJECT_NAME} PRIVATE
+    $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:GNU,Clang,AppleClang>>:-O3 -march=native -DNDEBUG>
+)
+if(IPO_SUPPORTED)
+    set_property(TARGET ${PROJECT_NAME} PROPERTY
+        INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
+endif()
 
 add_executable(brightness_volume_analyzer
         ${cwd}/src/BrightnessVolumeAnalyzer.cpp
