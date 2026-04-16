@@ -174,23 +174,33 @@ CellUniverse::CellUniverse(std::map<std::string, std::vector<Ellipsoid>> initial
                            int continueFrom)
 : config(config), outputPath(outputPath), firstFrame(firstFrame)
 {
-    std::vector<std::vector<cv::Mat>> loadedFrames;
-    std::vector<float> frameMeanBrightness;
-    loadedFrames.reserve(imagePaths.size());
-    frameMeanBrightness.reserve(imagePaths.size());
+    std::vector<std::vector<cv::Mat>> loadedFrames(imagePaths.size());
+    std::vector<float> frameMeanBrightness(imagePaths.size(), 0.0f);
+    std::vector<std::ostringstream> preprocessLogs(imagePaths.size());
 
     // Pass 1: load and preprocess every frame, record per-frame mean brightness.
-    // Sequential by design — keeps preprocessing logs ([Preprocess], [LoadFrame],
-    // [PreprocessScores], [IterPreprocess]) in deterministic frame order.
-    // The wall-time win from parallelizing this one-time startup loop is
-    // small (~25 sec out of a ~1 hr run); preserved log readability is
-    // worth more than the perf gain.
-    for (size_t i = 0; i < imagePaths.size(); ++i)
+    // Frames are independent, so load/preprocess can run in parallel.
+    // Each frame writes logs into its own buffer; we flush them after the
+    // parallel region so [LoadFrame]/[Preprocess]/[IterPreprocess] output
+    // stays deterministic and frame-ordered.
+    #pragma omp parallel for schedule(dynamic)
+    for (int i = 0; i < static_cast<int>(imagePaths.size()); ++i)
     {
         std::vector<cv::Mat> real_frame =
-            ImageHandler::loadFrame(imagePaths[i].string(), config);
-        frameMeanBrightness.push_back(computeStackMean(real_frame));
-        loadedFrames.push_back(std::move(real_frame));
+            ImageHandler::loadFrame(imagePaths[static_cast<size_t>(i)].string(),
+                                    config,
+                                    &preprocessLogs[static_cast<size_t>(i)]);
+        frameMeanBrightness[static_cast<size_t>(i)] = computeStackMean(real_frame);
+        loadedFrames[static_cast<size_t>(i)] = std::move(real_frame);
+    }
+
+    for (size_t i = 0; i < preprocessLogs.size(); ++i)
+    {
+        const std::string buffer = preprocessLogs[i].str();
+        if (!buffer.empty())
+        {
+            std::cout << buffer;
+        }
     }
 
     // Global mean across frames — rescale each frame so brightness is consistent.

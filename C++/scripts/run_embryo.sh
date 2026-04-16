@@ -34,6 +34,7 @@ OUT_DIR="$OUTPUT_ROOT/output_embryo_$(date +%Y%m%d_%H%M%S)"
 # Choose build directory preference
 BUILD_DIR="$CPP_ROOT/build"
 FALLBACK_BUILD_DIR="$CPP_ROOT/cmake-build-debug"
+BUILD_TYPE="${CELLUNIVERSE_BUILD_TYPE:-Release}"
 
 echo "*******************************************************************************************************"
 echo "Cell Universe Embryo Run (clean + rebuild + run)"
@@ -43,6 +44,7 @@ echo "Input Dir   : $INPUT_DIR"
 echo "Initial CSV : $INITIAL_FILE"
 echo "Config File : $CONFIG_FILE"
 echo "Output Dir  : $OUT_DIR"
+echo "Build Type  : $BUILD_TYPE"
 echo "========================================="
 
 # Hard checks (fail fast)
@@ -76,7 +78,7 @@ mkdir -p "$BUILD_DIR"
 # Reconfigure + Rebuild
 # -----------------------------------------
 echo "[STEP] Reconfiguring CMake..."
-cmake -S "$CPP_ROOT" -B "$BUILD_DIR"
+cmake -S "$CPP_ROOT" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
 
 echo "[STEP] Building..."
 cmake --build "$BUILD_DIR" -- -j"$(sysctl -n hw.ncpu 2>/dev/null || echo 4)"

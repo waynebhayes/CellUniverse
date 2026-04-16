@@ -97,18 +97,21 @@ StackStats computeStackStats(const ImageStack &stack)
     return stats;
 }
 
-void printStackStats(const std::string &stage, const std::string &imageFile, const ImageStack &stack)
+void printStackStats(std::ostream &log,
+                     const std::string &stage,
+                     const std::string &imageFile,
+                     const ImageStack &stack)
 {
     const StackStats stats = computeStackStats(stack);
-    std::cout << "[Preprocess] file=" << fs::path(imageFile).filename().string()
-              << " stage=" << stage
-              << " slices=" << stack.size()
-              << " voxels=" << stats.count
-              << " min=" << stats.minValue
-              << " max=" << stats.maxValue
-              << " mean=" << stats.mean
-              << " stddev=" << stats.stddev
-              << std::endl;
+    log << "[Preprocess] file=" << fs::path(imageFile).filename().string()
+        << " stage=" << stage
+        << " slices=" << stack.size()
+        << " voxels=" << stats.count
+        << " min=" << stats.minValue
+        << " max=" << stats.maxValue
+        << " mean=" << stats.mean
+        << " stddev=" << stats.stddev
+        << std::endl;
 }
 
 ImageStack cloneStack(const ImageStack &sequence)
@@ -338,7 +341,9 @@ float ImageHandler::evaluateSequencePercentileWeberContrast(const ImageStack &se
     return computePercentileFromValues(std::move(sliceScores), 0.5f);
 }
 
-ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence, const BaseConfig &config)
+ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
+                                                const BaseConfig &config,
+                                                std::ostream &log)
 {
     ImageStack current = cloneStack(sequence);
 
@@ -445,8 +450,8 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence, con
 
         if (count % 50 == 0)
         {
-            std::cout << "[IterPreprocess] round=" << count
-                      << " score=" << score << std::endl;
+            log << "[IterPreprocess] round=" << count
+                << " score=" << score << std::endl;
         }
 
         previousScore = score;
@@ -490,7 +495,7 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence, con
         }
     }
 
-    std::cout << "[IterPreprocess] best_score=" << bestScore << std::endl;
+    log << "[IterPreprocess] best_score=" << bestScore << std::endl;
 
     for (auto &slice : bestSequence)
     {
@@ -524,8 +529,11 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence, con
     return bestSequence;
 }
 
-std::vector<cv::Mat> ImageHandler::loadFrame(const std::string &imageFile, BaseConfig &config)
+std::vector<cv::Mat> ImageHandler::loadFrame(const std::string &imageFile,
+                                             BaseConfig &config,
+                                             std::ostream *logSink)
 {
+    std::ostream &log = logSink ? *logSink : std::cout;
     std::vector<cv::Mat> processedZSlices;
     std::vector<cv::Mat> interpolatedZSlices;
 
@@ -548,13 +556,13 @@ std::vector<cv::Mat> ImageHandler::loadFrame(const std::string &imageFile, BaseC
             return processedZSlices;
         }
 
-        std::cout << "[LoadFrame] file=" << fs::path(imageFile).filename().string()
-                  << " rawSlices=" << numTiffSlices
-                  << " rawType=" << firstSlice.type()
-                  << " rawChannels=" << firstSlice.channels()
-                  << " rawRows=" << firstSlice.rows
-                  << " rawCols=" << firstSlice.cols
-                  << std::endl;
+        log << "[LoadFrame] file=" << fs::path(imageFile).filename().string()
+            << " rawSlices=" << numTiffSlices
+            << " rawType=" << firstSlice.type()
+            << " rawChannels=" << firstSlice.channels()
+            << " rawRows=" << firstSlice.rows
+            << " rawCols=" << firstSlice.cols
+            << std::endl;
 
         processedZSlices.reserve(numTiffSlices);
         for (const auto &rawSlice : tiffImage)
@@ -584,21 +592,21 @@ std::vector<cv::Mat> ImageHandler::loadFrame(const std::string &imageFile, BaseC
         processedZSlices.push_back(processImage(image, config));
     }
 
-    printStackStats("normalized_input", imageFile, processedZSlices);
+    printStackStats(log, "normalized_input", imageFile, processedZSlices);
 
-    processedZSlices = processPreparedSequence(processedZSlices, config);
+    processedZSlices = processPreparedSequence(processedZSlices, config, log);
 
     const float localScore = evaluateSequenceContrastScore(processedZSlices, config);
     const float michelsonScore = evaluateSequencePercentileMichelsonContrast(processedZSlices, config);
     const float weberScore = evaluateSequencePercentileWeberContrast(processedZSlices, config);
 
-    std::cout << "[PreprocessScores] file=" << fs::path(imageFile).filename().string()
-              << " local=" << localScore
-              << " michelson=" << michelsonScore
-              << " weber=" << weberScore
-              << std::endl;
+    log << "[PreprocessScores] file=" << fs::path(imageFile).filename().string()
+        << " local=" << localScore
+        << " michelson=" << michelsonScore
+        << " weber=" << weberScore
+        << std::endl;
 
-    printStackStats("processed_sequence", imageFile, processedZSlices);
+    printStackStats(log, "processed_sequence", imageFile, processedZSlices);
 
     if (processedZSlices.empty())
     {
@@ -639,8 +647,8 @@ std::vector<cv::Mat> ImageHandler::loadFrame(const std::string &imageFile, BaseC
         }
     }
 
-    printStackStats("post_interpolation", imageFile, interpolatedZSlices);
-    std::cout << std::to_string(interpolatedZSlices.size()) << "slices built successfully" << std::endl;
+    printStackStats(log, "post_interpolation", imageFile, interpolatedZSlices);
+    log << std::to_string(interpolatedZSlices.size()) << "slices built successfully" << std::endl;
     return interpolatedZSlices;
 }
 
