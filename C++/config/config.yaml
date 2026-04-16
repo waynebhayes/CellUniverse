@@ -151,7 +151,6 @@ cell:
 # Image preprocessing pipeline — iterative contrast enhancer ported from
 # scripts/image_processor_clean.py. No sigmoid.
 simulation:
-  iterations_per_cell: 500
   z_scaling: 7
   blur_sigma: 0.0
 
@@ -243,6 +242,14 @@ simulation:
   #           fix: compute overshoot once per union footprint rather
   #           than per-cell (fixes the double-counting at the root).
   asymmetric_cost_weight: 8.0
+
+  # cell localization 
+  iterations_per_cell: 100
+  signal_guided_position_enabled: true
+  signal_guided_box_size_scale: 0.25
+  signal_guided_min_box_brightness_delta: 0.1
+  signal_guided_min_sigma_scale: 0.2
+  signal_guided_sigma_range_multiplier: 2.5
 
 # Triaxial split detection pipeline.
 prob:

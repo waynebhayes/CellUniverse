@@ -493,7 +493,7 @@ size_t Frame::length() const
     return cells.size();
 }
 
-CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight)
+CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight, bool useSignalGuidance)
 {
     if (index >= cells.size()) {
         return {0.0, [](bool) {}};
@@ -506,6 +506,44 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight)
     double oldOverlapCell = computeOverlapForCell(index, overlapWeight);
 
     cells[index] = cells[index].getPerturbedCell(&perturbDirections);
+    if (useSignalGuidance && !_signalCenters.empty() && !_realFrame.empty()) {
+        const cv::Point3f oldPos(oldCell.getX(), oldCell.getY(), oldCell.getZ());
+        const SignalCenter *nearestCenter = nullptr;
+        float bestDist = std::numeric_limits<float>::max();
+        for (const auto &center : _signalCenters) {
+            const float dist = static_cast<float>(cv::norm(center.position - oldPos));
+            if (dist < bestDist) {
+                bestDist = dist;
+                nearestCenter = &center;
+            }
+        }
+
+        if (nearestCenter != nullptr) {
+            thread_local std::mt19937 gen{std::random_device{}()};
+            const float sigmaScale = std::max(
+                simulationConfig.signal_guided_min_sigma_scale,
+                nearestCenter->sigmaScale);
+            const float sigmaRangeMultiplier = std::max(
+                1e-3f, simulationConfig.signal_guided_sigma_range_multiplier);
+            std::normal_distribution<float> dx(
+                nearestCenter->position.x,
+                std::max(1e-3f, Ellipsoid::cellConfig.x.sigma * sigmaScale * sigmaRangeMultiplier));
+            std::normal_distribution<float> dy(
+                nearestCenter->position.y,
+                std::max(1e-3f, Ellipsoid::cellConfig.y.sigma * sigmaScale * sigmaRangeMultiplier));
+            std::normal_distribution<float> dz(
+                nearestCenter->position.z,
+                std::max(1e-3f, Ellipsoid::cellConfig.z.sigma * sigmaScale * sigmaRangeMultiplier));
+
+            const float maxX = static_cast<float>(_realFrame[0].cols - 1);
+            const float maxY = static_cast<float>(_realFrame[0].rows - 1);
+            const float maxZ = static_cast<float>(_realFrame.size() - 1);
+            cells[index].setPosition(
+                std::clamp(dx(gen), 0.0f, maxX),
+                std::clamp(dy(gen), 0.0f, maxY),
+                std::clamp(dz(gen), 0.0f, maxZ));
+        }
+    }
 
     // Min-radius hard clamp (2026-04-09): prevent cells from ratcheting down to
     // minimum radius bounds via unconstrained perturbation. The Ellipsoid ctor
