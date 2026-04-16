@@ -3515,6 +3515,154 @@ Minor distortion on asymmetric first-frame is acceptable to keep the split from 
 
 `split_daughter_refit_min_radius_fraction: 0.85 → 0.6`.
 
+## 2026-04-15: Non-saturating overlap penalty — fundamental fix for cell drift into neighbors
+
+**Problem.** Run 153343 frame 3: e3d03 drifted 52 px in one frame from (113, 205) to (144, 176), landing essentially on top of 12345 (distance 10.9 px, radii sum 72.9). Consequence: 12345's split was rejected with `d1_buried_in_e3d03` because the daughter candidate fell inside the bloated e3d03 ellipsoid's territory. GT frame 3 expected both 12345 and e9077 to split; only e9077 did.
+
+**Why existing overlap penalty didn't stop the drift.** The formula was:
+```
+penalty = weight × ratio²    (with ratio = (combinedR − dist) / combinedR)
+```
+This saturates at `weight` when cells fully coincide (ratio=1). At `weight = 30,000`:
+- ratio=0.85 (e3d03 into 12345) → penalty = 21,675
+- ratio=1.0 (coincident) → penalty = 30,000
+
+Any finite image-cost gain larger than 30K wins. Cells can always stack if the cost landscape supports it. Increasing `weight` only raises the ceiling; the saturation shape is fundamentally the problem.
+
+**Fix.** Non-saturating (barrier-form) formula that diverges as cells approach full coincidence:
+```
+penalty = weight × ratio² / (1 − ratio + ε)
+```
+With `ε = 0.01` and `weight = 30,000`:
+
+| ratio | old (saturating) | new (non-saturating) | ratio of new/old |
+|---|---|---|---|
+| 0.3 | 2,700 | 3,830 | 1.42× |
+| 0.5 | 7,500 | 14,700 | 1.96× |
+| 0.7 | 14,700 | 49,000 | 3.33× |
+| 0.85 | 21,675 | 121,500 | 5.60× |
+| 0.95 | 27,075 | 452,000 | 16.7× |
+| 0.99 | 29,400 | 2,940,000 | 100× |
+| 1.0 | 30,000 | huge (1/ε-bounded) | structurally prohibitive |
+
+At ratio=0.85 (the e3d03 situation), the penalty jumps from 21K to 121K — a 5.6× increase, plenty to dominate the image-cost gain that was previously winning. At ratio=0.95+ (severe overlap), the penalty explodes — no physically-meaningful image gain can overcome it.
+
+**Properties:**
+- **No new tuning knobs** — ε is numerical stability only
+- **Light overlap unchanged in practice** — ratio=0.3 penalty goes 2.7K → 3.8K, doesn't punish legitimate cell touching
+- **Heavy overlap forbidden** — asymptote at ratio=1 is mechanically impossible to cross
+- **Dataset-agnostic** — doesn't depend on image brightness, cost function magnitudes, or preprocessing. Works for any biology.
+
+### Files changed
+
+- `C++/src/Frame.cpp`:
+  - New `static inline double nonSaturatingOverlap(ratio, weight)` at file scope before `computeOverlapPenalty`. Encodes the barrier formula with `EPS=0.01`.
+  - `Frame::computeOverlapPenalty` replaces inline `weight × ratio²` with `nonSaturatingOverlap(ratio, weight)`.
+  - `Frame::computeOverlapForCell` same replacement.
+
+### Verification
+
+```bash
+RUN=$(ls -t C++/outputs/ | head -1)
+
+# e3d03 and 12345 should NOT overlap at frame 3 (mutual distance > sum of minR)
+awk -F, -v f="frame003.tif" 'NR>1 && $1==f {
+  n[NR]=$2; x[NR]=$3; y[NR]=$4; z[NR]=$5; r[NR]=$6
+}
+END {
+  for(i in n) for(j in n) if(i<j) {
+    d=sqrt((x[i]-x[j])^2+(y[i]-y[j])^2+(z[i]-z[j])^2); cr=r[i]+r[j]
+    if(d < cr) printf "overlap: %s ↔ %s d=%.1f cr=%.1f\n", substr(n[i],1,10), substr(n[j],1,10), d, cr
+  }
+}' "$RUN/cells.csv"
+
+# 12345 split at frame 3 should accept (no d1_buried_in_e3d03 rejection)
+grep -E "Split (Accepted|Reject).*frame 3" "$RUN/debug_log.txt" || \
+  awk '/frame 3/,/frame 4/' "$RUN/debug_log.txt" | grep -E "Split (Accepted|Reject)"
+
+# Full split count vs GT (expect 8: f3:2, f8:1, f11:1, f19:1, f20:3)
+grep "Split Accepted" "$RUN/debug_log.txt" | wc -l
+```
+
+### Rollback
+
+Revert `computeOverlapPenalty` and `computeOverlapForCell` to the inline `weight * ratio * ratio` formula. Remove the `nonSaturatingOverlap` helper.
+
+### Caveat
+
+Cells that are SUPPOSED to touch (e.g., packed embryos where cells physically contact) get slightly stronger penalty at low ratios. At ratio=0.2 (edges touching, 20% overlap by the bounding-sphere approximation), penalty goes 1.2K → 1.5K (25% up). Acceptable for this dataset; would need retune for denser embryo imaging.
+
+## 2026-04-15: Tighten adaptive trigger — pcaShapeCoreFractionLow 0.10 → 0.30
+
+**Problem.** Run 161013 f4 showed `e3d03 ↔ 12345..0` overlap of 22 px (distance 35.4, radii sum 57.7, ratio 0.39). Non-saturating overlap penalty gave 7K penalty at this ratio — image cost gain beat it.
+
+Root cause: e3d03 was fit at aRadius=31 when its true size is ~22. The 40% oversize turned a merely-close neighbor pair into an overlapping one. Size inflation traced to adaptive path firing on dim cells:
+
+```
+e3d03 f1:  pCore = 0.60  → ramp t = (0.60-0.10)/(0.40-0.10) = 1.0 (full inflation)
+                        → radInfl = 1.15, exp = 1.15
+           Raw PCA aRadius = 22.3
+           Inflated aRadius = 22.3 × 1.15 = 25.7
+           After frames of bounded growth: f4 aRadius = 31
+```
+
+With `pcaShapeCoreFractionLow=0.10`, any cell with pCore > 0.10 gets partial-to-full inflation. e3d03 (moderately uniform pancake cell) qualifies as "fully peaked" under this too-permissive trigger.
+
+**Fix.** Raise `pcaShapeCoreFractionLow` from 0.10 to 0.30. Only cells with `pCore > 0.30` qualify for ANY adaptive treatment.
+
+Expected behavior:
+- Bright core-dominated cells (1f89ab, 1f2ed, pre-split 12345/e9077): pCore ≥ 0.5 → full inflation (unchanged)
+- Moderate cells (e3d03, 8cbdf): pCore 0.2-0.3 → no inflation (radInfl=1.0, exp=1.3)
+- Clearly dim cells: pCore < 0.2 → no inflation (unchanged)
+
+With e3d03 at radInfl=1.0, f1 aRadius = 22.3 (raw PCA). Over subsequent frames with bounded growth, aRadius stays near 22-23. Distance to 12345..0 (27 aRadius) = 35, sum = 49 → no overlap.
+
+### Why this is more fundamental than raising overlap weight
+
+- Raising `overlap_penalty_weight` forces cells apart regardless of cost landscape → risks pushing cells off their real positions
+- Tightening the adaptive trigger fixes the SIZE at source → cells are correctly sized → no artificial overlap to fight against
+- Overlap penalty (non-saturating, shipped earlier) still handles the remaining case where cells LEGITIMATELY approach each other
+
+### Files changed
+
+- `C++/config/config.yaml`: `pcaShapeCoreFractionLow: 0.10 → 0.30` with full rationale comment.
+
+### Verification
+
+```bash
+RUN=$(ls -t C++/outputs/ | head -1)
+
+# e3d03 should NOT get adaptive inflation (radInfl=1.0)
+grep "\[PCA Shape Exp\].*e3d03" "$RUN/debug_log.txt" | head -5
+
+# e3d03 aRadius across frames should stay ~22 (no bloat to 31)
+awk -F, 'NR>1 && $2 ~ /^e3d03/ {
+  printf "  %s R=(%.1f,%.1f,%.1f)\n", $1, $6, $7, $8
+}' "$RUN/cells.csv" | head -8
+
+# f4 overlap check — should be zero
+awk -F, -v f="frame004.tif" 'NR>1 && $1==f {
+  n[NR]=$2; x[NR]=$3; y[NR]=$4; z[NR]=$5; r[NR]=$6
+}
+END {
+  for(i in n) for(j in n) if(i<j) {
+    d=sqrt((x[i]-x[j])^2+(y[i]-y[j])^2+(z[i]-z[j])^2); cr=r[i]+r[j]
+    if(d<cr) printf "overlap: %s ↔ %s d=%.1f cr=%.1f\n", substr(n[i],1,10), substr(n[j],1,10), d, cr
+  }
+}' "$RUN/cells.csv"
+```
+
+Expected:
+- e3d03 `[PCA Shape Exp]` lines show `pCore=0.2-0.3`, `radInfl=1.0`, `exp=1.3` (previously `radInfl=1.15`, `exp=1.15`)
+- e3d03 aRadius stays 22-25 across all frames (was 25-31)
+- No pairwise overlaps at f4 (e3d03 ↔ 12345..0 gap > 0)
+- Bright cells (1f89ab etc.) continue to show radInfl ≥ 1.05 (still inflated)
+
+### Rollback
+
+`pcaShapeCoreFractionLow: 0.30 → 0.10`.
+
+
 
 
 

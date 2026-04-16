@@ -346,7 +346,7 @@ double Frame::calculateBboxCost(
     const std::vector<cv::Mat> &synthFrame,
     const std::vector<uint8_t> &mask) const
 {
-    if (!bbox.isValid() || mask.empty()) return 0.0;
+    if (!bbox.isValid()) return 0.0;
     if (synthFrame.size() != _realFrame.size()) {
         throw std::runtime_error("bbox cost: synth/real stack size mismatch");
     }
@@ -354,6 +354,16 @@ double Frame::calculateBboxCost(
     const int nx = bbox.nx();
     const int ny = bbox.ny();
     const bool useAsym = asymK > 1.0f + 1e-6f;
+    // When mask is empty, ALL voxels in the bbox contribute to cost —
+    // no Voronoi neighbor exclusion. This is intentional: during any
+    // single perturbCell call, neighbors' synth is constant between old
+    // and new → cancels out in the cost delta. Exclusion was actively
+    // HARMFUL because the Voronoi boundary shifts with the perturbed
+    // cell, hiding the cost of abandoning voxels at the snap position
+    // and weakening the position anchor. Without exclusion, every voxel
+    // in the snap-anchored bbox contributes to the delta → drift from
+    // snap costs reliably.
+    const bool useMask = !mask.empty();
     double totalCost = 0.0;
 
     #pragma omp parallel for reduction(+:totalCost) schedule(static)
@@ -368,7 +378,7 @@ double Frame::calculateBboxCost(
             const float *ss = synthSlice.ptr<float>(y);
             const int yOff = zOff + (y - bbox.yMin) * nx;
             for (int x = bbox.xMin; x <= bbox.xMax; ++x) {
-                if (!mask[yOff + (x - bbox.xMin)]) continue;
+                if (useMask && !mask[yOff + (x - bbox.xMin)]) continue;
                 const float d = ss[x] - rr[x];
                 float d2 = d * d;
                 if (useAsym && d > 0.0f) d2 *= asymK;
@@ -617,31 +627,17 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight)
             }
         }
 
-        // Voronoi exclusion mask: normally built LIVE from current cell
-        // positions (self + all others). But if this cell has a shared
-        // mask installed (split daughter burn-in case), use it directly
-        // so the sibling daughter is NOT treated as an excluding neighbor
-        // — otherwise the mask shifts with daughter motion and allows
-        // mutual drift toward a shared bright region at zero abandonment
-        // cost. See 2026-04-15 daughter-collapse analysis.
-        auto sharedIt = _sharedMasks.find(cellName);
-        std::vector<uint8_t> mask;
-        if (sharedIt != _sharedMasks.end() && !sharedIt->second.empty()) {
-            mask = sharedIt->second;
-        } else {
-            std::vector<cv::Point3f> selfClaims{
-                cv::Point3f(cells[index].getX(), cells[index].getY(), cells[index].getZ())
-            };
-            ClaimSet otherClaims;
-            for (size_t oi = 0; oi < cells.size(); ++oi) {
-                if (oi == index) continue;
-                otherClaims[cells[oi].getName()].push_back(
-                    cv::Point3f(cells[oi].getX(), cells[oi].getY(), cells[oi].getZ()));
-            }
-            mask = buildExclusionMask(bboxUnion, selfClaims, otherClaims);
-        }
-        oldImageCost = calculateBboxCost(bboxUnion, _synthFrame, mask);
-        newImageCost = calculateBboxCost(bboxUnion, newSynthFrame, mask);
+        // No Voronoi exclusion mask for bbox cost. Neighbors' synth is
+        // constant between old and new (only the perturbed cell changed)
+        // → their contribution cancels in the cost delta. Building a
+        // Voronoi mask was actively harmful: the mask shifts with the
+        // cell's new position, hiding the cost of abandoning voxels at
+        // the snap position (the anchor mechanism that prevents drift).
+        // Without exclusion, every voxel in the snap-anchored bbox
+        // contributes to the delta → drift from snap costs reliably.
+        const std::vector<uint8_t> noMask;  // empty = all voxels count
+        oldImageCost = calculateBboxCost(bboxUnion, _synthFrame, noMask);
+        newImageCost = calculateBboxCost(bboxUnion, newSynthFrame, noMask);
     } else {
         // Legacy full-image path.
         newImageCost = calculateIncrementalCost(newSynthFrame,
@@ -698,6 +694,29 @@ inline float boundingSphereRadius(const Ellipsoid &cell)
 }
 }
 
+// Non-saturating overlap penalty (barrier form). Diverges as cells approach
+// full coincidence, so any finite image-cost gain cannot overcome stacking.
+//   penalty = weight × ratio² / (1 − ratio + epsilon)
+// Properties:
+//   ratio=0.0  → 0                (no overlap, no penalty)
+//   ratio=0.3  → ~1.4× old        (barely stronger for light overlap)
+//   ratio=0.5  → ~2× old
+//   ratio=0.85 → ~5.6× old        (serious overlap, strong pushback)
+//   ratio=0.95 → ~17× old
+//   ratio=0.99 → ~100× old
+//   ratio=1.0  → huge (bounded by 1/epsilon)    (full coincidence forbidden)
+// EPS keeps numerical stability; choose small enough that ratio=0.95 barrier
+// is already effective but not so small the near-coincidence penalty overflows.
+static inline double nonSaturatingOverlap(float overlapRatio, float weight)
+{
+    constexpr float EPS = 0.01f;
+    const float denom = std::max(EPS, 1.0f - overlapRatio + EPS);
+    return static_cast<double>(weight) *
+           static_cast<double>(overlapRatio) *
+           static_cast<double>(overlapRatio) /
+           static_cast<double>(denom);
+}
+
 double Frame::computeOverlapPenalty(float weight) const
 {
     double totalPenalty = 0.0;
@@ -715,7 +734,7 @@ double Frame::computeOverlapPenalty(float weight) const
             float combinedR = ri + rj;
             if (dist < combinedR) {
                 float overlapRatio = (combinedR - dist) / combinedR;
-                totalPenalty += weight * overlapRatio * overlapRatio;
+                totalPenalty += nonSaturatingOverlap(overlapRatio, weight);
             }
         }
     }
@@ -739,7 +758,7 @@ double Frame::computeOverlapForCell(size_t cellIdx, float weight) const
         float combinedR = ri + rj;
         if (dist < combinedR) {
             float overlapRatio = (combinedR - dist) / combinedR;
-            penalty += weight * overlapRatio * overlapRatio;
+            penalty += nonSaturatingOverlap(overlapRatio, weight);
         }
     }
     return penalty;
@@ -2415,13 +2434,18 @@ CostCallbackPair Frame::trySplitCellPhased(
         }
     }
 
+    // No Voronoi mask for split cost eval either — same reasoning as
+    // perturbCell: neighbors' synth is constant across candidates and
+    // baseline, cancels in all comparisons. Dropping the mask keeps
+    // cost accounting honest about abandoned voxels.
+    const std::vector<uint8_t> noSplitMask;
     auto evalImageCost = [&](const std::vector<cv::Mat> &synth) -> double {
-        if (_useBboxCost) return calculateBboxCost(splitBbox, synth, splitMask);
+        if (_useBboxCost) return calculateBboxCost(splitBbox, synth, noSplitMask);
         return _currentCost;  // legacy path: cached after refreshFullCostCache
     };
 
     const double baselineImageCost = _useBboxCost
-        ? calculateBboxCost(splitBbox, _synthFrame, splitMask)
+        ? calculateBboxCost(splitBbox, _synthFrame, noSplitMask)
         : _currentCost;
     const double baselineOverlap = computeOverlapPenalty(probConfig.overlap_penalty_weight);
     const double baselineTotal = baselineImageCost + baselineOverlap;
