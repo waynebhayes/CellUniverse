@@ -231,8 +231,8 @@ simulation:
   weber_background_floor: 0.0039215686
   weber_eps: 0.000001
 
-  export_preprocessed_images: true
-  quit_after_preprocessing: true
+  export_preprocessed_images: false
+  quit_after_preprocessing: false
 
   adaptive_background_expand_factor: 1.1
   adaptive_background_top_fraction: 0.4
