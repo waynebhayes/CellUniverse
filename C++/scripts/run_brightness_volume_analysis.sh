@@ -24,6 +24,7 @@ INPUT_DIR="$CPP_ROOT/examples/input/C.elegans_developing embryo_Fluo-N3DH-CE_Tra
 CONFIG_FILE="$CPP_ROOT/config/config.yaml"
 OUTPUT_BASE="$OUTPUT_ROOT"
 BUILD_DIR="$CPP_ROOT/build"
+BUILD_TYPE="${CELLUNIVERSE_BUILD_TYPE:-Release}"
 
 FIRST_FRAME=1
 LAST_FRAME=10
@@ -47,6 +48,7 @@ log "Config YAML     : $CONFIG_FILE"
 log "Frame Range     : $FIRST_FRAME .. $LAST_FRAME"
 log "Output Base     : $OUTPUT_BASE"
 log "Run Output Dir  : $OUT_DIR"
+log "Build Type      : $BUILD_TYPE"
 log "======================================================================================================="
 
 [ -d "$CPP_ROOT" ] || { echo "[FATAL] CPP root not found: $CPP_ROOT"; exit 1; }
@@ -58,7 +60,7 @@ mkdir -p "$BUILD_DIR"
 mkdir -p "$OUT_DIR"
 
 log "[STEP] Reconfiguring CMake..."
-run_and_log cmake -S "$CPP_ROOT" -B "$BUILD_DIR"
+run_and_log cmake -S "$CPP_ROOT" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
 
 log "[STEP] Building brightness_volume_analyzer..."
 run_and_log cmake --build "$BUILD_DIR" --target brightness_volume_analyzer -- -j"$(sysctl -n hw.ncpu 2>/dev/null || echo 4)"

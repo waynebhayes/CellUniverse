@@ -4,6 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CPP_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUTPUT_ROOT="$CPP_ROOT/outputs"
+BUILD_TYPE="${CELLUNIVERSE_BUILD_TYPE:-Release}"
 
 # run_celluniverse.sh -i
 # run_celluniverse.sh <preset_config.ini> [preset_name]
@@ -76,6 +77,22 @@ validate_input_path() {
 
   # Normal path: can be a directory or a single file.
   [ -e "$p" ]
+}
+
+configured_build_type() {
+  local cache_file="$1"
+  [ -f "$cache_file" ] || return 1
+  awk -F= '/^CMAKE_BUILD_TYPE:STRING=/ { print $2; exit }' "$cache_file"
+}
+
+host_parallelism() {
+  if command -v nproc >/dev/null 2>&1; then
+    nproc
+  elif command -v sysctl >/dev/null 2>&1; then
+    sysctl -n hw.ncpu 2>/dev/null || echo 4
+  else
+    echo 4
+  fi
 }
 
 ini_get() {
@@ -449,16 +466,32 @@ print_kv "CLI Args File" "${CLI_ARGS_FILE:-<none>}"
 print_kv "Config YAML" "$CELL_CONFIG_FILE"
 hr "-"
 print_kv "Build Path" "$BUILD_DIR"
+print_kv "Build Type" "$BUILD_TYPE"
 print_kv "Frames" "$FIRST_FRAME to $LAST_FRAME"
 print_kv "Input Path" "$INPUT_PATH"
 print_kv "Output Path" "$OUT_DIR"
 hr "="
 echo
 
-[ -d "$BUILD_DIR" ] || { err "[FATAL] build dir not found: $BUILD_DIR"; exit 1; }
 validate_input_path "$INPUT_PATH" || { err "[FATAL] input path invalid or not found: $INPUT_PATH"; exit 1; }
 [ -f "$CELL_CONFIG_FILE" ] || { err "[FATAL] config yaml not found: $CELL_CONFIG_FILE"; exit 1; }
 [ -f "$INITIAL_FILE" ] || { err "[FATAL] initial csv not found: $INITIAL_FILE"; exit 1; }
+
+mkdir -p "$BUILD_DIR"
+
+CACHE_FILE="$BUILD_DIR/CMakeCache.txt"
+CURRENT_BUILD_TYPE="$(configured_build_type "$CACHE_FILE" || true)"
+NEED_BUILD=0
+if [ "$CURRENT_BUILD_TYPE" != "$BUILD_TYPE" ]; then
+  echo "[STEP] Reconfiguring CMake for build type: $BUILD_TYPE"
+  cmake -S "$CPP_ROOT" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
+  NEED_BUILD=1
+fi
+
+if [ "$NEED_BUILD" -eq 1 ] || [ ! -x "$BUILD_DIR/celluniverse" ]; then
+  echo "[STEP] Building celluniverse..."
+  cmake --build "$BUILD_DIR" --target celluniverse -- -j"$(host_parallelism)"
+fi
 
 mkdir -p "$OUT_DIR"
 cp "$INI_FILE" "$OUT_DIR/run_preset_used.ini"

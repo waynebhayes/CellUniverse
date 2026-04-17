@@ -192,7 +192,6 @@ cell:
 # Image preprocessing pipeline — iterative contrast enhancer ported from
 # scripts/image_processor_clean.py. No sigmoid.
 simulation:
-  iterations_per_cell: 500
   z_scaling: 7
   blur_sigma: 0.0
 
@@ -293,6 +292,14 @@ simulation:
   # more expensive than keeping the parent — blocking real splits.
   # 0.03 = just above typical background noise (~0.01-0.02).
   asymmetric_cost_threshold: 0.03
+
+  # cell localization 
+  iterations_per_cell: 100
+  signal_guided_position_enabled: true
+  signal_guided_box_size_scale: 0.25
+  signal_guided_min_box_brightness_delta: 0.1
+  signal_guided_min_sigma_scale: 0.2
+  signal_guided_sigma_range_multiplier: 2.5
 
 # Triaxial split detection pipeline.
 prob:

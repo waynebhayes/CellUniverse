@@ -41,6 +41,13 @@ struct BoundingBox3D
 class Frame
 {
 public:
+    struct SignalCenter {
+        cv::Point3f position{0.0f, 0.0f, 0.0f};
+        float brightness = 0.0f;
+        float sigmaScale = 1.0f;
+        int boxes = 0;
+    };
+
     // Single-pipeline constructor — the analysis-frame / dual-pipeline
     // variant was removed on 2026-04-11 when the new ImageHandler preprocessing
     // replaced the sigmoid-first / raw-analysis split.
@@ -57,7 +64,8 @@ public:
     // Cost and optimization
     Cost calculateCost(const std::vector<cv::Mat> &synthFrame);
     size_t length() const;
-    CostCallbackPair perturbCell(size_t index, float overlapWeight = 1000.0f);
+    CostCallbackPair perturbCell(size_t index, float overlapWeight = 1000.0f,
+                                 bool useSignalGuidance = false);
     double computeOverlapPenalty(float weight) const;
     double computeOverlapForCell(size_t cellIdx, float weight) const;
 
@@ -209,7 +217,8 @@ public:
     const std::vector<cv::Mat>& getRealFrame() const { return _realFrame; }
     void setBackgroundColor(float backgroundColor) { _backgroundValue = backgroundColor; }
     float getBackgroundValue() const { return _backgroundValue; }
-    void setMeanCellBrightness(float mean) { _meanCellBrightness = mean; }
+    void setSignalCenters(std::vector<SignalCenter> centers) { _signalCenters = std::move(centers); }
+    const std::vector<SignalCenter>& getSignalCenters() const { return _signalCenters; }
     // Bbox-cost mode: perturb/split use a per-cell bbox with Voronoi
     // neighbor exclusion instead of full-image L2. Set at frame start
     // from ProbabilityConfig.use_bbox_cost; forwarded to per-cell paths.
@@ -256,6 +265,7 @@ private:
     std::string imageName;
     std::vector<cv::Mat> _realFrame;
     std::vector<cv::Mat> _synthFrame;
+    std::vector<SignalCenter> _signalCenters;
     double _currentCost = -1.0; // cached L2 image cost of _synthFrame
     // Per-slice L2 contribution of _synthFrame to the total image cost. Kept
     // in sync with _synthFrame / _currentCost so that a perturbation touching

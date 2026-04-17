@@ -51,6 +51,11 @@ public:
     bool quit_after_preprocessing = false;
     float adaptive_background_expand_factor = 1.1f;
     float adaptive_background_top_fraction = 0.4f;
+    bool signal_guided_position_enabled = false;
+    float signal_guided_box_size_scale = 1.0f;
+    float signal_guided_min_box_brightness_delta = 0.0f;
+    float signal_guided_min_sigma_scale = 0.35f;
+    float signal_guided_sigma_range_multiplier = 1.0f;
 
     // Asymmetric L2 cost weight (Fix E). Per-voxel squared error is
     // multiplied by this factor when synth > real (cell covers darker
@@ -111,6 +116,11 @@ public:
         if (node["quit_after_preprocessing"]) quit_after_preprocessing = node["quit_after_preprocessing"].as<bool>();
         if (node["adaptive_background_expand_factor"]) adaptive_background_expand_factor = node["adaptive_background_expand_factor"].as<float>();
         if (node["adaptive_background_top_fraction"]) adaptive_background_top_fraction = node["adaptive_background_top_fraction"].as<float>();
+        if (node["signal_guided_position_enabled"]) signal_guided_position_enabled = node["signal_guided_position_enabled"].as<bool>();
+        if (node["signal_guided_box_size_scale"]) signal_guided_box_size_scale = node["signal_guided_box_size_scale"].as<float>();
+        if (node["signal_guided_min_box_brightness_delta"]) signal_guided_min_box_brightness_delta = node["signal_guided_min_box_brightness_delta"].as<float>();
+        if (node["signal_guided_min_sigma_scale"]) signal_guided_min_sigma_scale = node["signal_guided_min_sigma_scale"].as<float>();
+        if (node["signal_guided_sigma_range_multiplier"]) signal_guided_sigma_range_multiplier = node["signal_guided_sigma_range_multiplier"].as<float>();
         if (node["asymmetric_cost_weight"]) asymmetric_cost_weight = node["asymmetric_cost_weight"].as<float>();
         if (node["asymmetric_cost_threshold"]) asymmetric_cost_threshold = node["asymmetric_cost_threshold"].as<float>();
     }
@@ -152,6 +162,11 @@ public:
         std::cout << "quit_after_preprocessing: " << quit_after_preprocessing << '\n';
         std::cout << "adaptive_background_expand_factor: " << adaptive_background_expand_factor << '\n';
         std::cout << "adaptive_background_top_fraction: " << adaptive_background_top_fraction << '\n';
+        std::cout << "signal_guided_position_enabled: " << signal_guided_position_enabled << '\n';
+        std::cout << "signal_guided_box_size_scale: " << signal_guided_box_size_scale << '\n';
+        std::cout << "signal_guided_min_box_brightness_delta: " << signal_guided_min_box_brightness_delta << '\n';
+        std::cout << "signal_guided_min_sigma_scale: " << signal_guided_min_sigma_scale << '\n';
+        std::cout << "signal_guided_sigma_range_multiplier: " << signal_guided_sigma_range_multiplier << '\n';
         std::cout << "z_slices: " << z_slices << std::endl;
     }
 };

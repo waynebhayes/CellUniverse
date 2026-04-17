@@ -134,6 +134,7 @@ class Ellipsoid
                    static_cast<double>(getBRadius()) *
                    static_cast<double>(getCRadius());
         }
+        void setPosition(float x, float y, float z) { _position = cv::Point3f(x, y, z); }
         float getARadiusIncreaseProbability() const { return _aRadiusPerturbParams.increase_prob; }
         float getARadiusDecreaseProbability() const { return _aRadiusPerturbParams.decrease_prob; }
         float getBRadiusIncreaseProbability() const { return _bRadiusPerturbParams.increase_prob; }

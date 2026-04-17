@@ -28,6 +28,7 @@ OUT_DIR="$OUTPUT_ROOT/output_original_data_$(date +%Y%m%d_%H%M%S)"
 BUILD_DIR="$CPP_ROOT/build"
 FALLBACK_BUILD_DIR="$CPP_ROOT/cmake-build-debug"
 SKIP_CLEAN="${CELLUNIVERSE_SKIP_CLEAN:-0}"
+BUILD_TYPE="${CELLUNIVERSE_BUILD_TYPE:-Release}"
 
 echo "======================================================================================================="
 echo "Cell Universe Original Data Run (clean + rebuild + run)"
@@ -39,6 +40,7 @@ echo "Initial CSV     : $INITIAL_FILE"
 echo "Config YAML     : $CONFIG_FILE"
 echo "Output Dir      : $OUT_DIR"
 echo "Skip Clean      : $SKIP_CLEAN"
+echo "Build Type      : $BUILD_TYPE"
 echo "======================================================================================================="
 
 # -----------------------------------------
@@ -73,7 +75,7 @@ fi
 # Reconfigure + Rebuild
 # -----------------------------------------
 echo "[STEP] Reconfiguring CMake..."
-cmake -S "$CPP_ROOT" -B "$BUILD_DIR"
+cmake -S "$CPP_ROOT" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
 
 echo "[STEP] Building..."
 cmake --build "$BUILD_DIR" -- -j"$(sysctl -n hw.ncpu 2>/dev/null || echo 4)"

@@ -1,0 +1,272 @@
+[
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/includes -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/src -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -isystem /usr/include/opencv4 -O3 -DNDEBUG -std=gnu++17 -flto=auto -fno-fat-lto-objects -O3 -march=native -DNDEBUG -fopenmp -o CMakeFiles/celluniverse.dir/src/main.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/src/main.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/src/main.cpp",
+  "output": "CMakeFiles/celluniverse.dir/src/main.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/includes -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/src -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -isystem /usr/include/opencv4 -O3 -DNDEBUG -std=gnu++17 -flto=auto -fno-fat-lto-objects -O3 -march=native -DNDEBUG -fopenmp -o CMakeFiles/celluniverse.dir/src/CellFactory.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/src/CellFactory.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/src/CellFactory.cpp",
+  "output": "CMakeFiles/celluniverse.dir/src/CellFactory.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/includes -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/src -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -isystem /usr/include/opencv4 -O3 -DNDEBUG -std=gnu++17 -flto=auto -fno-fat-lto-objects -O3 -march=native -DNDEBUG -fopenmp -o CMakeFiles/celluniverse.dir/src/CellUniverse.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/src/CellUniverse.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/src/CellUniverse.cpp",
+  "output": "CMakeFiles/celluniverse.dir/src/CellUniverse.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/includes -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/src -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -isystem /usr/include/opencv4 -O3 -DNDEBUG -std=gnu++17 -flto=auto -fno-fat-lto-objects -O3 -march=native -DNDEBUG -fopenmp -o CMakeFiles/celluniverse.dir/src/Frame.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/src/Frame.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/src/Frame.cpp",
+  "output": "CMakeFiles/celluniverse.dir/src/Frame.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/includes -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/src -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -isystem /usr/include/opencv4 -O3 -DNDEBUG -std=gnu++17 -flto=auto -fno-fat-lto-objects -O3 -march=native -DNDEBUG -fopenmp -o CMakeFiles/celluniverse.dir/src/ImageHandler.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/src/ImageHandler.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/src/ImageHandler.cpp",
+  "output": "CMakeFiles/celluniverse.dir/src/ImageHandler.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/includes -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/src -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -isystem /usr/include/opencv4 -O3 -DNDEBUG -std=gnu++17 -flto=auto -fno-fat-lto-objects -O3 -march=native -DNDEBUG -fopenmp -o CMakeFiles/celluniverse.dir/src/LineageViewer.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/src/LineageViewer.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/src/LineageViewer.cpp",
+  "output": "CMakeFiles/celluniverse.dir/src/LineageViewer.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/includes -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/src -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -isystem /usr/include/opencv4 -O3 -DNDEBUG -std=gnu++17 -flto=auto -fno-fat-lto-objects -O3 -march=native -DNDEBUG -fopenmp -o CMakeFiles/celluniverse.dir/src/Ellipsoid.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/src/Ellipsoid.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/src/Ellipsoid.cpp",
+  "output": "CMakeFiles/celluniverse.dir/src/Ellipsoid.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/includes -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/src -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -isystem /usr/include/opencv4 -O3 -DNDEBUG -std=gnu++17 -o CMakeFiles/brightness_volume_analyzer.dir/src/BrightnessVolumeAnalyzer.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/src/BrightnessVolumeAnalyzer.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/src/BrightnessVolumeAnalyzer.cpp",
+  "output": "CMakeFiles/brightness_volume_analyzer.dir/src/BrightnessVolumeAnalyzer.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/includes -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/src -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -isystem /usr/include/opencv4 -O3 -DNDEBUG -std=gnu++17 -o CMakeFiles/brightness_volume_analyzer.dir/src/EmbryoBrightTracker.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/src/EmbryoBrightTracker.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/src/EmbryoBrightTracker.cpp",
+  "output": "CMakeFiles/brightness_volume_analyzer.dir/src/EmbryoBrightTracker.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/includes -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/src -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -isystem /usr/include/opencv4 -O3 -DNDEBUG -std=gnu++17 -o CMakeFiles/brightness_volume_analyzer.dir/src/LineageViewer.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/src/LineageViewer.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/src/LineageViewer.cpp",
+  "output": "CMakeFiles/brightness_volume_analyzer.dir/src/LineageViewer.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/contrib/graphbuilder.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/contrib/graphbuilder.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/contrib/graphbuilder.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/contrib/graphbuilder.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/contrib/graphbuilderadapter.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/contrib/graphbuilderadapter.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/contrib/graphbuilderadapter.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/contrib/graphbuilderadapter.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/binary.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/binary.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/binary.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/binary.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/convert.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/convert.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/convert.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/convert.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/depthguard.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/depthguard.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/depthguard.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/depthguard.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/directives.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/directives.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/directives.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/directives.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/emit.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/emit.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/emit.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/emit.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/emitfromevents.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/emitfromevents.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/emitfromevents.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/emitfromevents.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/emitter.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/emitter.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/emitter.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/emitter.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/emitterstate.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/emitterstate.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/emitterstate.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/emitterstate.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/emitterutils.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/emitterutils.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/emitterutils.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/emitterutils.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/exceptions.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/exceptions.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/exceptions.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/exceptions.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/exp.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/exp.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/exp.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/exp.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/fptostring.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/fptostring.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/fptostring.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/fptostring.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/memory.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/memory.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/memory.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/memory.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/node.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/node.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/node.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/node.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/node_data.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/node_data.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/node_data.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/node_data.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/nodebuilder.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/nodebuilder.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/nodebuilder.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/nodebuilder.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/nodeevents.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/nodeevents.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/nodeevents.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/nodeevents.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/null.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/null.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/null.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/null.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/ostream_wrapper.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/ostream_wrapper.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/ostream_wrapper.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/ostream_wrapper.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/parse.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/parse.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/parse.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/parse.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/parser.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/parser.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/parser.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/parser.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/regex_yaml.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/regex_yaml.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/regex_yaml.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/regex_yaml.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/scanner.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/scanner.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/scanner.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/scanner.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/scanscalar.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/scanscalar.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/scanscalar.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/scanscalar.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/scantag.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/scantag.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/scantag.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/scantag.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/scantoken.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/scantoken.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/scantoken.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/scantoken.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/simplekey.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/simplekey.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/simplekey.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/simplekey.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/singledocparser.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/singledocparser.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/singledocparser.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/singledocparser.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/stream.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/stream.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/stream.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/stream.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src -O3 -DNDEBUG -std=gnu++17 -fPIC -o CMakeFiles/yaml-cpp.dir/src/tag.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/tag.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/src/tag.cpp",
+  "output": "lib/yaml-cpp/CMakeFiles/yaml-cpp.dir/src/tag.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp/util",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -O3 -DNDEBUG -std=gnu++17 -o CMakeFiles/yaml-cpp-sandbox.dir/sandbox.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/util/sandbox.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/util/sandbox.cpp",
+  "output": "lib/yaml-cpp/util/CMakeFiles/yaml-cpp-sandbox.dir/sandbox.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp/util",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -O3 -DNDEBUG -std=gnu++17 -o CMakeFiles/yaml-cpp-parse.dir/parse.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/util/parse.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/util/parse.cpp",
+  "output": "lib/yaml-cpp/util/CMakeFiles/yaml-cpp-parse.dir/parse.cpp.o"
+},
+{
+  "directory": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/build-release/lib/yaml-cpp/util",
+  "command": "/usr/bin/c++ -DYAML_CPP_STATIC_DEFINE -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -O3 -DNDEBUG -std=gnu++17 -o CMakeFiles/yaml-cpp-read.dir/read.cpp.o -c /home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/util/read.cpp",
+  "file": "/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/util/read.cpp",
+  "output": "lib/yaml-cpp/util/CMakeFiles/yaml-cpp-read.dir/read.cpp.o"
+}
+]
