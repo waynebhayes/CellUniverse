@@ -547,7 +547,8 @@ void Ellipsoid::drawOutline(cv::Mat &image, float color, float z) const {
     }
 }
 
-[[nodiscard]] Ellipsoid Ellipsoid::getPerturbedCell(PerturbDirections *directions) const {
+[[nodiscard]] Ellipsoid Ellipsoid::getPerturbedCell(PerturbDirections *directions,
+                                                    float positionScale) const {
     const PerturbParams::Sample aRadiusSample = _aRadiusPerturbParams.samplePerturb();
     const PerturbParams::Sample cRadiusSample = _cRadiusPerturbParams.samplePerturb();
     const PerturbParams::Sample bRadiusSample = _bRadiusPerturbParams.samplePerturb();
@@ -560,9 +561,9 @@ void Ellipsoid::drawOutline(cv::Mat &image, float color, float z) const {
     }
     EllipsoidParams spheroidParams(
         _name,
-        _position.x + cellConfig.x.getPerturbOffset(),
-        _position.y + cellConfig.y.getPerturbOffset(),
-        _position.z + cellConfig.z.getPerturbOffset(),
+        _position.x + positionScale * cellConfig.x.getPerturbOffset(),
+        _position.y + positionScale * cellConfig.y.getPerturbOffset(),
+        _position.z + positionScale * cellConfig.z.getPerturbOffset(),
         _major_radius + aRadiusSample.offset,
         _minor_radius + cRadiusSample.offset,
         static_cast<float>(_theta_x) + cellConfig.thetaX.getPerturbOffset(),

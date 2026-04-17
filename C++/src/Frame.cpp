@@ -147,8 +147,13 @@ std::vector<cv::Mat> Frame::generateSynthFrame()
     for (double z : z_slices)
     {
         Image synthImage = cv::Mat(shape, CV_32F, cv::Scalar(_backgroundValue));
+        const float zf = static_cast<float>(z);
         for (const auto &cell : cells)
         {
+            const float cellMaxR = std::max({cell.getARadius(),
+                                             cell.getBRadius(),
+                                             cell.getCRadius()});
+            if (std::abs(zf - cell.getZ()) > cellMaxR) continue;
             cell.draw(synthImage, simulationConfig, z);
         }
         frame.push_back(synthImage);
@@ -217,7 +222,11 @@ BoundingBox3D Frame::computeBboxAtPoint(const cv::Point3f &center,
 {
     BoundingBox3D bbox;
     if (_realFrame.empty() || radius <= 0.0f) return bbox;
-    const float r = marginScale * radius;
+    // Floor on absolute half-extent: small cells (R=10, margin=2.5 → 25 px)
+    // get at least 40 px of bbox regardless of their radius, ensuring the
+    // position anchor has enough voxels to function.
+    constexpr float kMinBboxHalfExtent = 40.0f;
+    const float r = std::max(kMinBboxHalfExtent, marginScale * radius);
     const int cols = _realFrame[0].cols;
     const int rows = _realFrame[0].rows;
     const int slices = static_cast<int>(_realFrame.size());
@@ -351,6 +360,15 @@ double Frame::calculateBboxCost(
         throw std::runtime_error("bbox cost: synth/real stack size mismatch");
     }
     const float asymK = simulationConfig.asymmetric_cost_weight;
+    // Threshold: only apply asymK when overshoot exceeds this value.
+    // Below threshold, boundary rendering artifacts (d ≈ 0.01-0.05) are
+    // penalized at 1x (symmetric). Above, genuine overshoot (cell covering
+    // dark background, d ≈ 0.1+) gets the full asymK penalty.
+    // This eliminates the double-boundary bias: two daughters have 2×
+    // boundary artifacts but the same valley-coverage signal as one parent.
+    // Without the threshold, asymK amplifies boundary artifacts 8x,
+    // making two daughters structurally more expensive than one parent.
+    const float asymThreshold = simulationConfig.asymmetric_cost_threshold;
     const int nx = bbox.nx();
     const int ny = bbox.ny();
     const bool useAsym = asymK > 1.0f + 1e-6f;
@@ -381,7 +399,7 @@ double Frame::calculateBboxCost(
                 if (useMask && !mask[yOff + (x - bbox.xMin)]) continue;
                 const float d = ss[x] - rr[x];
                 float d2 = d * d;
-                if (useAsym && d > 0.0f) d2 *= asymK;
+                if (useAsym && d > asymThreshold) d2 *= asymK;
                 sliceCost += d2;
             }
         }
@@ -433,6 +451,14 @@ std::vector<cv::Mat> Frame::generateSynthFrameFast(Ellipsoid &oldCell, Ellipsoid
 
         for (const auto &cell : cells)
         {
+            // Skip cells that can't contribute to this z-slice.
+            // A cell at z=100 with maxR=25 only affects slices 75-125.
+            // Without this check, ALL cells are drawn on every affected
+            // slice — 80%+ of draw calls produce zero pixels.
+            const float cellMaxR = std::max({cell.getARadius(),
+                                             cell.getBRadius(),
+                                             cell.getCRadius()});
+            if (std::abs(static_cast<float>(z) - cell.getZ()) > cellMaxR) continue;
             cell.draw(synthImage, simulationConfig, z);
         }
 
@@ -512,10 +538,32 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight)
     Ellipsoid oldCell = cells[index];
     PerturbDirections perturbDirections;
 
-    // O(n) overlap for just this cell before perturbation
-    double oldOverlapCell = computeOverlapForCell(index, overlapWeight);
+    // Brightness-proportional overlap weight: scale the penalty by
+    // (cellBrightness / meanBrightness)² so dim cells get lower overlap
+    // weight (their image cost is lower → overlap shouldn't dominate).
+    // Prevents dim cells from being pushed out of position by overlap
+    // with brighter neighbors. Disabled when _meanCellBrightness <= 0.
+    float effectiveOverlapWeight = overlapWeight;
+    if (_meanCellBrightness > 1e-6f) {
+        const float bRatio = oldCell.getBrightness() / _meanCellBrightness;
+        effectiveOverlapWeight = overlapWeight * bRatio * bRatio;
+    }
 
-    cells[index] = cells[index].getPerturbedCell(&perturbDirections);
+    // O(n) overlap for just this cell before perturbation
+    double oldOverlapCell = computeOverlapForCell(index, effectiveOverlapWeight);
+
+    // Radius-proportional sigma: large cells take bigger position steps,
+    // small cells take smaller steps. Scale = maxR / referenceR.
+    // When referenceR <= 0, scaling is disabled (posScale = 1.0).
+    const float refR = Ellipsoid::cellConfig.perturbSigmaReferenceRadius;
+    float posScale = 1.0f;
+    if (refR > 1e-3f) {
+        const float maxR = std::max({oldCell.getARadius(),
+                                     oldCell.getBRadius(),
+                                     oldCell.getCRadius()});
+        posScale = maxR / refR;
+    }
+    cells[index] = cells[index].getPerturbedCell(&perturbDirections, posScale);
 
     // Min-radius hard clamp (2026-04-09): prevent cells from ratcheting down to
     // minimum radius bounds via unconstrained perturbation. The Ellipsoid ctor
@@ -559,7 +607,7 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight)
     }
 
     // O(n) overlap for this cell after perturbation
-    double newOverlapCell = computeOverlapForCell(index, overlapWeight);
+    double newOverlapCell = computeOverlapForCell(index, effectiveOverlapWeight);
 
     // Render only the affected z-slice range; generateSynthFrameFast writes
     // [affectedMin, affectedMax] (inclusive) for us to drive incremental
@@ -650,9 +698,11 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight)
                     - (oldImageCost + oldOverlapCell);
 
     const bool useBboxLocal = _useBboxCost;
-    CallBackFunc callback = [this, newSynthFrame, newCostPerSlice,
+    CallBackFunc callback = [this,
+                             newSynthFrame = std::move(newSynthFrame),
+                             newCostPerSlice = std::move(newCostPerSlice),
                              oldCell, index, newImageCost, perturbDirections,
-                             useBboxLocal](bool accept)
+                             useBboxLocal](bool accept) mutable
     {
         const float brightnessStep = std::max(0.0f, Ellipsoid::cellConfig.brightnessProbabilityStep);
         const float aRadiusStep = std::max(0.0f, Ellipsoid::cellConfig.aRadiusProbabilityStep);
@@ -663,10 +713,10 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight)
             if (perturbDirections.aRadius != 0) this->cells[index].adjustARadiusPerturbProbability(perturbDirections.aRadius, aRadiusStep);
             if (perturbDirections.bRadius != 0) this->cells[index].adjustBRadiusPerturbProbability(perturbDirections.bRadius, bRadiusStep);
             if (perturbDirections.cRadius != 0) this->cells[index].adjustCRadiusPerturbProbability(perturbDirections.cRadius, cRadiusStep);
-            this->_synthFrame = newSynthFrame;
+            this->_synthFrame = std::move(newSynthFrame);
             if (!useBboxLocal) {
                 this->_currentCost = newImageCost;
-                this->_currentCostPerSlice = newCostPerSlice;
+                this->_currentCostPerSlice = std::move(newCostPerSlice);
             }
             // Under bbox cost, _currentCost/_currentCostPerSlice are stale
             // and unused for decisions. They remain populated from the
@@ -862,26 +912,25 @@ std::vector<BrightPixel> gatherBrightPixelsVoronoi(
                     static_cast<float>(y),
                     static_cast<float>(z)};
 
-                // Voronoi test: find nearest claim point across all cells.
-                // Keep this pixel only if the nearest point belongs to self.
+                // Hard Voronoi exclusion: keep pixel only if self is the
+                // nearest claim across all cells.
                 float selfBest = std::numeric_limits<float>::infinity();
                 for (const auto &sp : selfClaimPoints) {
                     const float d2 = distSq(p, sp);
                     if (d2 < selfBest) selfBest = d2;
                 }
 
-                bool keep = true;
+                float otherBest = std::numeric_limits<float>::infinity();
                 for (const auto &kv : otherClaimSets) {
                     for (const auto &op : kv.second) {
                         const float d2 = distSq(p, op);
-                        if (d2 < selfBest) {
-                            keep = false;
-                            break;
-                        }
+                        if (d2 < otherBest) otherBest = d2;
                     }
-                    if (!keep) break;
                 }
 
+                // Hard Voronoi exclusion: keep pixel only if self is the
+                // nearest claim across ALL cells. Simple, proven in best22.
+                bool keep = (otherBest >= selfBest);
                 if (keep) {
                     kept.push_back({p, v - backgroundValue});
                 } else if (stats) {
@@ -1259,6 +1308,30 @@ bool bioCheckDaughters(
         return false;
     }
 
+    // 4. Neighbor-bridging check: reject if either daughter's center is
+    // closer to an existing neighbor than to its sibling. This catches
+    // false splits where the cell stretches to a neighbor's bright blob
+    // and the bridge gate sees a valley between them — the "split" is
+    // really the cell covering two separate cells, not dividing.
+    const cv::Point3f d1Pos(daughter1.getX(), daughter1.getY(), daughter1.getZ());
+    const cv::Point3f d2Pos(daughter2.getX(), daughter2.getY(), daughter2.getZ());
+    const float siblingDist = static_cast<float>(cv::norm(d2Pos - d1Pos));
+    for (size_t i = 0; i < allCells.size(); ++i) {
+        if (i == d1Idx || i == d2Idx) continue;
+        const Ellipsoid &other = allCells[i];
+        const cv::Point3f oPos(other.getX(), other.getY(), other.getZ());
+        const float d1ToOther = static_cast<float>(cv::norm(oPos - d1Pos));
+        const float d2ToOther = static_cast<float>(cv::norm(oPos - d2Pos));
+        if (d1ToOther < siblingDist * 0.5f) {
+            reasonOut = "d1_bridging_to_" + other.getName();
+            return false;
+        }
+        if (d2ToOther < siblingDist * 0.5f) {
+            reasonOut = "d2_bridging_to_" + other.getName();
+            return false;
+        }
+    }
+
     return true;
 }
 
@@ -1558,11 +1631,10 @@ bool Frame::calibrateCellShapeViaPca(
     const float convergeAngleRad =
         convergeAngleDeg * static_cast<float>(M_PI) / 180.0f;
 
-    // Fixed mask radii (typically previous-frame snapshot). These stay
+    // Fixed mask radii (birth radii, or fallback to live). Mask stays
     // constant across iterations so the pixel-collection scope does not
-    // collapse as the fitted radii shrink — preventing the mask-feedback
+    // collapse as the fitted radii shrink — prevents the mask-feedback
     // collapse where a shrinking cell latches onto one emerging daughter.
-    // Fall back to entry-time live radii if any mask axis was not provided.
     const float effMaskA = (maskA > 0.0f) ? maskA : cell.getARadius();
     const float effMaskB = (maskB > 0.0f) ? maskB : cell.getBRadius();
     const float effMaskC = (maskC > 0.0f) ? maskC : cell.getCRadius();
@@ -1640,9 +1712,26 @@ bool Frame::calibrateCellShapeViaPca(
             // ramp down toward expBright to give halo a fairer vote in
             // the weighted moments.
             if (adaptiveExp && !cachedRaw.empty()) {
+                // Relative pCore: fraction of pixels whose weight exceeds
+                // 1.5× the cell's own mean weight. Scale-invariant — a
+                // peaked cell (bright core, dim halo) has many pixels
+                // above 1.5×mean; a uniform cell has few. Doesn't depend
+                // on absolute brightness scale or preprocessing pipeline.
+                //
+                // Replaces the previous absolute-threshold metric
+                // (pcaShapeCoreBrightnessThreshold) which failed for this
+                // dataset: dim cells got HIGH pCore (many pixels barely
+                // above threshold) while bright cells got LOW pCore
+                // (pixels spread across a wide range). The relative
+                // metric correctly classifies both.
+                float meanW = 0.0f;
+                for (const auto &bp : cachedRaw) meanW += bp.weight;
+                meanW /= static_cast<float>(cachedRaw.size());
+
                 int coreCount = 0;
+                const float relativeThreshold = 1.5f * meanW;
                 for (const auto &bp : cachedRaw) {
-                    if (bp.weight > coreT) ++coreCount;
+                    if (bp.weight > relativeThreshold) ++coreCount;
                 }
                 const float pCore = static_cast<float>(coreCount) /
                                     static_cast<float>(cachedRaw.size());
@@ -1654,6 +1743,8 @@ bool Frame::calibrateCellShapeViaPca(
                 cellRadiusInflation = 1.0f + t * (radInflBright - 1.0f);
                 log << "  [PCA Shape Exp] cell=" << cell.getName()
                     << " pCore=" << pCore
+                    << " meanW=" << meanW
+                    << " relThresh=" << relativeThreshold
                     << " exp=" << cellWeightExponent
                     << " radInfl=" << cellRadiusInflation
                     << std::endl;
@@ -1712,23 +1803,28 @@ bool Frame::calibrateCellShapeViaPca(
             return std::pow(static_cast<double>(w), static_cast<double>(weightExponent));
         };
 
+        // Cache per-pixel effective weights to avoid recomputing pow()
+        // in the covariance loop below (saves N pow() calls where N is
+        // typically 500-5000 pixels per PCA iteration).
+        std::vector<double> pixelWeights(pixels.size());
         double sx = 0, sy = 0, sz = 0, wsum = 0;
-        for (const auto &bp : pixels) {
-            const double we = effectiveWeight(bp.weight);
-            sx += bp.pos.x * we;
-            sy += bp.pos.y * we;
-            sz += bp.pos.z * we;
+        for (size_t pi = 0; pi < pixels.size(); ++pi) {
+            const double we = effectiveWeight(pixels[pi].weight);
+            pixelWeights[pi] = we;
+            sx += pixels[pi].pos.x * we;
+            sy += pixels[pi].pos.y * we;
+            sz += pixels[pi].pos.z * we;
             wsum += we;
         }
         if (wsum < 1e-6) break;
         const double mx = sx / wsum, my = sy / wsum, mz = sz / wsum;
 
         double cxx = 0, cxy = 0, cxz = 0, cyy = 0, cyz = 0, czz = 0;
-        for (const auto &bp : pixels) {
-            const double dx = bp.pos.x - mx;
-            const double dy = bp.pos.y - my;
-            const double dz = bp.pos.z - mz;
-            const double we = effectiveWeight(bp.weight);
+        for (size_t pi = 0; pi < pixels.size(); ++pi) {
+            const double dx = pixels[pi].pos.x - mx;
+            const double dy = pixels[pi].pos.y - my;
+            const double dz = pixels[pi].pos.z - mz;
+            const double we = pixelWeights[pi];
             cxx += we * dx * dx; cxy += we * dx * dy; cxz += we * dx * dz;
             cyy += we * dy * dy; cyz += we * dy * dz;
             czz += we * dz * dz;
@@ -1801,18 +1897,41 @@ bool Frame::calibrateCellShapeViaPca(
             maxAxisAngle = 0.0;
         }
 
-        // Apply per-cell adaptive inflation (1.0 for uniform, up to
-        // radInflBright for peaked). Compensates PCA's 97%-containment
-        // underestimation for peaked distributions without inflating
-        // uniform cells where the analytic sqrt(5) formula is exact.
+        // Variance-based radii: radius = radiusScale × sqrt(weighted variance).
+        //
+        // The weighted variance along each axis is ALREADY computed by the
+        // PCA covariance above (matchedVariance[i] = eigenvalue for axis i).
+        // radiusScale = sqrt(5) ≈ 2.236 is the analytically correct
+        // containment radius for a uniformly-filled ellipsoid.
+        //
+        // Why variance over percentile: the weight exponent (1.3) correctly
+        // de-emphasizes halo for PCA rotation, but that same weighting
+        // makes the weighted variance genuinely smaller along thin axes
+        // (fewer bright pixels → lower weighted variance). This preserves
+        // the elongation signal: e.g. 12345 at f2 gets c-axis variance
+        // much smaller than a/b → elongation ~1.4 → correct split detection.
+        //
+        // Unweighted percentile lost this signal (halo extends equally on
+        // all axes → cell looks round, elong=1.07). Weighted percentile
+        // over-corrected (radii 40-50% too small, cells hit min floor).
+        // Variance + radiusScale is the calibrated middle ground that the
+        // best22 reference run (8/8 GT splits) validated.
+        //
+        // Per-cell adaptive inflation (cellRadiusInflation, from the pCore
+        // ramp above) compensates for peaked cells where sqrt(5) × sqrt(var)
+        // under-estimates the visible halo.
+        //
+        // Birth-based mask (introduced after the original variance formula)
+        // prevents the mask-feedback loops that motivated the percentile
+        // experiment. The mask is frozen at birth radii and never participates
+        // in the fit → no compounding bloat.
         const float targetA = cellRadiusInflation * radiusScale *
                               std::sqrt(static_cast<float>(matchedVariance[0]));
         const float targetB = cellRadiusInflation * radiusScale *
                               std::sqrt(static_cast<float>(matchedVariance[1]));
         const float targetC = cellRadiusInflation * radiusScale *
                               std::sqrt(static_cast<float>(matchedVariance[2]));
-        // No floor. Collapse was prevented by moving mask to snap radii
-        // (above); radii are now free to reach true image extent.
+        // No floor. Collapse prevented by birth-based mask (above).
 
         // Position update: centroid, capped.
         cv::Point3f newCenter = center;
@@ -1933,33 +2052,70 @@ CostCallbackPair Frame::trySplitCellPhased(
         snapParams.bRadius = srcB;
         snapshotParent = Ellipsoid(snapParams);
 
-        const double liveCostBeforeSwap = _currentCost;
-
+        // Swap in snapshot parent, render the affected z-range, and
+        // compare costs to decide which baseline (live vs snap) is better.
         cells[cellIndex] = snapshotParent;
         int affMinS = -1, affMaxS = -1;
         Ellipsoid liveMutable = liveParent;
         Ellipsoid snapshotMutable = snapshotParent;
         auto swappedSynth = generateSynthFrameFast(liveMutable, snapshotMutable,
                                                     &affMinS, &affMaxS);
+
+        // Compare live vs snap using the CORRECT cost mode for this frame.
+        // In bbox mode, _currentCost is stale (perturbCell doesn't update it),
+        // so we compute a fresh bbox cost over a temporary bbox covering
+        // both live and snap positions. In legacy mode, _currentCost is
+        // maintained by perturbCell and calculateIncrementalCost is exact.
+        double liveCostForComparison = 0.0;
+        double snapCostForComparison = 0.0;
         std::vector<double> swappedPerSlice;
-        const double swappedImageCost = calculateIncrementalCost(swappedSynth,
-                                                                   affMinS, affMaxS,
-                                                                   swappedPerSlice);
+        double swappedImageCost = 0.0;
+        if (_useBboxCost) {
+            // Build a temporary bbox covering both live and snap positions.
+            const float maxR = std::max({srcMajor, srcB, srcMinor,
+                                         liveParent.getARadius(),
+                                         liveParent.getBRadius(),
+                                         liveParent.getCRadius()});
+            // Union of live-parent bbox and snap-parent bbox.
+            BoundingBox3D liveBbox = computeBboxAtPoint(
+                cv::Point3f(liveParent.getX(), liveParent.getY(), liveParent.getZ()),
+                maxR, _bboxMarginScale);
+            BoundingBox3D snapBbox = computeBboxAtPoint(
+                snapshot.position, maxR, _bboxMarginScale);
+            BoundingBox3D cmpBbox;
+            cmpBbox.xMin = std::min(liveBbox.xMin, snapBbox.xMin);
+            cmpBbox.xMax = std::max(liveBbox.xMax, snapBbox.xMax);
+            cmpBbox.yMin = std::min(liveBbox.yMin, snapBbox.yMin);
+            cmpBbox.yMax = std::max(liveBbox.yMax, snapBbox.yMax);
+            cmpBbox.zMin = std::min(liveBbox.zMin, snapBbox.zMin);
+            cmpBbox.zMax = std::max(liveBbox.zMax, snapBbox.zMax);
+            const std::vector<uint8_t> noMask;
+            liveCostForComparison = calculateBboxCost(cmpBbox, _synthFrame, noMask);
+            snapCostForComparison = calculateBboxCost(cmpBbox, swappedSynth, noMask);
+        } else {
+            liveCostForComparison = _currentCost;
+            swappedImageCost = calculateIncrementalCost(swappedSynth,
+                                                        affMinS, affMaxS,
+                                                        swappedPerSlice);
+            snapCostForComparison = swappedImageCost;
+        }
+
         // Use min(liveCost, snapCost) as baseline. If the snapshot parent
         // is much worse than live (cell drifted between frames), keeping
         // the inflated snapshot baseline would make ANY daughter placement
         // look like an improvement — causing false splits. Using the
         // minimum ensures the split must beat the TIGHTER of the two fits.
-        const bool useSnapshotBaseline = (swappedImageCost <= liveCostBeforeSwap);
+        const bool useSnapshotBaseline = (snapCostForComparison <= liveCostForComparison);
         if (useSnapshotBaseline) {
             _synthFrame = swappedSynth;
-            _currentCost = swappedImageCost;
-            _currentCostPerSlice = swappedPerSlice;
+            if (!_useBboxCost) {
+                _currentCost = swappedImageCost;
+                _currentCostPerSlice = swappedPerSlice;
+            }
         } else {
             // Revert: live parent was a better fit, keep it as baseline.
             cells[cellIndex] = liveParent;
-            // _synthFrame / _currentCost / _currentCostPerSlice already
-            // reflect the live parent (never changed).
+            // _synthFrame already reflects the live parent (never changed).
         }
 
         std::cout << "  [Split Snapshot Parent] " << parentName
@@ -1967,9 +2123,10 @@ CostCallbackPair Frame::trySplitCellPhased(
                   << " snapPos=(" << snapshot.position.x << "," << snapshot.position.y << "," << snapshot.position.z << ")"
                   << " liveR=(" << liveParent.getARadius() << "," << liveParent.getBRadius() << "," << liveParent.getCRadius() << ")"
                   << " snapR=(" << srcMajor << "," << srcB << "," << srcMinor << ")"
-                  << " liveCost=" << liveCostBeforeSwap
-                  << " snapCost=" << swappedImageCost
+                  << " liveCost=" << liveCostForComparison
+                  << " snapCost=" << snapCostForComparison
                   << " baseline=" << (useSnapshotBaseline ? "snapshot" : "live")
+                  << (_useBboxCost ? " (bbox)" : " (full)")
                   << std::endl;
 
         // Update snapshotParent to match what was actually installed so
@@ -1994,8 +2151,7 @@ CostCallbackPair Frame::trySplitCellPhased(
         // is a no-op). Covers every reject path through restoreLiveParent.
         _snapBboxes.erase(parentName + "0");
         _snapBboxes.erase(parentName + "1");
-        _sharedMasks.erase(parentName + "0");
-        _sharedMasks.erase(parentName + "1");
+        // _sharedMasks removed — no longer used (cost uses empty mask)
         if (!snapshotValid) return;
         if (cellIndex >= cells.size()) return;
         cells[cellIndex] = liveParent;
@@ -2375,7 +2531,6 @@ CostCallbackPair Frame::trySplitCellPhased(
     // the same voxel set (apples-to-apples). Neighbor positions don't
     // change during the split attempt, so the mask stays valid throughout.
     BoundingBox3D splitBbox;
-    std::vector<uint8_t> splitMask;
     if (_useBboxCost) {
         std::vector<cv::Point3f> seedPoints;
         seedPoints.reserve(candidates.size() * 2);
@@ -2387,21 +2542,6 @@ CostCallbackPair Frame::trySplitCellPhased(
         splitBbox = computeUnionBboxWithPoints({cellIndex}, _bboxMarginScale,
                                                seedPoints, pointR);
 
-        std::vector<cv::Point3f> selfClaims{
-            cv::Point3f(cells[cellIndex].getX(),
-                        cells[cellIndex].getY(),
-                        cells[cellIndex].getZ())
-        };
-        ClaimSet otherClaimsForBbox;
-        for (size_t oi = 0; oi < cells.size(); ++oi) {
-            if (oi == cellIndex) continue;
-            otherClaimsForBbox[cells[oi].getName()].push_back(
-                cv::Point3f(cells[oi].getX(),
-                            cells[oi].getY(),
-                            cells[oi].getZ()));
-        }
-        splitMask = buildExclusionMask(splitBbox, selfClaims, otherClaimsForBbox);
-
         std::cout << "  [Split Bbox Init] " << parentName
                   << " bboxXYZ=(" << splitBbox.xMin << "-" << splitBbox.xMax
                   << ", " << splitBbox.yMin << "-" << splitBbox.yMax
@@ -2410,27 +2550,13 @@ CostCallbackPair Frame::trySplitCellPhased(
                   << " maskSeedPoints=" << seedPoints.size()
                   << std::endl;
 
-        // --- Daughter snap-bbox + shared-mask install (splits extension) ---
-        // (1) Install the shared split union bbox under each daughter
-        //     candidate name so perturbCell anchors daughters to the SAME
-        //     union bbox covering both lobes.
-        // (2) Install the splitMask (built above with PARENT as self-claim,
-        //     real neighbors as other-claims — SIBLING is NOT a claimant
-        //     because daughters don't exist yet at that point) under each
-        //     daughter candidate name. perturbCell will use the shared mask
-        //     instead of rebuilding one that would exclude the sibling.
-        // Without (2), each daughter's dynamic mask excludes the sibling.
-        // The Voronoi boundary then shifts with the daughters and neither
-        // pays the undershoot cost of abandoning its own lobe — both drift
-        // toward a shared bright region. With (2), abandoning a lobe
-        // registers undershoot regardless of sibling position — porting
-        // 0413's global anchoring into bbox scope. Erased on every return
-        // path via restoreLiveParent + the accept callback.
+        // Install the shared split union bbox under each daughter
+        // candidate name so perturbCell anchors daughters to the SAME
+        // union bbox covering both lobes during burn-in + refine.
+        // No Voronoi mask installed (cost uses empty mask; see below).
         if (splitBbox.isValid()) {
             _snapBboxes[parentName + "0"] = splitBbox;
             _snapBboxes[parentName + "1"] = splitBbox;
-            _sharedMasks[parentName + "0"] = splitMask;
-            _sharedMasks[parentName + "1"] = splitMask;
         }
     }
 
@@ -2449,10 +2575,12 @@ CostCallbackPair Frame::trySplitCellPhased(
         : _currentCost;
     const double baselineOverlap = computeOverlapPenalty(probConfig.overlap_penalty_weight);
     const double baselineTotal = baselineImageCost + baselineOverlap;
-    const std::vector<cv::Mat> savedSynth = _synthFrame;
-    const std::vector<double> savedPerSlice = _currentCostPerSlice;
+    // Non-const: moved into callback copies at the end of the function
+    // (std::move on const silently falls back to copy).
+    std::vector<cv::Mat> savedSynth = _synthFrame;
+    std::vector<double> savedPerSlice = _currentCostPerSlice;
     const double savedCost = _currentCost;
-    const std::vector<Ellipsoid> savedCells = cells;
+    std::vector<Ellipsoid> savedCells = cells;
 
     std::cout << "  [Split Baseline] " << parentName
               << " imageCost=" << baselineImageCost
@@ -2517,10 +2645,53 @@ CostCallbackPair Frame::trySplitCellPhased(
         const size_t d1Idx = cells.size() - 2;
         const size_t d2Idx = cells.size() - 1;
 
-        // Full render. Cost cache refresh is needed only by the legacy
-        // (full-image) path; bbox-cost reads the synth directly each time.
-        _synthFrame = generateSynthFrame();
-        if (!_useBboxCost) {
+        // Render the synth with the new cell configuration (parent
+        // removed, daughters added). Under bbox cost, only re-render
+        // the z-slices affected by the parent + both daughters —
+        // unaffected slices retain their existing render from savedSynth
+        // (which is correct because those slices have no parent pixels
+        // and the cost bbox doesn't reach them anyway).
+        // For legacy full-image mode, do a full render (needed for
+        // correct full-image cost).
+        if (_useBboxCost) {
+            // Compute the z-range touched by parent + both daughters.
+            const float pMaxR = std::max({parent.getARadius(),
+                                          parent.getBRadius(),
+                                          parent.getCRadius()});
+            const float d1MaxR = std::max({child1.getARadius(),
+                                           child1.getBRadius(),
+                                           child1.getCRadius()});
+            const float d2MaxR = std::max({child2.getARadius(),
+                                           child2.getBRadius(),
+                                           child2.getCRadius()});
+            const int nSlices = static_cast<int>(z_slices.size());
+            const int zLo = std::max(0, static_cast<int>(std::floor(
+                std::min({parent.getZ() - pMaxR,
+                          child1.getZ() - d1MaxR,
+                          child2.getZ() - d2MaxR}))));
+            const int zHi = std::min(nSlices - 1, static_cast<int>(std::ceil(
+                std::max({parent.getZ() + pMaxR,
+                          child1.getZ() + d1MaxR,
+                          child2.getZ() + d2MaxR}))));
+
+            // Re-render only affected slices. Unaffected slices retain
+            // the savedSynth reference (cv::Mat shallow copy = free).
+            const cv::Size shape = getImageShape();
+            for (int z = zLo; z <= zHi; ++z) {
+                cv::Mat synthImage = cv::Mat(shape, CV_32F,
+                                            cv::Scalar(_backgroundValue));
+                const float zf = static_cast<float>(z_slices[z]);
+                for (const auto &cell : cells) {
+                    const float cmr = std::max({cell.getARadius(),
+                                                cell.getBRadius(),
+                                                cell.getCRadius()});
+                    if (std::abs(zf - cell.getZ()) > cmr) continue;
+                    cell.draw(synthImage, simulationConfig, zf);
+                }
+                _synthFrame[z] = synthImage;
+            }
+        } else {
+            _synthFrame = generateSynthFrame();
             refreshFullCostCache();
         }
 
@@ -2559,12 +2730,124 @@ CostCallbackPair Frame::trySplitCellPhased(
                   << " (image=" << candImageCost << " overlap=" << candOverlap << ")"
                   << std::endl;
 
-        if (candTotal < bestTotal) {
+        // Per-candidate edge brightness pre-filter. A daughter whose
+        // position in the real image is below the edge_too_dim threshold
+        // would fail the bridge gate anyway — filter it HERE so it can't
+        // win the cost comparison and block a better candidate.
+        //
+        // This is the same biological signal as edge_too_dim (is there a
+        // real cell at the daughter's position?) applied earlier in the
+        // pipeline. Catches the f11 1f2ed pattern where a Z-direction
+        // candidate placed d2 at z=57 (brightness 0.029) and won on cost
+        // over the correct Y-direction candidate (daughters on bright
+        // lobes, brightness >0.10). Without this filter, the Z-candidate
+        // won, hit edge_too_dim at the bridge, and the whole split was
+        // rejected — 1 frame late.
+        //
+        // Measure: average real-image brightness in a small 3D neighborhood
+        // around each daughter center (3×3×3 voxels). Cheap and local.
+        const float kMinDaughterBright = probConfig.bio_bridge_min_edge_brightness_absolute;
+        auto measureLocalBrightness = [&](float cx, float cy, float cz) -> float {
+            const int ix = static_cast<int>(std::round(cx));
+            const int iy = static_cast<int>(std::round(cy));
+            const int iz = static_cast<int>(std::round(cz));
+            float sum = 0.0f;
+            int cnt = 0;
+            for (int dz = -1; dz <= 1; ++dz) {
+                const int zz = iz + dz;
+                if (zz < 0 || zz >= static_cast<int>(_realFrame.size())) continue;
+                const cv::Mat &sl = _realFrame[zz];
+                if (sl.type() != CV_32F) continue;
+                for (int dy = -1; dy <= 1; ++dy) {
+                    const int yy = iy + dy;
+                    if (yy < 0 || yy >= sl.rows) continue;
+                    const float *row = sl.ptr<float>(yy);
+                    for (int dx = -1; dx <= 1; ++dx) {
+                        const int xx = ix + dx;
+                        if (xx < 0 || xx >= sl.cols) continue;
+                        sum += row[xx];
+                        ++cnt;
+                    }
+                }
+            }
+            return (cnt > 0) ? (sum / cnt) : 0.0f;
+        };
+
+        const float d1LocalBright = measureLocalBrightness(
+            candD1.getX(), candD1.getY(), candD1.getZ());
+        const float d2LocalBright = measureLocalBrightness(
+            candD2.getX(), candD2.getY(), candD2.getZ());
+        const bool bothDaughtersBright =
+            (d1LocalBright >= kMinDaughterBright) &&
+            (d2LocalBright >= kMinDaughterBright);
+
+        // Quick valley pre-filter: project the parent's pixel cloud onto
+        // the d1→d2 axis and measure gap vs max(edges). Same logic as the
+        // final bridge gate but computed per-candidate BEFORE cost ranking.
+        // Candidates with no valley (valleyFromBright > 0.85) or dim
+        // daughters are filtered out so they can't win on cost and block
+        // better candidates. The full bridge runs again on the winner
+        // after refine+refit (Pass 2).
+        float candValleyFromBright = 1.0f;
+        {
+            const cv::Point3f d1Pos(candD1.getX(), candD1.getY(), candD1.getZ());
+            const cv::Point3f d2Pos(candD2.getX(), candD2.getY(), candD2.getZ());
+            const cv::Point3f axVec = d2Pos - d1Pos;
+            const float axLen = static_cast<float>(cv::norm(axVec));
+            if (axLen > 1e-3f) {
+                const cv::Point3f axDir(axVec.x/axLen, axVec.y/axLen, axVec.z/axLen);
+                const cv::Point3f mid(
+                    0.5f*(d1Pos.x+d2Pos.x), 0.5f*(d1Pos.y+d2Pos.y), 0.5f*(d1Pos.z+d2Pos.z));
+                const float halfLen = 0.5f * axLen;
+                const float gapHalf = std::max(0.15f * halfLen, 1.0f);
+
+                double gapSum=0, e1Sum=0, e2Sum=0;
+                int gapN=0, e1N=0, e2N=0;
+                for (const auto &bp : pixels) {
+                    const float dx = bp.pos.x - mid.x;
+                    const float dy = bp.pos.y - mid.y;
+                    const float dz = bp.pos.z - mid.z;
+                    const float proj = dx*axDir.x + dy*axDir.y + dz*axDir.z;
+                    if (std::abs(proj) > 1.5f*halfLen) continue;
+                    if (std::abs(proj) < gapHalf) {
+                        gapSum += bp.weight; ++gapN;
+                    } else if (proj < -gapHalf && proj > -halfLen*1.1f) {
+                        e1Sum += bp.weight; ++e1N;
+                    } else if (proj > gapHalf && proj < halfLen*1.1f) {
+                        e2Sum += bp.weight; ++e2N;
+                    }
+                }
+                const float gB = (gapN>0) ? static_cast<float>(gapSum/gapN) : 0.0f;
+                const float e1B = (e1N>0) ? static_cast<float>(e1Sum/e1N) : 0.0f;
+                const float e2B = (e2N>0) ? static_cast<float>(e2Sum/e2N) : 0.0f;
+                const float maxE = std::max(e1B, e2B);
+                if (maxE > 1e-6f) candValleyFromBright = gB / maxE;
+            }
+        }
+        const float valleyLimit = probConfig.bio_bridge_max_valley_ratio;
+        const bool candPassesPreFilter = bothDaughtersBright &&
+                                         (candValleyFromBright < valleyLimit);
+
+        if (!candPassesPreFilter) {
+            std::cout << "  [Split Cand PreFilter] " << parentName
+                      << " idx=" << ci << " label=" << cand.label
+                      << " d1Bright=" << d1LocalBright
+                      << " d2Bright=" << d2LocalBright
+                      << " valley=" << candValleyFromBright
+                      << (bothDaughtersBright ? "" : " EDGE_DIM")
+                      << (candValleyFromBright >= valleyLimit ? " NO_VALLEY" : "")
+                      << std::endl;
+        }
+
+        if (candPassesPreFilter && candTotal < bestTotal) {
             bestTotal = candTotal;
             bestIdx = static_cast<int>(ci);
-            bestCells = cells;
-            bestSynth = _synthFrame;
-            bestPerSlice = _currentCostPerSlice;
+            // Move instead of copy — cells, _synthFrame, _currentCostPerSlice
+            // are immediately overwritten from savedCells/savedSynth/savedPerSlice
+            // below, so we can steal their contents here.
+            bestCells = std::move(cells);
+            bestSynth = std::move(_synthFrame);
+            bestPerSlice = std::move(_currentCostPerSlice);
             bestImageCost = candImageCost;
             bestSeedD1 = cand.d1Pos;
             bestSeedD2 = cand.d2Pos;
@@ -2727,18 +3010,45 @@ CostCallbackPair Frame::trySplitCellPhased(
             refitOne(d1IdxRefine, "d1");
             refitOne(d2IdxRefine, "d2");
 
-            // Radii changed → regenerate synth. Cost-cache refresh only
-            // needed for the legacy full-image path.
-            _synthFrame = generateSynthFrame();
-            if (!_useBboxCost) {
+            // Radii changed → regenerate synth. Under bbox mode, only
+            // re-render the z-slices affected by the two daughters (whose
+            // radii just changed). Under legacy mode, full render.
+            if (_useBboxCost) {
+                const Ellipsoid &rd1 = cells[d1IdxRefine];
+                const Ellipsoid &rd2 = cells[d2IdxRefine];
+                const float rd1MaxR = std::max({rd1.getARadius(), rd1.getBRadius(), rd1.getCRadius()});
+                const float rd2MaxR = std::max({rd2.getARadius(), rd2.getBRadius(), rd2.getCRadius()});
+                // Include the PRE-refit extent too (built radii) in case
+                // the refit shrunk the cell — old render needs clearing.
+                const float builtMaxR = std::max({dBuiltA, dBuiltB, dBuiltC});
+                const float extentR = std::max({rd1MaxR, rd2MaxR, builtMaxR});
+                const int nSlices = static_cast<int>(z_slices.size());
+                const int zLo = std::max(0, static_cast<int>(std::floor(
+                    std::min(rd1.getZ(), rd2.getZ()) - extentR)));
+                const int zHi = std::min(nSlices - 1, static_cast<int>(std::ceil(
+                    std::max(rd1.getZ(), rd2.getZ()) + extentR)));
+                const cv::Size shape = getImageShape();
+                for (int z = zLo; z <= zHi; ++z) {
+                    cv::Mat synthImage = cv::Mat(shape, CV_32F,
+                                                cv::Scalar(_backgroundValue));
+                    const float zf = static_cast<float>(z_slices[z]);
+                    for (const auto &cell : cells) {
+                        const float cmr = std::max({cell.getARadius(),
+                                                    cell.getBRadius(),
+                                                    cell.getCRadius()});
+                        if (std::abs(zf - cell.getZ()) > cmr) continue;
+                        cell.draw(synthImage, simulationConfig, zf);
+                    }
+                    _synthFrame[z] = synthImage;
+                }
+            } else {
+                _synthFrame = generateSynthFrame();
                 refreshFullCostCache();
             }
         }
 
-        // Re-capture refined state as new best.
-        bestCells = cells;
-        bestSynth = _synthFrame;
-        bestPerSlice = _currentCostPerSlice;
+        // Re-capture refined state as new best. Capture diagnostic data
+        // BEFORE moving cells (use-after-move is UB).
         bestImageCost = evalImageCost(_synthFrame);
         bestTotal = bestImageCost + computeOverlapPenalty(probConfig.overlap_penalty_weight);
 
@@ -2751,8 +3061,10 @@ CostCallbackPair Frame::trySplitCellPhased(
         // Daughter radii diagnostic. Built = 0.794 * src; post-refit radii
         // reflect the PCA fit on each daughter's pixel cloud, clamped at
         // the configured floor fraction.
-        const Ellipsoid &refinedD1 = cells[d1IdxRefine];
-        const Ellipsoid &refinedD2 = cells[d2IdxRefine];
+        // Read daughter state BEFORE moving cells — references into a
+        // moved-from vector are dangling (UB). Copy radii by value.
+        const Ellipsoid refinedD1 = cells[d1IdxRefine];
+        const Ellipsoid refinedD2 = cells[d2IdxRefine];
         const float builtMajor = volumeScale * srcMajor;
         const float builtB     = volumeScale * srcB;
         const float builtMinor = volumeScale * srcMinor;
@@ -2770,6 +3082,10 @@ CostCallbackPair Frame::trySplitCellPhased(
                   << " d1R=(" << refinedD1.getARadius() << "," << refinedD1.getBRadius() << "," << refinedD1.getCRadius() << ")"
                   << " d2R=(" << refinedD2.getARadius() << "," << refinedD2.getBRadius() << "," << refinedD2.getCRadius() << ")"
                   << std::endl;
+
+        bestCells = std::move(cells);
+        bestSynth = std::move(_synthFrame);
+        bestPerSlice = std::move(_currentCostPerSlice);
 
         // Revert to pre-split state — gates run on savedCells baseline
         // against bestCells (the refined winner).
@@ -3100,11 +3416,23 @@ CostCallbackPair Frame::trySplitCellPhased(
     // so this is an apples-to-apples comparison.
     const double costDiff = bestTotal - baselineTotal;
 
-    if (costDiff >= -probConfig.split_cost) {
+    // Adaptive split cost threshold: the larger of:
+    // (1) the fixed split_cost from config
+    // (2) split_cost_fraction × baselineImageCost (proportional to cell)
+    // This prevents marginal splits on dim/small cells (low baseline cost)
+    // from passing the fixed threshold while requiring the same fractional
+    // improvement from bright/large cells.
+    const double adaptiveThreshold = std::max(
+        static_cast<double>(probConfig.split_cost),
+        static_cast<double>(probConfig.split_cost_fraction) * baselineImageCost);
+
+    if (costDiff >= -adaptiveThreshold) {
         std::cout << "[Split Reject cost] " << parentName
                   << " diff=" << costDiff
                   << " mode=" << (_useBboxCost ? "bbox" : "full")
-                  << " threshold=" << -probConfig.split_cost
+                  << " threshold=" << -adaptiveThreshold
+                  << " (fixed=" << probConfig.split_cost
+                  << " frac=" << probConfig.split_cost_fraction << "×" << baselineImageCost << ")"
                   << " bestIdx=" << bestIdx
                   << " bestLabel=" << bestLabel
                   << " d1=(" << bestD1.getX() << "," << bestD1.getY() << "," << bestD1.getZ() << ")"
@@ -3122,9 +3450,11 @@ CostCallbackPair Frame::trySplitCellPhased(
     // accept; the caller uses perturbCell's contract where the callback is
     // invoked after the decision. To stay consistent with that contract we
     // return the (costDiff, callback) pair that installs bestCells state.
-    auto savedCellsCopy = savedCells;
-    auto savedSynthCopy = savedSynth;
-    auto savedPerSliceCopy = savedPerSlice;
+    // Move saved* into copies for the callback — savedCells/savedSynth/
+    // savedPerSlice are not read again after this point.
+    auto savedCellsCopy = std::move(savedCells);
+    auto savedSynthCopy = std::move(savedSynth);
+    auto savedPerSliceCopy = std::move(savedPerSlice);
     double savedCostCopy = savedCost;
 
     const cv::Point3f acceptedD1Pos(bestD1.getX(), bestD1.getY(), bestD1.getZ());
@@ -3145,8 +3475,15 @@ CostCallbackPair Frame::trySplitCellPhased(
 
     const std::string acceptedLabel = bestLabel;
 
-    CallBackFunc callback = [this, bestCells, bestSynth, bestPerSlice, bestImageCost,
-                             savedCellsCopy, savedSynthCopy, savedPerSliceCopy, savedCostCopy,
+    CallBackFunc callback = [this,
+                             bestCells = std::move(bestCells),
+                             bestSynth = std::move(bestSynth),
+                             bestPerSlice = std::move(bestPerSlice),
+                             bestImageCost,
+                             savedCellsCopy = std::move(savedCellsCopy),
+                             savedSynthCopy = std::move(savedSynthCopy),
+                             savedPerSliceCopy = std::move(savedPerSliceCopy),
+                             savedCostCopy,
                              parentName, costDiff, acceptedD1Pos, acceptedD2Pos,
                              acceptedD1R, acceptedD2R, acceptedSeed1, acceptedSeed2,
                              acceptedDrift1, acceptedDrift2, acceptedLabel,
@@ -3162,12 +3499,11 @@ CostCallbackPair Frame::trySplitCellPhased(
         // even if restoreLiveParent already ran.
         this->_snapBboxes.erase(parentName + "0");
         this->_snapBboxes.erase(parentName + "1");
-        this->_sharedMasks.erase(parentName + "0");
-        this->_sharedMasks.erase(parentName + "1");
+        // _sharedMasks removed — no longer used (cost uses empty mask)
         if (accept) {
-            this->cells = bestCells;
-            this->_synthFrame = bestSynth;
-            this->_currentCostPerSlice = bestPerSlice;
+            this->cells = std::move(bestCells);
+            this->_synthFrame = std::move(bestSynth);
+            this->_currentCostPerSlice = std::move(bestPerSlice);
             this->_currentCost = bestImageCost;
             std::cout << "[Split Accepted] " << parentName
                       << " costDiff=" << costDiff
@@ -3186,9 +3522,9 @@ CostCallbackPair Frame::trySplitCellPhased(
             // is what savedCellsCopy holds), then swap cells[cellIndexCopy]
             // back to the live parent and re-render the affected z-range
             // so Phase B's live state isn't lost.
-            this->cells = savedCellsCopy;
-            this->_synthFrame = savedSynthCopy;
-            this->_currentCostPerSlice = savedPerSliceCopy;
+            this->cells = std::move(savedCellsCopy);  // NOLINT: move in mutable lambda
+            this->_synthFrame = std::move(savedSynthCopy);
+            this->_currentCostPerSlice = std::move(savedPerSliceCopy);
             this->_currentCost = savedCostCopy;
 
             if (snapshotValidCopy && cellIndexCopy < this->cells.size()) {

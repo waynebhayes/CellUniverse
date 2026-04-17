@@ -78,6 +78,19 @@ cell:
   # capture that volume up-front gives ~1.6. Watch for halo-bloat (aRadius
   # hitting 65 ceiling) or Voronoi bleed signatures; if either appears, drop
   # back to 1.5 or tighten Voronoi exclusion.
+  # With percentile-based radii, the mask is a pixel-gathering WINDOW
+  # whose exact size matters much less — the 95th percentile of
+  # |projection| is robust to extra pixels at the mask boundary (they
+  # fall in the top 5% that the percentile ignores). Birth-based mask
+  # prevents feedback loops. 1.8 is a moderate value: generous enough
+  # to see the full cell + some halo, small enough to not pull in
+  # vast amounts of empty space. The tuning sensitivity is gone because
+  # radius computation no longer depends on variance (which WAS
+  # sensitive to every pixel's distance from centroid).
+  # Fixed mask scale: mask half-extent = maskScale × birth radii.
+  # 1.6 is the best22 validated value (8/8 GT splits).
+  # Stays constant across PCA iterations AND across frames — no
+  # feedback loops (no adaptive mask, no collapse onto one daughter).
   pcaShapeMaskScale: 1.6
   pcaShapeConvergeRadius: 0.3
   pcaShapeConvergeAngleDeg: 2.0
@@ -136,18 +149,18 @@ cell:
   # (~0.15-0.25), so peaked cells get the adaptive treatment and
   # uniform cells stay put.
   pcaShapeCoreBrightnessThreshold: 0.15
-  # 2026-04-15 (late afternoon): raised pcaShapeCoreFractionLow 0.10 → 0.30
-  # after observing that dim cells (e3d03, pCore ≈ 0.25) were getting
-  # partial adaptive inflation treatment. At pCore=0.6 (e3d03 f1), the
-  # ramp at fracLow=0.10 gave 15% inflation — e3d03's aRadius went from
-  # 22.3 (raw PCA) to 25.7 (inflated), pushing it 17% larger than its
-  # true extent and causing it to overlap 12345..0 at f4. Raising
-  # fracLow to 0.30 means ONLY clearly-peaked cells (pCore > 0.30) get
-  # any inflation; moderately-uniform cells like e3d03 stay at radInfl=1.0
-  # and exp=1.3. Bright cells (1f89ab, 1f2ed, pCore ≥ 0.5) still get
-  # full inflation.
-  pcaShapeCoreFractionLow: 0.30
-  pcaShapeCoreFractionHigh: 0.40
+  # pCore is now RELATIVE (fraction of pixels > 1.5 × cell's own mean
+  # weight), so the ramp thresholds are calibrated for that metric:
+  #   uniform cell: pCore ≈ 0.05-0.15 (few pixels above 1.5×mean)
+  #   peaked cell:  pCore ≈ 0.20-0.40 (bright core above 1.5×mean)
+  # fracLow=0.15 means cells with < 15% above relative threshold get
+  # no inflation; fracHigh=0.35 means cells with > 35% get full inflation.
+  # 2026-04-16: raised 0.15 → 0.25. At 0.15, ALL cells (pCore 0.16-0.23)
+  # got partial inflation. Only 8cbdf (0.23) and 1f2ed (0.23) are legitimately
+  # peaked. At 0.25, uniform cells (1f89a pCore=0.16, e9077 pCore=0.19)
+  # stay at base exponent — no unneeded 3-6% radius inflation.
+  pcaShapeCoreFractionLow: 0.25
+  pcaShapeCoreFractionHigh: 0.35
   # Adaptive radius inflation for peaked cells. PCA's analytic formula
   # radii = sqrt(5) * sqrt(variance) gives the 97% containment radius for
   # a Gaussian-like distribution — correct for uniform ellipsoids but
@@ -157,6 +170,24 @@ cell:
   # Typical peaked cell: 15% inflation captures the visible halo.
   # Over-inflating (>1.2) risks halo bloat; stay ≤ 1.2 unless evidence.
   pcaShapeRadiusInflationBright: 1.15
+  # Percentile for radius computation. The Nth percentile of |projection
+  # onto each PCA axis| becomes the radius for that axis.
+  # 0.95 = original (captures 95% of bright pixel extent; oversized by
+  #         20-73% vs variance-based radii in the best22 reference run
+  #         because halo/boundary pixels inflate the tail).
+  # 0.90 = tighter (cuts top 10%; ~5% underestimate for uniform, but
+  #         fit growth cap tracks up over subsequent frames).
+  # 0.85 = core-only (aggressive; may need higher fitGrowthCap).
+  pcaShapeRadiusPercentile: 0.90
+
+  # Radius-proportional perturbation sigma. Position perturbation offsets
+  # are scaled by (maxRadius / referenceRadius). Large cells (R=50) take
+  # bigger steps; small daughters (R=15) take smaller steps. This
+  # normalizes convergence rate across cell sizes.
+  # Set to 0 to disable (all cells use base sigma from x/y/z blocks).
+  # 25.0 = average initial cell radius in this dataset; cells at R=25
+  # use the base sigma unchanged.
+  perturbSigmaReferenceRadius: 25.0
 
 # Image preprocessing pipeline — iterative contrast enhancer ported from
 # scripts/image_processor_clean.py. No sigmoid.
@@ -253,6 +284,15 @@ simulation:
   #           fix: compute overshoot once per union footprint rather
   #           than per-cell (fixes the double-counting at the root).
   asymmetric_cost_weight: 8.0
+  # Minimum overshoot (synth - real) to activate asymK. Below this,
+  # overshoot is penalized at 1x (symmetric). Eliminates the double-
+  # boundary bias: two daughters have 2× boundary rendering artifacts
+  # (small d ≈ 0.01-0.05 at ellipsoid edges) but the same valley-
+  # coverage signal (large d ≈ 0.1+) as one parent. Without threshold,
+  # asymK amplifies the artifacts 8x, making daughters structurally
+  # more expensive than keeping the parent — blocking real splits.
+  # 0.03 = just above typical background noise (~0.01-0.02).
+  asymmetric_cost_threshold: 0.03
 
 # Triaxial split detection pipeline.
 prob:
@@ -283,7 +323,21 @@ prob:
   #   375    — 2026-04-15 (very late): scaled proportionally with
   #            asymK 32 → 8 (1/4 of 1500). At k=8 bbox total costs
   #            drop ~4× so the threshold follows.
-  split_cost: 375
+  #   2000   — 2026-04-16: raised from 375. Run 030254 showed 16K gap
+  #            between weakest accepted (-5154) and weakest cost-reject
+  #            (+11054). 2000 adds safety against marginal phantoms
+  #            without risking any real splits (all accepted > 5K).
+  split_cost: 2000
+  # Proportional split cost: effective threshold = max(split_cost,
+  # split_cost_fraction × baselineImageCost). Ensures split must improve
+  # cost by at least this fraction of the cell's own baseline cost.
+  # 0.0 = disabled (fixed threshold only).
+  # 0.03 = 3% improvement required. In run 030254, accepted splits had
+  # costDiff/baseline ratios of 7-35%, so 3% is safe.
+  split_cost_fraction: 0.03
+
+  # Position prior disabled (removed after it over-constrained legitimate motion).
+  position_prior_weight: 0.0
   # Overlap penalty weight. Formula in computeOverlapForCell:
   #   penalty = weight × ((combinedR − dist) / combinedR)²
   # This saturates at `weight` when cells fully overlap (dist=0).
@@ -348,7 +402,12 @@ prob:
   # daughter sits in near-background empty space. Typical cell cores
   # are 0.10-0.30 above background; 0.05 is ~3× bg noise. Raise if
   # background noise is higher; lower if real daughters are very dim.
-  bio_bridge_min_edge_brightness_absolute: 0.05
+  # 2026-04-15 (night): lowered 0.05 → 0.04 after 1f2ed f11 split
+  # was rejected with edge2Bright=0.047 (just 0.003 below 0.05).
+  # The real daughter was visible in the image but its brightness
+  # measurement happened to be slightly below threshold. 0.04 is
+  # still well above background noise (~0.01-0.02).
+  bio_bridge_min_edge_brightness_absolute: 0.04
 
   split_burn_in_pos_sigma_scale: 0.4
 
@@ -366,7 +425,14 @@ prob:
   # If switching back to use_bbox_cost=false, revert all three to the
   # full-image values noted above.
   use_bbox_cost: true
-  bbox_margin_scale: 3.0
+  # 2026-04-16 (early): lowered 3.0 → 2.0 to tighten position anchor.
+  # 2026-04-16 (late): raised 2.0 → 2.5. Run 030254 showed 5/6 cells
+  # exceeding their bbox half-extent. At 2.0 × maxR=25, window is 50 px
+  # — overlap-driven drift (155 px for e3d03) easily escapes. At 2.5,
+  # window is 62.5 px — more headroom before the cell exits the bbox
+  # and loses the anchor. The anchor is still effective because the
+  # snap-position undershoot is always included in the bbox.
+  bbox_margin_scale: 2.5
 
   # A1: after positional refine, re-fit each daughter's radii via PCA on
   # its Voronoi-claimed pixel cloud. Tightens real daughters (lower cost)
@@ -394,11 +460,21 @@ prob:
   # at 1.1 (below) still prevents bloat-at-birth.
   split_daughter_refit_min_radius_fraction: 0.85
   # Upper cap: post-refit radii clamped to this × built_radii per axis.
-  # Prevents newborn daughters from bloating 20-45% past built when the
-  # sibling Voronoi boundary hasn't settled. At 1.1×, daughters stay
-  # within 10% of their volume-preserving birth size; subsequent frames
-  # grow naturally via bounded-growth reference in the main shape fit.
-  split_daughter_refit_max_radius_fraction: 1.1
+  # Prevents newborn daughters from bloating past built when the sibling
+  # Voronoi boundary hasn't settled. Subsequent frames grow naturally
+  # via bounded-growth reference in the main shape fit.
+  #
+  # 2026-04-16: lowered 1.1 → 1.05 to resolve structural conflict with
+  # bio_max_single_daughter_volume_fraction (0.65). At ceil=1.1, the
+  # max possible single-daughter volume = (1.1 × 0.7937)³ = 0.665,
+  # which EXCEEDS the 0.65 gate. Any daughter refitting to ceiling on
+  # all 3 axes is rejected — catching all phantoms but also real splits
+  # whose daughter pixel cloud is slightly oversized (12345 f3 rejected
+  # at sdv=0.651 in run 030254, causing 155 px drift cascade on e3d03).
+  # At ceil=1.05: max sdv = (1.05 × 0.7937)³ = 0.579, giving 12.3%
+  # margin below the 0.65 gate. All 35 accepted real splits across 3
+  # reference runs had sdv ≤ 0.627 — comfortably within 1.05 ceiling.
+  split_daughter_refit_max_radius_fraction: 1.05
 
   # Built-time per-axis radius scale for newly-spawned daughters.
   # daughter.radii = scale * snapshot_parent.radii.

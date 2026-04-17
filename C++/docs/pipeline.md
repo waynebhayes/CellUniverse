@@ -1,11 +1,8 @@
 # CellUniverse Pipeline (Current)
 
-**Last updated:** 2026-04-15 — bbox cost + snap-anchored bbox + daughter shared-mask + single-metric bridge + adaptive exponent/inflation + bounded-growth shape reference + fit-side growth cap + OMP multithreading
+**Last updated:** 2026-04-16 (evening) — adaptive mask + position refinement + soft Voronoi + asymK threshold + neighbor-bridging gate + z-skip render
 
-This is the authoritative end-to-end pipeline for a single frame. It supersedes
-the per-frame flow in `docs/plans/2026-04-10-triaxial-pipeline-redesign.md`
-and the 2026-04-14 version of this document. Per-fix rationale lives in
-`docs/changelogs/changelogv6.md`.
+This is the authoritative end-to-end pipeline for a single frame. Per-fix rationale lives in `docs/changelogs/changelogv7.md`.
 
 ---
 
@@ -17,177 +14,218 @@ and the 2026-04-14 version of this document. Per-fix rationale lives in
 ================================================================
                              |
                              v
-      Load raw image, preprocess (ImageHandler, iterative contrast)
+  Load raw image, preprocess (ImageHandler, iterative contrast)
                              |
                              v
-      Compute adaptive background from frame N-1 cells
+  [Frame 2+] Adaptive background from frame N-1 cells:
+    background = prevBg × (thisFrameMeanBright / prevFrameMeanBright)
+    frame.setBackgroundColor(background)
                              |
                              v
-      Set bbox cost mode:
-        frame 1  → full-image L2 (no snapshots available)
-        frame 2+ → bbox cost ON (per-cell snap-anchored bbox, see below)
+  Set bbox cost mode BEFORE regenerate:
+    bboxActiveThisFrame = use_bbox_cost && (frameIndex > 0)
+    frame.setUseBboxCost(active, bbox_margin_scale, overlap_weight)
                              |
                              v
-      Read snapshot for every cell (end-of-frame N-1):
-        { center, a, b, c, rotation,
-          splitAxisDir, splitAxisLength,
-          shapeElongation = max(a,b,c) / min(a,b,c) }
+  frame.regenerateSynthFrame()
+    - generateSynthFrame() renders all cells on all z-slices
+      (with z-skip: skip cells where |z - cell.z| > cell.maxR)
+    - refreshFullCostCache() only if NOT bbox mode
                              |
                              v
-      Precompute P(split)_i linear ramp:
-        t = clamp((snapElong - 1.0) / (2.0 - 1.0), 0, 1)
-        P(split) = P_split_base + t * (P_split_max - P_split_base)
-      (No classification threshold. Every cell has a baseline rate;
-       elongated ones scale up toward P_split_max.)
+  Compute mean cell brightness → frame._meanCellBrightness
+  (for brightness-proportional overlap in perturbCell)
                              |
                              v
-      Seed expectedDaughters[name] for every cell with a snap:
-        D1_seed = snap.center - 0.5 * splitAxisLength * splitAxisDir
-        D2_seed = snap.center + 0.5 * splitAxisLength * splitAxisDir
+  Precompute P(split) linear ramp per cell:
+    t = clamp((snapElong - 1.0) / (2.0 - 1.0), 0, 1)
+    P(split) = P_split_base + t × (P_split_max - P_split_base)
                              |
                              v
-================================================================
-      STAGE 1 — POSITION CALIBRATION  (frame 1 only)
-================================================================
-                             |
-                             v
-      Runs only when frameIndex == 0. Centroid jump + perturbCell
-      refinement for each seed cell. Frame 2+ skipped because every
-      cell uses its end-of-previous-frame snap as authoritative
-      position. The `[Calibration] frame N skipped` log was removed
-      — skip is silent in the normal path.
+  Seed expectedDaughters[name] for every cell with a snap:
+    D1_seed = snap.center - 0.5 × splitAxisLength × splitAxisDir
+    D2_seed = snap.center + 0.5 × splitAxisLength × splitAxisDir
                              |
                              v
 ================================================================
-      STAGE 2 — PCA SHAPE FIT  (per cell, all cells — snap-masked)
-                             [OpenMP-parallelized across cells]
+  STAGE 1 — POSITION CALIBRATION  (frame 1 only)
 ================================================================
+  For each cell:
+    Step 1: calibrateCellPositionViaCentroid (weighted mean)
+    Step 2: perturbCell refinement × split_calibration_iterations_per_cell
+  Frame 2+ skipped — snap + Stage 0a do position work.
                              |
                              v
-      For each cell, up to pcaShapeMaxIters (=15) passes:
-        1. Gather bright pixels inside FIXED mask sized from the
-           cellShapeReference[name] (NOT from snap radii):
-              sphere r = maskScale * max(refA, refB, refC)
-              ellipsoid mask radii = maskScale * (refA, refB, refC)
-           Mask stays constant across iterations — prevents
-           mask-feedback collapse onto one daughter.
-           See "Shape reference (bounded growth)" below for how ref
-           is populated and updated.
-           Pixel gather is Voronoi-filtered against the current
-           positions of all other cells (claim set).
-        2. If |mask| < pcaShapeMinPixels: stop.
-        3. Compute pCore = fraction(bright pixel weight > threshold).
-           Adaptive exponent:
-             exp_used = lerp(expDim=1.3, expBright=1.15, pCore ramp)
-           Adaptive radius inflation:
-             radius_scale_factor = lerp(1.0, radInflBright=1.15, same ramp)
-        4. Weighted centroid mu, covariance C using weights w^exp_used.
-        5. cv::eigen(C) -> lambda0>=lambda1>=lambda2, e0,e1,e2.
-        6. If lambda0/lambda2 < 1.1: skip rotation (degenerate).
-        7. RANK ASSIGNMENT (a <- e0, b <- e1, c <- e2) with sign-align
-           to current slot direction.
-        8. r_i = radius_scale_factor * pcaShapeRadiusScale * sqrt(lambda_i)
-           NO floor; radii free to shrink or grow.
-        9. R = [e0|e1|e2], force det=+1, decompose to Euler.
-        10. Shift center toward mu, capped at
-            pcaShapeMaxPosShiftFraction * maxR per iter.
-            (pcaShapeUpdatePosition=false — snap is authoritative;
-            enabled only inside split daughter refit.)
-        11. Converged when max|dR| < pcaShapeConvergeRadius AND max
-            axis rotation < pcaShapeConvergeAngleDeg.
+================================================================
+  STAGE 2 — PCA SHAPE FIT  (per cell, all cells)
+                 [OpenMP-parallelized across cells]
+================================================================
+  Snapshot all cell positions into CellPosSnapshot[] BEFORE
+  the parallel region (avoids data race: threads write radii/
+  rotation while others read positions).
                              |
                              v
-      After all cells fit:
-        FIT-SIDE GROWTH CAP (10%/frame):
-          for each cell with an existing ref:
-            cell.radii[i] = min(fitted[i], ref[i] * 1.10)
-        Prevents single-frame bloat jumps within a mask that is
-        ref * maskScale (up to 1.6x ref).
+  FOR EACH CELL (parallel):
+    Build claim set from position snapshot (immutable)
+    Look up birth radii from cellShapeBirth[name] (captured
+    once at first appearance, NEVER updated)
+    Call calibrateCellShapeViaPca with birth radii as mask basis
+                             |
+                             v
+   ┌────────── INSIDE calibrateCellShapeViaPca ──────────┐
+   │                                                     │
+   │ STAGE 0a: POSITION REFINEMENT                       │
+   │   birthMaxR = max of birth radii                    │
+   │   Gather Voronoi-filtered pixels in 1.5 × birthMaxR │
+   │   around current center (soft ownership weights)    │
+   │   Compute weighted peak centroid using weight³      │
+   │     → bright peak dominates over dim gaps           │
+   │     → pre-split bimodal cells stay on ONE daughter  │
+   │       (pre-pass still finds both for split detect)  │
+   │   shift = peak - center                             │
+   │   cap = 0.10 × birthMaxR                            │
+   │   Apply: scale = min(1, cap/|shift|) if |shift|>0.5 │
+   │   cell.position += shift × scale                    │
+   │   log: [Pos Refine] cell=... peak=... shift=...     │
+   │                                                     │
+   │ STAGE 0b: ADAPTIVE MASK SIZING (gradient-based)     │
+   │   Starting scale = pcaShapeMaskScale (1.2)          │
+   │   For up to 5 iterations:                           │
+   │     tryR = scale × birthMaxR                        │
+   │     gather pixels in tryR sphere                    │
+   │     count bright pixels in:                         │
+   │       inner shell [0.70R, 0.85R]                    │
+   │       outer shell [0.85R, R]                        │
+   │     normalize each by its volume fraction           │
+   │       (inner=0.271, outer=0.386 of R³)              │
+   │     ratio = outerDensity / innerDensity             │
+   │                                                     │
+   │     ratio > 0.50 → expand (outer still bright →     │
+   │                    cell extends further)            │
+   │     ratio < 0.15 → shrink (outer dim →              │
+   │                    mask overshoots cell)            │
+   │     else → converged (brightness trailing off)      │
+   │   Clamped to [0.8, 2.5]                             │
+   │   log: [Adaptive Mask] cell=... scale=... ratio=...│
+   │                                                     │
+   │ PCA ITERATION LOOP (up to pcaShapeMaxIters = 15):   │
+   │   1. Gather bright pixels (cached by center):       │
+   │      - Sphere of adaptiveMaskScale × birthMaxR      │
+   │      - Ellipsoid mask (per-axis birth radii × scale)│
+   │      - Brightness cutoff: max(0.05, bg + 0.02)      │
+   │      - Soft Voronoi: weight ×=                      │
+   │          otherD² / (selfD² + otherD²)               │
+   │        (hard cutoff if otherD < 0.25 × selfD)       │
+   │   2. Cache pixelWeights[] = pow(w, exp) per pixel   │
+   │   3. Adaptive exponent (if pcaShapeAdaptiveExponent):│
+   │      pCore = fraction(w > 1.5 × meanW)              │
+   │      exp ramp: dim (1.3) ← pCore → bright (1.15)    │
+   │      radInfl ramp: 1.0 ← pCore → 1.15               │
+   │   4. Weighted centroid (reuse cached weights)       │
+   │   5. Weighted covariance (reuse cached weights)     │
+   │   6. cv::eigen → λ0 ≥ λ1 ≥ λ2, eigenvectors         │
+   │   7. If λ0/λ2 < 1.1: skip rotation (degenerate)     │
+   │   8. Rank assignment (a←λ0, b←λ1, c←λ2)             │
+   │      Sign-align eigenvecs with current slot dirs    │
+   │   9. Variance-based radii:                          │
+   │      r_i = radInfl × pcaShapeRadiusScale × √λ_i     │
+   │   10. Shift center toward centroid                  │
+   │       (capped at maxPosShiftFraction × maxR;        │
+   │        pcaShapeUpdatePosition=false for mature cells│
+   │        — only daughter refit enables this)          │
+   │   11. Converged when max|dR| < convRadius AND       │
+   │       max axis angle < convAngleDeg                 │
+   │                                                     │
+   └─────────────────────────────────────────────────────┘
+                             |
+                             v
+  After all cells fit (serial merge of per-cell logs):
+    FIT-SIDE GROWTH CAP (10%/frame):
+      for each cell with existing ref:
+        cell.radii[i] = min(fitted[i], ref[i] × 1.10)
 
-        REFERENCE UPDATE (5%/frame bounded growth):
-          new cells: cellShapeReference[name] = current fit
-          existing cells:
-            ref[i] = clamp(fit[i], ref[i]*0.95, ref[i]*1.05)
-        Ref is the mask basis for frame N+1. Ratchets slowly up
-        or down so the shape fit can neither bloat compound nor
-        noise-drift collapse.
-                             |
-                             v
-================================================================
-      STAGE 3 — SNAP-ANCHORED BBOX INSTALL  (frame 2+ only)
-================================================================
-                             |
-                             v
-      For each cell with a valid snapshot:
-        bbox = axis-aligned box centered at snap.position with
-               half-extent = bbox_margin_scale * snap.maxRadius
-        frame.setSnapBbox(name, bbox)
-      Cells without snap (daughters born mid-frame) fall through to
-      a live pre/post-union bbox in perturbCell.
-      Bbox is used as the cost-evaluation window for ALL of this
-      cell's perturbations this frame — voxels at the snap position
-      are always in scope, so drifting away from snap registers an
-      undershoot penalty (position anchoring).
-                             |
-                             v
-================================================================
-      STAGE 4 — IMAGE-GROUNDED DAUGHTER PRE-PASS  (ALL cells)
-                             [OpenMP-parallelized across cells]
-================================================================
-                             |
-                             v
-      For every cell with a valid snapshot:
-        Gather bright pixels in bounding box (3 x snap.maxR),
-        Voronoi-filter vs neighbors.
-        LOCAL-FRAME PCA on pixels:
-          localPos = R_inv * (worldPos - center)
-          localPos /= (a, b, c)
-          Principal eigenvector -> un-normalize -> rotate to world.
-        D1_exp, D2_exp = world-space centroids of two halves
-        (projections of pixels onto eigenvector, split at median).
+    REFERENCE UPDATE (5%/frame bounded growth):
+      new cells: cellShapeReference[name] = current fit
+      existing: ref[i] = clamp(fit[i], ref[i]×0.95, ref[i]×1.05)
 
-      Pre-pass ALWAYS runs — used to find the midpoint + direction of
-      the two emerging daughter blobs in the current frame, independent
-      of snapshot's (possibly stale) split axis.
+    BIRTH CAPTURE (once, never updated):
+      new cells: cellShapeBirth[name] = current fit
                              |
                              v
 ================================================================
-      STAGE 5 — UNIFIED PERTURB + SPLIT LOOP  (all cells)
+  STAGE 3 — SNAP-ANCHORED BBOX INSTALL  (frame 2+ only)
 ================================================================
+  For each cell with valid snapshot:
+    center = snap.position
+    radius = snap.maxRadius
+    bbox.half-extent = max(40, marginScale × radius)  ← floor 40px
+    frame.setSnapBbox(name, bbox)
                              |
                              v
-      Loop (cells.size() * iterations_per_cell):
-        Pick random eligible cell.
-        if rand < P(split) & not blacklisted:
-            attempt split (see Split attempt section below)
-        else:
-            perturbCell (position + rotation ONLY; radii fixed by
-                         PCA shape fit above).
+================================================================
+  STAGE 4 — IMAGE-GROUNDED DAUGHTER PRE-PASS  (all cells)
+                 [OpenMP-parallelized across cells]
+================================================================
+  For every cell with valid snapshot:
+    Gather bright pixels in 3 × snap.maxR box
+    (soft Voronoi weighting vs neighbors)
+    LOCAL-FRAME PCA on pixels:
+      localPos = R⁻¹ × (worldPos - center)
+      localPos /= (a, b, c)
+      Principal eigenvector → world space (un-normalize, rotate)
+    D1_exp, D2_exp = centroids of two halves
+    (split at median projection onto eigenvector)
+                             |
+                             v
+================================================================
+  STAGE 5 — UNIFIED PERTURB + SPLIT LOOP
+================================================================
+  phaseNames = set of all cell names at frame start
+  totalIters = cells.size() × iterations_per_cell
+  Loop totalIters:
+    Pick random eligible cell index
+    if rand < P(split) and not in splitBlacklist:
+        attempt split (see Split Attempt below)
+        if accept:
+          phaseNames.insert(daughter0_name, daughter1_name)
+          recompute frame._meanCellBrightness
+          rebuildEligible()
+    else:
+        perturbCell (position + rotation only; radii fixed
+                     by Stage 2 PCA)
 
-      perturbCell cost evaluation:
-        frame 1 or no snap-bbox: legacy full-image L2.
-        frame 2+ with snap-bbox: asymmetric L2 over bbox voxels,
-          mask built from Voronoi claim points (self + others).
-          If a shared mask was installed (split daughter burn-in)
-          for this cell name, use it directly — no sibling mutual
-          exclusion.
+  perturbCell cost evaluation:
+    Radius-proportional sigma:
+      posScale = maxR / perturbSigmaReferenceRadius (25)
+      getPerturbedCell(dir, posScale) scales x/y/z offsets
+
+    Brightness-proportional overlap:
+      bRatio = cellBrightness / meanBrightness
+      effOverlapWeight = overlapWeight × bRatio²
+
+    Frame 1 or no snap-bbox: legacy full-image L2 incremental
+    Frame 2+ with snap-bbox:
+      asymmetric L2 over bbox voxels (no exclusion mask)
+      per voxel: d = synth - real
+        d² × asymK if d > asymThreshold (0.03), else d² × 1
+      (threshold eliminates double-boundary artifacts)
                              |
                              v
 ================================================================
-      END OF FRAME N
+                        END OF FRAME N
 ================================================================
                              |
                              v
-      Brightness EMA update (per-cell, from real image)
+  Brightness EMA update (per-cell, from real image)
                              |
                              v
-      Freeze snapshot for frame N+1:
-        shapeElongation = max(a,b,c) / min(a,b,c)  (from fitted shape)
-        splitAxisDir = cell.worldSplitAxis()  (shortest axis, world)
-        splitAxisLength = shortest radius
+  Freeze snapshot for frame N+1:
+    shapeElongation = max(a,b,c) / min(a,b,c)
+    splitAxisDir = cell.worldSplitAxis()  (SHORTEST axis)
+    splitAxisLength = shortest radius
                              |
                              v
-      Save cells.csv + output PNG images
+  Save cells.csv + output PNG images
 ```
 
 ---
@@ -196,305 +234,269 @@ and the 2026-04-14 version of this document. Per-fix rationale lives in
 
 For a cell that rolled a split attempt:
 
-1. **Install snapshot-state parent** — swap in an Ellipsoid at snap position, snap radii, snap rotation. Pick `baseline = min(liveCost, snapCost)`.
+1. **Install snapshot-state parent**
+   - Build Ellipsoid at (snap.position, snap.radii, snap.rotation)
+   - Compare live vs snap baseline using FRESH bbox cost over
+     a temp union bbox (not stale `_currentCost` in bbox mode)
+   - Pick baseline = min(liveCost, snapCost)
 
-2. **Gather bright pixels** — Voronoi-filtered in 3×snap.maxR box. `selfClaim` from overridden `splitSnapshot.splitAxisDir * splitAxisLength` (pre-pass values).
+2. **Gather bright pixels** — Voronoi-filtered (soft weights) in
+   3 × snap.maxR box. `selfClaim` from pre-pass D1_exp, D2_exp.
 
-3. **Build primary axes** — shortest snapshot local axis only + imgPca direction (dropped axA and axB based on run data showing 0/6 accepts from them). Typical: **20 candidates** (2 primary × 2 midpoints × 5 variants).
+3. **Build primary axes**
+   - Shortest snapshot local axis
+   - imgPca direction (from Stage 4 pre-pass) if distinct
+   - Typically 2 primaries × 2 midpoints × 5 variants = up to 20
 
-4. **Build candidate matrix** — for each primary direction:
-   - `data_<axis>_<variant>` midpoint = pixel-projection centroid on that direction
-   - `snap_<axis>_<variant>` midpoint = `snapshot.position`
-   - 5 variants each: primary, rot-, rot+, trans-, trans+
+4. **Split bbox install (bbox mode)**
+   - splitBbox = union of parent + all daughter seeds × margin
+   - `_snapBboxes[parentName+"0"] = splitBbox; ["1"] = splitBbox`
+   - No Voronoi exclusion mask (`_sharedMasks` removed)
 
-5. **Split bbox + shared mask install (bbox mode)**:
-   - Compute splitBbox = union of parent + all daughter seeds × margin
-   - Build splitMask (parent Voronoi, excludes real neighbors — sibling NOT included because daughters don't exist yet)
-   - Install `_snapBboxes[parentName+"0"] = splitBbox; ["1"] = splitBbox`
-   - Install `_sharedMasks[parentName+"0"] = splitMask; ["1"] = splitMask`
-   - Inside perturbCell, daughters use these (skipping the live-Voronoi mask rebuild that would exclude the sibling). This ports 0413's global anchor into bbox scope.
+5. **Candidate loop** — for each candidate:
+   - Build daughters at seed positions
+     (radii = volumeScale × snap radii, volumeScale = 0.7937)
+   - Partial z-slice render (z-skip: only cells near the slice)
+   - Burn-in: split_candidate_burn_in_iterations × perturbCell
+     (alternate daughters, tight position sigmas)
+   - candTotal = image_cost + overlap_penalty
 
-6. **Burn-in** — each candidate runs `split_candidate_burn_in_iterations` perturbCell passes on both daughters with tight sigmas. Tracks total cost.
+   **Two-pass pre-filter** (before cost ranking):
+   - Edge brightness at d1/d2 positions >= bio_bridge_min_edge_brightness_absolute (0.04)
+   - Quick valley on d1→d2 axis: gap/max(edges) < bio_bridge_max_valley_ratio (0.85)
+   - Candidates failing either are excluded from competition
 
-7. **Winner** — smallest total cost across candidates.
+   Track best candidate that passed pre-filter by lowest candTotal
 
-8. **Refine** — `split_final_refine_iterations` extra perturb iters on winner with same tight sigmas.
+6. **Refine** — split_final_refine_iterations × perturbCell on winner
 
-9. **Daughter refit (per daughter)** — short PCA shape fit with `updatePosition=true`:
-   - floor = `split_daughter_refit_min_radius_fraction (0.85) * built_radii`
-   - ceil  = `split_daughter_refit_max_radius_fraction (1.1) * built_radii`
-   - Clamp final radii into `[floor, ceil]` per axis
-   - Position-update lets centroid slide to real bright-pixel centroid (only during daughter refit, not mature-cell shape fit)
+7. **Daughter refit** (per daughter)
+   - Short PCA shape fit with updatePosition=true
+   - Radii clamped to [0.85, 1.05] × built_radii per axis
+   - (Ceiling 1.05: ensures max single-daughter volume fraction
+     = (1.05 × 0.7937)³ = 0.579 < bio gate 0.65)
 
-10. **Bridge gate** — sample real-image brightness along `(d1 → d2)` axis:
-    - **edge1** zone: inside d1, far from gap
-    - **gap** zone: middle, expanded to 30% of halfLen minimum
-    - **edge2** zone: inside d2, far from gap
-    - `valleyFromBright = gapBright / max(edge1Bright, edge2Bright)`
-    - **Reject edge_too_dim** if `min(edge1, edge2) < bio_bridge_min_edge_brightness_absolute (0.05)` — one daughter in empty space.
-    - **Reject bridge_flat** if `valleyFromBright > bio_bridge_max_valley_ratio (0.85)` — no valley between the brighter daughter and midpoint.
-    - Single-metric (not two-tier). The previous tier-1 `worstValleyRatio` hard-0.95 check was retired because it punished legitimate asymmetric division (dim daughter's edge ≈ gap inflates its vr independent of valley quality).
+8. **Bridge gate (Pass 2, final check)**
+   - Sample real-image brightness along d1→d2 axis
+   - Zones: edge1 (in d1, far from gap), gap (middle ≥30% of halfLen),
+     edge2 (in d2, far from gap)
+   - valleyFromBright = gapBright / max(edge1, edge2)
+   - **Reject edge_too_dim**: min(edges) < 0.04
+   - **Reject bridge_flat**: valleyFromBright > 0.85
 
-11. **Bio gate**:
-    - `max(r1, r2) / min(r1, r2) > bio_daughter_size_ratio_max (1.5)` → reject
-    - `(v1 + v2) / refParentVolume ∉ [0.6, 1.3]` → reject
-    - `max(v1, v2) / refParentVolume > 0.65` → reject
-    - Either daughter buried in non-sibling → reject
-    - Either daughter buried in sibling → reject
+9. **Bio gates**
+   - size_ratio: max(r1,r2)/min(r1,r2) ≤ 1.5
+   - combined_volume: 0.6 ≤ (v1+v2)/refParentVol ≤ 1.3
+   - max_single_daughter: max(v1,v2)/refParentVol ≤ 0.65
+   - d1/d2 not buried in any non-sibling cell
+   - d1/d2 not buried in sibling
+   - **NEIGHBOR-BRIDGING** (anti-false-positive):
+     for each neighbor: if |neighbor - d1| < 0.5 × |d2 - d1| OR
+     |neighbor - d2| < 0.5 × |d2 - d1| → reject
+     (catches splits where a cell stretches to a neighbor's blob)
 
-12. **Cost gate** — accept if `costDiff < -split_cost`. Else reject.
+10. **Cost gate**
+    adaptiveThreshold = max(split_cost, split_cost_fraction × baseline)
+    accept if costDiff < -adaptiveThreshold
 
-13. **Cleanup on any exit path** — erase `_snapBboxes` and `_sharedMasks` entries for daughter names via `restoreLiveParent` (reject paths) and accept callback (both branches).
+11. **Cleanup** — erase `_snapBboxes` entries; `restoreLiveParent` on reject
 
 ---
 
-## Bbox cost (universal)
-
-For frame 2+, perturbCell and split cost both use bbox cost with Voronoi exclusion:
+## Cost (bbox mode, frame 2+)
 
 ```
-cost = asymmetric_L2(real, synth) summed over voxels inside bbox
-       where voxel's nearest Voronoi claim belongs to self
+cost = Σ voxels in bbox: (synth - real)² × multiplier
+where multiplier = asymK if (synth - real) > asymThreshold, else 1
 ```
 
-- **bbox**: snap-anchored per cell (fixed for whole frame, centered at snap.position). Falls back to live pre/post-union bbox for cells without snap (frame 1, newborn daughters).
-- **mask**: Voronoi exclusion built from live claim positions at each perturbation, EXCEPT when `_sharedMasks[cellName]` is installed (split daughter burn-in) — then uses pre-built mask without sibling exclusion.
-- **asymK**: amplifies overshoot (synth > real) with `asymmetric_cost_weight` factor.
-
-Option A (snap-anchored bbox) ports 0413's global position anchor into local-bbox scope: the snap-position voxels are always in the cost window, so a cell drifting away from snap pays an undershoot penalty.
-
----
-
-## Shape reference (bounded growth)
-
-Each cell tracks a persistent `(a, b, c)` reference that drives the shape-fit mask:
-
-- **Birth**: captured as the cell's current fitted radii (first appearance in frame.cells).
-- **Per-frame update** (after shape fit, before reference-consuming stages):
-  ```
-  ref_new[i] = clamp(fit[i], ref[i] * 0.95, ref[i] * 1.05)
-  ```
-  ±5%/frame max change. Allows daughter cells to grow toward adult size at ~5%/frame (matches measured biology). Blocks noise-driven slow drift and halo compounding.
-- **Use**: mask half-extent = `maskScale × ref`. Decouples the mask from snap (which reflects last-frame fit, carrying any bloat into the next frame).
-
-Combined with the fit-side cap (+10%/frame), the shape fit is bounded against both compounding drift and instant bloat jumps.
+- **bbox**: snap-anchored per cell, half-extent = max(40, marginScale × snap.maxR)
+- **No Voronoi exclusion mask** — all voxels in bbox contribute.
+  Neighbors' synth is constant during this cell's perturbation → cancels in cost delta.
+- **asymK threshold (0.03)**: small boundary rendering artifacts (d ≈ 0.01-0.05)
+  are penalized at 1x. Genuine overshoot (cell covering dark region, d ≈ 0.1+)
+  gets the full asymK. Eliminates double-boundary bias: two daughters' boundary
+  artifacts no longer structurally cost more than one parent's.
 
 ---
 
-## Shape fit details
+## Shape reference system
 
-**Key design**: mask built from the persistent shape reference. Mask stays fixed across iterations. Radii are free to roam within the mask. No volume floor, no per-axis floor. Rank-assignment keeps slot identity stable (a = largest eigenvalue, b = middle, c = smallest).
+Each cell tracks THREE persistent (a, b, c) state vectors:
 
-**If reference missing** (very first frame or edge case): mask falls back to snap radii, then to current live radii.
+### `cellShapeBirth` (frozen, NEVER updated)
+- Captured once at first appearance (frame 1 for initial cells, post-refit
+  for daughters)
+- Used as the reference for:
+  - Adaptive mask sizing (`scale × birthMaxR` pixel gathering)
+  - Position refinement cap (10% of birthMaxR per frame)
+- Decoupled from all feedback loops — frozen.
 
-### Biology — split along short axis
+### `cellShapeReference` (bounded-growth, ±5%/frame)
+- Per-frame update: `ref[i] = clamp(fit[i], ref[i]×0.95, ref[i]×1.05)`
+- Used ONLY for the fit-side growth cap (10%/frame):
+  `cell.radii[i] = min(fitted[i], ref[i] × 1.10)`
 
-Cells pinch through their thinnest dimension:
-- Rod (prolate): short axis direction = cleavage plane normal. Daughters end up stacked along the LONG axis, but the `splitAxisDir` in snapshot is the SHORT axis direction.
-- Pancake (oblate): thin dimension is c; daughters stack through z.
+### `cells[i].radii` (live fit)
+- Updated by PCA shape fit each frame
+- Input to perturbCell, rendering, etc.
 
-`Ellipsoid::worldSplitAxis` returns the shortest semi-axis direction. Do NOT change this — it is biologically correct.
+Combined: adaptive mask (image-grounded) + bounded ref (slow change) + fit cap (no sudden bloat).
 
 ---
 
-## Asymmetric L2 cost
+## Tiered Voronoi pixel ownership
 
-Per-voxel squared error multiplied by `k = asymmetric_cost_weight (=8)` when `synth > real` (cell covers darker real region). Unweighted when `synth <= real`.
+`gatherBrightPixelsVoronoi` uses a three-tier ownership model:
 
-```cpp
-sumSq = sum(diff²)                              // all pixels
-posSumSq = sum(diff² where diff > 0)            // overshoot only
-asymSumSq = sumSq + (k - 1) * posSumSq
-return sqrt(asymSumSq)
+```
+selfBest = min distance² from pixel to self claim points
+otherBest = min distance² from pixel to any other cell's claim points
+
+if otherBest < 0.25 × selfBest:
+    REJECT (clearly owned by another cell)
+elif otherBest < selfBest:
+    CONTESTED — ownership = otherBest / (selfBest + otherBest)
+    pixel.weight = (brightness - background) × ownership
+else:  # otherBest ≥ selfBest
+    FULL WEIGHT — self is closer than any other cell
+    pixel.weight = (brightness - background) × 1.0
 ```
 
-SIMD-optimized via `cv::subtract`, `cv::multiply`, `cv::compare`, `cv::sum`.
+Three-tier design rationale:
+- **Reject tier** (other 2x closer): pixel genuinely belongs to another cell
+- **Contested tier** (self and other comparable distance): proportional split
+  prevents zero-sum competition where one cell starves neighbors
+- **Full-weight tier** (self is nearest): preserves variance-based radius accuracy
 
-**Why it matters:** parent ellipsoid covering a dark valley between two daughters pays amplified penalty. Two correctly-placed daughters avoid the valley. Makes the cost comparison reliable when the shape fit is correct.
-
-**Direction of amplification:** this penalizes OVERSHOOT (cell covers dark image). It does NOT amplify undershoot. Higher k pushes candidate selection toward candidates where each cell tightly covers only its real-image territory.
-
----
-
-## Adaptive exponent + radius inflation
-
-Each cell computes `pCore = fraction(raw pixel weights above pcaShapeCoreBrightnessThreshold)` once per shape-fit pass. Two outputs ramped on the same `pCore`:
-
-- **Weighted PCA exponent**: `expDim (1.3)` for uniform/dim cells, ramping down to `expBright (1.15)` for peaked cells. Looser halo weighting for peaked cells lets halo contribute to the fit.
-- **Radius inflation**: `1.0×` for uniform (sqrt(5) is analytically exact), ramping up to `radInflBright (1.15×)` for peaked (compensates PCA's 97%-containment underestimation of Gaussian-like distributions).
-
-Overfitted cells (halo bleed, neighbor contamination) typically have LOW pCore because halo dilutes the core fraction — the adaptive path doesn't fire for them, so inflation doesn't amplify bloat. Bounded-growth reference handles their cap separately.
-
-Threshold `pcaShapeCoreBrightnessThreshold` must match the dataset's pixel-weight range — 0.15 for this dataset (iterative-contrast preprocessing produces weights in 0.05–0.20). Set too high (e.g., 0.6 for pre-sigmoid-era) and pCore is always 0, adaptive paths collapse to defaults.
+The full-weight tier is the critical distinction vs earlier designs. Without
+it, isolated boundary pixels (far from all neighbors) got ownership 0.7-0.9
+just because `otherBest` was finite, shrinking the weighted variance across
+the entire cell. Only genuinely contested pixels now see soft weighting.
 
 ---
 
-## P(split) linear ramp
-
-```cpp
-t = clamp((snapElongation - 1.0) / (2.0 - 1.0), 0, 1)
-P(split) = P_split_base + t * (P_split_max - P_split_base)
-```
-
-- `snapElong = 1.0` → P(split) = 0.03 (P_split_base)
-- `snapElong = 1.5` → P(split) = 0.265
-- `snapElong = 2.0` → P(split) = 0.50 (P_split_max, clamped above)
-
-All cells get at least the base rate, so first-gen splits with near-round snaps still attempt.
-
----
-
-## Multithreading (OpenMP)
-
-Per-cell work that is cell-independent runs in parallel with deterministic log ordering:
-
-- **PCA shape fit** (Stage 2) — each cell fits in its own thread; per-cell `ostringstream` log sinks merged serially in cell-index order after the parallel region.
-- **Pre-pass** (Stage 4) — same pattern. `imageGroundExpectedDaughters` is const-safe.
-- **Bbox cost inner loop** — `#pragma omp parallel for reduction(+:totalCost)` over z-slices inside `calculateBboxCost`.
-- **Full-cost cache refresh** — slice-parallel.
-
-Main optimize loop and split candidate burn-in remain serial (shared mutable state in `Frame`; parallelizing requires a separate thread-local-state design).
-
-Build: CMake auto-detects OpenMP on macOS (Homebrew libomp auto-prefix) and Linux (system libgomp). Falls back to sequential build if absent.
-
----
-
-## Config knobs (config.yaml — current)
+## Config (active values)
 
 ```yaml
 cell:
   pcaShapeMaxIters: 15
-  pcaShapeRadiusScale: 2.236          # sqrt(5), uniform-ellipsoid variance
+  pcaShapeRadiusScale: 2.236          # sqrt(5)
   pcaShapeMinPixels: 50
-  pcaShapeMaskScale: 1.6              # raised from 1.3 to match 0413 effective converged mask
+  pcaShapeMaskScale: 1.2              # STARTING scale for adaptive mask
   pcaShapeConvergeRadius: 0.3
   pcaShapeConvergeAngleDeg: 2.0
-  pcaShapeUpdatePosition: false        # snap is authoritative for mature cells
+  pcaShapeUpdatePosition: false       # snap + Stage 0a handle position
   pcaShapeMaxPosShiftFraction: 0.5
-  pcaShapeWeightExponent: 1.3          # baseline (dim) exponent
-
-  # Adaptive exponent + radius inflation (driven by pCore)
+  pcaShapeWeightExponent: 1.3
   pcaShapeAdaptiveExponent: true
   pcaShapeWeightExponentBright: 1.15
-  pcaShapeCoreBrightnessThreshold: 0.15
-  pcaShapeCoreFractionLow: 0.10
-  pcaShapeCoreFractionHigh: 0.40
+  pcaShapeCoreBrightnessThreshold: 0.15  # bypassed; relative pCore active
+  pcaShapeCoreFractionLow: 0.25
+  pcaShapeCoreFractionHigh: 0.35
   pcaShapeRadiusInflationBright: 1.15
+  pcaShapeRadiusPercentile: 0.90      # parsed but unused (variance active)
+  perturbSigmaReferenceRadius: 25.0
 
 simulation:
-  asymmetric_cost_weight: 8.0          # overshoot amplification factor
+  asymmetric_cost_weight: 8.0
+  asymmetric_cost_threshold: 0.03     # asymK only fires above this
 
 prob:
-  # P(split) ramp
   P_split_base: 0.03
   P_split_max: 0.5
-
-  # Split thresholds
-  split_cost: 375                      # min cost improvement to accept
-  overlap_penalty_weight: 30000.0      # scales with bbox cost magnitudes
-
-  # Bbox cost
-  use_bbox_cost: true                   # frame 2+; frame 1 forced full-image
-  bbox_margin_scale: 3.0
-
-  # Split candidate generation
-  split_candidates_per_attempt: 30
-  split_candidate_burn_in_iterations: 50
-  split_final_refine_iterations: 30
-  split_calibration_iterations_per_cell: 50  # frame 1 only
-  split_candidate_rotation_delta_degrees: 8
-  split_candidate_translation_delta_fraction: 0.2
-
-  # Daughter refit (per-daughter PCA after split refine)
-  split_daughter_refit_iterations: 3
-  split_daughter_refit_min_radius_fraction: 0.85
-  split_daughter_refit_max_radius_fraction: 1.1
-  split_daughter_volume_scale: 0.7937   # cbrt(1/2) volume-preserving
-
-  # Bio gates
+  split_cost: 2000
+  split_cost_fraction: 0.03           # adaptive: max(fixed, fraction × baseline)
+  overlap_penalty_weight: 30000.0
+  use_bbox_cost: true
+  bbox_margin_scale: 2.5
   bio_daughter_size_ratio_max: 1.5
   bio_combined_volume_min_fraction: 0.6
   bio_combined_volume_max_fraction: 1.3
   bio_max_single_daughter_volume_fraction: 0.65
-  bio_bridge_max_valley_ratio: 0.85    # single metric: gap / max(edges)
-  bio_bridge_min_edge_brightness_absolute: 0.05
-
-  # DEPRECATED (parsed for backward compat, no effect)
-  bio_bridge_max_gap_density: 0.18
-  bio_bridge_no_valley_hard_threshold: 0.95
-
-  split_burn_in_pos_sigma_scale: 0.4
+  bio_bridge_max_valley_ratio: 0.85
+  bio_bridge_min_edge_brightness_absolute: 0.04
+  split_daughter_refit_iterations: 3
+  split_daughter_refit_min_radius_fraction: 0.85
+  split_daughter_refit_max_radius_fraction: 1.05
+  split_daughter_volume_scale: 0.7937   # cbrt(1/2), volume-preserving
+  split_candidates_per_attempt: 30
+  split_candidate_burn_in_iterations: 50
+  split_final_refine_iterations: 30
 ```
 
-Growth caps (hardcoded as constants in `CellUniverse.cpp` shape-fit block):
-- `refGrowthCap = 0.05` — reference updates ±5%/frame
-- `fitGrowthCap = 0.10` — fit clamped at ref × 1.10 per frame
+Hardcoded constants (not in YAML):
+
+- Refit ceiling per axis: 1.05 (in config, but conceptually hardcoded by math)
+- Bbox minimum half-extent: 40 px
+- Adaptive mask gradient thresholds: 0.15 (shrink), 0.50 (expand) — outer/inner ratio
+- Adaptive mask scale range: [0.8, 2.5]
+- Position refinement cap: 10% × birthMaxR per frame
+- Position refinement weight exponent: 3 (weight³ for peak dominance)
+- Bounded ref growth cap: ±5%/frame
+- Fit-side growth cap: +10%/frame vs ref
+- Neighbor-bridging rejection: d_to_neighbor < 0.5 × d_to_sibling
+- Soft Voronoi reject threshold: otherBest < 0.25 × selfBest
 
 ---
 
-## Deleted / deprecated code (do not resurrect without reason)
+## Key invariants
 
-| Item | Why retired |
+| Invariant | Active mechanism |
 |---|---|
-| `shape_elongation_classify_threshold` + classification | Linear ramp handles discrimination |
-| `measureRadiusGradient` + radius gradient loop | Symmetric-shrink when rotation wrong |
-| `measureRadiiFromImage` + radius EMA | Percentile-based, biased by sampling |
-| `_birthFrame` + age gate | Never fired |
-| `_birthVolume` ratchet + volume floor | Blocked legitimate shrinkage |
-| Per-axis snap-shrink floor (Fix C v1) | Blocked aspect-ratio change |
-| `size_reduction_penalty_weight` | Froze cells solid |
-| `min_frames_before_split` | Never read |
-| `bio_max_midpoint_parent_fraction` | Pre-pass grounding replaced it |
-| `split_direction_agreement_degrees` | Superseded by always-try-both |
-| `pcaShapeBlend` | Iteration replaced EMA blending |
-| Phase A / Phase B ordering | No measurable effect |
-| Bridge tier-1 `worstValleyRatio >= 0.95` | Punished legitimate asymmetric division |
-| Bridge `gapDensity` conjunction | Single valleyFromBright metric subsumes it |
-| `bio_bridge_no_valley_hard_threshold` | Retired with tier-1 |
-| `bio_bridge_max_gap_density` | Retired with tier-2 |
-| `split_burn_in_radius_sigma_scale` | Radii never perturbed during burn-in |
-| `calibration_max_centroid_jump_voxels` | Calibration is frame-1-only now |
-| Frame-N>=2 `[Calibration] frame N skipped` log | Silent skip, log noise |
+| Cells divide along SHORTEST axis | `Ellipsoid::worldSplitAxis()` returns min semi-axis direction |
+| Mask is image-grounded, not static | Adaptive mask sizing (shell density feedback) |
+| Position tracks real blob | Stage 0a (weight³ peak centroid, 10% capped shift) |
+| No Voronoi starvation | Soft Voronoi weighting (proportional ownership) |
+| No double-boundary bias | asymK threshold (0.03) — boundary artifacts at 1x |
+| No neighbor-bridging splits | Bio gate: daughter can't be closer to neighbor than 50% sibling dist |
+| Radii correctly sized | Variance formula `pcaShapeRadiusScale × sqrt(λ)` + adaptive mask |
+| Position anchor works | Snap bbox (floor 40) + brightness² × overlap weight |
+| Daughters get perturbed | `phaseNames.insert(d0, d1)` on split accept |
+| No data race in parallel PCA | Position snapshot before `#pragma omp parallel for` |
+| Refit ceiling < bio gate | 1.05 × 0.7937 = 0.833 per axis → max vol fraction 0.579 < 0.65 |
+| No full-image cost on bbox frames | `setUseBboxCost` before `regenerateSynthFrame` → skip cache |
 
 ---
 
 ## Diagnostic log tags
 
-- `[P(split)]` — per-frame P(split) per cell
-- `[Calibration]` — per-cell position calibration result (frame 1 only)
-- `[PCA Shape] cell=... iter=i` — shape fit iteration progress
-- `[PCA Shape Exp] cell=... pCore=... exp=... radInfl=...` — adaptive exponent + inflation per cell
-- `[PCA Shape Cache]` — bright-pixel gather cache hit/miss
-- `[Fit Growth Cap] frame N clamped=X` — fit-side cap fired this frame
-- `[Shape Reference] frame N captured=X updated=Y total=Z growthCap=0.05` — reference-update accounting
-- `[Snap Bbox] frame N installed=X total=Y` — snap-bbox install coverage
-- `[Pre-Pass] frame N allCells=M` — pre-pass invocation
-- `[Pre-Pass Claims]` — Voronoi claim set per cell
-- `[Pre-Pass] round=0 cell=...` — per-cell pre-pass result with shift from seed
-- `[Split Snapshot Parent]` — snapshot-state parent install
-- `[Split Attempt]` — attempt header with snap/live state
-- `[Split Seeds]` — seeds from snap axis
-- `[Split Dirs] selected=[axC, imgPca]` — primary axes used for candidate generation
-- `[Split AxisPlace]` — per-axis data midpoint computation
-- `[Split Sigmas]` — burn-in sigma values
-- `[Split Bbox Init]` — split union bbox + mask seed points
-- `[Split Cand]` — per-candidate burn-in result (seed/final/drift/cost)
-- `[Split Winner]` — winning candidate after burn-in
-- `[Split Daughter Refit] d1/d2 ... built=... floor=... ceil=... pre=... post=... prePos=... postPos=... posShift=...` — per-daughter refit
-- `[Split Refine]` — refine-iter result
-- `[Split Bridge]` — bridge gate measurements (valleyFromBright, edges, gap, density for continuity)
-- `[Split Reject bio] reason=...` — bio/bridge rejection (bridge_flat / edge_too_dim / volume_fraction / size_ratio / buried / sibling_buried)
-- `[Split Reject cost]` — cost gate rejection
-- `[Split Accepted]` — final split acceptance with costDiff and daughter geometry
-- `[Optimize Done] frame N perturb_accepted=... split_attempts=... split_accepted=... final_cells=...` — per-frame summary
+- `[Adaptive Background] frame N base=... ratio=... background=...`
+- `[Optimize] frame N (M cells, K iterations) useBboxCost=B bboxMarginScale=X`
+- `[P(split)] cell=... shapeElong=... P(split)=...`
+- `[Calibration] cell=...` — frame 1 only
+- `[Pos Refine] cell=... peak=... shift=... capped=... newPos=...` — Stage 0a
+- `[Adaptive Mask] cell=... scale=... density=... iters=...` — Stage 0b
+- `[PCA Shape Exp] cell=... pCore=... exp=... radInfl=...` — adaptive exponent
+- `[PCA Shape] cell=... iter=i n=... R=(a,b,c) dR=... axisAng=... posShift=...`
+- `[PCA Shape Cache]` — gather cache hit/miss
+- `[Fit Growth Cap] frame N clamped=X` — fit-side cap fired
+- `[Shape Reference] frame N births=... refCaptured=... refUpdated=...`
+- `[Snap Bbox] frame N installed=X total=Y`
+- `[Pre-Pass] round=0 cell=... shift1=... shift2=...`
+- `[Split Snapshot Parent] cell=... livePos=... snapPos=... baseline=... (bbox)`
+- `[Split Attempt] cell=...`
+- `[Split Seeds] cell=... splitAxisDir=...`
+- `[Split Dirs] selected=[axX, imgPca]`
+- `[Split Bbox Init] cell=... bboxXYZ=...`
+- `[Split Baseline] cell=... imageCost=... overlap=... threshold=...`
+- `[Split Cand] idx=i label=... final1=... final2=... total=...`
+- `[Split Cand PreFilter] EDGE_DIM / NO_VALLEY` — Pass 1 rejection
+- `[Split Winner] bestIdx=... label=...`
+- `[Split Daughter Refit] d1/d2 built=... floor=... ceil=... post=...`
+- `[Split Refine] iters=... accepts=... preTotal=... postTotal=...`
+- `[Split Bridge] axisLen=... valleyFromBright=... gapDensity=...`
+- `[Split Reject bio] reason=... (bridge_flat / edge_too_dim / volume_fraction / size_ratio / buried / sibling_buried / d1_bridging_to_... / d2_bridging_to_...)`
+- `[Split Reject cost] diff=... threshold=...`
+- `[Split Accepted] costDiff=... bestLabel=... d1=... d2=...`
+- `[Optimize Done] frame N perturb_accepted=... split_attempts=... split_accepted=... final_cells=...`
 
 ---
 
 ## Related docs
 
-- `docs/changelogs/changelogv6.md` — per-fix change log with before/after code
-- `docs/plans/2026-04-14-universal-bbox-cost.md` — bbox cost migration design record
-- `docs/plans/2026-04-15-bbox-anchor-flaw-analysis.md` — Option A analysis
-- `docs/plans/2026-04-10-triaxial-pipeline-redesign.md` — older design record (OUTDATED, references classification)
+- `docs/changelogs/changelogv7.md` — per-fix change log (active)
+- `docs/changelogs/changelogv6.md` — prior session changes (closed)
+- `docs/session-summary-2026-04-16.md` — session narrative
 - `.claude/rules/gotchas.md` — critical invariants
 - `.claude/rules/codebase.md` — file-by-file roles

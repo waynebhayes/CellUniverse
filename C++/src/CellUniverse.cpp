@@ -272,11 +272,10 @@ void CellUniverse::optimize(int frameIndex)
                   << " background=" << updatedBackground << '\n';
     }
 
-    frame.regenerateSynthFrame();
-
-    // Propagate the universal bbox cost flag to the frame for this run.
-    // When enabled, perturbCell and the split cost gate use per-cell bbox
-    // cost (Voronoi-excluded neighbor contribution) instead of full-image L2.
+    // Propagate the universal bbox cost flag to the frame BEFORE
+    // regenerateSynthFrame so the regenerate can skip the full-image L2
+    // cache (refreshFullCostCache) when bbox cost is active — saves ~32M
+    // pixel ops per frame for frames 2+.
     //
     // Frame 1 exception: there are no previous-frame snapshots, so bbox
     // mode cannot be snap-anchored (Option A fallback would make every
@@ -289,6 +288,8 @@ void CellUniverse::optimize(int frameIndex)
                          config.prob.bbox_margin_scale,
                          config.prob.overlap_penalty_weight);
 
+    frame.regenerateSynthFrame();
+
     size_t totalIterations = frame.length() * config.simulation.iterations_per_cell;
     int displayFrame = firstFrame + frameIndex;
 
@@ -299,6 +300,16 @@ void CellUniverse::optimize(int frameIndex)
               << (config.prob.use_bbox_cost && frameIndex == 0
                   ? " (frame-1 forced full-image)" : "")
               << std::endl;
+
+    // Compute mean cell brightness for brightness-proportional overlap
+    // scaling in perturbCell. Dim cells get lower overlap weight so the
+    // penalty can't overwhelm their lower image cost signal.
+    {
+        float bSum = 0.0f;
+        for (const auto &c : frame.cells) bSum += c.getBrightness();
+        frame.setMeanCellBrightness(
+            frame.cells.empty() ? 0.0f : bSum / static_cast<float>(frame.cells.size()));
+    }
 
     if (frame.cells.size() <= 24)
     {
@@ -529,13 +540,24 @@ void CellUniverse::optimize(int frameIndex)
                   << " updatePos=" << updatePos
                   << std::endl;
 
+        // Snapshot cell positions BEFORE the parallel region to avoid a
+        // data race: each OMP thread writes to frame.cells[ci] (radii,
+        // rotation, and optionally position), while buildShapeClaimSet
+        // reads all cells' positions. Without the snapshot, thread A
+        // could read a partially-written Ellipsoid from thread B.
+        // The snapshot is read-only during the parallel region.
+        struct CellPosSnapshot { std::string name; float x, y, z; };
+        std::vector<CellPosSnapshot> cellPosSnap;
+        cellPosSnap.reserve(frame.cells.size());
+        for (const auto &c : frame.cells) {
+            cellPosSnap.push_back({c.getName(), c.getX(), c.getY(), c.getZ()});
+        }
+
         auto buildShapeClaimSet = [&](const std::string &selfName) -> Frame::ClaimSet {
             Frame::ClaimSet others;
-            for (const auto &other : frame.cells) {
-                const std::string otherName = other.getName();
-                if (otherName == selfName) continue;
-                others[otherName].push_back(cv::Point3f(
-                    other.getX(), other.getY(), other.getZ()));
+            for (const auto &snap : cellPosSnap) {
+                if (snap.name == selfName) continue;
+                others[snap.name].push_back(cv::Point3f(snap.x, snap.y, snap.z));
             }
             return others;
         };
@@ -548,10 +570,11 @@ void CellUniverse::optimize(int frameIndex)
         // live radii inside calibrateCellShapeViaPca.
         //
         // Parallel: cells are independent (_realFrame is read-only, each
-        // thread writes a unique cells[ci]). Per-cell logs are accumulated
-        // into per-cell ostringstreams via the optional logSink parameter,
-        // then emitted in cell-index order during the serial merge below
-        // — log ordering is deterministic regardless of thread count.
+        // thread writes a unique cells[ci], claim sets read from the
+        // pre-snapshot). Per-cell logs are accumulated into per-cell
+        // ostringstreams via the optional logSink parameter, then emitted
+        // in cell-index order during the serial merge below — log
+        // ordering is deterministic regardless of thread count.
         const int nCells = static_cast<int>(frame.cells.size());
         std::vector<std::ostringstream> shapeLogs(nCells);
         #pragma omp parallel for schedule(dynamic)
@@ -565,14 +588,25 @@ void CellUniverse::optimize(int frameIndex)
             // captured post-fit at frame 1 for initial cells and post-refit
             // at split-accept for daughters. Falling back to snap covers
             // cells whose reference wasn't registered (shouldn't happen in
-            // steady state; belt and suspenders).
+            // Mask radii: use BIRTH values (captured once, never updated).
+            // The mask defines the pixel-gathering window — it should
+            // always be bigger than the cell so PCA sees the full picture.
+            // Birth-based mask is decoupled from the bounded ref, so it
+            // can't participate in feedback loops (upward bloat or
+            // downward thinning). With maskScale=3.0, mask ≈ 3× birth
+            // — generous enough that the PCA fit is determined entirely
+            // by the pixel distribution, not the mask boundary.
+            // Bounded ref (cellShapeReference) is used ONLY for the
+            // fit-side growth cap downstream.
             float maskA = 0.0f, maskB = 0.0f, maskC = 0.0f;
-            auto refIt = cellShapeReference.find(sname);
-            if (refIt != cellShapeReference.end()) {
-                maskA = refIt->second[0];
-                maskB = refIt->second[1] > 1e-3f ? refIt->second[1] : maskA;
-                maskC = refIt->second[2];
+            auto birthIt = cellShapeBirth.find(sname);
+            if (birthIt != cellShapeBirth.end()) {
+                maskA = birthIt->second[0];
+                maskB = birthIt->second[1] > 1e-3f ? birthIt->second[1] : maskA;
+                maskC = birthIt->second[2];
             } else {
+                // First appearance (frame 1 or just-born daughter):
+                // no birth ref yet. Fall back to snap, then live radii.
                 auto snapIt = previousSnapshots.find(sname);
                 if (snapIt != previousSnapshots.end() && snapIt->second.valid) {
                     maskA = snapIt->second.aRadius;
@@ -603,10 +637,11 @@ void CellUniverse::optimize(int frameIndex)
         // 65.2 at f20 (+57%) and hit the ceiling, cascading chaos at
         // f21/f22.
         //
-        // Clamp the ALREADY-APPLIED fit radii down toward ref at max
-        // fitGrowthCap per frame. For new cells (no reference yet), no
-        // clamp — they get to set their initial radii freely.
-        constexpr float fitGrowthCap = 0.10f;   // 10%/frame max upward fit jump
+        // Fit-side growth cap: one-sided upper bound at ref × 1.10 per frame.
+        // Prevents single-frame bloat jumps (e.g., PCA seeing halo and
+        // outputting R=60 when ref=40). Downward change unconstrained —
+        // cells can pinch freely during pre-split.
+        constexpr float fitGrowthCap = 0.10f;
         const float fitUpFactor = 1.0f + fitGrowthCap;
         int fitsClamped = 0;
         for (size_t ci = 0; ci < frame.cells.size(); ++ci) {
@@ -657,11 +692,19 @@ void CellUniverse::optimize(int frameIndex)
         const float refHi = 1.0f + refGrowthCap;
         int refsCaptured = 0;
         int refsUpdated = 0;
+        int birthsCaptured = 0;
         for (const auto &cell : frame.cells) {
             const std::string &name = cell.getName();
             const float fA = cell.getARadius();
             const float fB = cell.getBRadius();
             const float fC = cell.getCRadius();
+
+            // Birth capture (once, never updated). Used for mask basis.
+            if (cellShapeBirth.find(name) == cellShapeBirth.end()) {
+                cellShapeBirth[name] = {fA, fB, fC};
+                ++birthsCaptured;
+            }
+
             auto it = cellShapeReference.find(name);
             if (it == cellShapeReference.end()) {
                 cellShapeReference[name] = {fA, fB, fC};
@@ -674,11 +717,13 @@ void CellUniverse::optimize(int frameIndex)
                 ++refsUpdated;
             }
         }
-        if (refsCaptured > 0 || refsUpdated > 0) {
+        if (refsCaptured > 0 || refsUpdated > 0 || birthsCaptured > 0) {
             std::cout << "[Shape Reference] frame " << displayFrame
-                      << " captured=" << refsCaptured
-                      << " updated=" << refsUpdated
-                      << " total=" << cellShapeReference.size()
+                      << " births=" << birthsCaptured
+                      << " refCaptured=" << refsCaptured
+                      << " refUpdated=" << refsUpdated
+                      << " totalRef=" << cellShapeReference.size()
+                      << " totalBirth=" << cellShapeBirth.size()
                       << " growthCap=" << refGrowthCap << std::endl;
         }
     }
@@ -923,7 +968,7 @@ void CellUniverse::optimize(int frameIndex)
     };
 
     // ---- Single-phase iteration helper ----
-    auto runPhase = [&](const std::set<std::string> &phaseNames,
+    auto runPhase = [&](std::set<std::string> &phaseNames,
                         bool phaseB,
                         std::set<std::string> &splitAcceptedInPhase,
                         std::set<std::string> &splitRejectedInPhase) {
@@ -1025,9 +1070,22 @@ void CellUniverse::optimize(int frameIndex)
                     splitAccepted++;
                     splitAcceptedInPhase.insert(cellName);
                     previousSnapshots.erase(cellName);
+                    // Add daughter names to phaseNames so they become eligible
+                    // for perturbation during the rest of this frame. Without
+                    // this, rebuildEligible skips daughters (their names weren't
+                    // in phaseNames at frame start) and they get zero perturbation
+                    // iterations — only the split burn-in + refine positioning.
+                    phaseNames.insert(cellName + "0");
+                    phaseNames.insert(cellName + "1");
                     // Rebuild eligible: the parent cell at cellIdx was replaced
                     // by two daughters appended to the cells vector.
                     rebuildEligible();
+                    // Recompute mean brightness — cell count changed.
+                    {
+                        float bSum = 0.0f;
+                        for (const auto &c : frame.cells) bSum += c.getBrightness();
+                        frame.setMeanCellBrightness(bSum / static_cast<float>(frame.cells.size()));
+                    }
                 } else {
                     splitBlacklist.insert(cellName);
                     splitRejectedInPhase.insert(cellName);

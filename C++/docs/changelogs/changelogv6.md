@@ -3662,14 +3662,7 @@ Expected:
 
 `pcaShapeCoreFractionLow: 0.30 → 0.10`.
 
+---
 
-
-
-
-
-
-
-
-
-
+**CLOSED.** Subsequent changes in `changelogv7.md`.
 

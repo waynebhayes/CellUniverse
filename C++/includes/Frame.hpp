@@ -76,7 +76,7 @@ public:
     // (perturbation, split). See plans/2026-04-14-universal-bbox-cost.md.
     //
     // Bbox half-extent per axis = marginScale * max(a,b,c) of the cell.
-    // marginScale=3.0 matches existing boxRadius convention in
+    // marginScale matches existing boxRadius convention in
     // gatherBrightPixelsVoronoi and trySplitCellPhased.
     BoundingBox3D computeCellBbox(size_t cellIdx, float marginScale) const;
 
@@ -209,6 +209,7 @@ public:
     const std::vector<cv::Mat>& getRealFrame() const { return _realFrame; }
     void setBackgroundColor(float backgroundColor) { _backgroundValue = backgroundColor; }
     float getBackgroundValue() const { return _backgroundValue; }
+    void setMeanCellBrightness(float mean) { _meanCellBrightness = mean; }
     // Bbox-cost mode: perturb/split use a per-cell bbox with Voronoi
     // neighbor exclusion instead of full-image L2. Set at frame start
     // from ProbabilityConfig.use_bbox_cost; forwarded to per-cell paths.
@@ -234,23 +235,17 @@ public:
         return _snapBboxes.find(name) != _snapBboxes.end();
     }
 
-    // Shared per-cell Voronoi exclusion mask. Installed during a split
-    // attempt so BOTH daughter candidates score cost over the parent's
-    // original territory (parent-self, real neighbors as otherClaims —
-    // sibling is NOT an otherClaim). Without this, each daughter's
-    // perturbCell rebuilds a mask that DOES exclude the sibling, and the
-    // mask shifts with each daughter — allowing both to drift toward a
-    // shared bright region at zero abandonment cost. See 2026-04-15
-    // daughter-collapse analysis.
-    void setSharedMask(const std::string &name,
-                       const std::vector<uint8_t> &mask) {
-        _sharedMasks[name] = mask;
+    // _sharedMasks removed — cost path now uses empty mask (no Voronoi
+    // exclusion). The shared mask was never read after perturbCell
+    // switched to empty mask. Saves ~100M distance comparisons per
+    // split attempt that were wasted building and storing the mask.
+    void regenerateSynthFrame() {
+        _synthFrame = generateSynthFrame();
+        // Skip the full-image L2 cache when bbox cost is active — the
+        // cache is never read for decisions (perturbCell + split use
+        // calculateBboxCost directly). Saves ~32M pixel ops per call.
+        if (!_useBboxCost) refreshFullCostCache();
     }
-    void clearSharedMasks() { _sharedMasks.clear(); }
-    bool hasSharedMask(const std::string &name) const {
-        return _sharedMasks.find(name) != _sharedMasks.end();
-    }
-    void regenerateSynthFrame() { _synthFrame = generateSynthFrame(); refreshFullCostCache(); }
     std::string getImageName() const { return imageName; }
     std::vector<Ellipsoid> cells;
 
@@ -276,6 +271,10 @@ private:
     bool  _useBboxCost = false;
     float _bboxMarginScale = 3.0f;
     float _bboxOverlapWeight = 0.0f;  // optional cached overlap weight for bbox path
+    // Mean cell brightness for brightness-proportional overlap scaling.
+    // Set once per frame by CellUniverse::optimize. When > 0, perturbCell
+    // scales overlap weight by (cellBrightness / mean)².
+    float _meanCellBrightness = 0.0f;
     // Snap-anchored bboxes keyed by cell name. Installed once per frame by
     // CellUniverse::optimize from PreviousFrameSnapshot{position,maxRadius}.
     // When present, perturbCell uses the stored bbox as a fixed evaluation
@@ -284,11 +283,7 @@ private:
     // cost, anchoring the cell to its real-cell location. Missing entry
     // (frame 1, newborn daughters) → legacy live pre/post-union bbox.
     std::unordered_map<std::string, BoundingBox3D> _snapBboxes;
-    // Pre-built Voronoi exclusion masks, keyed by cell name. When present
-    // for the cell being perturbed, perturbCell uses the stored mask
-    // instead of rebuilding one from live claim sets. Used during split
-    // daughter burn-in to avoid mutual-exclusion between sibling daughters.
-    std::unordered_map<std::string, std::vector<uint8_t>> _sharedMasks;
+    // _sharedMasks member removed — see comment above.
     cv::Size getImageShape();
 
     // Rebuild _currentCostPerSlice and _currentCost from scratch by walking

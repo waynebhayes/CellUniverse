@@ -173,7 +173,12 @@ class Ellipsoid
 
         void drawOutline(cv::Mat &image, float color, float z = 0) const;
 
-        [[nodiscard]] Ellipsoid getPerturbedCell(PerturbDirections *directions = nullptr) const;
+        // positionScale: multiplier on the position perturbation offset.
+        // Used for radius-proportional sigma: scale = maxR / referenceR so
+        // large cells take bigger steps and small cells take smaller steps.
+        // Default 1.0 = use the base sigma from config unchanged.
+        [[nodiscard]] Ellipsoid getPerturbedCell(PerturbDirections *directions = nullptr,
+                                                  float positionScale = 1.0f) const;
 
         // Test if point is inside this cell's (optionally scaled) ellipsoid
         bool isPointInsideEllipsoid(const cv::Point3f &worldPoint,

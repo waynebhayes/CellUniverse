@@ -61,6 +61,12 @@ public:
     // blobs," so split-vs-no-split cost comparison is deterministic on
     // bright-coverage geometry.
     float asymmetric_cost_weight = 1.0f;
+    // Minimum overshoot (synth - real) to trigger asymK amplification.
+    // Below this threshold, overshoot is penalized at 1x (symmetric) —
+    // treats small boundary rendering artifacts as noise. Above, the
+    // full asymK applies. Eliminates double-boundary bias where two
+    // daughters' boundary artifacts cost more than one parent's.
+    float asymmetric_cost_threshold = 0.03f;
 
     // Constructor with default values
     SimulationConfig() : iterations_per_cell(0),
@@ -106,6 +112,7 @@ public:
         if (node["adaptive_background_expand_factor"]) adaptive_background_expand_factor = node["adaptive_background_expand_factor"].as<float>();
         if (node["adaptive_background_top_fraction"]) adaptive_background_top_fraction = node["adaptive_background_top_fraction"].as<float>();
         if (node["asymmetric_cost_weight"]) asymmetric_cost_weight = node["asymmetric_cost_weight"].as<float>();
+        if (node["asymmetric_cost_threshold"]) asymmetric_cost_threshold = node["asymmetric_cost_threshold"].as<float>();
     }
     void printConfig() const {
         std::cout << "Simulation Config\n";
@@ -157,6 +164,17 @@ public:
 
     float overlap_penalty_weight = 500.0f;
     float split_cost = 80.0f;
+    // Proportional split cost: threshold = max(split_cost, fraction × baselineImageCost).
+    // 0.0 = disabled (use fixed split_cost only). Typical: 0.03 = split must
+    // improve cost by at least 3% of the baseline to accept.
+    float split_cost_fraction = 0.0f;
+    // Quadratic position prior weight for perturbCell.
+    // penalty = weight × ||cell.pos - snap.pos||²
+    // Temporal anchor independent of image evidence. Prevents drift
+    // when overlap/bright-neighbor halos would otherwise overpower
+    // the image-based snap anchor. Typical: 50.0 (20 px drift = 20K
+    // penalty; same scale as bbox image cost).
+    float position_prior_weight = 0.0f;
 
     int expected_daughter_pre_pass_iterations = 1;
 
@@ -288,6 +306,8 @@ public:
         if (node["P_split_max"]) P_split_max = node["P_split_max"].as<float>();
         if (node["overlap_penalty_weight"]) overlap_penalty_weight = node["overlap_penalty_weight"].as<float>();
         if (node["split_cost"]) split_cost = node["split_cost"].as<float>();
+        if (node["split_cost_fraction"]) split_cost_fraction = node["split_cost_fraction"].as<float>();
+        if (node["position_prior_weight"]) position_prior_weight = node["position_prior_weight"].as<float>();
         if (node["expected_daughter_pre_pass_iterations"]) expected_daughter_pre_pass_iterations = node["expected_daughter_pre_pass_iterations"].as<int>();
         if (node["split_candidates_per_attempt"]) split_candidates_per_attempt = node["split_candidates_per_attempt"].as<int>();
         if (node["split_candidate_burn_in_iterations"]) split_candidate_burn_in_iterations = node["split_candidate_burn_in_iterations"].as<int>();
@@ -501,6 +521,16 @@ public:
     // (halo dilutes the core fraction), so they don't get additional
     // inflation — bounded-growth reference handles their cap separately.
     float pcaShapeRadiusInflationBright{1.15f};
+    // Percentile for the radius computation in calibrateCellShapeViaPca.
+    // For each PCA axis, the radius = Nth percentile of |projection of
+    // bright pixels onto that axis|. Higher = larger radii (captures more
+    // halo). Lower = tighter to core. Default 0.90.
+    float pcaShapeRadiusPercentile{0.90f};
+    // Reference radius for proportional perturbation sigma scaling.
+    // positionScale = max(cell.a, cell.b, cell.c) / perturbSigmaReferenceRadius.
+    // Cells larger than refR take bigger steps; smaller cells take smaller
+    // steps. Set to 0 to disable (all cells use base sigma unchanged).
+    float perturbSigmaReferenceRadius{0.0f};
     // Maximum valid z position (interpolated z-space). Used to clamp Ellipsoid
     // center z in the constructor, preventing cells from drifting off the z-stack.
     // Default 224 = (z_slices=225) - 1. Runtime-updated by CellUniverse::loadFrame
@@ -566,6 +596,8 @@ public:
         if (node["pcaShapeCoreFractionLow"]) pcaShapeCoreFractionLow = node["pcaShapeCoreFractionLow"].as<float>();
         if (node["pcaShapeCoreFractionHigh"]) pcaShapeCoreFractionHigh = node["pcaShapeCoreFractionHigh"].as<float>();
         if (node["pcaShapeRadiusInflationBright"]) pcaShapeRadiusInflationBright = node["pcaShapeRadiusInflationBright"].as<float>();
+        if (node["pcaShapeRadiusPercentile"]) pcaShapeRadiusPercentile = node["pcaShapeRadiusPercentile"].as<float>();
+        if (node["perturbSigmaReferenceRadius"]) perturbSigmaReferenceRadius = node["perturbSigmaReferenceRadius"].as<float>();
     }
 };
 

@@ -52,6 +52,12 @@ private:
    // so a bloated fit in frame N can't compound into an even bigger
    // mask for frame N+1. See 2026-04-15 compounding-bloat analysis.
    std::map<std::string, std::array<float, 3>> cellShapeReference;
+   // Birth-time radii. Captured once at first appearance, NEVER updated.
+   // Used as the pixel-collection mask basis: mask = birth × maskScale.
+   // Decoupled from the bounded ref so the mask can't participate in
+   // feedback loops (neither upward bloat nor downward thinning).
+   // The bounded ref is used ONLY for the fit-side growth cap.
+   std::map<std::string, std::array<float, 3>> cellShapeBirth;
 };
 
 #endif
