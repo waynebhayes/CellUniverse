@@ -217,6 +217,10 @@ public:
     const std::vector<cv::Mat>& getRealFrame() const { return _realFrame; }
     void setBackgroundColor(float backgroundColor) { _backgroundValue = backgroundColor; }
     float getBackgroundValue() const { return _backgroundValue; }
+    void setMeanCellBrightness(float meanCellBrightness) {
+        _meanCellBrightness = std::max(0.0f, meanCellBrightness);
+    }
+    float getMeanCellBrightness() const { return _meanCellBrightness; }
     void setSignalCenters(std::vector<SignalCenter> centers) { _signalCenters = std::move(centers); }
     const std::vector<SignalCenter>& getSignalCenters() const { return _signalCenters; }
     // Bbox-cost mode: perturb/split use a per-cell bbox with Voronoi

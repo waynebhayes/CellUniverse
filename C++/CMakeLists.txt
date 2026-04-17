@@ -13,6 +13,28 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+if(APPLE AND NOT CMAKE_OSX_ARCHITECTURES)
+    set(_detected_macos_arch "${CMAKE_HOST_SYSTEM_PROCESSOR}")
+    if(NOT _detected_macos_arch)
+        execute_process(
+            COMMAND /usr/bin/uname -m
+            OUTPUT_VARIABLE _detected_macos_arch
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+    endif()
+
+    if(_detected_macos_arch STREQUAL "arm64" OR _detected_macos_arch STREQUAL "aarch64")
+        set(CMAKE_OSX_ARCHITECTURES "arm64" CACHE STRING "Build architectures for macOS" FORCE)
+    elseif(_detected_macos_arch STREQUAL "x86_64")
+        set(CMAKE_OSX_ARCHITECTURES "x86_64" CACHE STRING "Build architectures for macOS" FORCE)
+    endif()
+
+    if(CMAKE_OSX_ARCHITECTURES)
+        message(STATUS "macOS: auto-selected CMAKE_OSX_ARCHITECTURES=${CMAKE_OSX_ARCHITECTURES}")
+    endif()
+endif()
+
 # Force single-config generators (Unix Makefiles, Ninja) to build Release.
 # Multi-config generators keep selecting the configuration at build time.
 if(NOT CMAKE_CONFIGURATION_TYPES)
@@ -102,7 +124,8 @@ target_include_directories(${PROJECT_NAME} PRIVATE lib/yaml-cpp/include)
 
 # Release optimization flags.
 target_compile_options(${PROJECT_NAME} PRIVATE
-    $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:GNU,Clang,AppleClang>>:-O3 -march=native -DNDEBUG>
+    $<$<AND:$<CONFIG:Release>,$<CXX_COMPILER_ID:GNU,Clang,AppleClang>>:-O3 -DNDEBUG>
+    $<$<AND:$<CONFIG:Release>,$<NOT:$<PLATFORM_ID:Darwin>>,$<CXX_COMPILER_ID:GNU,Clang>>:-march=native>
 )
 if(IPO_SUPPORTED)
     set_property(TARGET ${PROJECT_NAME} PROPERTY
