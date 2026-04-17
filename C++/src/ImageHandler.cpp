@@ -358,7 +358,6 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
 
     int count = 0;
     float currentPenalty = config.simulation.iterative_penalty;
-    int noImprovementCount = 0;
     bool restoreBestBeforeReward = false;
     float scorePercentile = config.simulation.iterative_score_percentile;
     float rewardGate = config.simulation.iterative_reward_gate;
@@ -456,11 +455,6 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
         {
             bestScore = score;
             bestSequence = cloneStack(current);
-            noImprovementCount = 0;
-        }
-        else
-        {
-            ++noImprovementCount;
         }
 
         if (count % 50 == 0)
@@ -484,21 +478,6 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
                 config.simulation.iterative_min_penalty,
                 currentPenalty * config.simulation.iterative_collapse_backoff);
             current = cloneStack(bestSequence);
-            continue;
-        }
-
-        if (noImprovementCount >= config.simulation.iterative_no_improvement_patience)
-        {
-            if (currentPenalty <= config.simulation.iterative_min_penalty)
-            {
-                break;
-            }
-
-            currentPenalty = std::max(
-                config.simulation.iterative_min_penalty,
-                currentPenalty * config.simulation.iterative_collapse_backoff);
-            current = cloneStack(bestSequence);
-            noImprovementCount = 0;
             continue;
         }
 

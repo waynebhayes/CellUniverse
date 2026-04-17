@@ -26,7 +26,6 @@ public:
     float iterative_reward = 0.1f;
     float iterative_score_max = 1.5f;
     int iterative_max_count = 300;
-    int iterative_no_improvement_patience = 10;
     float iterative_improvement_tolerance = 0.01f;
     float iterative_score_drop_stop_threshold = 0.1f;
     float iterative_penalty_score_drop_stop_threshold = 0.15f;
@@ -92,7 +91,6 @@ public:
         if (node["iterative_reward"]) iterative_reward = node["iterative_reward"].as<float>();
         if (node["iterative_score_max"]) iterative_score_max = node["iterative_score_max"].as<float>();
         if (node["iterative_max_count"]) iterative_max_count = node["iterative_max_count"].as<int>();
-        if (node["iterative_no_improvement_patience"]) iterative_no_improvement_patience = node["iterative_no_improvement_patience"].as<int>();
         if (node["iterative_improvement_tolerance"]) iterative_improvement_tolerance = node["iterative_improvement_tolerance"].as<float>();
         if (node["iterative_score_drop_stop_threshold"]) iterative_score_drop_stop_threshold = node["iterative_score_drop_stop_threshold"].as<float>();
         if (node["iterative_penalty_score_drop_stop_threshold"]) iterative_penalty_score_drop_stop_threshold = node["iterative_penalty_score_drop_stop_threshold"].as<float>();
@@ -141,7 +139,6 @@ public:
         std::cout << "iterative_reward: " << iterative_reward << '\n';
         std::cout << "iterative_score_max: " << iterative_score_max << '\n';
         std::cout << "iterative_max_count: " << iterative_max_count << '\n';
-        std::cout << "iterative_no_improvement_patience: " << iterative_no_improvement_patience << '\n';
         std::cout << "iterative_improvement_tolerance: " << iterative_improvement_tolerance << '\n';
         std::cout << "iterative_score_drop_stop_threshold: " << iterative_score_drop_stop_threshold << '\n';
         std::cout << "iterative_penalty_score_drop_stop_threshold: " << iterative_penalty_score_drop_stop_threshold << '\n';

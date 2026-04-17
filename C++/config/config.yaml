@@ -205,7 +205,6 @@ simulation:
   iterative_reward: 2.0
   iterative_score_max: 0.8
   iterative_max_count: 100
-  iterative_no_improvement_patience: 2
   iterative_improvement_tolerance: 0.01
   iterative_score_drop_stop_threshold: 0.03
   iterative_penalty_score_drop_stop_threshold: 0.001
