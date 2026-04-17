@@ -211,9 +211,13 @@ float ImageHandler::evaluateSequenceContrastScore(const ImageStack &sequence, co
         (config.cell ? static_cast<float>(config.cell->maxARadius) : 40.0f);
     const float cRadius =
         (config.cell ? static_cast<float>(config.cell->maxCRadius) : 35.0f);
-    const std::array<float, 2> radii = {
-        std::max(1.0f, aRadius),
-        std::max(1.0f, cRadius)
+    const float minRadius = std::max(1.0f, std::min(aRadius, cRadius));
+    const float maxRadius = std::max(1.0f, std::max(aRadius, cRadius));
+    const float midRadius = 0.5f * (minRadius + maxRadius);
+    const std::array<float, 3> radii = {
+        minRadius,
+        midRadius,
+        maxRadius
     };
 
     std::vector<float> scaleScores;
@@ -353,7 +357,6 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
     bool hasPreviousScore = false;
 
     int count = 0;
-    bool rewardNextRound = true;
     float currentPenalty = config.simulation.iterative_penalty;
     int noImprovementCount = 0;
     bool restoreBestBeforeReward = false;
@@ -362,6 +365,12 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
 
     while (true)
     {
+        if (restoreBestBeforeReward)
+        {
+            current = cloneStack(bestSequence);
+            restoreBestBeforeReward = false;
+        }
+
         for (auto &slice : current)
         {
             for (int y = 0; y < slice.rows; ++y)
@@ -381,52 +390,58 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
             }
         }
 
-        if (rewardNextRound)
-        {
-            if (restoreBestBeforeReward)
-            {
-                current = cloneStack(bestSequence);
-                restoreBestBeforeReward = false;
-            }
+        BaseConfig penaltyScoringConfig = config;
+        penaltyScoringConfig.simulation.iterative_score_percentile = scorePercentile;
+        const float penaltyScore = evaluateSequenceContrastScore(current, penaltyScoringConfig);
 
-            for (auto &slice : current)
+        if (hasPreviousScore &&
+            previousScore - penaltyScore >=
+                config.simulation.iterative_penalty_score_drop_stop_threshold)
+        {
+            restoreBestBeforeReward = true;
+            currentPenalty = std::max(
+                config.simulation.iterative_min_penalty,
+                currentPenalty * config.simulation.iterative_collapse_backoff);
+            previousScore = penaltyScore;
+            hasPreviousScore = true;
+            ++count;
+            continue;
+        }
+
+        for (auto &slice : current)
+        {
+            for (int y = 0; y < slice.rows; ++y)
             {
-                for (int y = 0; y < slice.rows; ++y)
+                float *row = slice.ptr<float>(y);
+                for (int x = 0; x < slice.cols; ++x)
                 {
-                    float *row = slice.ptr<float>(y);
-                    for (int x = 0; x < slice.cols; ++x)
+                    if (row[x] > rewardGate)
                     {
-                        if (row[x] > rewardGate)
+                        row[x] += config.simulation.iterative_reward;
+                        if (row[x] > 1.0f)
                         {
-                            row[x] += config.simulation.iterative_reward;
-                            if (row[x] > 1.0f)
-                            {
-                                row[x] = 1.0f;
-                            }
+                            row[x] = 1.0f;
                         }
                     }
                 }
             }
-
-            scorePercentile = std::min(
-                scorePercentile + config.simulation.iterative_score_percentile_increment,
-                config.simulation.iterative_score_percentile_max);
-            rewardGate = std::max(
-                config.simulation.iterative_reward_gate_min,
-                rewardGate -
-                    config.simulation.iterative_reward_gate_decrement);
         }
 
-        rewardNextRound = !rewardNextRound;
+        scorePercentile = std::min(
+            scorePercentile + config.simulation.iterative_score_percentile_increment,
+            config.simulation.iterative_score_percentile_max);
+        rewardGate = std::max(
+            config.simulation.iterative_reward_gate_min,
+            rewardGate -
+                config.simulation.iterative_reward_gate_decrement);
 
-        BaseConfig scoringConfig = config;
-        scoringConfig.simulation.iterative_score_percentile = scorePercentile;
-        const float score = evaluateSequenceContrastScore(current, scoringConfig);
+        BaseConfig rewardScoringConfig = config;
+        rewardScoringConfig.simulation.iterative_score_percentile = scorePercentile;
+        const float score = evaluateSequenceContrastScore(current, rewardScoringConfig);
 
         if (hasPreviousScore &&
             previousScore - score >= config.simulation.iterative_score_drop_stop_threshold)
         {
-            rewardNextRound = true;
             restoreBestBeforeReward = true;
             currentPenalty = std::max(
                 config.simulation.iterative_min_penalty,
@@ -469,7 +484,6 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
                 config.simulation.iterative_min_penalty,
                 currentPenalty * config.simulation.iterative_collapse_backoff);
             current = cloneStack(bestSequence);
-            rewardNextRound = true;
             continue;
         }
 
@@ -485,7 +499,6 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
                 currentPenalty * config.simulation.iterative_collapse_backoff);
             current = cloneStack(bestSequence);
             noImprovementCount = 0;
-            rewardNextRound = true;
             continue;
         }
 

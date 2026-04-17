@@ -29,6 +29,7 @@ public:
     int iterative_no_improvement_patience = 10;
     float iterative_improvement_tolerance = 0.01f;
     float iterative_score_drop_stop_threshold = 0.1f;
+    float iterative_penalty_score_drop_stop_threshold = 0.15f;
     float iterative_score_percentile = 0.05f;
     float iterative_score_percentile_max = 0.90f;
     float iterative_score_percentile_increment = 0.025f;
@@ -94,6 +95,7 @@ public:
         if (node["iterative_no_improvement_patience"]) iterative_no_improvement_patience = node["iterative_no_improvement_patience"].as<int>();
         if (node["iterative_improvement_tolerance"]) iterative_improvement_tolerance = node["iterative_improvement_tolerance"].as<float>();
         if (node["iterative_score_drop_stop_threshold"]) iterative_score_drop_stop_threshold = node["iterative_score_drop_stop_threshold"].as<float>();
+        if (node["iterative_penalty_score_drop_stop_threshold"]) iterative_penalty_score_drop_stop_threshold = node["iterative_penalty_score_drop_stop_threshold"].as<float>();
         if (node["iterative_score_percentile"]) iterative_score_percentile = node["iterative_score_percentile"].as<float>();
         if (node["iterative_score_percentile_max"]) iterative_score_percentile_max = node["iterative_score_percentile_max"].as<float>();
         if (node["iterative_score_percentile_increment"]) iterative_score_percentile_increment = node["iterative_score_percentile_increment"].as<float>();
@@ -142,6 +144,7 @@ public:
         std::cout << "iterative_no_improvement_patience: " << iterative_no_improvement_patience << '\n';
         std::cout << "iterative_improvement_tolerance: " << iterative_improvement_tolerance << '\n';
         std::cout << "iterative_score_drop_stop_threshold: " << iterative_score_drop_stop_threshold << '\n';
+        std::cout << "iterative_penalty_score_drop_stop_threshold: " << iterative_penalty_score_drop_stop_threshold << '\n';
         std::cout << "iterative_score_percentile: " << iterative_score_percentile << '\n';
         std::cout << "iterative_score_percentile_max: " << iterative_score_percentile_max << '\n';
         std::cout << "iterative_score_percentile_increment: " << iterative_score_percentile_increment << '\n';
