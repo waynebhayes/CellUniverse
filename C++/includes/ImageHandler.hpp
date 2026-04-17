@@ -22,8 +22,6 @@ private:
                                              const BaseConfig &config,
                                              std::ostream &log);
     static float evaluateSequenceContrastScore(const ImageStack &sequence, const BaseConfig &config);
-    static float evaluateSequencePercentileMichelsonContrast(const ImageStack &sequence, const BaseConfig &config);
-    static float evaluateSequencePercentileWeberContrast(const ImageStack &sequence, const BaseConfig &config);
     static cv::Mat boxMean(const cv::Mat &image, int windowSize);
     static float computePercentileFromSlice(const cv::Mat &slice, float percentileFraction);
     static float computePercentileFromValues(std::vector<float> values, float percentileFraction);

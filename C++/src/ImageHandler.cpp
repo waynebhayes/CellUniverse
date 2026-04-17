@@ -295,56 +295,6 @@ float ImageHandler::evaluateSequenceContrastScore(const ImageStack &sequence, co
     return sumScores / static_cast<float>(scaleScores.size());
 }
 
-float ImageHandler::evaluateSequencePercentileMichelsonContrast(const ImageStack &sequence, const BaseConfig &config)
-{
-    std::vector<float> sliceScores;
-    sliceScores.reserve(sequence.size());
-
-    for (const auto &slice : sequence)
-    {
-        const float lowValue = computePercentileFromSlice(
-            slice, config.simulation.michelson_low_percentile);
-        const float highValue = computePercentileFromSlice(
-            slice, config.simulation.michelson_high_percentile);
-        sliceScores.push_back(
-            (highValue - lowValue) /
-            (highValue + lowValue + config.simulation.michelson_eps));
-    }
-
-    if (sliceScores.empty())
-    {
-        return 0.0f;
-    }
-
-    return computePercentileFromValues(std::move(sliceScores), 0.5f);
-}
-
-float ImageHandler::evaluateSequencePercentileWeberContrast(const ImageStack &sequence, const BaseConfig &config)
-{
-    std::vector<float> sliceScores;
-    sliceScores.reserve(sequence.size());
-
-    for (const auto &slice : sequence)
-    {
-        const float backgroundValue = computePercentileFromSlice(
-            slice, config.simulation.weber_background_percentile);
-        const float signalValue = computePercentileFromSlice(
-            slice, config.simulation.weber_signal_percentile);
-        const float stableBackground =
-            std::max(backgroundValue, config.simulation.weber_background_floor);
-        sliceScores.push_back(
-            (signalValue - stableBackground) /
-            (stableBackground + config.simulation.weber_eps));
-    }
-
-    if (sliceScores.empty())
-    {
-        return 0.0f;
-    }
-
-    return computePercentileFromValues(std::move(sliceScores), 0.5f);
-}
-
 ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
                                                 const BaseConfig &config,
                                                 std::ostream &log)
@@ -615,13 +565,8 @@ std::vector<cv::Mat> ImageHandler::loadFrame(const std::string &imageFile,
     processedZSlices = processPreparedSequence(processedZSlices, config, log);
 
     const float localScore = evaluateSequenceContrastScore(processedZSlices, config);
-    const float michelsonScore = evaluateSequencePercentileMichelsonContrast(processedZSlices, config);
-    const float weberScore = evaluateSequencePercentileWeberContrast(processedZSlices, config);
-
     log << "[PreprocessScores] file=" << fs::path(imageFile).filename().string()
         << " local=" << localScore
-        << " michelson=" << michelsonScore
-        << " weber=" << weberScore
         << std::endl;
 
     printStackStats(log, "processed_sequence", imageFile, processedZSlices);

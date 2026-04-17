@@ -217,20 +217,12 @@ simulation:
 
   post_process_blur_sigma: 1.5
   post_process_final_blur_sigma: 3.0
-  post_process_final_direct_weight: 0.2
+  post_process_final_direct_weight: 0.5
 
   post_process_amplification: 4.0
-  post_process_black_percentile: 0.09
+  post_process_black_percentile: 0.00
   post_process_white_percentile: 0.4
-  michelson_low_percentile: 0.10
-  michelson_high_percentile: 0.90
-  michelson_eps: 0.000001
-
-  weber_background_percentile: 0.10
-  weber_signal_percentile: 0.90
-  weber_background_floor: 0.0039215686
-  weber_eps: 0.000001
-
+  
   export_preprocessed_images: false
   quit_after_preprocessing: false
 
