@@ -491,6 +491,15 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
 
     for (auto &slice : bestSequence)
     {
+        if (config.simulation.post_process_blur_sigma > 0.0f)
+        {
+            cv::GaussianBlur(slice,
+                             slice,
+                             cv::Size(0, 0),
+                             config.simulation.post_process_blur_sigma,
+                             config.simulation.post_process_blur_sigma);
+        }
+
         for (int y = 0; y < slice.rows; ++y)
         {
             float *row = slice.ptr<float>(y);
@@ -507,13 +516,30 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
             }
         }
 
-        if (config.simulation.post_process_blur_sigma > 0.0f)
+    }
+
+    if (config.simulation.post_process_final_blur_sigma > 0.0f)
+    {
+        const float directWeight = std::clamp(
+            config.simulation.post_process_final_direct_weight,
+            0.0f,
+            1.0f);
+        const float blurredWeight = 1.0f - directWeight;
+
+        for (auto &slice : bestSequence)
         {
+            cv::Mat blurredSlice;
             cv::GaussianBlur(slice,
-                             slice,
+                             blurredSlice,
                              cv::Size(0, 0),
-                             config.simulation.post_process_blur_sigma,
-                             config.simulation.post_process_blur_sigma);
+                             config.simulation.post_process_final_blur_sigma,
+                             config.simulation.post_process_final_blur_sigma);
+            cv::addWeighted(slice,
+                            directWeight,
+                            blurredSlice,
+                            blurredWeight,
+                            0.0,
+                            slice);
         }
     }
 

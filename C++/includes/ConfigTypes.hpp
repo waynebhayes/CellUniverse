@@ -37,6 +37,8 @@ public:
     float contrast_structure_threshold = 0.02f;
     float contrast_eps = 1e-6f;
     float post_process_blur_sigma = 2.5f;
+    float post_process_final_blur_sigma = 0.0f;
+    float post_process_final_direct_weight = 1.0f;
     float post_process_amplification = 15.0f;
     float post_process_black_percentile = 0.005f;
     float post_process_white_percentile = 0.3f;
@@ -102,6 +104,8 @@ public:
         if (node["contrast_structure_threshold"]) contrast_structure_threshold = node["contrast_structure_threshold"].as<float>();
         if (node["contrast_eps"]) contrast_eps = node["contrast_eps"].as<float>();
         if (node["post_process_blur_sigma"]) post_process_blur_sigma = node["post_process_blur_sigma"].as<float>();
+        if (node["post_process_final_blur_sigma"]) post_process_final_blur_sigma = node["post_process_final_blur_sigma"].as<float>();
+        if (node["post_process_final_direct_weight"]) post_process_final_direct_weight = node["post_process_final_direct_weight"].as<float>();
         if (node["post_process_amplification"]) post_process_amplification = node["post_process_amplification"].as<float>();
         if (node["post_process_black_percentile"]) post_process_black_percentile = node["post_process_black_percentile"].as<float>();
         if (node["post_process_white_percentile"]) post_process_white_percentile = node["post_process_white_percentile"].as<float>();
@@ -150,6 +154,8 @@ public:
         std::cout << "contrast_structure_threshold: " << contrast_structure_threshold << '\n';
         std::cout << "contrast_eps: " << contrast_eps << '\n';
         std::cout << "post_process_blur_sigma: " << post_process_blur_sigma << '\n';
+        std::cout << "post_process_final_blur_sigma: " << post_process_final_blur_sigma << '\n';
+        std::cout << "post_process_final_direct_weight: " << post_process_final_direct_weight << '\n';
         std::cout << "post_process_amplification: " << post_process_amplification << '\n';
         std::cout << "post_process_black_percentile: " << post_process_black_percentile << '\n';
         std::cout << "post_process_white_percentile: " << post_process_white_percentile << '\n';

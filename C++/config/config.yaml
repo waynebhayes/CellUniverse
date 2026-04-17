@@ -215,11 +215,13 @@ simulation:
   contrast_structure_threshold: 0.02
   contrast_eps: 0.000001
 
-  post_process_blur_sigma: 2.5
-  post_process_amplification: 5.0
-  post_process_black_percentile: 0.11
-  post_process_white_percentile: 0.4
+  post_process_blur_sigma: 1.5
+  post_process_final_blur_sigma: 3.0
+  post_process_final_direct_weight: 0.2
 
+  post_process_amplification: 4.0
+  post_process_black_percentile: 0.09
+  post_process_white_percentile: 0.4
   michelson_low_percentile: 0.10
   michelson_high_percentile: 0.90
   michelson_eps: 0.000001
