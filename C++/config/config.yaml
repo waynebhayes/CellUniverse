@@ -54,7 +54,7 @@ cell:
 
   brightnessUpdateBlend: 0.95
   brightnessMeanAmplification: 1.1
-  brightnessMeasurementTopPercentile: 0.3
+  brightnessMeasurementTopPercentile: 0.5
 
   # Iterative PCA shape fit (per frame, before perturbation loop).
   # Converges rotation + radii (+ centroid) to the Voronoi-filtered
@@ -219,9 +219,9 @@ simulation:
   post_process_final_blur_sigma: 3.0
   post_process_final_direct_weight: 0.5
 
-  post_process_amplification: 4.0
-  post_process_black_percentile: 0.00
-  post_process_white_percentile: 0.4
+  post_process_amplification: 5.0
+  post_process_black_percentile: 0.09
+  post_process_white_percentile: 1.0
   
   export_preprocessed_images: false
   quit_after_preprocessing: false
