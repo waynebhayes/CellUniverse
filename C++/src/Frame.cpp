@@ -46,6 +46,224 @@ static double asymmetricL2Slice(const cv::Mat &real, const cv::Mat &synth, float
     return std::sqrt(std::max(0.0, asymSumSq));
 }
 
+static std::vector<cv::Mat> buildCostPooledSynthFrame(const std::vector<cv::Mat> &stack,
+                                                      const SimulationConfig &simulationConfig)
+{
+    if (!simulationConfig.adaptive_cube_pooling_enabled ||
+        !simulationConfig.adaptive_cube_pooling_cost_comparison_enabled ||
+        stack.empty())
+    {
+        return stack;
+    }
+
+    const int depth = static_cast<int>(stack.size());
+    const int rows = stack[0].rows;
+    const int cols = stack[0].cols;
+    if (depth <= 0 || rows <= 0 || cols <= 0)
+    {
+        return stack;
+    }
+
+    const float minRadius = std::max(
+        1.0f,
+        static_cast<float>(std::min({Ellipsoid::cellConfig.minARadius,
+                                     Ellipsoid::cellConfig.minBRadius,
+                                     Ellipsoid::cellConfig.minCRadius})));
+    const float cubeSizeTarget =
+        std::max(1.0f, simulationConfig.adaptive_cube_pooling_cube_size_scale * minRadius);
+    const int cubeSize = std::max(1, static_cast<int>(std::lround(cubeSizeTarget)));
+    const float zeroThreshold =
+        std::max(0.0f, simulationConfig.adaptive_cube_pooling_zero_threshold);
+    const float majorityThreshold =
+        std::clamp(simulationConfig.adaptive_cube_pooling_majority_threshold, 0.0f, 1.0f);
+
+    const int gridZ = (depth + cubeSize - 1) / cubeSize;
+    const int gridY = (rows + cubeSize - 1) / cubeSize;
+    const int gridX = (cols + cubeSize - 1) / cubeSize;
+
+    struct CubeStats
+    {
+        float mean = 0.0f;
+        float maxValue = 0.0f;
+        float zeroFraction = 0.0f;
+    };
+
+    std::vector<CubeStats> cubeStats(static_cast<size_t>(gridZ) * gridY * gridX);
+    auto cubeIndex = [gridX, gridY](int gz, int gy, int gx) -> size_t {
+        return static_cast<size_t>((gz * gridY + gy) * gridX + gx);
+    };
+
+    for (int gz = 0; gz < gridZ; ++gz)
+    {
+        const int z0 = gz * cubeSize;
+        const int z1 = std::min(depth, z0 + cubeSize);
+        for (int gy = 0; gy < gridY; ++gy)
+        {
+            const int y0 = gy * cubeSize;
+            const int y1 = std::min(rows, y0 + cubeSize);
+            for (int gx = 0; gx < gridX; ++gx)
+            {
+                const int x0 = gx * cubeSize;
+                const int x1 = std::min(cols, x0 + cubeSize);
+
+                double sum = 0.0;
+                float maxValue = 0.0f;
+                int zeroCount = 0;
+                int voxelCount = 0;
+                for (int z = z0; z < z1; ++z)
+                {
+                    const cv::Mat &slice = stack[static_cast<size_t>(z)];
+                    for (int y = y0; y < y1; ++y)
+                    {
+                        const float *row = slice.ptr<float>(y);
+                        for (int x = x0; x < x1; ++x)
+                        {
+                            const float value = row[x];
+                            sum += value;
+                            maxValue = std::max(maxValue, value);
+                            zeroCount += (value <= zeroThreshold) ? 1 : 0;
+                            ++voxelCount;
+                        }
+                    }
+                }
+
+                CubeStats &stats = cubeStats[cubeIndex(gz, gy, gx)];
+                if (voxelCount > 0)
+                {
+                    stats.mean = static_cast<float>(sum / static_cast<double>(voxelCount));
+                    stats.maxValue = maxValue;
+                    stats.zeroFraction = static_cast<float>(zeroCount) /
+                                         static_cast<float>(voxelCount);
+                }
+            }
+        }
+    }
+
+    std::vector<cv::Mat> pooled(depth);
+    for (int z = 0; z < depth; ++z)
+    {
+        pooled[static_cast<size_t>(z)] = cv::Mat::zeros(rows, cols, CV_32F);
+    }
+    std::vector<float> pooledCubeValues(static_cast<size_t>(gridZ) * gridY * gridX, 0.0f);
+
+    for (int gz = 0; gz < gridZ; ++gz)
+    {
+        const int z0 = gz * cubeSize;
+        const int z1 = std::min(depth, z0 + cubeSize);
+        for (int gy = 0; gy < gridY; ++gy)
+        {
+            const int y0 = gy * cubeSize;
+            const int y1 = std::min(rows, y0 + cubeSize);
+            for (int gx = 0; gx < gridX; ++gx)
+            {
+                const int x0 = gx * cubeSize;
+                const int x1 = std::min(cols, x0 + cubeSize);
+                const CubeStats &stats = cubeStats[cubeIndex(gz, gy, gx)];
+
+                float neighborMean = 0.0f;
+                int neighborCount = 0;
+                for (int nz = std::max(0, gz - 1); nz <= std::min(gridZ - 1, gz + 1); ++nz)
+                {
+                    for (int ny = std::max(0, gy - 1); ny <= std::min(gridY - 1, gy + 1); ++ny)
+                    {
+                        for (int nx = std::max(0, gx - 1); nx <= std::min(gridX - 1, gx + 1); ++nx)
+                        {
+                            if (nz == gz && ny == gy && nx == gx) continue;
+                            neighborMean += cubeStats[cubeIndex(nz, ny, nx)].mean;
+                            ++neighborCount;
+                        }
+                    }
+                }
+                if (neighborCount > 0)
+                {
+                    neighborMean /= static_cast<float>(neighborCount);
+                }
+
+                const bool useMeanPooling =
+                    stats.zeroFraction >= majorityThreshold &&
+                    neighborMean <= zeroThreshold;
+                const float pooledValue = useMeanPooling ? stats.mean : stats.maxValue;
+                pooledCubeValues[cubeIndex(gz, gy, gx)] = pooledValue;
+
+                for (int z = z0; z < z1; ++z)
+                {
+                    cv::Mat &slice = pooled[static_cast<size_t>(z)];
+                    for (int y = y0; y < y1; ++y)
+                    {
+                        float *row = slice.ptr<float>(y);
+                        for (int x = x0; x < x1; ++x)
+                        {
+                            row[x] = pooledValue;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (simulationConfig.adaptive_cube_pooling_remove_isolated_bright_cubes)
+    {
+        const float isolatedBrightThreshold =
+            std::max(zeroThreshold,
+                     simulationConfig.adaptive_cube_pooling_isolated_bright_cube_threshold);
+        for (int gz = 0; gz < gridZ; ++gz)
+        {
+            const int z0 = gz * cubeSize;
+            const int z1 = std::min(depth, z0 + cubeSize);
+            for (int gy = 0; gy < gridY; ++gy)
+            {
+                const int y0 = gy * cubeSize;
+                const int y1 = std::min(rows, y0 + cubeSize);
+                for (int gx = 0; gx < gridX; ++gx)
+                {
+                    const float centerValue = pooledCubeValues[cubeIndex(gz, gy, gx)];
+                    if (centerValue <= isolatedBrightThreshold)
+                    {
+                        continue;
+                    }
+
+                    bool hasBrightNeighbor = false;
+                    for (int nz = std::max(0, gz - 1); nz <= std::min(gridZ - 1, gz + 1) && !hasBrightNeighbor; ++nz)
+                    {
+                        for (int ny = std::max(0, gy - 1); ny <= std::min(gridY - 1, gy + 1) && !hasBrightNeighbor; ++ny)
+                        {
+                            for (int nx = std::max(0, gx - 1); nx <= std::min(gridX - 1, gx + 1); ++nx)
+                            {
+                                if (nz == gz && ny == gy && nx == gx) continue;
+                                if (pooledCubeValues[cubeIndex(nz, ny, nx)] > zeroThreshold)
+                                {
+                                    hasBrightNeighbor = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (!hasBrightNeighbor)
+                    {
+                        const int x0 = gx * cubeSize;
+                        const int x1 = std::min(cols, x0 + cubeSize);
+                        for (int z = z0; z < z1; ++z)
+                        {
+                            cv::Mat &slice = pooled[static_cast<size_t>(z)];
+                            for (int y = y0; y < y1; ++y)
+                            {
+                                float *row = slice.ptr<float>(y);
+                                for (int x = x0; x < x1; ++x)
+                                {
+                                    row[x] = 0.0f;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    return pooled;
+}
+
 // Function to interpolate between two slices
 void interpolateSlices(const cv::Mat& slice1, const cv::Mat& slice2, 
                        std::vector<cv::Mat>& processedSlices, int numInterpolations) {
@@ -80,6 +298,11 @@ Frame::Frame(const std::vector<cv::Mat> &realFrame, const SimulationConfig &simu
     refreshFullCostCache();
 }
 
+void Frame::refreshCostSynthFrame()
+{
+    _costSynthFrame = buildCostPooledSynthFrame(_synthFrame, simulationConfig);
+}
+
 void Frame::refreshFullCostCache()
 {
     if (_realFrame.size() != _synthFrame.size())
@@ -87,6 +310,7 @@ void Frame::refreshFullCostCache()
         throw std::runtime_error("Mismatch in image stack sizes");
     }
 
+    refreshCostSynthFrame();
     _currentCostPerSlice.assign(_realFrame.size(), 0.0);
     const float asymK = simulationConfig.asymmetric_cost_weight;
     const int nSlices = static_cast<int>(_realFrame.size());
@@ -94,7 +318,7 @@ void Frame::refreshFullCostCache()
     #pragma omp parallel for reduction(+:totalCost) schedule(static)
     for (int i = 0; i < nSlices; ++i)
     {
-        const double sliceCost = asymmetricL2Slice(_realFrame[i], _synthFrame[i], asymK);
+        const double sliceCost = asymmetricL2Slice(_realFrame[i], _costSynthFrame[i], asymK);
         _currentCostPerSlice[i] = sliceCost;
         totalCost += sliceCost;
     }
@@ -177,13 +401,15 @@ Cost Frame::calculateCost(const std::vector<cv::Mat> &synthFrame)
         throw std::runtime_error("Mismatch in image stack sizes");
     }
 
+    const std::vector<cv::Mat> pooledSynthFrame =
+        buildCostPooledSynthFrame(synthFrame, simulationConfig);
     const float asymK = simulationConfig.asymmetric_cost_weight;
     const int nSlices = static_cast<int>(_realFrame.size());
     double totalCost = 0.0;
     #pragma omp parallel for reduction(+:totalCost) schedule(static)
     for (int i = 0; i < nSlices; ++i)
     {
-        totalCost += asymmetricL2Slice(_realFrame[i], synthFrame[i], asymK);
+        totalCost += asymmetricL2Slice(_realFrame[i], pooledSynthFrame[i], asymK);
     }
     return totalCost;
 }
@@ -359,6 +585,8 @@ double Frame::calculateBboxCost(
     if (synthFrame.size() != _realFrame.size()) {
         throw std::runtime_error("bbox cost: synth/real stack size mismatch");
     }
+    const std::vector<cv::Mat> pooledSynthFrame =
+        buildCostPooledSynthFrame(synthFrame, simulationConfig);
     const float asymK = simulationConfig.asymmetric_cost_weight;
     // Threshold: only apply asymK when overshoot exceeds this value.
     // Below threshold, boundary rendering artifacts (d ≈ 0.01-0.05) are
@@ -387,7 +615,7 @@ double Frame::calculateBboxCost(
     #pragma omp parallel for reduction(+:totalCost) schedule(static)
     for (int z = bbox.zMin; z <= bbox.zMax; ++z) {
         const cv::Mat &realSlice  = _realFrame[z];
-        const cv::Mat &synthSlice = synthFrame[z];
+        const cv::Mat &synthSlice = pooledSynthFrame[z];
         if (realSlice.type() != CV_32F || synthSlice.type() != CV_32F) continue;
         const int zOff = (z - bbox.zMin) * nx * ny;
         double sliceCost = 0.0;
@@ -644,6 +872,8 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight, bool useS
     int affectedMax = -1;
     auto newSynthFrame = generateSynthFrameFast(oldCell, cells[index],
                                                 &affectedMin, &affectedMax);
+    const std::vector<cv::Mat> pooledNewSynthFrame =
+        buildCostPooledSynthFrame(newSynthFrame, simulationConfig);
 
     double newImageCost = 0.0;
     double oldImageCost = 0.0;
@@ -714,11 +944,18 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight, bool useS
         oldImageCost = calculateBboxCost(bboxUnion, _synthFrame, noMask);
         newImageCost = calculateBboxCost(bboxUnion, newSynthFrame, noMask);
     } else {
-        // Legacy full-image path.
-        newImageCost = calculateIncrementalCost(newSynthFrame,
-                                                affectedMin, affectedMax,
-                                                newCostPerSlice);
-        oldImageCost = _currentCost;
+        // Cost-side pooling changes synth-only comparison behavior while
+        // keeping the exported synth frame untouched.
+        if (simulationConfig.adaptive_cube_pooling_enabled &&
+            simulationConfig.adaptive_cube_pooling_cost_comparison_enabled) {
+            newImageCost = calculateCost(newSynthFrame);
+            oldImageCost = _currentCost;
+        } else {
+            newImageCost = calculateIncrementalCost(newSynthFrame,
+                                                    affectedMin, affectedMax,
+                                                    newCostPerSlice);
+            oldImageCost = _currentCost;
+        }
     }
 
     double costDiff = (newImageCost + newOverlapCell)
@@ -727,6 +964,7 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight, bool useS
     const bool useBboxLocal = _useBboxCost;
     CallBackFunc callback = [this,
                              newSynthFrame = std::move(newSynthFrame),
+                             pooledNewSynthFrame = std::move(pooledNewSynthFrame),
                              newCostPerSlice = std::move(newCostPerSlice),
                              oldCell, index, newImageCost, perturbDirections,
                              useBboxLocal](bool accept) mutable
@@ -741,9 +979,12 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight, bool useS
             if (perturbDirections.bRadius != 0) this->cells[index].adjustBRadiusPerturbProbability(perturbDirections.bRadius, bRadiusStep);
             if (perturbDirections.cRadius != 0) this->cells[index].adjustCRadiusPerturbProbability(perturbDirections.cRadius, cRadiusStep);
             this->_synthFrame = std::move(newSynthFrame);
+            this->_costSynthFrame = std::move(pooledNewSynthFrame);
             if (!useBboxLocal) {
                 this->_currentCost = newImageCost;
-                this->_currentCostPerSlice = std::move(newCostPerSlice);
+                if (!newCostPerSlice.empty()) {
+                    this->_currentCostPerSlice = std::move(newCostPerSlice);
+                }
             }
             // Under bbox cost, _currentCost/_currentCostPerSlice are stale
             // and unused for decisions. They remain populated from the

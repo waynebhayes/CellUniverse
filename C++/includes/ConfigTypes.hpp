@@ -13,6 +13,8 @@
 class SimulationConfig {
 public:
     int iterations_per_cell;
+    int signal_guided_iterations_per_cell = -1;
+    int random_iterations_per_cell = -1;
     float z_scaling;
     float blur_sigma;
     int z_slices;
@@ -55,6 +57,7 @@ public:
     bool export_preprocessed_images = false;
     bool quit_after_preprocessing = false;
     bool adaptive_cube_pooling_enabled = false;
+    bool adaptive_cube_pooling_cost_comparison_enabled = true;
     float adaptive_cube_pooling_cube_size_scale = 0.25f;
     float adaptive_cube_pooling_zero_threshold = 0.02f;
     float adaptive_cube_pooling_majority_threshold = 0.7f;
@@ -90,6 +93,8 @@ public:
     }
     void explodeConfig(const YAML::Node& node) {
         iterations_per_cell = node["iterations_per_cell"].as<int>();
+        if (node["signal_guided_iterations_per_cell"]) signal_guided_iterations_per_cell = node["signal_guided_iterations_per_cell"].as<int>();
+        if (node["random_iterations_per_cell"]) random_iterations_per_cell = node["random_iterations_per_cell"].as<int>();
         z_scaling = node["z_scaling"].as<float>();
         blur_sigma = node["blur_sigma"].as<float>();
         if (node["iterative_penalty"]) iterative_penalty = node["iterative_penalty"].as<float>();
@@ -131,6 +136,7 @@ public:
         if (node["export_preprocessed_images"]) export_preprocessed_images = node["export_preprocessed_images"].as<bool>();
         if (node["quit_after_preprocessing"]) quit_after_preprocessing = node["quit_after_preprocessing"].as<bool>();
         if (node["adaptive_cube_pooling_enabled"]) adaptive_cube_pooling_enabled = node["adaptive_cube_pooling_enabled"].as<bool>();
+        if (node["adaptive_cube_pooling_cost_comparison_enabled"]) adaptive_cube_pooling_cost_comparison_enabled = node["adaptive_cube_pooling_cost_comparison_enabled"].as<bool>();
         if (node["adaptive_cube_pooling_cube_size_scale"]) adaptive_cube_pooling_cube_size_scale = node["adaptive_cube_pooling_cube_size_scale"].as<float>();
         if (node["adaptive_cube_pooling_zero_threshold"]) adaptive_cube_pooling_zero_threshold = node["adaptive_cube_pooling_zero_threshold"].as<float>();
         if (node["adaptive_cube_pooling_majority_threshold"]) adaptive_cube_pooling_majority_threshold = node["adaptive_cube_pooling_majority_threshold"].as<float>();
@@ -149,6 +155,8 @@ public:
     void printConfig() const {
         std::cout << "Simulation Config\n";
         std::cout << "iterations_per_cell: " << iterations_per_cell << '\n';
+        std::cout << "signal_guided_iterations_per_cell: " << signal_guided_iterations_per_cell << '\n';
+        std::cout << "random_iterations_per_cell: " << random_iterations_per_cell << '\n';
         std::cout << "z_scaling: " << z_scaling << '\n';
         std::cout << "blur_sigma: " << blur_sigma << '\n';
         std::cout << "iterative_penalty: " << iterative_penalty << '\n';
@@ -190,6 +198,7 @@ public:
         std::cout << "export_preprocessed_images: " << export_preprocessed_images << '\n';
         std::cout << "quit_after_preprocessing: " << quit_after_preprocessing << '\n';
         std::cout << "adaptive_cube_pooling_enabled: " << adaptive_cube_pooling_enabled << '\n';
+        std::cout << "adaptive_cube_pooling_cost_comparison_enabled: " << adaptive_cube_pooling_cost_comparison_enabled << '\n';
         std::cout << "adaptive_cube_pooling_cube_size_scale: " << adaptive_cube_pooling_cube_size_scale << '\n';
         std::cout << "adaptive_cube_pooling_zero_threshold: " << adaptive_cube_pooling_zero_threshold << '\n';
         std::cout << "adaptive_cube_pooling_majority_threshold: " << adaptive_cube_pooling_majority_threshold << '\n';

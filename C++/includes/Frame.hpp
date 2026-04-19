@@ -269,6 +269,7 @@ private:
     std::string imageName;
     std::vector<cv::Mat> _realFrame;
     std::vector<cv::Mat> _synthFrame;
+    std::vector<cv::Mat> _costSynthFrame;
     std::vector<SignalCenter> _signalCenters;
     double _currentCost = -1.0; // cached L2 image cost of _synthFrame
     // Per-slice L2 contribution of _synthFrame to the total image cost. Kept
@@ -305,6 +306,7 @@ private:
     // (constructor, regenerateSynthFrame) where the incremental cache cannot
     // be updated delta-wise.
     void refreshFullCostCache();
+    void refreshCostSynthFrame();
 
     // Given a new synth frame that differs from _synthFrame only in slices
     // [affectedZMin, affectedZMax], compute the new total image cost and

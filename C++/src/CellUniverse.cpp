@@ -655,8 +655,22 @@ void CellUniverse::optimize(int frameIndex)
     }
 
     frame.regenerateSynthFrame();
+    bool useSignalGuidanceThisFrame = false;
     if (config.simulation.signal_guided_position_enabled) {
-        frame.setSignalCenters(localizeSignalCentersForFrame(frame, config, firstFrame + frameIndex));
+        std::vector<Frame::SignalCenter> centers =
+            localizeSignalCentersForFrame(frame, config, firstFrame + frameIndex);
+        frame.setSignalCenters(centers);
+        useSignalGuidanceThisFrame = true;
+        if (frameIndex > 0) {
+            const size_t previousCellCount = frames[frameIndex - 1].cells.size();
+            if (centers.size() < previousCellCount) {
+                useSignalGuidanceThisFrame = false;
+                std::cout << "[Signal Guidance Fallback] frame " << (firstFrame + frameIndex)
+                          << " centers=" << centers.size()
+                          << " previousCells=" << previousCellCount
+                          << " mode=random" << '\n';
+            }
+        }
     } else {
         frame.setSignalCenters({});
     }
@@ -678,11 +692,24 @@ void CellUniverse::optimize(int frameIndex)
 
     frame.regenerateSynthFrame();
 
-    size_t totalIterations = frame.length() * config.simulation.iterations_per_cell;
+    const int guidedPerCellIters =
+        (config.simulation.signal_guided_iterations_per_cell >= 0)
+            ? config.simulation.signal_guided_iterations_per_cell
+            : config.simulation.iterations_per_cell;
+    const int randomPerCellIters =
+        (config.simulation.random_iterations_per_cell >= 0)
+            ? config.simulation.random_iterations_per_cell
+            : config.simulation.iterations_per_cell;
+    const size_t activePerCellIters = static_cast<size_t>(std::max(
+        0, useSignalGuidanceThisFrame ? guidedPerCellIters : randomPerCellIters));
+    size_t totalIterations = frame.length() * activePerCellIters;
     int displayFrame = firstFrame + frameIndex;
 
     std::cout << "[Optimize] frame " << displayFrame
               << " (" << frame.cells.size() << " cells, " << totalIterations << " iterations)"
+              << " perturbMode=" << (useSignalGuidanceThisFrame ? "signal_guided" : "random")
+              << " guidedItersPerCell=" << guidedPerCellIters
+              << " randomItersPerCell=" << randomPerCellIters
               << " useBboxCost=" << (bboxActiveThisFrame ? 1 : 0)
               << " bboxMarginScale=" << config.prob.bbox_margin_scale
               << (config.prob.use_bbox_cost && frameIndex == 0
@@ -876,7 +903,7 @@ void CellUniverse::optimize(int frameIndex)
             int calAccepts = 0;
             for (int it = 0; it < calibrationIters; ++it) {
                 auto calResult = frame.perturbCell(
-                    ci, overlapWeight, config.simulation.signal_guided_position_enabled);
+                    ci, overlapWeight, useSignalGuidanceThisFrame);
                 const bool calAccept = calResult.first < 0.0;
                 if (calAccept) ++calAccepts;
                 calResult.second(calAccept);
@@ -1363,7 +1390,7 @@ void CellUniverse::optimize(int frameIndex)
                         std::set<std::string> &splitRejectedInPhase) {
         if (phaseNames.empty()) return;
 
-        const size_t perCellIters = static_cast<size_t>(config.simulation.iterations_per_cell);
+        const size_t perCellIters = activePerCellIters;
         const size_t totalPhaseIters = perCellIters * phaseNames.size();
 
         // Maintain eligibility incrementally. Only changes when a split
@@ -1482,7 +1509,7 @@ void CellUniverse::optimize(int frameIndex)
                     // Compensation perturb. The revert left cells[cellIdx]
                     // as the parent (in place), so no find_if needed.
                     auto compResult = frame.perturbCell(
-                        cellIdx, overlapWeight, config.simulation.signal_guided_position_enabled);
+                        cellIdx, overlapWeight, useSignalGuidanceThisFrame);
                     const bool compAccept = compResult.first < 0.0;
                     compResult.second(compAccept);
                     if (compAccept) {
@@ -1495,7 +1522,7 @@ void CellUniverse::optimize(int frameIndex)
             } else {
                 // --- Perturbation ---
                 auto result = frame.perturbCell(
-                    cellIdx, overlapWeight, config.simulation.signal_guided_position_enabled);
+                    cellIdx, overlapWeight, useSignalGuidanceThisFrame);
                 double costDiff = result.first;
                 auto callback = result.second;
                 if (costDiff < 0) {
