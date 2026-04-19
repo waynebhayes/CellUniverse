@@ -33,14 +33,28 @@ public:
                                                       const fs::path &csvOutputPath);
 
 private:
+    struct DatasetProfile
+    {
+        std::string label = "default";
+        float effectiveZScaling = 1.0f;
+        int minHighSeedVoxels = 8;
+        float seedMergeDistance = 8.0f;
+        float seedSplitSeparation = 10.0f;
+        float dedupDistance = 8.0f;
+    };
+
     BaseConfig config;
     fs::path outputDir;
     EmbryoBrightTracker tracker;
+    DatasetProfile activeProfile;
 
     static float clampf(float value, float lo, float hi);
+    static std::string toLowerCopy(std::string value);
     static std::string extractFrameFolderName(const fs::path &imageFile);
     static std::string makeCellName(const std::string &frameStem, int index);
 
+    DatasetProfile inferDatasetProfile(const fs::path &imageFile) const;
+    float effectiveZScaling() const;
     float estimateBackgroundValue(const std::vector<cv::Mat> &volume) const;
     int computeMinComponentVoxels() const;
     std::vector<DetectedCell> detectCellsInVolume(const std::vector<cv::Mat> &volume,
@@ -52,6 +66,18 @@ private:
     std::optional<DetectedCell> detectLocalSeededCell(const std::vector<cv::Mat> &volume,
                                                       const EmbryoBrightTracker::Comp3DStat &seedComponent,
                                                       float thresholdLow) const;
+    std::vector<EmbryoBrightTracker::Comp3DStat> collapseNearbySeeds(
+        const std::vector<EmbryoBrightTracker::Comp3DStat> &seeds,
+        float mergeDistance) const;
+    bool shouldSplitCoarseComponent(const DetectedCell &coarseCell,
+                                    const std::vector<EmbryoBrightTracker::Comp3DStat> &containedSeeds) const;
+    std::vector<DetectedCell> pruneLikelySatelliteCells(const std::vector<DetectedCell> &cells) const;
+    float scoreCandidateCells(const std::vector<DetectedCell> &cells,
+                              int &totalVoxels,
+                              int &clampedMinorCount,
+                              int &verySmallCount,
+                              int &veryLargeCount,
+                              int &nearDuplicatePairs) const;
     bool componentContainsBrightSeed(const EmbryoBrightTracker::Comp3DStat &component,
                                      const std::vector<EmbryoBrightTracker::Comp3DStat> &highComponents) const;
     std::vector<Spheroid> makeSpheroids(const std::vector<DetectedCell> &cells) const;

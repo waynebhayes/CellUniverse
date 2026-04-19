@@ -611,31 +611,30 @@ std::vector<cv::Mat> ImageHandler::loadFrame(const std::string &imageFile, BaseC
     }
     else
     {
-        const int expandFactor = config.simulation.z_scaling;
-        const unsigned numSynthSlices =
-            static_cast<unsigned>(expandFactor) * (processedZSlices.size() - 1U) + 1U;
+        const float expandFactor = std::max(1.0f, config.simulation.z_scaling);
+        const float scaledDepth = expandFactor * static_cast<float>(processedZSlices.size() - 1U);
+        const unsigned numSynthSlices = static_cast<unsigned>(std::lround(scaledDepth)) + 1U;
 
+        interpolatedZSlices.reserve(numSynthSlices);
+        const int lastSourceIndex = static_cast<int>(processedZSlices.size()) - 1;
         for (unsigned synthSlice = 0; synthSlice < numSynthSlices; ++synthSlice)
         {
-            const int sourceSlice = static_cast<int>(synthSlice / expandFactor);
-            if (synthSlice % expandFactor == 0)
-            {
-                interpolatedZSlices.push_back(processedZSlices[sourceSlice]);
-            }
-            else if (synthSlice % expandFactor == 1)
-            {
-                interpolateSlices(processedZSlices[sourceSlice],
-                                  processedZSlices[sourceSlice + 1],
-                                  interpolatedZSlices,
-                                  expandFactor - 1);
-            }
-        }
+            const float sourcePosition = static_cast<float>(synthSlice) / expandFactor;
+            const int sourceLower = std::clamp(static_cast<int>(std::floor(sourcePosition)), 0, lastSourceIndex);
+            const int sourceUpper = std::min(sourceLower + 1, lastSourceIndex);
+            const float alpha = std::clamp(sourcePosition - static_cast<float>(sourceLower), 0.0f, 1.0f);
 
-        if (interpolatedZSlices.size() != numSynthSlices)
-        {
-            throw std::runtime_error(
-                "interpolatedZSlices must have exactly " + std::to_string(numSynthSlices) +
-                " slices, but has " + std::to_string(interpolatedZSlices.size()) + " slices");
+            if (sourceLower == sourceUpper || alpha <= 1e-6f)
+            {
+                interpolatedZSlices.push_back(processedZSlices[sourceLower]);
+                continue;
+            }
+
+            cv::Mat blended;
+            cv::addWeighted(processedZSlices[sourceLower], 1.0 - alpha,
+                            processedZSlices[sourceUpper], alpha,
+                            0.0, blended);
+            interpolatedZSlices.push_back(blended);
         }
     }
 
