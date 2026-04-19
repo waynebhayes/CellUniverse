@@ -1,6 +1,7 @@
 #include "../includes/ImageHandler.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <iostream>
@@ -9,6 +10,14 @@
 
 namespace
 {
+std::string toLowerCopy(std::string value)
+{
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+}
+
 int makeOddAtLeast(int value, int minimum = 3)
 {
     int adjusted = std::max(value, minimum);
@@ -35,6 +44,39 @@ void updateTiffConfigIfNeeded(const fs::path &file, BaseConfig &config)
     std::vector<cv::Mat> images;
     cv::imreadmulti(file.string(), images, cv::IMREAD_UNCHANGED);
     config.simulation.z_slices = static_cast<int>(images.size());
+}
+
+void applyDatasetRuntimeProfileIfKnown(const fs::path &inputPath, BaseConfig &config)
+{
+    const std::string lowerPath = toLowerCopy(inputPath.string());
+
+    if (lowerPath.find("simulated_nuclei_hl60 cells_stained_with_hoechst") != std::string::npos ||
+        lowerPath.find("fluo-n3dh-sim+") != std::string::npos)
+    {
+        const float inferredZScaling = 0.200f / 0.125f;
+        config.simulation.z_scaling = inferredZScaling;
+        std::cout << "[Dataset Runtime] profile=hl60_sim"
+                  << " z_scaling=" << inferredZScaling
+                  << " voxel_size_xyz=(0.125,0.125,0.200)"
+                  << std::endl;
+        return;
+    }
+
+    if (lowerPath.find("c.elegans_developing embryo_fluo-n3dh-ce_training") != std::string::npos ||
+        lowerPath.find("fluo-n3dh-ce") != std::string::npos)
+    {
+        std::cout << "[Dataset Runtime] profile=celegans_embryo"
+                  << " z_scaling=" << config.simulation.z_scaling
+                  << std::endl;
+        return;
+    }
+
+    if (lowerPath.find("original_data") != std::string::npos)
+    {
+        std::cout << "[Dataset Runtime] profile=original_data"
+                  << " z_scaling=" << config.simulation.z_scaling
+                  << std::endl;
+    }
 }
 
 struct StackStats
@@ -131,6 +173,11 @@ void clipStack(ImageStack &sequence)
     }
 }
 } // namespace
+
+void ImageHandler::applyDatasetRuntimeProfile(const std::string &input, BaseConfig &config)
+{
+    applyDatasetRuntimeProfileIfKnown(fs::path(input), config);
+}
 
 Image ImageHandler::processImage(const Image &image, const BaseConfig &config)
 {

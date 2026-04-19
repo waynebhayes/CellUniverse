@@ -129,10 +129,12 @@ int main(int argc, char *argv[])
     // load config
     BaseConfig config;
     loadConfig(args.config, config);
-    config.printConfig();
+
+    ImageHandler::applyDatasetRuntimeProfile(args.input, config);
 
     // load file paths
     PathVec imageFilePaths = ImageHandler::getImageFilePaths(args.input, args.firstFrame, args.lastFrame, config);
+    config.printConfig();
 
     // load cells
     std::string firstFrameFile;
@@ -162,11 +164,11 @@ int main(int argc, char *argv[])
     {
         lineage.optimize(frame);
 
-        lineage.copyCellsForward(frame + 1);
-
         lineage.saveImages(frame);
 
         lineage.saveCells(frame);
+
+        lineage.copyCellsForward(frame + 1);
     }
     auto end = std::chrono::steady_clock::now(); // timer end
 

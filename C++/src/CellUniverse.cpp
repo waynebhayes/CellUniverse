@@ -171,74 +171,100 @@ CellUniverse::CellUniverse(std::map<std::string, std::vector<Spheroid>> initialC
                            std::string outputPath,
                            int firstFrame,
                            int continueFrom)
-: config(config), outputPath(outputPath), firstFrame(firstFrame)
+: config(config),
+  imagePaths(std::move(imagePaths)),
+  outputPath(std::move(outputPath)),
+  firstFrame(firstFrame),
+  continueFrom(continueFrom),
+  initialCells(std::move(initialCells))
 {
-    std::vector<std::vector<cv::Mat>> loadedFrames;
-    std::vector<float> frameMeanBrightness;
-    loadedFrames.reserve(imagePaths.size());
-    frameMeanBrightness.reserve(imagePaths.size());
-
-    // Pass 1: load and preprocess every frame, record per-frame mean brightness.
-    for (size_t i = 0; i < imagePaths.size(); ++i)
+    frames.resize(this->imagePaths.size());
+    if (this->config.simulation.quit_after_preprocessing)
     {
-        std::vector<cv::Mat> real_frame =
-            ImageHandler::loadFrame(imagePaths[i].string(), config);
-        frameMeanBrightness.push_back(computeStackMean(real_frame));
-        loadedFrames.push_back(std::move(real_frame));
+        for (size_t i = 0; i < this->imagePaths.size(); ++i)
+        {
+            std::vector<cv::Mat> realFrame = ImageHandler::loadFrame(this->imagePaths[i].string(), this->config);
+            if (this->config.simulation.export_preprocessed_images)
+            {
+                exportPreprocessedStack(realFrame, fs::path(this->outputPath), this->imagePaths[i]);
+            }
+        }
+    }
+    else if (!this->imagePaths.empty())
+    {
+        ensureFrameLoaded(0);
+    }
+}
+
+std::vector<Spheroid> CellUniverse::seedCellsForFrame(size_t frameIndex) const
+{
+    if (frameIndex >= imagePaths.size())
+    {
+        return {};
     }
 
-    // Global mean across frames — rescale each frame so brightness is consistent.
-    const float globalMeanBrightness = frameMeanBrightness.empty()
-        ? 0.0f
-        : std::accumulate(frameMeanBrightness.begin(), frameMeanBrightness.end(), 0.0f)
-            / static_cast<float>(frameMeanBrightness.size());
-
-    // Pass 2: scale each frame to the global mean, export, construct Frame.
-    for (size_t i = 0; i < imagePaths.size(); ++i)
+    auto carriedIt = carriedCells.find(frameIndex);
+    if (carriedIt != carriedCells.end())
     {
-        std::vector<cv::Mat> &real_frame = loadedFrames[i];
-        const float currentMeanBrightness = frameMeanBrightness[i];
-        const float brightnessScale =
-            (currentMeanBrightness > 1e-6f) ? (globalMeanBrightness / currentMeanBrightness) : 1.0f;
-        scaleStackBrightness(real_frame, brightnessScale);
+        return carriedIt->second;
+    }
 
-        std::cout << "[Brightness Align] frame=" << imagePaths[i].filename().string()
-                  << " frame_mean=" << currentMeanBrightness
-                  << " global_mean=" << globalMeanBrightness
-                  << " scale=" << brightnessScale << '\n';
+    const std::string fileName = imagePaths[frameIndex].filename().string();
+    if ((continueFrom == -1 || static_cast<int>(frameIndex) < continueFrom) && initialCells.find(fileName) != initialCells.end())
+    {
+        return initialCells.at(fileName);
+    }
 
-        if (config.simulation.export_preprocessed_images) {
-            exportPreprocessedStack(real_frame, fs::path(outputPath), imagePaths[i]);
-        }
+    return {};
+}
 
-        if (config.simulation.quit_after_preprocessing) {
-            continue;
-        }
+void CellUniverse::ensureFrameLoaded(size_t frameIndex)
+{
+    if (frameIndex >= imagePaths.size())
+    {
+        throw std::invalid_argument("CellUniverse::ensureFrameLoaded - invalid frame index");
+    }
 
-        // loadFrame interpolates frames; update config to the new slice count.
-        config.simulation.z_slices = real_frame.size();
-        // Propagate the interpolated-z upper bound into Spheroid::cellConfig so
-        // the Spheroid constructor's z clamp uses the actual stack height.
-        // Without this, cells could drift off the top/bottom of the z-stack.
-        Spheroid::cellConfig.maxZ = static_cast<float>(real_frame.size()) - 1.0f;
+    if (frames[frameIndex])
+    {
+        return;
+    }
 
-        fs::path path(imagePaths[i]);
-        std::string file_name = path.filename();
+    std::vector<cv::Mat> realFrame = ImageHandler::loadFrame(imagePaths[frameIndex].string(), config);
+    const float currentMeanBrightness = computeStackMean(realFrame);
+    if (!referenceMeanBrightnessInitialized)
+    {
+        referenceMeanBrightness = currentMeanBrightness;
+        referenceMeanBrightnessInitialized = true;
+    }
+    const float brightnessScale =
+        (currentMeanBrightness > 1e-6f && referenceMeanBrightness > 1e-6f)
+            ? (referenceMeanBrightness / currentMeanBrightness)
+            : 1.0f;
+    scaleStackBrightness(realFrame, brightnessScale);
 
-        if ((continueFrom == -1 || i < continueFrom) && initialCells.find(file_name) != initialCells.end())
-        {
-            const std::vector<Spheroid> &cells = initialCells.at(file_name);
-            frames.emplace_back(real_frame, config.simulation, cells, outputPath, file_name);
-        }
-        else
-        {
-            frames.emplace_back(real_frame, config.simulation, std::vector<Spheroid>(), outputPath, file_name);
-        }
+    if (config.simulation.export_preprocessed_images)
+    {
+        exportPreprocessedStack(realFrame, fs::path(outputPath), imagePaths[frameIndex]);
+    }
 
-        if (config.cell) {
-            frames.back().setBackgroundColor(config.cell->backgroundColor);
-            frames.back().regenerateSynthFrame();
-        }
+    std::cout << "[Brightness Align] frame=" << imagePaths[frameIndex].filename().string()
+              << " frame_mean=" << currentMeanBrightness
+              << " reference_mean=" << referenceMeanBrightness
+              << " scale=" << brightnessScale << '\n';
+
+    config.simulation.z_slices = static_cast<int>(realFrame.size());
+    Spheroid::cellConfig.maxZ = static_cast<float>(realFrame.size()) - 1.0f;
+
+    const std::string fileName = imagePaths[frameIndex].filename().string();
+    std::vector<Spheroid> cells = seedCellsForFrame(frameIndex);
+    carriedCells.erase(frameIndex);
+
+    frames[frameIndex] = std::make_unique<Frame>(realFrame, config.simulation, cells, outputPath, fileName);
+    if (config.cell)
+    {
+        frames[frameIndex]->setBackgroundColor(config.cell->backgroundColor);
+        frames[frameIndex]->regenerateSynthFrame();
     }
 }
 void CellUniverse::optimize(int frameIndex)
@@ -248,10 +274,12 @@ void CellUniverse::optimize(int frameIndex)
         throw std::invalid_argument("Invalid frame index");
     }
 
-    Frame &frame = frames[frameIndex];
+    ensureFrameLoaded(static_cast<size_t>(frameIndex));
+    Frame &frame = *frames[frameIndex];
 
     if (frameIndex > 0) {
-        const Frame &previousFrame = frames[frameIndex - 1];
+        ensureFrameLoaded(static_cast<size_t>(frameIndex - 1));
+        const Frame &previousFrame = *frames[frameIndex - 1];
         const float previousBackground = estimateAdaptiveBackgroundFromFrame(previousFrame, config.simulation);
         const float previousMeanBrightness = computeStackMean(previousFrame.getRealFrame());
         const float currentMeanBrightness = computeStackMean(frame.getRealFrame());
@@ -940,8 +968,9 @@ void CellUniverse::saveImages(int frameIndex)
         throw std::invalid_argument("Invalid frame index");
     }
 
-    std::vector<Image> realImages = frames[frameIndex].generateOutputFrame();
-    std::vector<Image> synthImages = frames[frameIndex].generateOutputSynthFrame();
+    ensureFrameLoaded(static_cast<size_t>(frameIndex));
+    std::vector<Image> realImages = frames[frameIndex]->generateOutputFrame();
+    std::vector<Image> synthImages = frames[frameIndex]->generateOutputSynthFrame();
     int displayFrame = firstFrame + frameIndex;
     std::cout << "Saving images for frame " << displayFrame << "..." << '\n';
     std::cout << "Real Image Type: " << realImages[0].type() << '\n';
@@ -994,7 +1023,8 @@ void CellUniverse::saveCells(int frameIndex)
         file << "file,name,x,y,z,majorRadius,bRadius,minorRadius,theta_x,theta_y,theta_z" << '\n';
     }
 
-    Frame &frame = frames[frameIndex];
+    ensureFrameLoaded(static_cast<size_t>(frameIndex));
+    Frame &frame = *frames[frameIndex];
     std::string imageName = frame.getImageName();
 
     for (const auto &cell : frame.cells) {
@@ -1016,6 +1046,11 @@ void CellUniverse::saveCells(int frameIndex)
 
     std::cout << "Saved " << frame.cells.size() << " cells for frame " << (firstFrame + frameIndex)
               << " to " << cellsPath << std::endl;
+
+    if (frameIndex > 0)
+    {
+        frames[frameIndex - 1].reset();
+    }
 }
 
 void CellUniverse::copyCellsForward(size_t to)
@@ -1024,10 +1059,11 @@ void CellUniverse::copyCellsForward(size_t to)
     {
         return;
     }
-    // assumes cells have deepcopy copy constructors
-    frames[to].cells = frames[to - 1].cells;
+
+    ensureFrameLoaded(to - 1);
+    carriedCells[to] = frames[to - 1]->cells;
     if (config.cell) {
-        for (auto &cell : frames[to].cells) {
+        for (auto &cell : carriedCells[to]) {
             cell.blendAdaptivePerturbProbabilitiesWithConfig(
                 config.cell->brightnessProbabilityTrust,
                 config.cell->majorRadiusProbabilityTrust,
@@ -1039,7 +1075,7 @@ void CellUniverse::copyCellsForward(size_t to)
 
 unsigned int CellUniverse::length()
 {
-    return frames.size();
+    return static_cast<unsigned int>(imagePaths.size());
 }
 
 const std::vector<Spheroid> &CellUniverse::getCells(int frameIndex) const
@@ -1048,7 +1084,11 @@ const std::vector<Spheroid> &CellUniverse::getCells(int frameIndex) const
     {
         throw std::invalid_argument("CellUniverse::getCells - invalid frameIndex");
     }
-    return frames[frameIndex].cells;
+    if (!frames[frameIndex])
+    {
+        throw std::runtime_error("CellUniverse::getCells - requested frame is not loaded");
+    }
+    return frames[frameIndex]->cells;
 }
 
 std::vector<std::string> CellUniverse::getCellNames(int frameIndex) const

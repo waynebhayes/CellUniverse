@@ -380,3 +380,6 @@ cellviewer*.sh
 .vs
 .dask-worker-space
 dask-worker-space/
+
+# Ignore ChangeLog folder
+C++/ChangeLog/

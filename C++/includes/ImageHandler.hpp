@@ -13,6 +13,7 @@ public:
     static Image processImage(const Image &image, const BaseConfig &config);
     static std::vector<cv::Mat> loadFrame(const std::string &imageFile, BaseConfig &config);
     static PathVec getImageFilePaths(const std::string &input, int firstFrame, int lastFrame, BaseConfig &config);
+    static void applyDatasetRuntimeProfile(const std::string &input, BaseConfig &config);
 
 private:
     static ImageStack processPreparedSequence(const ImageStack &sequence, const BaseConfig &config);
