@@ -10,6 +10,7 @@
 #include "yaml-cpp/yaml.h"
 #include "Spheroid.hpp"
 #include "CellUniverse.hpp"
+#include "CellGroundTruthBuilder.hpp"
 #include "ImageHandler.hpp"
 #include <chrono>
 #include <algorithm>
@@ -25,6 +26,15 @@ public:
     std::string initial{};
     std::string output{};
     int continueFrom = -1;
+};
+
+class GroundTruthArgs
+{
+public:
+    std::string inputFile{};
+    std::string output{};
+    std::string config{};
+    std::string csvOutput{};
 };
 
 // helper function to load the config
@@ -62,6 +72,22 @@ Args initArgs(char *argv[]) {
     return args;
 }
 
+GroundTruthArgs initGroundTruthArgs(char *argv[])
+{
+    GroundTruthArgs args;
+    args.inputFile = argv[2];
+    args.output = argv[3];
+    args.config = argv[4];
+    args.csvOutput = argv[5];
+
+    std::cout << "Loading ground-truth builder args:\n";
+    std::cout << "Input frame: " << args.inputFile << '\n' << std::flush;
+    std::cout << "Output folder: " << args.output << '\n' << std::flush;
+    std::cout << "Config file: " << args.config << '\n' << std::flush;
+    std::cout << "CSV output: " << args.csvOutput << '\n' << std::flush;
+    return args;
+}
+
 int main(int argc, char *argv[])
 {
     // Suppress OpenCV TIFF warnings (ColorMap tag noise from microscopy TIFFs)
@@ -69,6 +95,25 @@ int main(int argc, char *argv[])
 
     // Note: progress/status lines use std::endl for immediate visibility
     // through pipes (tee). Inner-loop diagnostics use '\n' for performance.
+
+    if (argc >= 2 && std::string(argv[1]) == "--build-ground-truth")
+    {
+        if (argc < 6)
+        {
+            std::cerr << "Usage: celluniverse --build-ground-truth <input_frame.tif> <output_dir> <config.yaml> <csv_output>\n";
+            return 1;
+        }
+
+        GroundTruthArgs args = initGroundTruthArgs(argv);
+        BaseConfig config;
+        loadConfig(args.config, config);
+        config.printConfig();
+
+        fs::create_directories(args.output);
+        CellGroundTruthBuilder builder(config, fs::path(args.output));
+        builder.buildInitialCsvForFrame(fs::path(args.inputFile), fs::path(args.csvOutput));
+        return 0;
+    }
 
     // check user input
     if (argc < 7)
