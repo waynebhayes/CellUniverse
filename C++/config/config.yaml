@@ -1,7 +1,4 @@
 cellType: ellipsoid
-
-# Position + rotation perturbation only.
-# Radii are fit by iterative PCA on bright pixels each frame, so
 # radius perturbation params are not read here.
 cell:
   x:
@@ -199,12 +196,12 @@ simulation:
   iterative_min_penalty: 0.005
   iterative_collapse_backoff: 0.9
   iterative_penalty_range: 0.9
-  iterative_reward_gate: 0.5
+  iterative_reward_gate: 1.0
   iterative_reward_gate_decrement: 0.05
   iterative_reward_gate_min: 0.005
-  iterative_reward: 2.0
-  iterative_score_max: 0.8
-  iterative_max_count: 100
+  iterative_reward: 1.0
+  iterative_score_max: 0.5
+  iterative_max_count: 150
   iterative_improvement_tolerance: 0.01
   iterative_score_drop_stop_threshold: 0.03
   iterative_penalty_score_drop_stop_threshold: 0.001
@@ -213,21 +210,31 @@ simulation:
   iterative_score_percentile_increment: 0.025
 
   contrast_structure_threshold: 0.02
+  contrast_background_floor: 0.02
+  contrast_bright_fraction: 0.02
+  contrast_brightness_weight: 0.25
+  contrast_hollow_penalty_weight: 0.15
   contrast_eps: 0.000001
+  global_intensity_scale_low_percentile: 0.05
+  global_intensity_scale_high_percentile: 1.0
+  global_intensity_hard_max: 512.0
 
-  post_process_blur_sigma: 1.5
-  post_process_final_blur_sigma: 3.0
-  post_process_final_direct_weight: 0.5
+  post_process_blur_sigma: 1.1
+  post_process_final_blur_sigma: 5.0
+  post_process_final_direct_weight: 0.3
+  post_process_final_direct_amplification: 0.1
+  post_process_final_blurred_amplification: 1.0
 
   post_process_amplification: 5.0
-  post_process_black_percentile: 0.09
-  post_process_white_percentile: 1.0
+  post_process_black_percentile: 0.08
+  post_process_white_percentile: 0.3
+  brightness_alignment_enabled: false
   
-  export_preprocessed_images: false
-  quit_after_preprocessing: false
+  export_preprocessed_images: true
+  quit_after_preprocessing: true
 
   adaptive_background_expand_factor: 1.1
-  adaptive_background_top_fraction: 0.4
+  adaptive_background_top_fraction: 0.2
 
   # Asymmetric L2 cost weight (Fix E). Per-voxel squared error is multiplied
   # by this factor when synth > real (cell covers dark image region).
@@ -290,12 +297,12 @@ simulation:
   # cell localization 
   iterations_per_cell: 100
   signal_guided_position_enabled: true
-  signal_guided_box_size_scale: 0.25
-  signal_guided_min_box_brightness_delta: 0.1
-  signal_guided_min_sigma_scale: 0.2
-  signal_guided_sigma_range_multiplier: 2.5
+  signal_guided_box_size_scale: 0.1
+  signal_guided_min_box_brightness_delta: 0.02
+  signal_guided_min_sigma_scale: 0.35
+  signal_guided_sigma_range_multiplier: 1.5
 
-# Triaxial split detection pipeline.
+ # Triaxial split detection pipeline.
 prob:
   # P(split) ramps linearly from P_split_base at snap elong=1.0 to
   # P_split_max at snap elong=2.0 (clamped above). No classification

@@ -6,5 +6,5 @@ CXX_DEFINES = -DYAML_CPP_STATIC_DEFINE
 
 CXX_INCLUDES = -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/includes -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/src -I/home/blue-lobster/p2/UCI/CS295p/CellUniverse/C++/lib/yaml-cpp/include -isystem /usr/include/opencv4
 
-CXX_FLAGS = -O3 -DNDEBUG -std=gnu++17 -flto=auto -fno-fat-lto-objects -O3 -march=native -DNDEBUG -fopenmp
+CXX_FLAGS = -O3 -DNDEBUG -std=gnu++17 -flto=auto -fno-fat-lto-objects -O3 -DNDEBUG -march=native -fopenmp
 

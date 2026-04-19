@@ -49,6 +49,63 @@ static float computeStackMean(const std::vector<cv::Mat> &stack)
     return (count > 0.0) ? static_cast<float>(sum / count) : 0.0f;
 }
 
+static float computeStackPercentile(const std::vector<cv::Mat> &stack, float percentile)
+{
+    std::vector<float> values;
+
+    size_t totalCount = 0;
+    for (const auto &slice : stack) {
+        if (!slice.empty()) {
+            totalCount += static_cast<size_t>(slice.total());
+        }
+    }
+    values.reserve(totalCount);
+
+    for (const auto &slice : stack) {
+        if (slice.empty()) {
+            continue;
+        }
+        for (int y = 0; y < slice.rows; ++y) {
+            const float *row = slice.ptr<float>(y);
+            values.insert(values.end(), row, row + slice.cols);
+        }
+    }
+
+    if (values.empty()) {
+        return 0.0f;
+    }
+
+    const float clamped = std::clamp(percentile, 0.0f, 1.0f);
+    const size_t index = static_cast<size_t>(
+        std::floor(clamped * static_cast<float>(values.size() - 1)));
+    std::nth_element(values.begin(),
+                     values.begin() + static_cast<std::ptrdiff_t>(index),
+                     values.end());
+    return values[index];
+}
+
+static float computeStackMax(const std::vector<cv::Mat> &stack)
+{
+    float maxValue = 0.0f;
+    bool foundValue = false;
+
+    for (const auto &slice : stack) {
+        if (slice.empty()) {
+            continue;
+        }
+
+        double sliceMin = 0.0;
+        double sliceMax = 0.0;
+        cv::minMaxLoc(slice, &sliceMin, &sliceMax);
+        if (!foundValue || static_cast<float>(sliceMax) > maxValue) {
+            maxValue = static_cast<float>(sliceMax);
+            foundValue = true;
+        }
+    }
+
+    return foundValue ? maxValue : 0.0f;
+}
+
 static float computeMeanOfTopFraction(std::vector<float> values, float topFraction)
 {
     if (values.empty()) {
@@ -76,9 +133,22 @@ static float computeMeanOfTopFraction(std::vector<float> values, float topFracti
     return static_cast<float>(sum / selectedCount);
 }
 
-static void scaleStackBrightness(std::vector<cv::Mat> &stack, float scale)
+static void normalizeStackToSharedScale(std::vector<cv::Mat> &stack,
+                                        float lowReference,
+                                        float highReference,
+                                        float hardMax)
 {
-    if (std::abs(scale - 1.0f) <= 1e-6f) {
+    if (hardMax > 0.0f) {
+        highReference = std::min(highReference, hardMax);
+    }
+
+    const float denominator = highReference - lowReference;
+    if (denominator <= 1e-6f) {
+        for (auto &slice : stack) {
+            if (!slice.empty()) {
+                slice.setTo(0.0f);
+            }
+        }
         return;
     }
 
@@ -86,7 +156,11 @@ static void scaleStackBrightness(std::vector<cv::Mat> &stack, float scale)
         if (slice.empty()) {
             continue;
         }
-        slice *= scale;
+        if (hardMax > 0.0f) {
+            cv::min(slice, hardMax, slice);
+        }
+        slice -= lowReference;
+        slice *= (1.0f / denominator);
         cv::min(slice, 1.0f, slice);
         cv::max(slice, 0.0f, slice);
     }
@@ -397,23 +471,115 @@ CellUniverse::CellUniverse(std::map<std::string, std::vector<Ellipsoid>> initial
 : config(config), outputPath(outputPath), firstFrame(firstFrame)
 {
     std::vector<std::vector<cv::Mat>> loadedFrames(imagePaths.size());
-    std::vector<float> frameMeanBrightness(imagePaths.size(), 0.0f);
+    std::vector<std::ostringstream> rawLoadLogs(imagePaths.size());
     std::vector<std::ostringstream> preprocessLogs(imagePaths.size());
 
-    // Pass 1: load and preprocess every frame, record per-frame mean brightness.
-    // Frames are independent, so load/preprocess can run in parallel.
+    // Pass 1: load raw float frames only.
+    // Frames are independent, so load can run in parallel.
     // Each frame writes logs into its own buffer; we flush them after the
-    // parallel region so [LoadFrame]/[Preprocess]/[IterPreprocess] output
+    // parallel region so [LoadFrame] output
     // stays deterministic and frame-ordered.
     #pragma omp parallel for schedule(dynamic)
     for (int i = 0; i < static_cast<int>(imagePaths.size()); ++i)
     {
         std::vector<cv::Mat> real_frame =
-            ImageHandler::loadFrame(imagePaths[static_cast<size_t>(i)].string(),
-                                    config,
-                                    &preprocessLogs[static_cast<size_t>(i)]);
-        frameMeanBrightness[static_cast<size_t>(i)] = computeStackMean(real_frame);
+            ImageHandler::loadRawFrame(imagePaths[static_cast<size_t>(i)].string(),
+                                       config,
+                                       &rawLoadLogs[static_cast<size_t>(i)]);
         loadedFrames[static_cast<size_t>(i)] = std::move(real_frame);
+    }
+
+    for (size_t i = 0; i < rawLoadLogs.size(); ++i)
+    {
+        const std::string buffer = rawLoadLogs[i].str();
+        if (!buffer.empty())
+        {
+            std::cout << buffer;
+        }
+    }
+
+    // Global shared scale across frames. Every frame uses the same black/white
+    // references so thresholds have a consistent meaning across the run.
+    std::vector<cv::Mat> allLoadedSlices;
+    size_t totalSlices = 0;
+    for (const auto &frame : loadedFrames) {
+        totalSlices += frame.size();
+    }
+    allLoadedSlices.reserve(totalSlices);
+    for (const auto &frame : loadedFrames) {
+        for (const auto &slice : frame) {
+            allLoadedSlices.push_back(slice);
+        }
+    }
+
+    float globalLowReference = computeStackPercentile(
+        allLoadedSlices, config.simulation.global_intensity_scale_low_percentile);
+    float globalHighReference = computeStackPercentile(
+        allLoadedSlices, config.simulation.global_intensity_scale_high_percentile);
+    if (config.simulation.global_intensity_hard_max > 0.0f &&
+        globalHighReference > config.simulation.global_intensity_hard_max) {
+        globalHighReference = config.simulation.global_intensity_hard_max;
+    }
+
+    if (globalHighReference <= globalLowReference + 1e-6f) {
+        const float fallbackHighReference = computeStackMax(allLoadedSlices);
+        if (fallbackHighReference > globalLowReference + 1e-6f) {
+            globalHighReference = fallbackHighReference;
+            if (config.simulation.global_intensity_hard_max > 0.0f) {
+                globalHighReference = std::min(globalHighReference,
+                                               config.simulation.global_intensity_hard_max);
+            }
+            std::cout << "[Global Scale Warning] percentile range collapsed;"
+                      << " using stack max fallback low_ref=" << globalLowReference
+                      << " high_ref=" << globalHighReference << '\n';
+        } else {
+            globalLowReference = 0.0f;
+            globalHighReference = 1.0f;
+            if (config.simulation.global_intensity_hard_max > 0.0f) {
+                globalHighReference = std::min(globalHighReference,
+                                               config.simulation.global_intensity_hard_max);
+            }
+            std::cout << "[Global Scale Warning] percentile range collapsed and stack max was unusable;"
+                      << " falling back to low_ref=" << globalLowReference
+                      << " high_ref=" << globalHighReference << '\n';
+        }
+    }
+
+    std::cout << "[Global Scale] low_percentile="
+              << config.simulation.global_intensity_scale_low_percentile
+              << " high_percentile="
+              << config.simulation.global_intensity_scale_high_percentile
+              << " low_ref=" << globalLowReference
+              << " high_ref=" << globalHighReference
+              << " hard_max=" << config.simulation.global_intensity_hard_max << '\n';
+
+    // Pass 2: normalize each loaded frame using the same global references.
+    for (size_t i = 0; i < imagePaths.size(); ++i)
+    {
+        std::vector<cv::Mat> &real_frame = loadedFrames[i];
+        normalizeStackToSharedScale(real_frame,
+                                    globalLowReference,
+                                    globalHighReference,
+                                    config.simulation.global_intensity_hard_max);
+
+        std::cout << "[Global Scale] frame=" << imagePaths[i].filename().string()
+                  << " mean=" << computeStackMean(real_frame)
+                  << " low_ref=" << globalLowReference
+                  << " high_ref=" << globalHighReference
+                  << " hard_max=" << config.simulation.global_intensity_hard_max << '\n';
+    }
+
+    // Pass 3: preprocess aligned frames. Frames are independent, so this can
+    // run in parallel; logs are buffered and flushed in frame order.
+    #pragma omp parallel for schedule(dynamic)
+    for (int i = 0; i < static_cast<int>(imagePaths.size()); ++i)
+    {
+        loadedFrames[static_cast<size_t>(i)] =
+            ImageHandler::preprocessLoadedFrame(
+                loadedFrames[static_cast<size_t>(i)],
+                imagePaths[static_cast<size_t>(i)].string(),
+                config,
+                &preprocessLogs[static_cast<size_t>(i)]);
     }
 
     for (size_t i = 0; i < preprocessLogs.size(); ++i)
@@ -425,30 +591,14 @@ CellUniverse::CellUniverse(std::map<std::string, std::vector<Ellipsoid>> initial
         }
     }
 
-    // Global mean across frames — rescale each frame so brightness is consistent.
-    const float globalMeanBrightness = frameMeanBrightness.empty()
-        ? 0.0f
-        : std::accumulate(frameMeanBrightness.begin(), frameMeanBrightness.end(), 0.0f)
-            / static_cast<float>(frameMeanBrightness.size());
-
-    // Pass 2: scale each frame to the global mean, export, construct Frame.
+    // Pass 4: export preprocessed frames and construct Frame objects.
     for (size_t i = 0; i < imagePaths.size(); ++i)
     {
         std::vector<cv::Mat> &real_frame = loadedFrames[i];
-        const float currentMeanBrightness = frameMeanBrightness[i];
-        const float brightnessScale =
-            (currentMeanBrightness > 1e-6f) ? (globalMeanBrightness / currentMeanBrightness) : 1.0f;
-        scaleStackBrightness(real_frame, brightnessScale);
-
-        std::cout << "[Brightness Align] frame=" << imagePaths[i].filename().string()
-                  << " frame_mean=" << currentMeanBrightness
-                  << " global_mean=" << globalMeanBrightness
-                  << " scale=" << brightnessScale << '\n';
 
         if (config.simulation.export_preprocessed_images) {
             exportPreprocessedStack(real_frame, fs::path(outputPath), imagePaths[i]);
         }
-
         if (config.simulation.quit_after_preprocessing) {
             continue;
         }
