@@ -97,18 +97,21 @@ StackStats computeStackStats(const ImageStack &stack)
     return stats;
 }
 
-void printStackStats(const std::string &stage, const std::string &imageFile, const ImageStack &stack)
+void printStackStats(std::ostream &log,
+                     const std::string &stage,
+                     const std::string &imageFile,
+                     const ImageStack &stack)
 {
     const StackStats stats = computeStackStats(stack);
-    std::cout << "[Preprocess] file=" << fs::path(imageFile).filename().string()
-              << " stage=" << stage
-              << " slices=" << stack.size()
-              << " voxels=" << stats.count
-              << " min=" << stats.minValue
-              << " max=" << stats.maxValue
-              << " mean=" << stats.mean
-              << " stddev=" << stats.stddev
-              << std::endl;
+    log << "[Preprocess] file=" << fs::path(imageFile).filename().string()
+        << " stage=" << stage
+        << " slices=" << stack.size()
+        << " voxels=" << stats.count
+        << " min=" << stats.minValue
+        << " max=" << stats.maxValue
+        << " mean=" << stats.mean
+        << " stddev=" << stats.stddev
+        << std::endl;
 }
 
 ImageStack cloneStack(const ImageStack &sequence)
@@ -120,6 +123,509 @@ ImageStack cloneStack(const ImageStack &sequence)
         cloned.push_back(slice.clone());
     }
     return cloned;
+}
+
+ImageStack applyAdaptiveCubePooling(const ImageStack &stack,
+                                    const BaseConfig &config,
+                                    std::ostream &log)
+{
+    if (stack.empty() || !config.cell || !config.simulation.adaptive_cube_pooling_enabled)
+    {
+        return cloneStack(stack);
+    }
+
+    const int depth = static_cast<int>(stack.size());
+    const int rows = stack[0].rows;
+    const int cols = stack[0].cols;
+    if (depth <= 0 || rows <= 0 || cols <= 0)
+    {
+        return cloneStack(stack);
+    }
+
+    const float minRadius = std::max(
+        1.0f,
+        static_cast<float>(std::min({config.cell->minARadius,
+                                     config.cell->minBRadius,
+                                     config.cell->minCRadius})));
+    const float cubeSizeTarget =
+        std::max(1.0f, config.simulation.adaptive_cube_pooling_cube_size_scale * minRadius);
+    const int cubeSize = std::max(1, static_cast<int>(std::lround(cubeSizeTarget)));
+    const float zeroThreshold = std::max(0.0f, config.simulation.adaptive_cube_pooling_zero_threshold);
+    const float majorityThreshold =
+        std::clamp(config.simulation.adaptive_cube_pooling_majority_threshold, 0.0f, 1.0f);
+
+    const int gridZ = (depth + cubeSize - 1) / cubeSize;
+    const int gridY = (rows + cubeSize - 1) / cubeSize;
+    const int gridX = (cols + cubeSize - 1) / cubeSize;
+
+    struct CubeStats
+    {
+        float mean = 0.0f;
+        float maxValue = 0.0f;
+        float zeroFraction = 0.0f;
+    };
+
+    std::vector<CubeStats> cubeStats(static_cast<size_t>(gridZ) * gridY * gridX);
+    auto cubeIndex = [gridX, gridY](int gz, int gy, int gx) -> size_t {
+        return static_cast<size_t>((gz * gridY + gy) * gridX + gx);
+    };
+
+    for (int gz = 0; gz < gridZ; ++gz)
+    {
+        const int z0 = gz * cubeSize;
+        const int z1 = std::min(depth, z0 + cubeSize);
+        for (int gy = 0; gy < gridY; ++gy)
+        {
+            const int y0 = gy * cubeSize;
+            const int y1 = std::min(rows, y0 + cubeSize);
+            for (int gx = 0; gx < gridX; ++gx)
+            {
+                const int x0 = gx * cubeSize;
+                const int x1 = std::min(cols, x0 + cubeSize);
+
+                double sum = 0.0;
+                float maxValue = 0.0f;
+                int zeroCount = 0;
+                int voxelCount = 0;
+                for (int z = z0; z < z1; ++z)
+                {
+                    const cv::Mat &slice = stack[static_cast<size_t>(z)];
+                    for (int y = y0; y < y1; ++y)
+                    {
+                        const float *row = slice.ptr<float>(y);
+                        for (int x = x0; x < x1; ++x)
+                        {
+                            const float value = row[x];
+                            sum += value;
+                            maxValue = std::max(maxValue, value);
+                            zeroCount += (value <= zeroThreshold) ? 1 : 0;
+                            ++voxelCount;
+                        }
+                    }
+                }
+
+                CubeStats &stats = cubeStats[cubeIndex(gz, gy, gx)];
+                if (voxelCount > 0)
+                {
+                    stats.mean = static_cast<float>(sum / static_cast<double>(voxelCount));
+                    stats.maxValue = maxValue;
+                    stats.zeroFraction = static_cast<float>(zeroCount) /
+                                         static_cast<float>(voxelCount);
+                }
+            }
+        }
+    }
+
+    ImageStack pooled(depth);
+    for (int z = 0; z < depth; ++z)
+    {
+        pooled[static_cast<size_t>(z)] = cv::Mat::zeros(rows, cols, CV_32F);
+    }
+    std::vector<float> pooledCubeValues(static_cast<size_t>(gridZ) * gridY * gridX, 0.0f);
+
+    int meanPooledCubes = 0;
+    int maxPooledCubes = 0;
+    for (int gz = 0; gz < gridZ; ++gz)
+    {
+        const int z0 = gz * cubeSize;
+        const int z1 = std::min(depth, z0 + cubeSize);
+        for (int gy = 0; gy < gridY; ++gy)
+        {
+            const int y0 = gy * cubeSize;
+            const int y1 = std::min(rows, y0 + cubeSize);
+            for (int gx = 0; gx < gridX; ++gx)
+            {
+                const int x0 = gx * cubeSize;
+                const int x1 = std::min(cols, x0 + cubeSize);
+                const CubeStats &stats = cubeStats[cubeIndex(gz, gy, gx)];
+
+                float neighborMean = 0.0f;
+                int neighborCount = 0;
+                for (int nz = std::max(0, gz - 1); nz <= std::min(gridZ - 1, gz + 1); ++nz)
+                {
+                    for (int ny = std::max(0, gy - 1); ny <= std::min(gridY - 1, gy + 1); ++ny)
+                    {
+                        for (int nx = std::max(0, gx - 1); nx <= std::min(gridX - 1, gx + 1); ++nx)
+                        {
+                            if (nz == gz && ny == gy && nx == gx)
+                            {
+                                continue;
+                            }
+                            neighborMean += cubeStats[cubeIndex(nz, ny, nx)].mean;
+                            ++neighborCount;
+                        }
+                    }
+                }
+                if (neighborCount > 0)
+                {
+                    neighborMean /= static_cast<float>(neighborCount);
+                }
+
+                const bool useMeanPooling =
+                    stats.zeroFraction >= majorityThreshold &&
+                    neighborMean <= zeroThreshold;
+                const float pooledValue = useMeanPooling ? stats.mean : stats.maxValue;
+                pooledCubeValues[cubeIndex(gz, gy, gx)] = pooledValue;
+                if (useMeanPooling)
+                {
+                    ++meanPooledCubes;
+                }
+                else
+                {
+                    ++maxPooledCubes;
+                }
+
+                for (int z = z0; z < z1; ++z)
+                {
+                    cv::Mat &slice = pooled[static_cast<size_t>(z)];
+                    for (int y = y0; y < y1; ++y)
+                    {
+                        float *row = slice.ptr<float>(y);
+                        for (int x = x0; x < x1; ++x)
+                        {
+                            row[x] = pooledValue;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    int removedIsolatedBrightCubes = 0;
+    int isolatedBrightCandidateCubes = 0;
+    if (config.simulation.adaptive_cube_pooling_remove_isolated_bright_cubes)
+    {
+        const float isolatedBrightThreshold =
+            std::max(zeroThreshold,
+                     config.simulation.adaptive_cube_pooling_isolated_bright_cube_threshold);
+        std::vector<char> clearCube(static_cast<size_t>(gridZ) * gridY * gridX, 0);
+        for (int gz = 0; gz < gridZ; ++gz)
+        {
+            for (int gy = 0; gy < gridY; ++gy)
+            {
+                for (int gx = 0; gx < gridX; ++gx)
+                {
+                    const size_t idx = cubeIndex(gz, gy, gx);
+                    const float centerValue = pooledCubeValues[idx];
+                    if (centerValue <= isolatedBrightThreshold)
+                    {
+                        continue;
+                    }
+                    ++isolatedBrightCandidateCubes;
+
+                    bool hasBrightNeighbor = false;
+                    for (int nz = std::max(0, gz - 1); nz <= std::min(gridZ - 1, gz + 1) && !hasBrightNeighbor; ++nz)
+                    {
+                        for (int ny = std::max(0, gy - 1); ny <= std::min(gridY - 1, gy + 1) && !hasBrightNeighbor; ++ny)
+                        {
+                            for (int nx = std::max(0, gx - 1); nx <= std::min(gridX - 1, gx + 1); ++nx)
+                            {
+                                if (nz == gz && ny == gy && nx == gx)
+                                {
+                                    continue;
+                                }
+                                if (pooledCubeValues[cubeIndex(nz, ny, nx)] > zeroThreshold)
+                                {
+                                    hasBrightNeighbor = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (!hasBrightNeighbor)
+                    {
+                        clearCube[idx] = 1;
+                    }
+                }
+            }
+        }
+
+        for (int gz = 0; gz < gridZ; ++gz)
+        {
+            const int z0 = gz * cubeSize;
+            const int z1 = std::min(depth, z0 + cubeSize);
+            for (int gy = 0; gy < gridY; ++gy)
+            {
+                const int y0 = gy * cubeSize;
+                const int y1 = std::min(rows, y0 + cubeSize);
+                for (int gx = 0; gx < gridX; ++gx)
+                {
+                    if (!clearCube[cubeIndex(gz, gy, gx)])
+                    {
+                        continue;
+                    }
+
+                    ++removedIsolatedBrightCubes;
+                    const int x0 = gx * cubeSize;
+                    const int x1 = std::min(cols, x0 + cubeSize);
+                    for (int z = z0; z < z1; ++z)
+                    {
+                        cv::Mat &slice = pooled[static_cast<size_t>(z)];
+                        for (int y = y0; y < y1; ++y)
+                        {
+                            float *row = slice.ptr<float>(y);
+                            for (int x = x0; x < x1; ++x)
+                            {
+                                row[x] = 0.0f;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    log << "[AdaptiveCubePooling]"
+        << " cubeSize=" << cubeSize
+        << " grid=" << gridX << "x" << gridY << "x" << gridZ
+        << " zeroThreshold=" << zeroThreshold
+        << " majorityThreshold=" << majorityThreshold
+        << " meanCubes=" << meanPooledCubes
+        << " maxCubes=" << maxPooledCubes
+        << " isolatedBrightThreshold="
+        << (config.simulation.adaptive_cube_pooling_remove_isolated_bright_cubes
+                ? std::max(zeroThreshold,
+                           config.simulation.adaptive_cube_pooling_isolated_bright_cube_threshold)
+                : 0.0f)
+        << " isolatedBrightCandidates=" << isolatedBrightCandidateCubes
+        << " removedIsolatedBrightCubes=" << removedIsolatedBrightCubes
+        << std::endl;
+
+    return pooled;
+}
+
+struct BrightBox
+{
+    int ix = 0;
+    int iy = 0;
+    int iz = 0;
+    cv::Point3f center{0.0f, 0.0f, 0.0f};
+    float brightness = 0.0f;
+    int voxels = 0;
+};
+
+int chooseNearestDivisorSize(int axisLength, float targetSize)
+{
+    if (axisLength <= 1)
+    {
+        return 1;
+    }
+
+    const float clampedTarget = std::clamp(targetSize, 1.0f, static_cast<float>(axisLength));
+    int bestDivisor = 1;
+    float bestDistance = std::abs(static_cast<float>(bestDivisor) - clampedTarget);
+    for (int d = 1; d <= axisLength; ++d)
+    {
+        if (axisLength % d != 0)
+        {
+            continue;
+        }
+        const float distance = std::abs(static_cast<float>(d) - clampedTarget);
+        if (distance < bestDistance ||
+            (std::abs(distance - bestDistance) <= 1e-6f && d > bestDivisor))
+        {
+            bestDivisor = d;
+            bestDistance = distance;
+        }
+    }
+    return bestDivisor;
+}
+
+std::vector<Frame::SignalCenter> localizeSignalCentersInStack(const ImageStack &stack,
+                                                              const BaseConfig &config)
+{
+    std::vector<Frame::SignalCenter> centers;
+    if (stack.empty() || !config.cell)
+    {
+        return centers;
+    }
+
+    const int sizeX = stack[0].cols;
+    const int sizeY = stack[0].rows;
+    const int sizeZ = static_cast<int>(stack.size());
+    if (sizeX <= 0 || sizeY <= 0 || sizeZ <= 0)
+    {
+        return centers;
+    }
+
+    const float boxScale = std::max(0.1f, config.simulation.signal_guided_box_size_scale);
+    const float zShrink = std::max(1.0f, config.simulation.z_scaling);
+    const float maxDiamX = 2.0f * static_cast<float>(config.cell->maxARadius);
+    const float maxDiamY = 2.0f * static_cast<float>(
+        config.cell->maxBRadius > 0.0 ? config.cell->maxBRadius : config.cell->maxARadius);
+    const float maxDiamZ = 2.0f * static_cast<float>(config.cell->maxCRadius);
+    const float targetBoxX = std::max(1.0f, (maxDiamX / 3.0f) * boxScale);
+    const float targetBoxY = std::max(1.0f, (maxDiamY / 3.0f) * boxScale);
+    const float targetBoxZ = std::max(1.0f, (maxDiamZ / 3.0f) * (boxScale / zShrink));
+
+    const int boxSizeX = chooseNearestDivisorSize(sizeX, targetBoxX);
+    const int boxSizeY = chooseNearestDivisorSize(sizeY, targetBoxY);
+    const int boxSizeZ = chooseNearestDivisorSize(sizeZ, targetBoxZ);
+    const int gridX = std::max(1, sizeX / boxSizeX);
+    const int gridY = std::max(1, sizeY / boxSizeY);
+    const int gridZ = std::max(1, sizeZ / boxSizeZ);
+
+    const float backgroundValue = 0.0f;
+    const float minDelta = std::max(0.0f, config.simulation.signal_guided_min_box_brightness_delta);
+
+    std::vector<BrightBox> boxes;
+    boxes.reserve(static_cast<size_t>(gridX) * gridY * gridZ);
+    for (int iz = 0; iz < gridZ; ++iz)
+    {
+        const int z0 = iz * boxSizeZ;
+        const int z1 = z0 + boxSizeZ;
+        for (int iy = 0; iy < gridY; ++iy)
+        {
+            const int y0 = iy * boxSizeY;
+            const int y1 = y0 + boxSizeY;
+            for (int ix = 0; ix < gridX; ++ix)
+            {
+                const int x0 = ix * boxSizeX;
+                const int x1 = x0 + boxSizeX;
+
+                double sum = 0.0;
+                int voxels = 0;
+                for (int z = z0; z < z1; ++z)
+                {
+                    for (int y = y0; y < y1; ++y)
+                    {
+                        const float *row = stack[static_cast<size_t>(z)].ptr<float>(y);
+                        for (int x = x0; x < x1; ++x)
+                        {
+                            sum += row[x];
+                            ++voxels;
+                        }
+                    }
+                }
+                if (voxels <= 0)
+                {
+                    continue;
+                }
+
+                const float meanBrightness = static_cast<float>(sum / static_cast<double>(voxels));
+                if (meanBrightness <= backgroundValue + minDelta)
+                {
+                    continue;
+                }
+
+                boxes.push_back({
+                    ix, iy, iz,
+                    cv::Point3f(
+                        static_cast<float>(x0 + x1 - 1) * 0.5f,
+                        static_cast<float>(y0 + y1 - 1) * 0.5f,
+                        static_cast<float>(z0 + z1 - 1) * 0.5f),
+                    meanBrightness,
+                    voxels
+                });
+            }
+        }
+    }
+
+    std::sort(boxes.begin(), boxes.end(),
+              [](const BrightBox &a, const BrightBox &b)
+              {
+                  return a.brightness > b.brightness;
+              });
+
+    std::map<std::tuple<int, int, int>, size_t> boxIndex;
+    for (size_t i = 0; i < boxes.size(); ++i)
+    {
+        boxIndex[{boxes[i].ix, boxes[i].iy, boxes[i].iz}] = i;
+    }
+
+    std::vector<char> visited(boxes.size(), 0);
+    float maxCenterBrightness = backgroundValue;
+    for (size_t seed = 0; seed < boxes.size(); ++seed)
+    {
+        if (visited[seed])
+        {
+            continue;
+        }
+
+        std::vector<size_t> stackIndices{seed};
+        visited[seed] = 1;
+        double weightSum = 0.0;
+        double xSum = 0.0;
+        double ySum = 0.0;
+        double zSum = 0.0;
+        double brightnessSum = 0.0;
+        int clusterBoxes = 0;
+
+        while (!stackIndices.empty())
+        {
+            const size_t current = stackIndices.back();
+            stackIndices.pop_back();
+            const BrightBox &box = boxes[current];
+            const float weight = std::max(1e-6f, box.brightness - backgroundValue);
+            weightSum += weight;
+            xSum += weight * static_cast<double>(box.center.x);
+            ySum += weight * static_cast<double>(box.center.y);
+            zSum += weight * static_cast<double>(box.center.z);
+            brightnessSum += static_cast<double>(box.brightness);
+            ++clusterBoxes;
+
+            for (int dz = -1; dz <= 1; ++dz)
+            {
+                for (int dy = -1; dy <= 1; ++dy)
+                {
+                    for (int dx = -1; dx <= 1; ++dx)
+                    {
+                        if (dx == 0 && dy == 0 && dz == 0)
+                        {
+                            continue;
+                        }
+                        auto it = boxIndex.find({box.ix + dx, box.iy + dy, box.iz + dz});
+                        if (it == boxIndex.end())
+                        {
+                            continue;
+                        }
+                        const size_t neighbor = it->second;
+                        if (visited[neighbor])
+                        {
+                            continue;
+                        }
+                        visited[neighbor] = 1;
+                        stackIndices.push_back(neighbor);
+                    }
+                }
+            }
+        }
+
+        if (clusterBoxes <= 0 || weightSum <= 0.0)
+        {
+            continue;
+        }
+
+        Frame::SignalCenter center;
+        center.position = cv::Point3f(
+            static_cast<float>(xSum / weightSum),
+            static_cast<float>(ySum / weightSum),
+            static_cast<float>(zSum / weightSum));
+        center.brightness = static_cast<float>(brightnessSum / static_cast<double>(clusterBoxes));
+        center.boxes = clusterBoxes;
+        centers.push_back(center);
+        maxCenterBrightness = std::max(maxCenterBrightness, center.brightness);
+    }
+
+    for (auto &center : centers)
+    {
+        const float normalized = (maxCenterBrightness > backgroundValue + 1e-6f)
+            ? std::clamp((center.brightness - backgroundValue) /
+                         (maxCenterBrightness - backgroundValue), 0.0f, 1.0f)
+            : 0.0f;
+        center.sigmaScale = std::max(
+            config.simulation.signal_guided_min_sigma_scale,
+            1.0f - normalized * (1.0f - config.simulation.signal_guided_min_sigma_scale));
+    }
+
+    std::sort(centers.begin(), centers.end(),
+              [](const Frame::SignalCenter &a, const Frame::SignalCenter &b)
+              {
+                  return a.brightness > b.brightness;
+              });
+
+    return centers;
 }
 
 void clipStack(ImageStack &sequence)
@@ -145,7 +651,9 @@ Image ImageHandler::processImage(const Image &image, const BaseConfig &config)
         processedImage = image.clone();
     }
 
-    processedImage.convertTo(processedImage, CV_32F, 1.0 / 255.0);
+    // Preserve the source intensity scale here. Frames are normalized later
+    // using one shared percentile-based scale across the selected run.
+    processedImage.convertTo(processedImage, CV_32F);
 
     if (config.simulation.blur_sigma > 0.0f)
     {
@@ -174,6 +682,38 @@ float ImageHandler::computePercentileFromValues(std::vector<float> values, float
                      values.begin() + static_cast<std::ptrdiff_t>(index),
                      values.end());
     return values[index];
+}
+
+float computeMeanOfTopFraction(std::vector<float> values, float topFraction)
+{
+    if (values.empty())
+    {
+        return 0.0f;
+    }
+
+    const float clampedFraction = std::clamp(topFraction, 0.0f, 1.0f);
+    if (clampedFraction <= 0.0f)
+    {
+        return 0.0f;
+    }
+
+    const std::size_t selectedCount = std::max<std::size_t>(
+        1,
+        static_cast<std::size_t>(
+            std::ceil(clampedFraction * static_cast<float>(values.size()))));
+    const std::size_t thresholdIndex = values.size() - selectedCount;
+
+    std::nth_element(values.begin(),
+                     values.begin() + static_cast<std::ptrdiff_t>(thresholdIndex),
+                     values.end());
+
+    double sum = 0.0;
+    for (std::size_t i = thresholdIndex; i < values.size(); ++i)
+    {
+        sum += values[i];
+    }
+
+    return static_cast<float>(sum / static_cast<double>(selectedCount));
 }
 
 float ImageHandler::computePercentileFromSlice(const cv::Mat &slice, float percentileFraction)
@@ -208,9 +748,12 @@ float ImageHandler::evaluateSequenceContrastScore(const ImageStack &sequence, co
         (config.cell ? static_cast<float>(config.cell->maxARadius) : 40.0f);
     const float cRadius =
         (config.cell ? static_cast<float>(config.cell->maxCRadius) : 35.0f);
+    const float minRadius = std::max(1.0f, std::min(aRadius, cRadius));
+    const float maxRadius = std::max(1.0f, std::max(aRadius, cRadius));
+    const float midRadius = 0.5f * (minRadius + maxRadius);
     const std::array<float, 2> radii = {
-        std::max(1.0f, aRadius),
-        std::max(1.0f, cRadius)
+        midRadius,
+        maxRadius
     };
 
     std::vector<float> scaleScores;
@@ -235,23 +778,41 @@ float ImageHandler::evaluateSequenceContrastScore(const ImageStack &sequence, co
             const cv::Mat outerMean = boxMean(slice, outerWindow);
 
             std::vector<float> contrastValues;
+            std::vector<float> brightInteriorValues;
+            std::vector<float> hollowPenaltyValues;
             contrastValues.reserve(static_cast<std::size_t>(slice.total()));
+            brightInteriorValues.reserve(static_cast<std::size_t>(slice.total() / 8));
+            hollowPenaltyValues.reserve(static_cast<std::size_t>(slice.total() / 8));
 
             for (int y = 0; y < slice.rows; ++y)
             {
+                const float *sliceRow = slice.ptr<float>(y);
                 const float *innerRow = innerMean.ptr<float>(y);
                 const float *outerRow = outerMean.ptr<float>(y);
                 for (int x = 0; x < slice.cols; ++x)
                 {
-                    const float localDifference = std::abs(innerRow[x] - outerRow[x]);
+                    const float localDifference = innerRow[x] - outerRow[x];
                     if (localDifference < config.simulation.contrast_structure_threshold)
                     {
                         continue;
                     }
 
+                    const float stableBackground =
+                        std::max(outerRow[x], config.simulation.contrast_background_floor);
                     const float localContrast =
-                        localDifference / (outerRow[x] + config.simulation.contrast_eps);
+                        localDifference / (stableBackground + config.simulation.contrast_eps);
                     contrastValues.push_back(localContrast);
+
+                    // Reward bright filled interiors in regions that already
+                    // exhibit positive local contrast.
+                    brightInteriorValues.push_back(sliceRow[x]);
+
+                    const float hollowDifference = outerRow[x] - innerRow[x];
+                    if (hollowDifference > config.simulation.contrast_structure_threshold)
+                    {
+                        hollowPenaltyValues.push_back(
+                            hollowDifference / (stableBackground + config.simulation.contrast_eps));
+                    }
                 }
             }
 
@@ -261,9 +822,20 @@ float ImageHandler::evaluateSequenceContrastScore(const ImageStack &sequence, co
                 continue;
             }
 
-            sliceScores.push_back(computePercentileFromValues(
+            const float contrastScore = computePercentileFromValues(
                 std::move(contrastValues),
-                config.simulation.iterative_score_percentile));
+                config.simulation.iterative_score_percentile);
+            const float brightInteriorScore = computeMeanOfTopFraction(
+                std::move(brightInteriorValues),
+                config.simulation.contrast_bright_fraction);
+            const float hollowPenaltyScore = computeMeanOfTopFraction(
+                std::move(hollowPenaltyValues),
+                config.simulation.contrast_bright_fraction);
+
+            sliceScores.push_back(
+                contrastScore +
+                config.simulation.contrast_brightness_weight * brightInteriorScore -
+                config.simulation.contrast_hollow_penalty_weight * hollowPenaltyScore);
         }
 
         if (sliceScores.empty())
@@ -288,59 +860,12 @@ float ImageHandler::evaluateSequenceContrastScore(const ImageStack &sequence, co
     return sumScores / static_cast<float>(scaleScores.size());
 }
 
-float ImageHandler::evaluateSequencePercentileMichelsonContrast(const ImageStack &sequence, const BaseConfig &config)
-{
-    std::vector<float> sliceScores;
-    sliceScores.reserve(sequence.size());
-
-    for (const auto &slice : sequence)
-    {
-        const float lowValue = computePercentileFromSlice(
-            slice, config.simulation.michelson_low_percentile);
-        const float highValue = computePercentileFromSlice(
-            slice, config.simulation.michelson_high_percentile);
-        sliceScores.push_back(
-            (highValue - lowValue) /
-            (highValue + lowValue + config.simulation.michelson_eps));
-    }
-
-    if (sliceScores.empty())
-    {
-        return 0.0f;
-    }
-
-    return computePercentileFromValues(std::move(sliceScores), 0.5f);
-}
-
-float ImageHandler::evaluateSequencePercentileWeberContrast(const ImageStack &sequence, const BaseConfig &config)
-{
-    std::vector<float> sliceScores;
-    sliceScores.reserve(sequence.size());
-
-    for (const auto &slice : sequence)
-    {
-        const float backgroundValue = computePercentileFromSlice(
-            slice, config.simulation.weber_background_percentile);
-        const float signalValue = computePercentileFromSlice(
-            slice, config.simulation.weber_signal_percentile);
-        const float stableBackground =
-            std::max(backgroundValue, config.simulation.weber_background_floor);
-        sliceScores.push_back(
-            (signalValue - stableBackground) /
-            (stableBackground + config.simulation.weber_eps));
-    }
-
-    if (sliceScores.empty())
-    {
-        return 0.0f;
-    }
-
-    return computePercentileFromValues(std::move(sliceScores), 0.5f);
-}
-
-ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence, const BaseConfig &config)
+ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
+                                                const BaseConfig &config,
+                                                std::ostream &log)
 {
     ImageStack current = cloneStack(sequence);
+    const int maxIterations = std::max(1, config.simulation.iterative_max_count);
 
     ImageStack bestSequence = cloneStack(current);
     float bestScore = -std::numeric_limits<float>::infinity();
@@ -348,15 +873,19 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence, con
     bool hasPreviousScore = false;
 
     int count = 0;
-    bool rewardNextRound = true;
     float currentPenalty = config.simulation.iterative_penalty;
-    int noImprovementCount = 0;
     bool restoreBestBeforeReward = false;
     float scorePercentile = config.simulation.iterative_score_percentile;
     float rewardGate = config.simulation.iterative_reward_gate;
 
-    while (true)
+    while (count < maxIterations)
     {
+        if (restoreBestBeforeReward)
+        {
+            current = cloneStack(bestSequence);
+            restoreBestBeforeReward = false;
+        }
+
         for (auto &slice : current)
         {
             for (int y = 0; y < slice.rows; ++y)
@@ -366,7 +895,14 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence, con
                 {
                     if (row[x] < config.simulation.iterative_penalty_range)
                     {
-                        row[x] -= currentPenalty;
+                        const float normalizedDistanceToKeep =
+                            (config.simulation.iterative_penalty_range > 1e-6f)
+                                ? ((config.simulation.iterative_penalty_range - row[x]) /
+                                   config.simulation.iterative_penalty_range)
+                                : 1.0f;
+                        const float penaltyStrength =
+                            std::clamp(normalizedDistanceToKeep, 0.0f, 1.0f);
+                        row[x] -= currentPenalty * penaltyStrength;
                         if (row[x] < 0.0f)
                         {
                             row[x] = 0.0f;
@@ -376,52 +912,58 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence, con
             }
         }
 
-        if (rewardNextRound)
-        {
-            if (restoreBestBeforeReward)
-            {
-                current = cloneStack(bestSequence);
-                restoreBestBeforeReward = false;
-            }
+        BaseConfig penaltyScoringConfig = config;
+        penaltyScoringConfig.simulation.iterative_score_percentile = scorePercentile;
+        const float penaltyScore = evaluateSequenceContrastScore(current, penaltyScoringConfig);
 
-            for (auto &slice : current)
+        if (hasPreviousScore &&
+            previousScore - penaltyScore >=
+                config.simulation.iterative_penalty_score_drop_stop_threshold)
+        {
+            restoreBestBeforeReward = true;
+            currentPenalty = std::max(
+                config.simulation.iterative_min_penalty,
+                currentPenalty * config.simulation.iterative_collapse_backoff);
+            previousScore = penaltyScore;
+            hasPreviousScore = true;
+            ++count;
+            continue;
+        }
+
+        for (auto &slice : current)
+        {
+            for (int y = 0; y < slice.rows; ++y)
             {
-                for (int y = 0; y < slice.rows; ++y)
+                float *row = slice.ptr<float>(y);
+                for (int x = 0; x < slice.cols; ++x)
                 {
-                    float *row = slice.ptr<float>(y);
-                    for (int x = 0; x < slice.cols; ++x)
+                    if (row[x] > rewardGate)
                     {
-                        if (row[x] > rewardGate)
+                        row[x] += config.simulation.iterative_reward;
+                        if (row[x] > 1.0f)
                         {
-                            row[x] += config.simulation.iterative_reward;
-                            if (row[x] > 1.0f)
-                            {
-                                row[x] = 1.0f;
-                            }
+                            row[x] = 1.0f;
                         }
                     }
                 }
             }
-
-            scorePercentile = std::min(
-                scorePercentile + config.simulation.iterative_score_percentile_increment,
-                config.simulation.iterative_score_percentile_max);
-            rewardGate = std::max(
-                config.simulation.iterative_reward_gate_min,
-                rewardGate -
-                    config.simulation.iterative_reward_gate_decrement);
         }
 
-        rewardNextRound = !rewardNextRound;
+        scorePercentile = std::min(
+            scorePercentile + config.simulation.iterative_score_percentile_increment,
+            config.simulation.iterative_score_percentile_max);
+        rewardGate = std::max(
+            config.simulation.iterative_reward_gate_min,
+            rewardGate -
+                config.simulation.iterative_reward_gate_decrement);
 
-        BaseConfig scoringConfig = config;
-        scoringConfig.simulation.iterative_score_percentile = scorePercentile;
-        const float score = evaluateSequenceContrastScore(current, scoringConfig);
+        BaseConfig rewardScoringConfig = config;
+        rewardScoringConfig.simulation.iterative_score_percentile = scorePercentile;
+        const float score = evaluateSequenceContrastScore(current, rewardScoringConfig);
 
         if (hasPreviousScore &&
             previousScore - score >= config.simulation.iterative_score_drop_stop_threshold)
         {
-            rewardNextRound = true;
             restoreBestBeforeReward = true;
             currentPenalty = std::max(
                 config.simulation.iterative_min_penalty,
@@ -436,17 +978,12 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence, con
         {
             bestScore = score;
             bestSequence = cloneStack(current);
-            noImprovementCount = 0;
-        }
-        else
-        {
-            ++noImprovementCount;
         }
 
         if (count % 50 == 0)
         {
-            std::cout << "[IterPreprocess] round=" << count
-                      << " score=" << score << std::endl;
+            log << "[IterPreprocess] round=" << count
+                << " score=" << score << std::endl;
         }
 
         previousScore = score;
@@ -464,36 +1001,24 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence, con
                 config.simulation.iterative_min_penalty,
                 currentPenalty * config.simulation.iterative_collapse_backoff);
             current = cloneStack(bestSequence);
-            rewardNextRound = true;
             continue;
         }
 
-        if (noImprovementCount >= config.simulation.iterative_no_improvement_patience)
-        {
-            if (currentPenalty <= config.simulation.iterative_min_penalty)
-            {
-                break;
-            }
-
-            currentPenalty = std::max(
-                config.simulation.iterative_min_penalty,
-                currentPenalty * config.simulation.iterative_collapse_backoff);
-            current = cloneStack(bestSequence);
-            noImprovementCount = 0;
-            rewardNextRound = true;
-            continue;
-        }
-
-        if (count >= config.simulation.iterative_max_count)
-        {
-            break;
-        }
     }
 
-    std::cout << "[IterPreprocess] best_score=" << bestScore << std::endl;
+    log << "[IterPreprocess] best_score=" << bestScore << std::endl;
 
     for (auto &slice : bestSequence)
     {
+        if (config.simulation.post_process_blur_sigma > 0.0f)
+        {
+            cv::GaussianBlur(slice,
+                             slice,
+                             cv::Size(0, 0),
+                             config.simulation.post_process_blur_sigma,
+                             config.simulation.post_process_blur_sigma);
+        }
+
         for (int y = 0; y < slice.rows; ++y)
         {
             float *row = slice.ptr<float>(y);
@@ -510,13 +1035,45 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence, con
             }
         }
 
-        if (config.simulation.post_process_blur_sigma > 0.0f)
+    }
+
+    if (config.simulation.post_process_final_blur_sigma > 0.0f)
+    {
+        const float directWeight = std::clamp(
+            config.simulation.post_process_final_direct_weight,
+            0.0f,
+            1.0f);
+        const float blurredWeight = 1.0f - directWeight;
+        const float directAmplification =
+            std::max(0.0f, config.simulation.post_process_final_direct_amplification);
+        const float blurredAmplification =
+            std::max(0.0f, config.simulation.post_process_final_blurred_amplification);
+
+        for (auto &slice : bestSequence)
         {
+            cv::Mat directSlice = slice.clone();
+            cv::Mat blurredSlice;
             cv::GaussianBlur(slice,
-                             slice,
+                             blurredSlice,
                              cv::Size(0, 0),
-                             config.simulation.post_process_blur_sigma,
-                             config.simulation.post_process_blur_sigma);
+                             config.simulation.post_process_final_blur_sigma,
+                             config.simulation.post_process_final_blur_sigma);
+
+            if (directAmplification != 1.0f)
+            {
+                directSlice *= directAmplification;
+            }
+            if (blurredAmplification != 1.0f)
+            {
+                blurredSlice *= blurredAmplification;
+            }
+
+            cv::addWeighted(directSlice,
+                            directWeight,
+                            blurredSlice,
+                            blurredWeight,
+                            0.0,
+                            slice);
         }
     }
 
@@ -524,10 +1081,12 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence, con
     return bestSequence;
 }
 
-std::vector<cv::Mat> ImageHandler::loadFrame(const std::string &imageFile, BaseConfig &config)
+std::vector<cv::Mat> ImageHandler::loadRawFrame(const std::string &imageFile,
+                                                const BaseConfig &config,
+                                                std::ostream *logSink)
 {
-    std::vector<cv::Mat> processedZSlices;
-    std::vector<cv::Mat> interpolatedZSlices;
+    std::ostream &log = logSink ? *logSink : std::cout;
+    std::vector<cv::Mat> normalizedSlices;
 
     const std::string extension = imageFile.substr(imageFile.find_last_of('.') + 1);
     if (extension == "tiff" || extension == "tif")
@@ -545,18 +1104,18 @@ std::vector<cv::Mat> ImageHandler::loadFrame(const std::string &imageFile, BaseC
         if (firstSlice.empty())
         {
             std::cout << "Error: Could not read the TIFF image" << '\n';
-            return processedZSlices;
+            return normalizedSlices;
         }
 
-        std::cout << "[LoadFrame] file=" << fs::path(imageFile).filename().string()
-                  << " rawSlices=" << numTiffSlices
-                  << " rawType=" << firstSlice.type()
-                  << " rawChannels=" << firstSlice.channels()
-                  << " rawRows=" << firstSlice.rows
-                  << " rawCols=" << firstSlice.cols
-                  << std::endl;
+        log << "[LoadFrame] file=" << fs::path(imageFile).filename().string()
+            << " rawSlices=" << numTiffSlices
+            << " rawType=" << firstSlice.type()
+            << " rawChannels=" << firstSlice.channels()
+            << " rawRows=" << firstSlice.rows
+            << " rawCols=" << firstSlice.cols
+            << std::endl;
 
-        processedZSlices.reserve(numTiffSlices);
+        normalizedSlices.reserve(numTiffSlices);
         for (const auto &rawSlice : tiffImage)
         {
             cv::Mat slice = rawSlice;
@@ -564,7 +1123,7 @@ std::vector<cv::Mat> ImageHandler::loadFrame(const std::string &imageFile, BaseC
             {
                 cv::cvtColor(slice, slice, cv::COLOR_BGR2GRAY);
             }
-            processedZSlices.push_back(processImage(slice, config));
+            normalizedSlices.push_back(processImage(slice, config));
         }
     }
     else
@@ -573,7 +1132,7 @@ std::vector<cv::Mat> ImageHandler::loadFrame(const std::string &imageFile, BaseC
         if (image.empty())
         {
             std::cout << "Error: Could not read the image" << '\n';
-            return processedZSlices;
+            return normalizedSlices;
         }
 
         if (image.channels() == 3)
@@ -581,24 +1140,30 @@ std::vector<cv::Mat> ImageHandler::loadFrame(const std::string &imageFile, BaseC
             cv::cvtColor(image, image, cv::COLOR_BGR2GRAY);
         }
 
-        processedZSlices.push_back(processImage(image, config));
+        normalizedSlices.push_back(processImage(image, config));
     }
 
-    printStackStats("normalized_input", imageFile, processedZSlices);
+    printStackStats(log, "normalized_input", imageFile, normalizedSlices);
+    return normalizedSlices;
+}
 
-    processedZSlices = processPreparedSequence(processedZSlices, config);
+std::vector<cv::Mat> ImageHandler::preprocessLoadedFrame(const std::vector<cv::Mat> &normalizedSlices,
+                                                         const std::string &imageFile,
+                                                         const BaseConfig &config,
+                                                         std::ostream *logSink)
+{
+    std::ostream &log = logSink ? *logSink : std::cout;
+    std::vector<cv::Mat> processedZSlices = cloneStack(normalizedSlices);
+    std::vector<cv::Mat> interpolatedZSlices;
+
+    processedZSlices = processPreparedSequence(processedZSlices, config, log);
 
     const float localScore = evaluateSequenceContrastScore(processedZSlices, config);
-    const float michelsonScore = evaluateSequencePercentileMichelsonContrast(processedZSlices, config);
-    const float weberScore = evaluateSequencePercentileWeberContrast(processedZSlices, config);
+    log << "[PreprocessScores] file=" << fs::path(imageFile).filename().string()
+        << " local=" << localScore
+        << std::endl;
 
-    std::cout << "[PreprocessScores] file=" << fs::path(imageFile).filename().string()
-              << " local=" << localScore
-              << " michelson=" << michelsonScore
-              << " weber=" << weberScore
-              << std::endl;
-
-    printStackStats("processed_sequence", imageFile, processedZSlices);
+    printStackStats(log, "processed_sequence", imageFile, processedZSlices);
 
     if (processedZSlices.empty())
     {
@@ -639,9 +1204,19 @@ std::vector<cv::Mat> ImageHandler::loadFrame(const std::string &imageFile, BaseC
         }
     }
 
-    printStackStats("post_interpolation", imageFile, interpolatedZSlices);
-    std::cout << std::to_string(interpolatedZSlices.size()) << "slices built successfully" << std::endl;
+    printStackStats(log, "post_interpolation", imageFile, interpolatedZSlices);
+    interpolatedZSlices = applyAdaptiveCubePooling(interpolatedZSlices, config, log);
+    printStackStats(log, "post_cube_pooling", imageFile, interpolatedZSlices);
+    log << std::to_string(interpolatedZSlices.size()) << "slices built successfully" << std::endl;
     return interpolatedZSlices;
+}
+
+std::vector<cv::Mat> ImageHandler::loadFrame(const std::string &imageFile,
+                                             BaseConfig &config,
+                                             std::ostream *logSink)
+{
+    const std::vector<cv::Mat> normalizedSlices = loadRawFrame(imageFile, config, logSink);
+    return preprocessLoadedFrame(normalizedSlices, imageFile, config, logSink);
 }
 
 PathVec ImageHandler::getImageFilePaths(const std::string &input, int firstFrame, int lastFrame, BaseConfig &config)

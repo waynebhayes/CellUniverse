@@ -1,8 +1,12 @@
 # Changelog v7 — Performance, correctness, and structural fixes (2026-04-16)
 
+**CLOSED 2026-04-19** at Change 50 (snap-only split candidate generation).
+New work continues in `changelogv8.md`, which opens with the
+`yp_fix_mask_04172026` preprocessing merge.
+
 Opened 2026-04-16. Previous: `changelogv6.md` (closed).
 
-Branch: `jl_bbox_multithread_04152026`
+Branch: `jl_bbox_multithread_04152026` → `jl_runtime_improve_04162026`
 
 ---
 

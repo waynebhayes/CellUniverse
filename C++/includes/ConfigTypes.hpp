@@ -13,6 +13,8 @@
 class SimulationConfig {
 public:
     int iterations_per_cell;
+    int signal_guided_iterations_per_cell = -1;
+    int random_iterations_per_cell = -1;
     float z_scaling;
     float blur_sigma;
     int z_slices;
@@ -26,31 +28,49 @@ public:
     float iterative_reward = 0.1f;
     float iterative_score_max = 1.5f;
     int iterative_max_count = 300;
-    int iterative_no_improvement_patience = 10;
     float iterative_improvement_tolerance = 0.01f;
     float iterative_score_drop_stop_threshold = 0.1f;
+    float iterative_penalty_score_drop_stop_threshold = 0.15f;
     float iterative_score_percentile = 0.05f;
     float iterative_score_percentile_max = 0.90f;
     float iterative_score_percentile_increment = 0.025f;
     int contrast_inner_window_size = 51;
     int contrast_outer_window_size = 101;
     float contrast_structure_threshold = 0.02f;
+    float contrast_background_floor = 0.02f;
+    float contrast_bright_fraction = 0.02f;
+    float contrast_brightness_weight = 0.25f;
+    float contrast_hollow_penalty_weight = 0.15f;
     float contrast_eps = 1e-6f;
+    float global_intensity_scale_low_percentile = 0.01f;
+    float global_intensity_scale_high_percentile = 0.995f;
+    float global_intensity_hard_max = 0.0f;
     float post_process_blur_sigma = 2.5f;
+    float post_process_final_blur_sigma = 0.0f;
+    float post_process_final_direct_weight = 1.0f;
+    float post_process_final_direct_amplification = 1.0f;
+    float post_process_final_blurred_amplification = 1.0f;
     float post_process_amplification = 15.0f;
     float post_process_black_percentile = 0.005f;
     float post_process_white_percentile = 0.3f;
-    float michelson_low_percentile = 0.10f;
-    float michelson_high_percentile = 0.90f;
-    float michelson_eps = 1e-6f;
-    float weber_background_percentile = 0.10f;
-    float weber_signal_percentile = 0.90f;
-    float weber_background_floor = 1.0f / 255.0f;
-    float weber_eps = 1e-6f;
+    bool brightness_alignment_enabled = true;
     bool export_preprocessed_images = false;
     bool quit_after_preprocessing = false;
+    bool export_post_localization_images = false;
+    bool adaptive_cube_pooling_enabled = false;
+    bool adaptive_cube_pooling_cost_comparison_enabled = true;
+    float adaptive_cube_pooling_cube_size_scale = 0.25f;
+    float adaptive_cube_pooling_zero_threshold = 0.02f;
+    float adaptive_cube_pooling_majority_threshold = 0.7f;
+    bool adaptive_cube_pooling_remove_isolated_bright_cubes = false;
+    float adaptive_cube_pooling_isolated_bright_cube_threshold = 0.08f;
     float adaptive_background_expand_factor = 1.1f;
     float adaptive_background_top_fraction = 0.4f;
+    bool signal_guided_position_enabled = false;
+    float signal_guided_box_size_scale = 1.0f;
+    float signal_guided_min_box_brightness_delta = 0.0f;
+    float signal_guided_min_sigma_scale = 0.35f;
+    float signal_guided_sigma_range_multiplier = 1.0f;
 
     // Asymmetric L2 cost weight (Fix E). Per-voxel squared error is
     // multiplied by this factor when synth > real (cell covers darker
@@ -74,6 +94,8 @@ public:
     }
     void explodeConfig(const YAML::Node& node) {
         iterations_per_cell = node["iterations_per_cell"].as<int>();
+        if (node["signal_guided_iterations_per_cell"]) signal_guided_iterations_per_cell = node["signal_guided_iterations_per_cell"].as<int>();
+        if (node["random_iterations_per_cell"]) random_iterations_per_cell = node["random_iterations_per_cell"].as<int>();
         z_scaling = node["z_scaling"].as<float>();
         blur_sigma = node["blur_sigma"].as<float>();
         if (node["iterative_penalty"]) iterative_penalty = node["iterative_penalty"].as<float>();
@@ -86,37 +108,57 @@ public:
         if (node["iterative_reward"]) iterative_reward = node["iterative_reward"].as<float>();
         if (node["iterative_score_max"]) iterative_score_max = node["iterative_score_max"].as<float>();
         if (node["iterative_max_count"]) iterative_max_count = node["iterative_max_count"].as<int>();
-        if (node["iterative_no_improvement_patience"]) iterative_no_improvement_patience = node["iterative_no_improvement_patience"].as<int>();
         if (node["iterative_improvement_tolerance"]) iterative_improvement_tolerance = node["iterative_improvement_tolerance"].as<float>();
         if (node["iterative_score_drop_stop_threshold"]) iterative_score_drop_stop_threshold = node["iterative_score_drop_stop_threshold"].as<float>();
+        if (node["iterative_penalty_score_drop_stop_threshold"]) iterative_penalty_score_drop_stop_threshold = node["iterative_penalty_score_drop_stop_threshold"].as<float>();
         if (node["iterative_score_percentile"]) iterative_score_percentile = node["iterative_score_percentile"].as<float>();
         if (node["iterative_score_percentile_max"]) iterative_score_percentile_max = node["iterative_score_percentile_max"].as<float>();
         if (node["iterative_score_percentile_increment"]) iterative_score_percentile_increment = node["iterative_score_percentile_increment"].as<float>();
         if (node["contrast_inner_window_size"]) contrast_inner_window_size = node["contrast_inner_window_size"].as<int>();
         if (node["contrast_outer_window_size"]) contrast_outer_window_size = node["contrast_outer_window_size"].as<int>();
         if (node["contrast_structure_threshold"]) contrast_structure_threshold = node["contrast_structure_threshold"].as<float>();
+        if (node["contrast_background_floor"]) contrast_background_floor = node["contrast_background_floor"].as<float>();
+        if (node["contrast_bright_fraction"]) contrast_bright_fraction = node["contrast_bright_fraction"].as<float>();
+        if (node["contrast_brightness_weight"]) contrast_brightness_weight = node["contrast_brightness_weight"].as<float>();
+        if (node["contrast_hollow_penalty_weight"]) contrast_hollow_penalty_weight = node["contrast_hollow_penalty_weight"].as<float>();
         if (node["contrast_eps"]) contrast_eps = node["contrast_eps"].as<float>();
+        if (node["global_intensity_scale_low_percentile"]) global_intensity_scale_low_percentile = node["global_intensity_scale_low_percentile"].as<float>();
+        if (node["global_intensity_scale_high_percentile"]) global_intensity_scale_high_percentile = node["global_intensity_scale_high_percentile"].as<float>();
+        if (node["global_intensity_hard_max"]) global_intensity_hard_max = node["global_intensity_hard_max"].as<float>();
         if (node["post_process_blur_sigma"]) post_process_blur_sigma = node["post_process_blur_sigma"].as<float>();
+        if (node["post_process_final_blur_sigma"]) post_process_final_blur_sigma = node["post_process_final_blur_sigma"].as<float>();
+        if (node["post_process_final_direct_weight"]) post_process_final_direct_weight = node["post_process_final_direct_weight"].as<float>();
+        if (node["post_process_final_direct_amplification"]) post_process_final_direct_amplification = node["post_process_final_direct_amplification"].as<float>();
+        if (node["post_process_final_blurred_amplification"]) post_process_final_blurred_amplification = node["post_process_final_blurred_amplification"].as<float>();
         if (node["post_process_amplification"]) post_process_amplification = node["post_process_amplification"].as<float>();
         if (node["post_process_black_percentile"]) post_process_black_percentile = node["post_process_black_percentile"].as<float>();
         if (node["post_process_white_percentile"]) post_process_white_percentile = node["post_process_white_percentile"].as<float>();
-        if (node["michelson_low_percentile"]) michelson_low_percentile = node["michelson_low_percentile"].as<float>();
-        if (node["michelson_high_percentile"]) michelson_high_percentile = node["michelson_high_percentile"].as<float>();
-        if (node["michelson_eps"]) michelson_eps = node["michelson_eps"].as<float>();
-        if (node["weber_background_percentile"]) weber_background_percentile = node["weber_background_percentile"].as<float>();
-        if (node["weber_signal_percentile"]) weber_signal_percentile = node["weber_signal_percentile"].as<float>();
-        if (node["weber_background_floor"]) weber_background_floor = node["weber_background_floor"].as<float>();
-        if (node["weber_eps"]) weber_eps = node["weber_eps"].as<float>();
+        if (node["brightness_alignment_enabled"]) brightness_alignment_enabled = node["brightness_alignment_enabled"].as<bool>();
         if (node["export_preprocessed_images"]) export_preprocessed_images = node["export_preprocessed_images"].as<bool>();
         if (node["quit_after_preprocessing"]) quit_after_preprocessing = node["quit_after_preprocessing"].as<bool>();
+        if (node["export_post_localization_images"]) export_post_localization_images = node["export_post_localization_images"].as<bool>();
+        if (node["adaptive_cube_pooling_enabled"]) adaptive_cube_pooling_enabled = node["adaptive_cube_pooling_enabled"].as<bool>();
+        if (node["adaptive_cube_pooling_cost_comparison_enabled"]) adaptive_cube_pooling_cost_comparison_enabled = node["adaptive_cube_pooling_cost_comparison_enabled"].as<bool>();
+        if (node["adaptive_cube_pooling_cube_size_scale"]) adaptive_cube_pooling_cube_size_scale = node["adaptive_cube_pooling_cube_size_scale"].as<float>();
+        if (node["adaptive_cube_pooling_zero_threshold"]) adaptive_cube_pooling_zero_threshold = node["adaptive_cube_pooling_zero_threshold"].as<float>();
+        if (node["adaptive_cube_pooling_majority_threshold"]) adaptive_cube_pooling_majority_threshold = node["adaptive_cube_pooling_majority_threshold"].as<float>();
+        if (node["adaptive_cube_pooling_remove_isolated_bright_cubes"]) adaptive_cube_pooling_remove_isolated_bright_cubes = node["adaptive_cube_pooling_remove_isolated_bright_cubes"].as<bool>();
+        if (node["adaptive_cube_pooling_isolated_bright_cube_threshold"]) adaptive_cube_pooling_isolated_bright_cube_threshold = node["adaptive_cube_pooling_isolated_bright_cube_threshold"].as<float>();
         if (node["adaptive_background_expand_factor"]) adaptive_background_expand_factor = node["adaptive_background_expand_factor"].as<float>();
         if (node["adaptive_background_top_fraction"]) adaptive_background_top_fraction = node["adaptive_background_top_fraction"].as<float>();
+        if (node["signal_guided_position_enabled"]) signal_guided_position_enabled = node["signal_guided_position_enabled"].as<bool>();
+        if (node["signal_guided_box_size_scale"]) signal_guided_box_size_scale = node["signal_guided_box_size_scale"].as<float>();
+        if (node["signal_guided_min_box_brightness_delta"]) signal_guided_min_box_brightness_delta = node["signal_guided_min_box_brightness_delta"].as<float>();
+        if (node["signal_guided_min_sigma_scale"]) signal_guided_min_sigma_scale = node["signal_guided_min_sigma_scale"].as<float>();
+        if (node["signal_guided_sigma_range_multiplier"]) signal_guided_sigma_range_multiplier = node["signal_guided_sigma_range_multiplier"].as<float>();
         if (node["asymmetric_cost_weight"]) asymmetric_cost_weight = node["asymmetric_cost_weight"].as<float>();
         if (node["asymmetric_cost_threshold"]) asymmetric_cost_threshold = node["asymmetric_cost_threshold"].as<float>();
     }
     void printConfig() const {
         std::cout << "Simulation Config\n";
         std::cout << "iterations_per_cell: " << iterations_per_cell << '\n';
+        std::cout << "signal_guided_iterations_per_cell: " << signal_guided_iterations_per_cell << '\n';
+        std::cout << "random_iterations_per_cell: " << random_iterations_per_cell << '\n';
         std::cout << "z_scaling: " << z_scaling << '\n';
         std::cout << "blur_sigma: " << blur_sigma << '\n';
         std::cout << "iterative_penalty: " << iterative_penalty << '\n';
@@ -129,29 +171,49 @@ public:
         std::cout << "iterative_reward: " << iterative_reward << '\n';
         std::cout << "iterative_score_max: " << iterative_score_max << '\n';
         std::cout << "iterative_max_count: " << iterative_max_count << '\n';
-        std::cout << "iterative_no_improvement_patience: " << iterative_no_improvement_patience << '\n';
         std::cout << "iterative_improvement_tolerance: " << iterative_improvement_tolerance << '\n';
         std::cout << "iterative_score_drop_stop_threshold: " << iterative_score_drop_stop_threshold << '\n';
+        std::cout << "iterative_penalty_score_drop_stop_threshold: " << iterative_penalty_score_drop_stop_threshold << '\n';
         std::cout << "iterative_score_percentile: " << iterative_score_percentile << '\n';
         std::cout << "iterative_score_percentile_max: " << iterative_score_percentile_max << '\n';
         std::cout << "iterative_score_percentile_increment: " << iterative_score_percentile_increment << '\n';
         std::cout << "contrast_inner_window_size: " << contrast_inner_window_size << '\n';
         std::cout << "contrast_outer_window_size: " << contrast_outer_window_size << '\n';
         std::cout << "contrast_structure_threshold: " << contrast_structure_threshold << '\n';
+        std::cout << "contrast_background_floor: " << contrast_background_floor << '\n';
+        std::cout << "contrast_bright_fraction: " << contrast_bright_fraction << '\n';
+        std::cout << "contrast_brightness_weight: " << contrast_brightness_weight << '\n';
+        std::cout << "contrast_hollow_penalty_weight: " << contrast_hollow_penalty_weight << '\n';
         std::cout << "contrast_eps: " << contrast_eps << '\n';
+        std::cout << "global_intensity_scale_low_percentile: " << global_intensity_scale_low_percentile << '\n';
+        std::cout << "global_intensity_scale_high_percentile: " << global_intensity_scale_high_percentile << '\n';
+        std::cout << "global_intensity_hard_max: " << global_intensity_hard_max << '\n';
         std::cout << "post_process_blur_sigma: " << post_process_blur_sigma << '\n';
+        std::cout << "post_process_final_blur_sigma: " << post_process_final_blur_sigma << '\n';
+        std::cout << "post_process_final_direct_weight: " << post_process_final_direct_weight << '\n';
+        std::cout << "post_process_final_direct_amplification: " << post_process_final_direct_amplification << '\n';
+        std::cout << "post_process_final_blurred_amplification: " << post_process_final_blurred_amplification << '\n';
         std::cout << "post_process_amplification: " << post_process_amplification << '\n';
         std::cout << "post_process_black_percentile: " << post_process_black_percentile << '\n';
         std::cout << "post_process_white_percentile: " << post_process_white_percentile << '\n';
-        std::cout << "michelson_low_percentile: " << michelson_low_percentile << '\n';
-        std::cout << "michelson_high_percentile: " << michelson_high_percentile << '\n';
-        std::cout << "weber_background_percentile: " << weber_background_percentile << '\n';
-        std::cout << "weber_signal_percentile: " << weber_signal_percentile << '\n';
-        std::cout << "weber_background_floor: " << weber_background_floor << '\n';
+        std::cout << "brightness_alignment_enabled: " << brightness_alignment_enabled << '\n';
         std::cout << "export_preprocessed_images: " << export_preprocessed_images << '\n';
         std::cout << "quit_after_preprocessing: " << quit_after_preprocessing << '\n';
+        std::cout << "export_post_localization_images: " << export_post_localization_images << '\n';
+        std::cout << "adaptive_cube_pooling_enabled: " << adaptive_cube_pooling_enabled << '\n';
+        std::cout << "adaptive_cube_pooling_cost_comparison_enabled: " << adaptive_cube_pooling_cost_comparison_enabled << '\n';
+        std::cout << "adaptive_cube_pooling_cube_size_scale: " << adaptive_cube_pooling_cube_size_scale << '\n';
+        std::cout << "adaptive_cube_pooling_zero_threshold: " << adaptive_cube_pooling_zero_threshold << '\n';
+        std::cout << "adaptive_cube_pooling_majority_threshold: " << adaptive_cube_pooling_majority_threshold << '\n';
+        std::cout << "adaptive_cube_pooling_remove_isolated_bright_cubes: " << adaptive_cube_pooling_remove_isolated_bright_cubes << '\n';
+        std::cout << "adaptive_cube_pooling_isolated_bright_cube_threshold: " << adaptive_cube_pooling_isolated_bright_cube_threshold << '\n';
         std::cout << "adaptive_background_expand_factor: " << adaptive_background_expand_factor << '\n';
         std::cout << "adaptive_background_top_fraction: " << adaptive_background_top_fraction << '\n';
+        std::cout << "signal_guided_position_enabled: " << signal_guided_position_enabled << '\n';
+        std::cout << "signal_guided_box_size_scale: " << signal_guided_box_size_scale << '\n';
+        std::cout << "signal_guided_min_box_brightness_delta: " << signal_guided_min_box_brightness_delta << '\n';
+        std::cout << "signal_guided_min_sigma_scale: " << signal_guided_min_sigma_scale << '\n';
+        std::cout << "signal_guided_sigma_range_multiplier: " << signal_guided_sigma_range_multiplier << '\n';
         std::cout << "z_slices: " << z_slices << std::endl;
     }
 };
@@ -226,10 +288,26 @@ public:
     // Reuses the Voronoi-filtered bright-pixel set that PCA already
     // computed for the split attempt. Each pixel is projected onto the
     // split axis (d1→d2), normalized so -1 is d1 center and +1 is d2
-    // center. valley_ratio = gap brightness / max(edge1, edge2).
-    // For a real division the groove dims the gap (ratio < limit). For
-    // a phantom continuous cell ratio ≈ 1.0.
+    // center. Two independent signals are computed:
+    //
+    //   gap_density  = fraction of in-range pixels with |t| < 0.3
+    //                  (in the middle ~30% of the axis between daughters)
+    //   valley_ratio = mean(brightness of gap pixels) /
+    //                  mean(brightness of edge pixels at 0.6 < |t| < 1.1)
+    //
+    // For a real division the dividing groove empties the gap (low
+    // density) AND dims it (low ratio). For a fake continuous cell
+    // both signals are flat — high density AND ratio ~1.0. The gate
+    // fires only when BOTH signals indicate "flat profile", so real
+    // divisions with a partial groove still pass.
+    float bio_bridge_max_gap_density = 0.18f;
     float bio_bridge_max_valley_ratio = 0.85f;
+    // Bridge tier-1: hard rejection threshold on the worst per-daughter
+    // valley ratio (gap / min edge). When gap brightness equals or exceeds
+    // an edge's brightness, there is no valley at all on that daughter's
+    // side and the split is clearly phantom. Applied to
+    // max(valleyRatio1, valleyRatio2).
+    float bio_bridge_no_valley_hard_threshold = 0.95f;
     // Absolute minimum edge brightness (real-image units above background).
     // Rejects splits where one daughter's edge zone is near-background —
     // a phantom daughter sitting in empty space regardless of ratios.
@@ -309,7 +387,9 @@ public:
         if (node["bio_combined_volume_min_fraction"]) bio_combined_volume_min_fraction = node["bio_combined_volume_min_fraction"].as<float>();
         if (node["bio_combined_volume_max_fraction"]) bio_combined_volume_max_fraction = node["bio_combined_volume_max_fraction"].as<float>();
         if (node["bio_max_single_daughter_volume_fraction"]) bio_max_single_daughter_volume_fraction = node["bio_max_single_daughter_volume_fraction"].as<float>();
+        if (node["bio_bridge_max_gap_density"]) bio_bridge_max_gap_density = node["bio_bridge_max_gap_density"].as<float>();
         if (node["bio_bridge_max_valley_ratio"]) bio_bridge_max_valley_ratio = node["bio_bridge_max_valley_ratio"].as<float>();
+        if (node["bio_bridge_no_valley_hard_threshold"]) bio_bridge_no_valley_hard_threshold = node["bio_bridge_no_valley_hard_threshold"].as<float>();
         if (node["bio_bridge_min_edge_brightness_absolute"]) bio_bridge_min_edge_brightness_absolute = node["bio_bridge_min_edge_brightness_absolute"].as<float>();
         if (node["split_burn_in_pos_sigma_scale"]) split_burn_in_pos_sigma_scale = node["split_burn_in_pos_sigma_scale"].as<float>();
         if (node["use_bbox_cost"]) use_bbox_cost = node["use_bbox_cost"].as<bool>();

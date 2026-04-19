@@ -41,6 +41,18 @@ struct BoundingBox3D
 class Frame
 {
 public:
+    // Signal center descriptor used by ImageHandler's signal-center
+    // localization (`localizeSignalCentersInStack`). Defined here as a
+    // public nested type so ImageHandler.cpp can compile without coupling
+    // to the rest of the signal-guided perturbation feature (which is
+    // currently unused in our pipeline). Kept for future re-enablement.
+    struct SignalCenter {
+        cv::Point3f position{0.0f, 0.0f, 0.0f};
+        float brightness = 0.0f;
+        float sigmaScale = 1.0f;
+        int boxes = 0;
+    };
+
     // Single-pipeline constructor — the analysis-frame / dual-pipeline
     // variant was removed on 2026-04-11 when the new ImageHandler preprocessing
     // replaced the sigmoid-first / raw-analysis split.
