@@ -125,6 +125,276 @@ ImageStack cloneStack(const ImageStack &sequence)
     return cloned;
 }
 
+ImageStack applyAdaptiveCubePooling(const ImageStack &stack,
+                                    const BaseConfig &config,
+                                    std::ostream &log)
+{
+    if (stack.empty() || !config.cell || !config.simulation.adaptive_cube_pooling_enabled)
+    {
+        return cloneStack(stack);
+    }
+
+    const int depth = static_cast<int>(stack.size());
+    const int rows = stack[0].rows;
+    const int cols = stack[0].cols;
+    if (depth <= 0 || rows <= 0 || cols <= 0)
+    {
+        return cloneStack(stack);
+    }
+
+    const float minRadius = std::max(
+        1.0f,
+        static_cast<float>(std::min({config.cell->minARadius,
+                                     config.cell->minBRadius,
+                                     config.cell->minCRadius})));
+    const float cubeSizeTarget =
+        std::max(1.0f, config.simulation.adaptive_cube_pooling_cube_size_scale * minRadius);
+    const int cubeSize = std::max(1, static_cast<int>(std::lround(cubeSizeTarget)));
+    const float zeroThreshold = std::max(0.0f, config.simulation.adaptive_cube_pooling_zero_threshold);
+    const float majorityThreshold =
+        std::clamp(config.simulation.adaptive_cube_pooling_majority_threshold, 0.0f, 1.0f);
+
+    const int gridZ = (depth + cubeSize - 1) / cubeSize;
+    const int gridY = (rows + cubeSize - 1) / cubeSize;
+    const int gridX = (cols + cubeSize - 1) / cubeSize;
+
+    struct CubeStats
+    {
+        float mean = 0.0f;
+        float maxValue = 0.0f;
+        float zeroFraction = 0.0f;
+    };
+
+    std::vector<CubeStats> cubeStats(static_cast<size_t>(gridZ) * gridY * gridX);
+    auto cubeIndex = [gridX, gridY](int gz, int gy, int gx) -> size_t {
+        return static_cast<size_t>((gz * gridY + gy) * gridX + gx);
+    };
+
+    for (int gz = 0; gz < gridZ; ++gz)
+    {
+        const int z0 = gz * cubeSize;
+        const int z1 = std::min(depth, z0 + cubeSize);
+        for (int gy = 0; gy < gridY; ++gy)
+        {
+            const int y0 = gy * cubeSize;
+            const int y1 = std::min(rows, y0 + cubeSize);
+            for (int gx = 0; gx < gridX; ++gx)
+            {
+                const int x0 = gx * cubeSize;
+                const int x1 = std::min(cols, x0 + cubeSize);
+
+                double sum = 0.0;
+                float maxValue = 0.0f;
+                int zeroCount = 0;
+                int voxelCount = 0;
+                for (int z = z0; z < z1; ++z)
+                {
+                    const cv::Mat &slice = stack[static_cast<size_t>(z)];
+                    for (int y = y0; y < y1; ++y)
+                    {
+                        const float *row = slice.ptr<float>(y);
+                        for (int x = x0; x < x1; ++x)
+                        {
+                            const float value = row[x];
+                            sum += value;
+                            maxValue = std::max(maxValue, value);
+                            zeroCount += (value <= zeroThreshold) ? 1 : 0;
+                            ++voxelCount;
+                        }
+                    }
+                }
+
+                CubeStats &stats = cubeStats[cubeIndex(gz, gy, gx)];
+                if (voxelCount > 0)
+                {
+                    stats.mean = static_cast<float>(sum / static_cast<double>(voxelCount));
+                    stats.maxValue = maxValue;
+                    stats.zeroFraction = static_cast<float>(zeroCount) /
+                                         static_cast<float>(voxelCount);
+                }
+            }
+        }
+    }
+
+    ImageStack pooled(depth);
+    for (int z = 0; z < depth; ++z)
+    {
+        pooled[static_cast<size_t>(z)] = cv::Mat::zeros(rows, cols, CV_32F);
+    }
+    std::vector<float> pooledCubeValues(static_cast<size_t>(gridZ) * gridY * gridX, 0.0f);
+
+    int meanPooledCubes = 0;
+    int maxPooledCubes = 0;
+    for (int gz = 0; gz < gridZ; ++gz)
+    {
+        const int z0 = gz * cubeSize;
+        const int z1 = std::min(depth, z0 + cubeSize);
+        for (int gy = 0; gy < gridY; ++gy)
+        {
+            const int y0 = gy * cubeSize;
+            const int y1 = std::min(rows, y0 + cubeSize);
+            for (int gx = 0; gx < gridX; ++gx)
+            {
+                const int x0 = gx * cubeSize;
+                const int x1 = std::min(cols, x0 + cubeSize);
+                const CubeStats &stats = cubeStats[cubeIndex(gz, gy, gx)];
+
+                float neighborMean = 0.0f;
+                int neighborCount = 0;
+                for (int nz = std::max(0, gz - 1); nz <= std::min(gridZ - 1, gz + 1); ++nz)
+                {
+                    for (int ny = std::max(0, gy - 1); ny <= std::min(gridY - 1, gy + 1); ++ny)
+                    {
+                        for (int nx = std::max(0, gx - 1); nx <= std::min(gridX - 1, gx + 1); ++nx)
+                        {
+                            if (nz == gz && ny == gy && nx == gx)
+                            {
+                                continue;
+                            }
+                            neighborMean += cubeStats[cubeIndex(nz, ny, nx)].mean;
+                            ++neighborCount;
+                        }
+                    }
+                }
+                if (neighborCount > 0)
+                {
+                    neighborMean /= static_cast<float>(neighborCount);
+                }
+
+                const bool useMeanPooling =
+                    stats.zeroFraction >= majorityThreshold &&
+                    neighborMean <= zeroThreshold;
+                const float pooledValue = useMeanPooling ? stats.mean : stats.maxValue;
+                pooledCubeValues[cubeIndex(gz, gy, gx)] = pooledValue;
+                if (useMeanPooling)
+                {
+                    ++meanPooledCubes;
+                }
+                else
+                {
+                    ++maxPooledCubes;
+                }
+
+                for (int z = z0; z < z1; ++z)
+                {
+                    cv::Mat &slice = pooled[static_cast<size_t>(z)];
+                    for (int y = y0; y < y1; ++y)
+                    {
+                        float *row = slice.ptr<float>(y);
+                        for (int x = x0; x < x1; ++x)
+                        {
+                            row[x] = pooledValue;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    int removedIsolatedBrightCubes = 0;
+    int isolatedBrightCandidateCubes = 0;
+    if (config.simulation.adaptive_cube_pooling_remove_isolated_bright_cubes)
+    {
+        const float isolatedBrightThreshold =
+            std::max(zeroThreshold,
+                     config.simulation.adaptive_cube_pooling_isolated_bright_cube_threshold);
+        std::vector<char> clearCube(static_cast<size_t>(gridZ) * gridY * gridX, 0);
+        for (int gz = 0; gz < gridZ; ++gz)
+        {
+            for (int gy = 0; gy < gridY; ++gy)
+            {
+                for (int gx = 0; gx < gridX; ++gx)
+                {
+                    const size_t idx = cubeIndex(gz, gy, gx);
+                    const float centerValue = pooledCubeValues[idx];
+                    if (centerValue <= isolatedBrightThreshold)
+                    {
+                        continue;
+                    }
+                    ++isolatedBrightCandidateCubes;
+
+                    bool hasBrightNeighbor = false;
+                    for (int nz = std::max(0, gz - 1); nz <= std::min(gridZ - 1, gz + 1) && !hasBrightNeighbor; ++nz)
+                    {
+                        for (int ny = std::max(0, gy - 1); ny <= std::min(gridY - 1, gy + 1) && !hasBrightNeighbor; ++ny)
+                        {
+                            for (int nx = std::max(0, gx - 1); nx <= std::min(gridX - 1, gx + 1); ++nx)
+                            {
+                                if (nz == gz && ny == gy && nx == gx)
+                                {
+                                    continue;
+                                }
+                                if (pooledCubeValues[cubeIndex(nz, ny, nx)] > zeroThreshold)
+                                {
+                                    hasBrightNeighbor = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (!hasBrightNeighbor)
+                    {
+                        clearCube[idx] = 1;
+                    }
+                }
+            }
+        }
+
+        for (int gz = 0; gz < gridZ; ++gz)
+        {
+            const int z0 = gz * cubeSize;
+            const int z1 = std::min(depth, z0 + cubeSize);
+            for (int gy = 0; gy < gridY; ++gy)
+            {
+                const int y0 = gy * cubeSize;
+                const int y1 = std::min(rows, y0 + cubeSize);
+                for (int gx = 0; gx < gridX; ++gx)
+                {
+                    if (!clearCube[cubeIndex(gz, gy, gx)])
+                    {
+                        continue;
+                    }
+
+                    ++removedIsolatedBrightCubes;
+                    const int x0 = gx * cubeSize;
+                    const int x1 = std::min(cols, x0 + cubeSize);
+                    for (int z = z0; z < z1; ++z)
+                    {
+                        cv::Mat &slice = pooled[static_cast<size_t>(z)];
+                        for (int y = y0; y < y1; ++y)
+                        {
+                            float *row = slice.ptr<float>(y);
+                            for (int x = x0; x < x1; ++x)
+                            {
+                                row[x] = 0.0f;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    log << "[AdaptiveCubePooling]"
+        << " cubeSize=" << cubeSize
+        << " grid=" << gridX << "x" << gridY << "x" << gridZ
+        << " zeroThreshold=" << zeroThreshold
+        << " majorityThreshold=" << majorityThreshold
+        << " meanCubes=" << meanPooledCubes
+        << " maxCubes=" << maxPooledCubes
+        << " isolatedBrightThreshold="
+        << (config.simulation.adaptive_cube_pooling_remove_isolated_bright_cubes
+                ? std::max(zeroThreshold,
+                           config.simulation.adaptive_cube_pooling_isolated_bright_cube_threshold)
+                : 0.0f)
+        << " isolatedBrightCandidates=" << isolatedBrightCandidateCubes
+        << " removedIsolatedBrightCubes=" << removedIsolatedBrightCubes
+        << std::endl;
+
+    return pooled;
+}
+
 struct BrightBox
 {
     int ix = 0;
@@ -935,6 +1205,8 @@ std::vector<cv::Mat> ImageHandler::preprocessLoadedFrame(const std::vector<cv::M
     }
 
     printStackStats(log, "post_interpolation", imageFile, interpolatedZSlices);
+    interpolatedZSlices = applyAdaptiveCubePooling(interpolatedZSlices, config, log);
+    printStackStats(log, "post_cube_pooling", imageFile, interpolatedZSlices);
     log << std::to_string(interpolatedZSlices.size()) << "slices built successfully" << std::endl;
     return interpolatedZSlices;
 }

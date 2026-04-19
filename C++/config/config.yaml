@@ -221,9 +221,9 @@ simulation:
 
   post_process_blur_sigma: 1.1
   post_process_final_blur_sigma: 5.0
-  post_process_final_direct_weight: 0.3
-  post_process_final_direct_amplification: 0.1
-  post_process_final_blurred_amplification: 1.0
+  post_process_final_direct_weight: 0.7
+  post_process_final_direct_amplification: 0.4
+  post_process_final_blurred_amplification: 2.0
 
   post_process_amplification: 5.0
   post_process_black_percentile: 0.08
@@ -232,6 +232,12 @@ simulation:
   
   export_preprocessed_images: true
   quit_after_preprocessing: true
+  adaptive_cube_pooling_enabled: true
+  adaptive_cube_pooling_cube_size_scale: 0.6
+  adaptive_cube_pooling_zero_threshold: 0.035
+  adaptive_cube_pooling_majority_threshold: 0.7
+  adaptive_cube_pooling_remove_isolated_bright_cubes: true
+  adaptive_cube_pooling_isolated_bright_cube_threshold: 0.08
 
   adaptive_background_expand_factor: 1.1
   adaptive_background_top_fraction: 0.2
