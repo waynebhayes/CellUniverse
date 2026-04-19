@@ -432,7 +432,7 @@ std::vector<EmbryoBrightTracker::Comp3DStat> EmbryoBrightTracker::extractConnect
         }
     }
 
-    if (maskTot > 0) {
+    if (dbgVerbose && maskTot > 0) {
         double frac = (double)maskOn / (double)maskTot;
         // Print only for bbox-sized calls (heuristic): avoid flooding global calls.
         if (maskTot <= (size_t)120*120*20) {
@@ -483,9 +483,11 @@ EmbryoBrightTracker::CellState EmbryoBrightTracker::trackSingleCellByCCInBBox(
         dead.lastSeenFrame = frameIdx;
         dead.voxelCount = 0;
 
-        std::cout << "  [DBG][TrackFail] f=" << frameIdx << " id=" << prev.id
-          << " reason=comps_empty(threshLow_too_high_or_bbox_miss)"
-          << "\n";
+        if (dbgVerbose) {
+            std::cout << "  [DBG][TrackFail] f=" << frameIdx << " id=" << prev.id
+              << " reason=comps_empty(threshLow_too_high_or_bbox_miss)"
+              << "\n";
+        }
 
         return dead;
     }
@@ -515,10 +517,12 @@ EmbryoBrightTracker::CellState EmbryoBrightTracker::trackSingleCellByCCInBBox(
         if (c.vox >= minVox) kept.push_back(c);
     }
 
-    std::cout << "  [DBG][TrackFilter] f=" << frameIdx << " id=" << prev.id
-          << " minVox=" << minVox
-          << " kept=" << kept.size() << "/" << comps.size()
-          << "\n";
+    if (dbgVerbose) {
+        std::cout << "  [DBG][TrackFilter] f=" << frameIdx << " id=" << prev.id
+              << " minVox=" << minVox
+              << " kept=" << kept.size() << "/" << comps.size()
+              << "\n";
+    }
 
     if (kept.empty()) {
         // Fallback: do not kill track immediately; pick the largest component.
@@ -539,9 +543,11 @@ EmbryoBrightTracker::CellState EmbryoBrightTracker::trackSingleCellByCCInBBox(
 
         ok = true;
 
-        std::cout << "  [WARN][TrackFallback] f=" << frameIdx << " id=" << prev.id
-                  << " kept_empty -> use_max_comp vox=" << cst.vox
-                  << "\n";
+        if (dbgVerbose) {
+            std::cout << "  [WARN][TrackFallback] f=" << frameIdx << " id=" << prev.id
+                      << " kept_empty -> use_max_comp vox=" << cst.vox
+                      << "\n";
+        }
 
         return cur;
     }
