@@ -109,9 +109,11 @@ void Ellipsoid::worldSplitAxis(cv::Point3f &dir, float &length) const
 {
     // Pick whichever of (a, b, c) is shortest and rotate the corresponding
     // local unit vector out to world space using the forward rotation
-    // R = Rz * Ry * Rx. Since R_T in generateInverseRotationMatrix is R^T
-    // stored row-major, column-i of R (which maps local axis i to world) is
-    // read out of R_T as (R_T[i], R_T[3 + i], R_T[6 + i]).
+    // R = Rz * Ry * Rx. R_T in generateInverseRotationMatrix is R^T stored
+    // row-major: R_T[r*3 + c] = R[c, r]. The world direction of local axis
+    // i is column i of R, which equals (R_T[3i], R_T[3i+1], R_T[3i+2]).
+    // (Bug 2026-04-19: previously read (R_T[i], R_T[3+i], R_T[6+i]) which
+    // is row i of R, not column i — wrong for any rotated cell.)
     std::array<double, 9> R_T{};
     generateInverseRotationMatrix(R_T);
 
@@ -123,9 +125,10 @@ void Ellipsoid::worldSplitAxis(cv::Point3f &dir, float &length) const
     if (b < shortestValue) { shortestAxis = 1; shortestValue = b; }
     if (c < shortestValue) { shortestAxis = 2; shortestValue = c; }
 
-    const double dx = R_T[shortestAxis];
-    const double dy = R_T[3 + shortestAxis];
-    const double dz = R_T[6 + shortestAxis];
+    const int base = 3 * shortestAxis;
+    const double dx = R_T[base];
+    const double dy = R_T[base + 1];
+    const double dz = R_T[base + 2];
 
     // The column should already be a unit vector because R is orthonormal,
     // but normalize defensively against floating-point drift.
