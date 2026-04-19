@@ -190,6 +190,20 @@ static void exportPreprocessedStack(const std::vector<cv::Mat> &stack,
     }
 }
 
+static void exportFrameStack(const std::vector<cv::Mat> &stack,
+                             const fs::path &baseOutputDir,
+                             const std::string &subdir,
+                             int displayFrame)
+{
+    const fs::path frameOutputDir = baseOutputDir / subdir / std::to_string(displayFrame);
+    fs::create_directories(frameOutputDir);
+    for (size_t i = 0; i < stack.size(); ++i)
+    {
+        const fs::path outputFile = frameOutputDir / (std::to_string(i) + ".png");
+        cv::imwrite(outputFile.string(), stack[i]);
+    }
+}
+
 static float estimateAdaptiveBackgroundFromFrame(const Frame &frame,
                                                  const SimulationConfig &simulationConfig)
 {
@@ -930,6 +944,19 @@ void CellUniverse::optimize(int frameIndex)
         Ellipsoid::cellConfig.x = savedCalX;
         Ellipsoid::cellConfig.y = savedCalY;
         Ellipsoid::cellConfig.z = savedCalZ;
+
+    }
+
+    if (config.simulation.export_post_localization_images) {
+        const std::vector<Image> localizationImages = frame.generateOutputFrame();
+        exportFrameStack(localizationImages,
+                         fs::path(outputPath),
+                         "post_localization",
+                         displayFrame);
+        std::cout << "[Post-Localization Export] frame " << displayFrame
+                  << " dir=" << (fs::path(outputPath) / "post_localization" /
+                                  std::to_string(displayFrame)).string()
+                  << std::endl;
     }
 
     // ---- Per-cell iterative PCA shape fit ----
@@ -1641,6 +1668,7 @@ void CellUniverse::optimize(int frameIndex)
               << " split_attempts=" << splitAttempted
               << " split_accepted=" << splitAccepted
               << " final_cells=" << frame.cells.size() << std::endl;
+
 }
 
 void CellUniverse::saveImages(int frameIndex)
@@ -1657,27 +1685,8 @@ void CellUniverse::saveImages(int frameIndex)
     std::cout << "Real Image Type: " << realImages[0].type() << '\n';
     std::cout << "Synth Image Type: " << synthImages[0].type() << '\n';
 
-    std::string realOutputPath = outputPath + "/real/" + std::to_string(displayFrame);
-    if (!std::filesystem::exists(realOutputPath))
-    {
-        std::filesystem::create_directories(realOutputPath);
-    }
-    for (size_t i = 0; i < realImages.size(); ++i)
-    {
-        // Save real images
-        cv::imwrite(realOutputPath + "/" + std::to_string(i) + ".png", realImages[i]);
-    }
-
-    std::string synthOutputPath = outputPath + "/synth/" + std::to_string(displayFrame);
-    if (!std::filesystem::exists(synthOutputPath))
-    {
-        std::filesystem::create_directories(synthOutputPath);
-    }
-    for (size_t i = 0; i < synthImages.size(); ++i)
-    {
-        // Save synthetic images
-        cv::imwrite(synthOutputPath + "/" + std::to_string(i) + ".png", synthImages[i]);
-    }
+    exportFrameStack(realImages, fs::path(outputPath), "real", displayFrame);
+    exportFrameStack(synthImages, fs::path(outputPath), "synth", displayFrame);
 
     std::cout << "Done" << '\n';
 }

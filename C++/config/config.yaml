@@ -232,6 +232,7 @@ simulation:
   
   export_preprocessed_images: false
   quit_after_preprocessing: false
+  export_post_localization_images: true
 
   adaptive_cube_pooling_enabled: true
   adaptive_cube_pooling_cost_comparison_enabled: false
@@ -239,7 +240,7 @@ simulation:
   adaptive_cube_pooling_zero_threshold: 0.035
   adaptive_cube_pooling_majority_threshold: 0.7
   adaptive_cube_pooling_remove_isolated_bright_cubes: true
-  adaptive_cube_pooling_isolated_bright_cube_threshold: 0.08
+  adaptive_cube_pooling_isolated_bright_cube_threshold: 0.07
 
   adaptive_background_expand_factor: 1.1
   adaptive_background_top_fraction: 0.1
