@@ -398,12 +398,6 @@ prob:
   bio_combined_volume_min_fraction: 0.6
   bio_combined_volume_max_fraction: 1.3
   bio_max_single_daughter_volume_fraction: 0.65
-  # [DEPRECATED 2026-04-15] Retired from the decision. The bridge gate is
-  # now a single-metric test: gapBright / max(edge1, edge2) < bio_bridge_max_valley_ratio.
-  # Density-flat conjunction was compensating for the old worst-of-two-sides
-  # ratio punishing asymmetric division. Field still parsed for backward
-  # compat; value has no effect.
-  bio_bridge_max_gap_density: 0.18
   # Primary bridge threshold. The bright-pixel profile along the split axis
   # must show a drop from the brighter daughter's edge into the midpoint
   # gap by at least this factor: gap / max(edge1, edge2) < this limit.
@@ -415,10 +409,6 @@ prob:
   # Default 0.85: real splits typically drop to 0.3-0.7 of brighter edge;
   # phantom splits have gap >= both edges (ratio >= 1.0).
   bio_bridge_max_valley_ratio: 0.85
-  # [DEPRECATED 2026-04-15] Retired. The single-metric gate above handles
-  # both "clearly no valley" and "subtly flat" cases with one threshold.
-  # Field still parsed for backward compat; value has no effect.
-  bio_bridge_no_valley_hard_threshold: 0.95
   # Absolute minimum edge brightness (real-image units above background).
   # Rejects splits where min(edge1Bright, edge2Bright) < threshold — one
   # daughter sits in near-background empty space. Typical cell cores
@@ -447,34 +437,6 @@ prob:
   # If switching back to use_bbox_cost=false, revert all three to the
   # full-image values noted above.
   use_bbox_cost: true
-  # Edge-based shape fit (Phase A, 2026-04-17). When true, shape fitting
-  # runs via Frame::fitCellShapeViaEdges: unweighted PCA on positions of
-  # Voronoi-filtered bright pixels for rotation, and 6 gradient-edge
-  # walks (3 axes × ±) for radii. No mask, no variance-to-radius formula,
-  # no iteration. Decouples shape from the feedback loop of the prior
-  # mask + weighted-PCA path. Set false to keep the legacy
-  # calibrateCellShapeViaPca path.
-  # Edge-fit produced working splits (7/8 GT) but systematically under-
-  # sized radii (mean ΔR ~15 px vs best22). Visual inspection at f22 of
-  # run 071958 showed synth ellipsoids smaller than real bright blobs.
-  # Switching back to baseline mask+weighted-PCA path which historically
-  # gave best22-quality shapes. Position prior (new) addresses the drift
-  # issue that previously accompanied the baseline path.
-  use_edge_shape_fit: false
-  # Gather sphere radius = gatherRadiusScale × snap_maxR. 1.3 is tight
-  # enough to exclude most of a touching neighbor's body while still
-  # covering the cell body + halo. Raise toward 1.5 if rotation is
-  # noisy on elongated cells.
-  edge_shape_gather_radius_scale: 1.3
-  # Walk max distance = walkRadiusScale × snap_maxR. 2.0 gives generous
-  # headroom for growth; walks terminate earlier at Voronoi midpoints
-  # or image boundaries as needed.
-  edge_shape_walk_radius_scale: 2.0
-  # Minimum |dI/dr| (per px) required for a walk to accept a gradient
-  # peak as the cell edge. Below this, the walk falls back to the
-  # previous-frame radius (× growth cap). 0.008 ≈ 10× background noise
-  # floor for the current preprocessing pipeline.
-  edge_shape_min_grad_mag: 0.008
   # 2026-04-16 (early): lowered 3.0 → 2.0 to tighten position anchor.
   # 2026-04-16 (late): raised 2.0 → 2.5. Run 030254 showed 5/6 cells
   # exceeding their bbox half-extent. At 2.0 × maxR=25, window is 50 px

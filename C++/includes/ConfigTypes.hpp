@@ -226,26 +226,10 @@ public:
     // Reuses the Voronoi-filtered bright-pixel set that PCA already
     // computed for the split attempt. Each pixel is projected onto the
     // split axis (d1→d2), normalized so -1 is d1 center and +1 is d2
-    // center. Two independent signals are computed:
-    //
-    //   gap_density  = fraction of in-range pixels with |t| < 0.3
-    //                  (in the middle ~30% of the axis between daughters)
-    //   valley_ratio = mean(brightness of gap pixels) /
-    //                  mean(brightness of edge pixels at 0.6 < |t| < 1.1)
-    //
-    // For a real division the dividing groove empties the gap (low
-    // density) AND dims it (low ratio). For a fake continuous cell
-    // both signals are flat — high density AND ratio ~1.0. The gate
-    // fires only when BOTH signals indicate "flat profile", so real
-    // divisions with a partial groove still pass.
-    float bio_bridge_max_gap_density = 0.18f;
+    // center. valley_ratio = gap brightness / max(edge1, edge2).
+    // For a real division the groove dims the gap (ratio < limit). For
+    // a phantom continuous cell ratio ≈ 1.0.
     float bio_bridge_max_valley_ratio = 0.85f;
-    // Bridge tier-1: hard rejection threshold on the worst per-daughter
-    // valley ratio (gap / min edge). When gap brightness equals or exceeds
-    // an edge's brightness, there is no valley at all on that daughter's
-    // side and the split is clearly phantom. Applied to
-    // max(valleyRatio1, valleyRatio2).
-    float bio_bridge_no_valley_hard_threshold = 0.95f;
     // Absolute minimum edge brightness (real-image units above background).
     // Rejects splits where one daughter's edge zone is near-background —
     // a phantom daughter sitting in empty space regardless of ratios.
@@ -268,30 +252,6 @@ public:
     // Bbox margin = bbox_margin_scale * max(a,b,c) of the cell (D1=3.0).
     bool use_bbox_cost = false;
     float bbox_margin_scale = 3.0f;
-
-    // Edge-based shape fit (Phase A, 2026-04-17). When true,
-    // CellUniverse::optimize dispatches to Frame::fitCellShapeViaEdges
-    // instead of Frame::calibrateCellShapeViaPca. Rotation comes from
-    // unweighted position PCA on Voronoi-filtered bright pixels in a
-    // tight sphere (edge_shape_gather_radius_scale × snap_maxR); radii
-    // from 6 gradient edge walks (3 axes × ±) with stops at Voronoi
-    // midpoints and image boundaries. Decouples shape from the
-    // variance-based feedback loop of the mask+weighted-PCA path.
-    bool use_edge_shape_fit = false;
-    // Tight gather sphere for the PCA rotation step. 1.3× snap_maxR
-    // limits contamination from close neighbors while still including
-    // the cell body + halo. Can raise toward 1.5 if rotation is
-    // unstable on elongated cells.
-    float edge_shape_gather_radius_scale = 1.3f;
-    // Walk max distance = this × snap_maxR. 2.0 gives generous headroom
-    // for growing cells without running into far neighbors' territory
-    // (those are typically stopped earlier by Voronoi).
-    float edge_shape_walk_radius_scale = 2.0f;
-    // Minimum |dI/dr| gradient magnitude (per px) required to accept a
-    // walk's edge. Below this, the walk's peak is noise; fall back to
-    // previous-frame radius × growth cap. 0.008/px ≈ 10× background
-    // noise floor for the current preprocessing pipeline.
-    float edge_shape_min_grad_mag = 0.008f;
 
     // Per-daughter PCA radius refit in the split refine phase (A1).
     // After positional refine settles both daughters, each daughter runs
@@ -349,17 +309,11 @@ public:
         if (node["bio_combined_volume_min_fraction"]) bio_combined_volume_min_fraction = node["bio_combined_volume_min_fraction"].as<float>();
         if (node["bio_combined_volume_max_fraction"]) bio_combined_volume_max_fraction = node["bio_combined_volume_max_fraction"].as<float>();
         if (node["bio_max_single_daughter_volume_fraction"]) bio_max_single_daughter_volume_fraction = node["bio_max_single_daughter_volume_fraction"].as<float>();
-        if (node["bio_bridge_max_gap_density"]) bio_bridge_max_gap_density = node["bio_bridge_max_gap_density"].as<float>();
         if (node["bio_bridge_max_valley_ratio"]) bio_bridge_max_valley_ratio = node["bio_bridge_max_valley_ratio"].as<float>();
-        if (node["bio_bridge_no_valley_hard_threshold"]) bio_bridge_no_valley_hard_threshold = node["bio_bridge_no_valley_hard_threshold"].as<float>();
         if (node["bio_bridge_min_edge_brightness_absolute"]) bio_bridge_min_edge_brightness_absolute = node["bio_bridge_min_edge_brightness_absolute"].as<float>();
         if (node["split_burn_in_pos_sigma_scale"]) split_burn_in_pos_sigma_scale = node["split_burn_in_pos_sigma_scale"].as<float>();
         if (node["use_bbox_cost"]) use_bbox_cost = node["use_bbox_cost"].as<bool>();
         if (node["bbox_margin_scale"]) bbox_margin_scale = node["bbox_margin_scale"].as<float>();
-        if (node["use_edge_shape_fit"]) use_edge_shape_fit = node["use_edge_shape_fit"].as<bool>();
-        if (node["edge_shape_gather_radius_scale"]) edge_shape_gather_radius_scale = node["edge_shape_gather_radius_scale"].as<float>();
-        if (node["edge_shape_walk_radius_scale"]) edge_shape_walk_radius_scale = node["edge_shape_walk_radius_scale"].as<float>();
-        if (node["edge_shape_min_grad_mag"]) edge_shape_min_grad_mag = node["edge_shape_min_grad_mag"].as<float>();
         if (node["split_daughter_refit_iterations"]) split_daughter_refit_iterations = node["split_daughter_refit_iterations"].as<int>();
         if (node["split_daughter_refit_min_radius_fraction"]) split_daughter_refit_min_radius_fraction = node["split_daughter_refit_min_radius_fraction"].as<float>();
         if (node["split_daughter_refit_max_radius_fraction"]) split_daughter_refit_max_radius_fraction = node["split_daughter_refit_max_radius_fraction"].as<float>();

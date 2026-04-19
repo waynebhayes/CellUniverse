@@ -24,7 +24,7 @@ This is the authoritative end-to-end pipeline for a single frame. Per-fix ration
                              v
   Set bbox cost mode BEFORE regenerate:
     bboxActiveThisFrame = use_bbox_cost && (frameIndex > 0)
-    frame.setUseBboxCost(active, bbox_margin_scale, overlap_weight)
+    frame.setUseBboxCost(active, bbox_margin_scale)
                              |
                              v
   frame.regenerateSynthFrame()

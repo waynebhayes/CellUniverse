@@ -1042,4 +1042,349 @@ Revert each config value:
 - Restore one-sided growth cap in CellUniverse.cpp (change `std::clamp(fA, capDownA, capUpA)` back to `std::min(fA, capUpA)`).
 
 
+---
+
+## 2026-04-19: Dead-code cleanup — edge-fit, deprecated bridge fields, dead bbox member
+
+**Status: ACTIVE**
+
+After the 45-frame run 210424 (18/20 GT splits, 0 FP) validated the current code path, this round removes the dead alternatives left from earlier experiments. No behavioral change — only deletions of code that was never executed in the working configuration.
+
+### Change 39: Remove edge-based shape fit (Phase A) — toggle was permanently `false`
+
+**Problem.** `Frame::fitCellShapeViaEdges` and its helpers (`walkGradientEdge`, `trilinearBrightness`, `GradWalkResult`) were dispatched from `CellUniverse::optimize` only when `config.prob.use_edge_shape_fit` was true. The flag has been `false` in YAML and the default since the path was retired (see Change 38 / session 2026-04-18). ~497 lines of dead code in `Frame.cpp`, ~25 lines of dead declaration in `Frame.hpp`, and 4 dead config fields.
+
+**Files changed:**
+- `C++/src/Frame.cpp` — deleted lines 1584-2080 (the edge-fit comment block, anonymous-namespace helpers, and `Frame::fitCellShapeViaEdges` definition)
+- `C++/includes/Frame.hpp` — deleted the `fitCellShapeViaEdges` declaration block (the 22-line declaration + leading comment)
+- `C++/src/CellUniverse.cpp` — collapsed `if (config.prob.use_edge_shape_fit) { ... } else { calibrateCellShapeViaPca(...) }` to just the always-taken `calibrateCellShapeViaPca` call (saves an `if` branch and ~14 lines of dispatch)
+- `C++/includes/ConfigTypes.hpp` — deleted `use_edge_shape_fit`, `edge_shape_gather_radius_scale`, `edge_shape_walk_radius_scale`, `edge_shape_min_grad_mag` field declarations + 4 corresponding `explodeConfig` parses
+- `C++/config/config.yaml` — deleted the 28-line `use_edge_shape_fit` block + 3 `edge_shape_*` fields
+
+**Effect.** ~550 LOC removed. Build is faster, binary is smaller, and there is one shape-fit path to reason about. No runtime change because the flag was already off.
+
+### Change 40: Remove deprecated bridge config fields (`bio_bridge_max_gap_density`, `bio_bridge_no_valley_hard_threshold`)
+
+**Problem.** Both fields were retired from the bridge gate decision in 2026-04-15 (changelogv6 Change 24); the gate became single-metric (`gapBright / max(edge1, edge2) < bio_bridge_max_valley_ratio`). The fields stayed in `ConfigTypes.hpp`, `config.yaml`, and code comments as "still parsed for backward compat" — but nothing reads them. They are pure noise that confuses anyone reading the config.
+
+**Files changed:**
+- `C++/includes/ConfigTypes.hpp` — deleted `bio_bridge_max_gap_density` field + parse (line 241, line 352), deleted `bio_bridge_no_valley_hard_threshold` field + parse (line 248, line 354). Tightened the bridge-gate doc comment in the field block.
+- `C++/config/config.yaml` — deleted both `bio_bridge_max_gap_density: 0.18` and `bio_bridge_no_valley_hard_threshold: 0.95` lines along with their `[DEPRECATED]` comment blocks.
+- `C++/src/Frame.cpp` — cleaned 3 obsolete comments referencing the deleted field names (lines 3681-3684, 3834-3838, 3902-3904 by old line numbers).
+
+**Effect.** YAML and ConfigTypes now match the actual decision logic. No runtime change.
+
+### Change 41: Remove dead `_bboxOverlapWeight` member + drop third arg from `setUseBboxCost`
+
+**Problem.** `Frame::_bboxOverlapWeight` was set by `setUseBboxCost(bool, float, float)` but never read anywhere — the bbox-cost path computes overlap penalty via `computeOverlapForCell(idx, weight)` with the weight passed directly from the caller. The member was a dead write since 2026-04-15.
+
+**Files changed:**
+- `C++/includes/Frame.hpp` — removed the `_bboxOverlapWeight` member and the third parameter of `setUseBboxCost`. Setter signature is now `setUseBboxCost(bool enable, float marginScale)`.
+- `C++/src/CellUniverse.cpp` — drop `config.prob.overlap_penalty_weight` argument from the `setUseBboxCost` call in `optimize()`.
+- `C++/docs/pipeline.md` — corrected the pipeline ASCII diagram to show the 2-arg setter signature.
+
+**Effect.** Three lines lighter; one less misleading "is this the right weight?" question for future readers.
+
+### Change 42: Remove dead `Frame::buildExclusionMask` definition + declaration
+
+**Problem.** `_sharedMasks` was removed in 2026-04-15 (changelogv6) and the cost path now passes an empty mask to `calculateBboxCost`. `buildExclusionMask` itself remained — ~54 lines of OMP-parallel Voronoi distance computation with zero callers. The scan agent and code-review agent both flagged it independently.
+
+**Files changed:**
+- `C++/src/Frame.cpp` — deleted the `Frame::buildExclusionMask` body (~54 LOC at the old lines 298-351).
+- `C++/includes/Frame.hpp` — deleted the matching declaration + comment.
+
+**Effect.** Dead OMP-parallel code path removed.
+
+### Change 43: Eliminate silent default-insert in `splitProbabilities` lookup
+
+**Problem.** `runPhase` reads per-cell P(split) at every iteration via `splitProbabilities[cellName]`. For newborn daughter names (added to `phaseNames` after a split accepts but never inserted into `splitProbabilities`), the `operator[]` lookup default-inserts a `0.0f` entry. With 10K+ iterations per cell, this silently bloats the map with phantom-zero entries for every daughter name, every iteration after their birth. Behaviorally indistinguishable (both give P=0) but unnecessary mutation in a hot read path.
+
+**File:** `C++/src/CellUniverse.cpp`
+
+**Lines 1029 (before):**
+```cpp
+const float pSplit = allowSplits ? splitProbabilities[cellName] : 0.0f;
+```
+
+**Lines 1029-1033 (after):**
+```cpp
+float pSplit = 0.0f;
+if (allowSplits) {
+    auto pIt = splitProbabilities.find(cellName);
+    if (pIt != splitProbabilities.end()) pSplit = pIt->second;
+}
+```
+
+**Effect.** Pure read on the hot path — no map mutation. Tiny perf win, mostly a cleanup.
+
+### Cleanup summary
+
+| Item | Lines removed | Risk |
+|------|---|---|
+| `Frame::fitCellShapeViaEdges` + helpers | ~497 in Frame.cpp, ~25 in Frame.hpp | None — toggle was off |
+| Edge-fit dispatch | ~14 in CellUniverse.cpp | None |
+| 4 `edge_shape_*` config fields + parses | ~30 in ConfigTypes.hpp, ~28 in config.yaml | None |
+| 2 deprecated bridge fields + parses | ~7 in ConfigTypes.hpp, ~10 in config.yaml | None |
+| `Frame::buildExclusionMask` | ~58 (definition + decl) | None — zero callers |
+| `_bboxOverlapWeight` member + setter param | 3 | None — dead write |
+| `splitProbabilities` `operator[]` smell | net +4 in CellUniverse.cpp | None — same behavior, no map mutation |
+
+**Total: ~700 LOC of dead code removed across 5 files.**
+
+### Deferred bug findings (NOT applied — flagged for review)
+
+The bug-and-perf review surfaced 3 latent issues that are higher risk to "fix" without a controlled test, since they could regress the working 18/20 GT split rate:
+
+1. **`Ellipsoid::worldSplitAxis` rotation indexing** — reviewer flagged that `worldSplitAxis` (and 3 other call sites in `Frame.cpp`) read rows of R instead of columns of R for the world-direction of a local axis. The 4 sites are internally consistent (they all use the same convention), so the per-cell semantics survive. However, `pca3DWithCentroids` uses the opposite (correct) convention. For axis-aligned cells the bug is invisible; for rotated cells the world-direction of the split axis disagrees with PCA-derived directions. Defer until we can A/B test on a rotation-heavy frame.
+
+2. **`Frame::perturbCell` whole-proposal reject on radius floor** — when any radius hits the min-floor, the entire perturbation (including position/brightness/rotation deltas in the same proposal) is dropped. This penalizes legitimate non-radius perturbations for cells near the floor. Fix is to restore radii but keep the other deltas in the proposal. Defer because it changes perturbation acceptance semantics.
+
+3. **Cache stale-write in bbox mode** — `_currentCost` and `_currentCostPerSlice` are written by `restoreLiveParent` and the split-callback reject branch using values seeded from a stale (bbox mode never refreshed) `_currentCostPerSlice`. The cache is never read in bbox mode, so the bug is currently latent. Defensive fix would guard these writes with `if (!_useBboxCost)`. Defer because no observable effect.
+
+These are tracked here so a follow-up session can decide whether to apply them with a controlled comparison run.
+
+
+---
+
+## 2026-04-19: Deferred-bug fixes + runtime optimizations
+
+**Status: ACTIVE (pending validation)**
+
+Picked up two of the three deferred bugs from the previous round (#1 worldSplitAxis indexing, #3 cache stale-write) plus three runtime perf wins. Bug #2 (perturbCell whole-proposal reject) is documented but NOT fixed — see the explanation in Change 46.
+
+### Change 44: Fix `worldSplitAxis` row-vs-column-of-R indexing (3 sites)
+
+**Problem.** `R_T` is `R^T` stored row-major: `R_T[r*3 + c] = R[c, r]`. The world direction of local axis `i` is column `i` of `R`, which equals `(R_T[3i], R_T[3i+1], R_T[3i+2])`. The code at three call sites read `(R_T[i], R_T[3+i], R_T[6+i])` instead — that's row `i` of `R`, not column `i`. For axis-aligned cells (R = I) the two patterns coincide. For rotated cells (any non-trivial Euler triple) they differ — a different vector entirely.
+
+The bug compounded: `Ellipsoid::worldSplitAxis`, `Frame.cpp::extractWorldAxis`, and `Frame.cpp::calibrateCellShapeViaPca::curAxis` all used the wrong convention consistently, while `pca3DWithCentroids` used the correct convention. This means PCA-derived eigenvectors and "current axis" directions disagreed for rotated cells, weakening the slot-matching in shape fit and producing incorrect split directions.
+
+**Files changed:**
+- `C++/src/Ellipsoid.cpp::worldSplitAxis` (~lines 108-145) — read `R_T[3i + 0/1/2]` instead of `R_T[i + 0/3/6]`. Updated comment.
+- `C++/src/Frame.cpp::calibrateCellShapeViaPca::curAxis` (~line 1837) — same fix in the PCA slot-matching loop.
+- `C++/src/Frame.cpp::trySplitCellPhased::extractWorldAxis` lambda (~line 2269) — same fix in the split-direction extractor that produces axisA/B/C candidates.
+
+**Behavioral implications.**
+- For axis-aligned cells: zero change.
+- For rotated cells: split direction now points along the correct world-frame direction of the shortest local axis. Pre-pass PCA daughter ordering and Voronoi self-claims align with the corrected direction.
+- For PCA shape fit: the `curAxis[i]` slot identity now actually corresponds to local axis `i` in world frame, so greedy slot matching against PCA eigenvectors is meaningful.
+
+**Risk.** This changes the working 18/20 GT split rate's behavior on any rotated cell. Validation run pending.
+
+### Change 45: Guard `_currentCost` cache writes in bbox mode
+
+**Problem.** When `_useBboxCost` is true, `regenerateSynthFrame` skips `refreshFullCostCache`, so `_currentCostPerSlice` stays stale (Change 1 perf optimization). Two functions still wrote to the cache using values seeded FROM the stale per-slice array:
+- `Frame.cpp::restoreLiveParent` (split path reset on reject)
+- `Frame.cpp::trySplitCellPhased` split-callback reject branch
+
+The writes were latent (no consumer reads `_currentCost` in bbox mode), but they computed a useless `calculateIncrementalCost` over 225 slices each time and stored garbage. Bug becomes observable if any future code path reads the cache in bbox mode.
+
+**Fix.** Both sites now guard cache writes with `if (!_useBboxCost)`. Bbox mode skips the recompute entirely; legacy full-image mode keeps the original behavior.
+
+**Files changed:** `C++/src/Frame.cpp` — `restoreLiveParent` (~line 2127) + the lambda's reject branch (~line 3530).
+
+**Effect.** Saves one full incremental cost recompute per split reject in bbox mode. Defensive — no behavior change.
+
+### Change 46: Bug #2 (perturbCell whole-proposal reject) — DEFERRED, requires Ellipsoid setters
+
+**Status: NOT FIXED.** Documented for a future structural refactor.
+
+**Why not fixed now.** The intended fix replaces the `cells[index] = oldCell; return early` pattern with one that keeps the position/brightness/rotation deltas in the perturbation while restoring only the radii. The natural way to do this — `Ellipsoid kept = Ellipsoid(getCellParams(...))` — round-trips through `EllipsoidParams`, which does NOT carry per-cell perturb probability state (`_aRadiusPerturbParams`, etc.). After re-construction the cell loses its tuned probabilities, regressing iteration-over-iteration probability adjustment.
+
+**Correct fix would be:** add public `Ellipsoid::setARadius/setBRadius/setCRadius` setters (or equivalently `Ellipsoid::setRadii(a,b,c)`) so the existing `cells[index]` can be modified in place without losing internal state. That's a small structural change but spans Ellipsoid.hpp + .cpp + any consumer that re-reads radii after the floor check. Tracked for the next session.
+
+### Change 47: `calculateBboxCost` inner-loop specialization (perf)
+
+**Problem.** The hot inner loop had two branches that prevented the compiler from auto-vectorizing:
+1. `if (useMask && !mask[...]) continue;` — useMask is loop-invariant per call but the compiler can't be sure of `mask` aliasing.
+2. `if (useAsym && d > asymThreshold) d2 *= asymK;` — useAsym is loop-invariant but the per-voxel data-dependent comparison stays.
+
+In the working configuration `useMask=false` (no Voronoi exclusion mask in cost path) and `useAsym=true` (k=8). So the path that runs in practice is "no-mask, asym-active" — and we want that path to vectorize.
+
+**Fix.** Split the loop into:
+- `if (!useMask)` branch: nested loops with `useAsym` hoisted ABOVE the y-loop. The asym sub-loop uses a branchless `mul = (d > thresh) ? asymK : 1.0f` so SIMD lanes can compute it without diverging.
+- `else` (useMask) branch: original code preserved bit-for-bit (rare path; correctness over speed).
+
+**File:** `C++/src/Frame.cpp::calculateBboxCost` (~line 298).
+
+**Effect.** Inner asym loop body is now 4 fp operations + 1 select — the compiler vectorizes (AVX2 = 8 floats per cycle on x86, NEON = 4 on ARM). On a typical bbox (~100^3 voxels), this should be a 2-4× speedup for the cost evaluation. The cost eval is ~1/3 of the optimize loop's wall time, so net ~10-20% faster per frame.
+
+### Change 48: Parallelize per-frame image save (perf)
+
+**Problem.** `CellUniverse::saveImages` ran two sequential loops of 225 `cv::imwrite` calls each (real, then synth). PNG encoding is single-threaded zlib, so sequential write took several seconds per frame.
+
+**Fix.** Single OMP-parallel loop over slice index that writes both real and synth in the same iteration. 450 PNG encodes execute on all available cores.
+
+**File:** `C++/src/CellUniverse.cpp::saveImages` (~line 1265).
+
+**Effect.** With ~8 cores, ~7-8× faster per-frame save. Saves on the order of seconds per frame on 45-frame runs (~1-2 minutes total).
+
+### Change 49: Parallelize PNG → TIFF post-processing (perf)
+
+**Problem.** `scripts/convert_png_to_tiff.py` iterated frame folders sequentially and read PNGs sequentially within each folder. For a 45-frame run with 225 PNGs per folder, that's 45 * 225 = 10125 sequential `imageio.imread` calls per stream (real + synth = 2 streams).
+
+**Fix.** Two-level parallelism via `ThreadPoolExecutor`:
+- Outer: convert frame folders concurrently (default `os.cpu_count()` workers).
+- Inner: read PNGs within each folder concurrently (max 8 workers).
+
+Optional `--workers N` CLI argument for tuning. Threading is fine here because `imageio.imread` releases the GIL during decode and `tifffile.imwrite` is I/O-bound.
+
+**File:** `C++/scripts/convert_png_to_tiff.py`.
+
+**Effect.** Order-of-magnitude faster post-processing. On a 45-frame run with 8 cores, drops from ~30-60s to ~5-10s.
+
+### Validation (run 023805, 45 frames)
+
+Compared `output_jihang_20260419_023805` vs baseline `output_jihang_20260418_best45` (run 210424).
+
+| Metric | New (with fixes) | Baseline | Δ |
+|---|---|---|---|
+| Total splits accepted | **19** | 18 | +1 |
+| Final cell count (f45) | **25** | 24 | +1 |
+| GT splits matched | 17 | 17 | 0 |
+| GT splits + extra accepted | 19 | 18 | +1 |
+
+**Direct wins (NEW better):** `12345 split` on time at f3 (was +1 in baseline), `1f2ed..0` on time at f31 (was +1), `7×3rd-gen` complete at f39 (vs 6+1 missed).
+
+**Cascade losses:** `e9077..a51` 4 frames early at f16 (vs GT f20), `e9077..a50` 12 frames late at f32 (vs baseline f20), `1f89ab..0` MISSED entirely (baseline got at f29).
+
+**Diagnosis (split-axis direction analysis):** Compared `splitAxisDir` (the seed direction picked by `worldSplitAxis`) against `actualUnit` (final daughter separation vector after burn-in) for the first 4 GT splits.
+
+| Cell | NEW: angle(seed, actual) | BASE: angle(seed, actual) |
+|---|---|---|
+| e9077 f3 | **58° off** | 0° (perfect) |
+| 12345 f3/f4 | 8° (good) | 0° (perfect) |
+| 1f89ab f8 | 83° off | 84° off |
+| 1f2ed f11 | **89° (orthogonal!)** | 8° (good) |
+
+In 3 of 4 baseline splits, the OLD (row-of-R) `splitAxisDir` perfectly predicted where daughters land. After the fix, the new `splitAxisDir` is up to 89° off the actual division direction. Burn-in compensates by drifting daughters significantly more, landing at suboptimal local optima.
+
+**Conclusion:** The mathematical fix is correct in isolation, but the rest of the system (daughter placement, PCA-matching, snapshot propagation) was implicitly built around the row-of-R convention. Fixing only `worldSplitAxis` + `extractWorldAxis` + `calibrateCellShapeViaPca::curAxis` introduced a geometry inconsistency: those 3 sites are now in column-of-R convention while consumers still expect row-of-R behavior.
+
+**Next step (this session):** Audit the full geometry stack. If a consistent column-of-R representation can be applied across all sites without breaking other invariants, do it. Otherwise revert Bug 1 and document the row-of-R convention as load-bearing.
+
+The 22-frame validation (config now set to 22 frames) will be the test for the consistent-geometry attempt.
+
+### Rollback
+
+Per-change rollback (each is independent):
+- Change 44: revert the 3 indexing fixes by restoring `(R_T[i], R_T[3+i], R_T[6+i])` reads.
+- Change 45: drop the `if (!_useBboxCost)` guards (restores prior latent stale-write).
+- Change 47: collapse two branches back into one merged loop.
+- Change 48: split parallel write back into two sequential loops.
+- Change 49: revert convert_png_to_tiff.py to pre-threading version.
+
+---
+
+## 2026-04-19: Snap-only split candidate generation (Change 50)
+
+**Status: ACTIVE — validated against best22 baseline**
+
+### Problem
+
+After Bug 1 fix (Change 44, worldSplitAxis indexing), 22-frame validation showed mild regression — `12345` split slipped from f3 (best22) to f6 (3 frames late). Per-frame analysis revealed the cascade:
+
+1. Bug 1 fix changed `curAxis` interpretation in `calibrateCellShapeViaPca` slot matching
+2. PCA shape fit at frame start converged to slightly different parent radii (e.g. 12345 b-axis 24.1 → 29.1)
+3. Wider parent → wider daughter seeds (daughter radii = parent.getARadius() × `split_daughter_volume_scale`)
+4. Bigger daughters render into more area, including dim periphery → asymmetric L2 (k=8) penalty fires hard
+5. Split rejected with `costDiff=+2530` instead of `-31000`
+
+The root issue: **split candidates were derived from LIVE cell state**, which drifts during in-frame perturbation. Even small shape-fit divergence cascades into completely different daughter sizes and bbox cost outcomes.
+
+### Design rule (new invariant)
+
+Split candidates source their inputs from exactly two places:
+- **Snapshot** (frozen previous-frame state): direction, midpoint, **size, shape**
+- **PCA** (current-frame image data, computed around snapshot.position): direction, midpoint **only**
+
+LIVE state is never consulted for candidate generation.
+
+This produces 4 base candidate configs × (1 primary + 2 rotation + 2 translation) = up to 20 seeds:
+
+| Family | Direction | Midpoint | Size | Shape |
+|--------|-----------|----------|------|-------|
+| `snap_axC` | snap-rotation × shortest local axis | snap.position | snap radii × scale | snap rotation |
+| `data_axC` | snap-rotation × shortest local axis | PCA centroid (pixels around snap) | snap radii × scale | snap rotation |
+| `snap_imgPca` | snapshot.splitAxisDir (image-PCA from pre-pass) | snap.position | snap radii × scale | snap rotation |
+| `data_imgPca` | snapshot.splitAxisDir | PCA centroid | snap radii × scale | snap rotation |
+
+### Implementation
+
+**File:** `C++/src/Frame.cpp::trySplitCellPhased`
+
+**Before (line 2158):**
+```cpp
+// parent now reflects the installed snapshot-state (or live fallback
+// when snapshot is invalid). Everything downstream treats this as the
+// baseline parent.
+Ellipsoid parent = cells[cellIndex];
+```
+
+`cells[cellIndex]` is conditionally swapped to `snapshotParent` only when snap cost ≤ live cost. Otherwise live remains. So `parent` was sometimes live.
+
+**After (line 2158):**
+```cpp
+// Geometric reference for split candidate generation: ALWAYS use the
+// snapshot-state parent (per 2026-04-19 design rule: split candidates
+// use SNAP or PCA-derived data only, never LIVE).
+//
+// Rationale: live position/radii drift during in-frame perturbation. If
+// axis directions, radii, or fallback midpoints were derived from the
+// live cell, that drift would cascade into different candidate seeds
+// each iteration, making the split decision sensitive to perturbation
+// history (frame-3 12345 / e9077 regression in run 084534).
+//
+// cells[cellIndex] still holds whatever the cost comparison above chose
+// (snapshot or live) — that is the RENDERING baseline for the cost
+// delta, intentionally separate from the GEOMETRIC reference here.
+//
+// Falls back to the live cell only when no snapshot exists (frame 1,
+// newborn daughter post-split — but those are filtered earlier).
+Ellipsoid parent = snapshotValid ? snapshotParent : cells[cellIndex];
+```
+
+The cost-baseline comparison logic (lines 2089-2135) is preserved unchanged — that decides which RENDERED state daughters must beat, separate from where candidates are seeded.
+
+### Effect
+
+Every downstream consumer of `parent` now reads snap state:
+
+- `parent.generateInverseRotationMatrix()` → snap rotation → `axisA/B/C` are world directions of snap's local axes
+- `parent.getARadius/B/C()` → snap radii → daughter built radii = snap × `split_daughter_volume_scale`
+- `parent.getX/Y/Z()` → snap position → fallback midpoint when `centroidsAlongAxis` returns invalid
+- `parent.getThetaX/Y/Z()` (via `buildDaughter`) → snap rotation → daughter rotation = snap rotation
+
+### Validation (run 095555, 22 frames)
+
+| Cell | GT | SNAP-ONLY (this) | BEST22 | Bug-1-only (run 084534) |
+|---|---|---|---|---|
+| e9077 | f3 | **f3 ✓** | f3 ✓ | f4 (+1) |
+| 12345 | f3 | **f3 ✓** | f3 ✓ | f6 (+3) ⚠️ |
+| 1f89ab | f8 | **f8 ✓** | f8 ✓ | f8 ✓ |
+| 1f2ed | f11 | **f11 ✓** | f12 (+1) | f11 ✓ |
+| e9077..a50 | f19 | f20 (+1) | f20 (+1) | f20 (+1) |
+| 12345..0 | f20 | **f20 ✓** | f20 ✓ | f20 ✓ |
+| 12345..1 | f20 | **f20 ✓** | f20 ✓ | f20 ✓ |
+| e9077..a51 | f20 | **f20 ✓** | f20 ✓ | f20 ✓ |
+
+| Score | SNAP-ONLY | BEST22 | Bug-1-only |
+|---|---|---|---|
+| Splits accepted | 8/8 | 8/8 | 8/8 |
+| **On-time** | **7/8** | 6/8 | 5/8 |
+| Cells at f22 | 14 | 14 | 14 |
+
+**Snap-only beats both BEST22 and Bug-1-only** — gains `1f2ed` on time without losing anything. This validates the design: anchoring split candidates to snap (the previous-frame fixed reference) makes the decision insensitive to in-frame drift.
+
+### Rollback
+
+Restore line 2158 to:
+```cpp
+Ellipsoid parent = cells[cellIndex];
+```
+
+### Open follow-ups
+
+- Re-run 45-frame test to verify the cascade fix holds at longer horizons (the Bug-1-only 45-frame run had additional regressions at f16/f29/f32 that may also resolve with snap-only).
+- Consider applying the same "snap-only" principle to other in-frame state consumers (e.g. perturbation reference radius — currently uses live `maxR` for posScale; could use snap).
+
 

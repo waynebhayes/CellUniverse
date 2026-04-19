@@ -285,8 +285,7 @@ void CellUniverse::optimize(int frameIndex)
     // into their initial fit. Frames 2+ use bbox with snap-anchoring.
     const bool bboxActiveThisFrame = config.prob.use_bbox_cost && (frameIndex > 0);
     frame.setUseBboxCost(bboxActiveThisFrame,
-                         config.prob.bbox_margin_scale,
-                         config.prob.overlap_penalty_weight);
+                         config.prob.bbox_margin_scale);
 
     frame.regenerateSynthFrame();
 
@@ -616,28 +615,12 @@ void CellUniverse::optimize(int frameIndex)
                 }
             }
 
-            if (config.prob.use_edge_shape_fit) {
-                // Edge-based shape fit (Phase A, 2026-04-17). snapMaxR =
-                // max of mask radii, which are the birth radii (falling
-                // back to snap). Gives the walk a generous upper bound.
-                const float snapMaxR = std::max({maskA, maskB, maskC,
-                                                 frame.cells[ci].getARadius(),
-                                                 frame.cells[ci].getBRadius(),
-                                                 frame.cells[ci].getCRadius()});
-                frame.fitCellShapeViaEdges(
-                    ci, others, snapMaxR,
-                    config.prob.edge_shape_gather_radius_scale,
-                    config.prob.edge_shape_walk_radius_scale,
-                    config.prob.edge_shape_min_grad_mag,
-                    &shapeLogs[ci]);
-            } else {
-                frame.calibrateCellShapeViaPca(ci, others,
-                                               pcaMaxIters, pcaScale, pcaMin,
-                                               maskScale, convR, convAng,
-                                               updatePos, posShiftCap,
-                                               maskA, maskB, maskC,
-                                               &shapeLogs[ci]);
-            }
+            frame.calibrateCellShapeViaPca(ci, others,
+                                           pcaMaxIters, pcaScale, pcaMin,
+                                           maskScale, convR, convAng,
+                                           updatePos, posShiftCap,
+                                           maskA, maskB, maskC,
+                                           &shapeLogs[ci]);
         }
         // Serial merge: emit per-cell log blocks in cell-index order.
         for (int ci = 0; ci < nCells; ++ci) {
@@ -1043,7 +1026,11 @@ void CellUniverse::optimize(int frameIndex)
             // Observed as the "8cbdf86d gets 2 split attempts" symptom.
             const std::string cellName = frame.cells[cellIdx].getName();
 
-            const float pSplit = allowSplits ? splitProbabilities[cellName] : 0.0f;
+            float pSplit = 0.0f;
+            if (allowSplits) {
+                auto pIt = splitProbabilities.find(cellName);
+                if (pIt != splitProbabilities.end()) pSplit = pIt->second;
+            }
             const bool canSplit = pSplit > 0.0f
                                && splitBlacklist.count(cellName) == 0;
 
@@ -1276,21 +1263,26 @@ void CellUniverse::saveImages(int frameIndex)
     {
         std::filesystem::create_directories(realOutputPath);
     }
-    for (size_t i = 0; i < realImages.size(); ++i)
-    {
-        // Save real images
-        cv::imwrite(realOutputPath + "/" + std::to_string(i) + ".png", realImages[i]);
-    }
-
     std::string synthOutputPath = outputPath + "/synth/" + std::to_string(displayFrame);
     if (!std::filesystem::exists(synthOutputPath))
     {
         std::filesystem::create_directories(synthOutputPath);
     }
-    for (size_t i = 0; i < synthImages.size(); ++i)
+
+    // Parallelize PNG encoding/write — independent across slices and across
+    // real/synth. cv::imwrite is CPU-bound (zlib compression). With 225
+    // slices × 2 streams = 450 independent writes per frame this typically
+    // saves several seconds per frame on a multi-core machine.
+    const int nSlices = static_cast<int>(std::max(realImages.size(), synthImages.size()));
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < nSlices; ++i)
     {
-        // Save synthetic images
-        cv::imwrite(synthOutputPath + "/" + std::to_string(i) + ".png", synthImages[i]);
+        if (static_cast<size_t>(i) < realImages.size()) {
+            cv::imwrite(realOutputPath + "/" + std::to_string(i) + ".png", realImages[i]);
+        }
+        if (static_cast<size_t>(i) < synthImages.size()) {
+            cv::imwrite(synthOutputPath + "/" + std::to_string(i) + ".png", synthImages[i]);
+        }
     }
 
     std::cout << "Done" << '\n';

@@ -295,61 +295,6 @@ BoundingBox3D Frame::computeUnionBboxWithPoints(
     return result;
 }
 
-std::vector<uint8_t> Frame::buildExclusionMask(
-    const BoundingBox3D &bbox,
-    const std::vector<cv::Point3f> &selfClaimPoints,
-    const ClaimSet &otherClaimSets) const
-{
-    std::vector<uint8_t> mask;
-    if (!bbox.isValid() || selfClaimPoints.empty()) return mask;
-    const int nx = bbox.nx();
-    const int ny = bbox.ny();
-    const int nz = bbox.nz();
-    mask.assign(static_cast<size_t>(nx) * ny * nz, 0);
-
-    // Flatten otherClaimSets into a single vector for tight inner-loop access.
-    std::vector<cv::Point3f> otherPoints;
-    otherPoints.reserve(otherClaimSets.size() * 2);
-    for (const auto &kv : otherClaimSets) {
-        for (const auto &p : kv.second) {
-            otherPoints.push_back(p);
-        }
-    }
-
-    #pragma omp parallel for schedule(static)
-    for (int z = bbox.zMin; z <= bbox.zMax; ++z) {
-        const float zf = static_cast<float>(z);
-        const int zOff = (z - bbox.zMin) * nx * ny;
-        for (int y = bbox.yMin; y <= bbox.yMax; ++y) {
-            const float yf = static_cast<float>(y);
-            const int yOff = zOff + (y - bbox.yMin) * nx;
-            for (int x = bbox.xMin; x <= bbox.xMax; ++x) {
-                const float xf = static_cast<float>(x);
-                // Nearest self-claim distance².
-                float selfBest = std::numeric_limits<float>::infinity();
-                for (const auto &sp : selfClaimPoints) {
-                    const float dx = xf - sp.x;
-                    const float dy = yf - sp.y;
-                    const float dz = zf - sp.z;
-                    const float d2 = dx * dx + dy * dy + dz * dz;
-                    if (d2 < selfBest) selfBest = d2;
-                }
-                // Reject if any other claim is closer than self's best.
-                bool keep = true;
-                for (const auto &op : otherPoints) {
-                    const float dx = xf - op.x;
-                    const float dy = yf - op.y;
-                    const float dz = zf - op.z;
-                    const float d2 = dx * dx + dy * dy + dz * dz;
-                    if (d2 < selfBest) { keep = false; break; }
-                }
-                if (keep) mask[yOff + (x - bbox.xMin)] = 1;
-            }
-        }
-    }
-    return mask;
-}
-
 double Frame::calculateBboxCost(
     const BoundingBox3D &bbox,
     const std::vector<cv::Mat> &synthFrame,
@@ -384,26 +329,59 @@ double Frame::calculateBboxCost(
     const bool useMask = !mask.empty();
     double totalCost = 0.0;
 
-    #pragma omp parallel for reduction(+:totalCost) schedule(static)
-    for (int z = bbox.zMin; z <= bbox.zMax; ++z) {
-        const cv::Mat &realSlice  = _realFrame[z];
-        const cv::Mat &synthSlice = synthFrame[z];
-        if (realSlice.type() != CV_32F || synthSlice.type() != CV_32F) continue;
-        const int zOff = (z - bbox.zMin) * nx * ny;
-        double sliceCost = 0.0;
-        for (int y = bbox.yMin; y <= bbox.yMax; ++y) {
-            const float *rr = realSlice.ptr<float>(y);
-            const float *ss = synthSlice.ptr<float>(y);
-            const int yOff = zOff + (y - bbox.yMin) * nx;
-            for (int x = bbox.xMin; x <= bbox.xMax; ++x) {
-                if (useMask && !mask[yOff + (x - bbox.xMin)]) continue;
-                const float d = ss[x] - rr[x];
-                float d2 = d * d;
-                if (useAsym && d > asymThreshold) d2 *= asymK;
-                sliceCost += d2;
+    // Two loop variants: with-mask (rare, includes the per-voxel mask check
+    // that kills auto-vectorization) and no-mask (default in current code,
+    // straight-line inner body that the compiler can SIMD-vectorize). The
+    // useAsym flag is loop-invariant so the compiler hoists it; the asym
+    // multiply itself is per-voxel data-dependent and stays in the loop.
+    if (!useMask) {
+        #pragma omp parallel for reduction(+:totalCost) schedule(static)
+        for (int z = bbox.zMin; z <= bbox.zMax; ++z) {
+            const cv::Mat &realSlice  = _realFrame[z];
+            const cv::Mat &synthSlice = synthFrame[z];
+            if (realSlice.type() != CV_32F || synthSlice.type() != CV_32F) continue;
+            double sliceCost = 0.0;
+            for (int y = bbox.yMin; y <= bbox.yMax; ++y) {
+                const float *rr = realSlice.ptr<float>(y);
+                const float *ss = synthSlice.ptr<float>(y);
+                if (useAsym) {
+                    for (int x = bbox.xMin; x <= bbox.xMax; ++x) {
+                        const float d = ss[x] - rr[x];
+                        const float d2 = d * d;
+                        const float mul = (d > asymThreshold) ? asymK : 1.0f;
+                        sliceCost += d2 * mul;
+                    }
+                } else {
+                    for (int x = bbox.xMin; x <= bbox.xMax; ++x) {
+                        const float d = ss[x] - rr[x];
+                        sliceCost += d * d;
+                    }
+                }
             }
+            totalCost += sliceCost;
         }
-        totalCost += sliceCost;
+    } else {
+        #pragma omp parallel for reduction(+:totalCost) schedule(static)
+        for (int z = bbox.zMin; z <= bbox.zMax; ++z) {
+            const cv::Mat &realSlice  = _realFrame[z];
+            const cv::Mat &synthSlice = synthFrame[z];
+            if (realSlice.type() != CV_32F || synthSlice.type() != CV_32F) continue;
+            const int zOff = (z - bbox.zMin) * nx * ny;
+            double sliceCost = 0.0;
+            for (int y = bbox.yMin; y <= bbox.yMax; ++y) {
+                const float *rr = realSlice.ptr<float>(y);
+                const float *ss = synthSlice.ptr<float>(y);
+                const int yOff = zOff + (y - bbox.yMin) * nx;
+                for (int x = bbox.xMin; x <= bbox.xMax; ++x) {
+                    if (!mask[yOff + (x - bbox.xMin)]) continue;
+                    const float d = ss[x] - rr[x];
+                    float d2 = d * d;
+                    if (useAsym && d > asymThreshold) d2 *= asymK;
+                    sliceCost += d2;
+                }
+            }
+            totalCost += sliceCost;
+        }
     }
     return totalCost;
 }
@@ -1636,503 +1614,6 @@ static void rotationMatrixToEulerZYX(const cv::Matx33d &R,
     }
 }
 
-// ---------------------------------------------------------------------------
-// Edge-based shape fit (Phase A, 2026-04-17)
-// ---------------------------------------------------------------------------
-// Replaces the mask + weighted-PCA + variance-to-radii feedback loop with a
-// direct image-gradient approach:
-//   1. Unweighted position PCA on Voronoi-filtered bright pixels in a tight
-//      sphere around the snap center. Positions (not brightness weights)
-//      determine the rotation. No iteration, no feedback.
-//   2. For each PCA axis, walk outward in + and - directions from the snap
-//      center. Sample brightness along the walk, smooth, find the position
-//      of peak |dI/dr|. That position is the cell edge on that side.
-//   3. Combine per-axis (r+ + r-)/2; partial-volume mirror when one side
-//      hits an image boundary; fallback to previous radius × growth cap
-//      when no gradient peak exceeds the minimum magnitude.
-// Walks stop at Voronoi midpoints (neighbor becomes closer) or image
-// boundaries.
-
-namespace {
-
-// Trilinear interpolation of the real-image 3D stack at floating-point
-// (x, y, z). Returns backgroundValue when the query point is outside
-// bounds. Used by walkGradientEdge for subpixel brightness sampling.
-static inline float trilinearBrightness(
-    const std::vector<cv::Mat> &realFrame,
-    float x, float y, float z, float backgroundValue)
-{
-    if (realFrame.empty()) return backgroundValue;
-    const int nz = static_cast<int>(realFrame.size());
-    const int ny = realFrame[0].rows;
-    const int nx = realFrame[0].cols;
-
-    const int x0 = static_cast<int>(std::floor(x));
-    const int y0 = static_cast<int>(std::floor(y));
-    const int z0 = static_cast<int>(std::floor(z));
-    if (x0 < 0 || x0 + 1 >= nx ||
-        y0 < 0 || y0 + 1 >= ny ||
-        z0 < 0 || z0 + 1 >= nz) {
-        return backgroundValue;
-    }
-    const float fx = x - x0;
-    const float fy = y - y0;
-    const float fz = z - z0;
-
-    const cv::Mat &z0slice = realFrame[z0];
-    const cv::Mat &z1slice = realFrame[z0 + 1];
-    if (z0slice.type() != CV_32F || z1slice.type() != CV_32F) return backgroundValue;
-
-    const float v000 = z0slice.ptr<float>(y0)[x0];
-    const float v100 = z0slice.ptr<float>(y0)[x0 + 1];
-    const float v010 = z0slice.ptr<float>(y0 + 1)[x0];
-    const float v110 = z0slice.ptr<float>(y0 + 1)[x0 + 1];
-    const float v001 = z1slice.ptr<float>(y0)[x0];
-    const float v101 = z1slice.ptr<float>(y0)[x0 + 1];
-    const float v011 = z1slice.ptr<float>(y0 + 1)[x0];
-    const float v111 = z1slice.ptr<float>(y0 + 1)[x0 + 1];
-
-    const float c00 = v000 * (1.0f - fx) + v100 * fx;
-    const float c10 = v010 * (1.0f - fx) + v110 * fx;
-    const float c01 = v001 * (1.0f - fx) + v101 * fx;
-    const float c11 = v011 * (1.0f - fx) + v111 * fx;
-    const float c0  = c00 * (1.0f - fy) + c10 * fy;
-    const float c1  = c01 * (1.0f - fy) + c11 * fy;
-    return c0 * (1.0f - fz) + c1 * fz;
-}
-
-// Sample brightness along axis at stride `delta`, stop on partial volume
-// or Voronoi midpoint. Returns (smoothed profile, stop info, walk length).
-struct GradWalkResult {
-    float r = -1.0f;                // chosen radius (or -1 if invalid)
-    bool valid = false;
-    bool partialVolume = false;     // walk exited image bounds
-    bool voronoiStop = false;       // walk exited own Voronoi region
-    float peakGradMag = 0.0f;       // |dI/dr| at the chosen peak
-    int peakIndex = -1;             // for logging
-    int walkLen = 0;                // number of samples collected
-};
-
-static GradWalkResult walkGradientEdge(
-    const std::vector<cv::Mat> &realFrame,
-    const cv::Point3f &center,
-    const cv::Point3f &axis,
-    float maxR,
-    float background,
-    const std::vector<cv::Point3f> &selfClaim,
-    const Frame::ClaimSet &otherClaims,
-    float minGradMag,
-    float delta = 0.5f)
-{
-    GradWalkResult out;
-    if (realFrame.empty() || maxR <= 0.0f) return out;
-
-    const int nz = static_cast<int>(realFrame.size());
-    const int ny = realFrame[0].rows;
-    const int nx = realFrame[0].cols;
-    const int N = std::max(2, static_cast<int>(std::ceil(maxR / delta)));
-
-    std::vector<float> raw;
-    raw.reserve(N + 1);
-
-    const bool voronoiActive = !selfClaim.empty() && !otherClaims.empty();
-
-    for (int i = 0; i <= N; ++i) {
-        const float r = i * delta;
-        const float x = center.x + r * axis.x;
-        const float y = center.y + r * axis.y;
-        const float z = center.z + r * axis.z;
-
-        // Image boundary → partial-volume stop.
-        if (x < 1.0f || x >= nx - 1 ||
-            y < 1.0f || y >= ny - 1 ||
-            z < 1.0f || z >= nz - 1) {
-            out.partialVolume = true;
-            break;
-        }
-
-        // Voronoi stop: sample is closer to a neighbor than any self-claim.
-        if (voronoiActive) {
-            float selfBest = std::numeric_limits<float>::infinity();
-            for (const auto &sp : selfClaim) {
-                const float dx = x - sp.x, dy = y - sp.y, dz = z - sp.z;
-                const float d2 = dx * dx + dy * dy + dz * dz;
-                if (d2 < selfBest) selfBest = d2;
-            }
-            bool otherCloser = false;
-            for (const auto &kv : otherClaims) {
-                for (const auto &op : kv.second) {
-                    const float dx = x - op.x, dy = y - op.y, dz = z - op.z;
-                    const float d2 = dx * dx + dy * dy + dz * dz;
-                    if (d2 < selfBest) { otherCloser = true; break; }
-                }
-                if (otherCloser) break;
-            }
-            if (otherCloser) { out.voronoiStop = true; break; }
-        }
-
-        raw.push_back(trilinearBrightness(realFrame, x, y, z, background));
-    }
-
-    out.walkLen = static_cast<int>(raw.size());
-    if (raw.size() < 8) return out;  // need at least a few samples past min-wall-distance
-
-    // Smoothed profile — 3-tap moving average, endpoint-preserving.
-    std::vector<float> smoothed(raw.size());
-    smoothed.front() = 0.5f * (raw[0] + raw[1]);
-    for (size_t i = 1; i + 1 < raw.size(); ++i) {
-        smoothed[i] = (raw[i - 1] + raw[i] + raw[i + 1]) / 3.0f;
-    }
-    smoothed.back() = 0.5f * (raw[raw.size() - 2] + raw.back());
-
-    // Find the cell-to-exterior transition. Rules (tightened after run
-    // 054817 pathology where interior brightness variation was creating
-    // spurious gradient peaks and collapsing radii):
-    //   (1) Peak must be > min wall distance from center (5 px).
-    //   (2) Peak must represent a DOWNWARD drop of magnitude ≥ 0.05
-    //       brightness over a ±3-sample window. Interior noise gives
-    //       drops ≤ 0.03; real membrane gives drops ≥ 0.10 typically.
-    //   (3) "Before" brightness must be at least bg + 0.08 — the walk
-    //       traversed cell material before the drop.
-    //   (4) "After" brightness must be BELOW bg + 0.08 — the drop goes
-    //       to near-background, not to merely dimmer cell interior.
-    //   (5) Among peaks meeting (1-4) with |grad| ≥ minGradMag, take
-    //       the OUTERMOST — the membrane is the last bright-to-dim
-    //       transition before exterior.
-    constexpr int kMinWallIdx = 10;      // 10 × 0.5 = 5 px minimum radius
-    constexpr int kDropWindow = 3;        // samples on each side for drop check
-    constexpr float kMinDropMagnitude = 0.03f;   // min |before - after| for edge
-    // Tuned 2026-04-18 to match best22 reference radii. Prior values were
-    // stopping at halo-to-dim-halo transition (12345 A=33) instead of
-    // halo-to-background (best22 gives 43). Relaxed thresholds:
-    //   insideBrightMin  = bg + 0.04  → halo tail (≈0.05) counts as inside
-    //   outsideBrightMax = bg + 0.025 → stop only when truly near bg (≈0.015-0.02)
-    //   kMinDropMagnitude = 0.03 → catch gentler halo-to-bg transitions
-    const float insideBrightMin  = background + 0.04f;
-    const float outsideBrightMax = background + 0.025f;
-
-    float bestPeakMag = 0.0f;
-    int bestPeakIdx = -1;
-    for (int i = static_cast<int>(smoothed.size()) - 2; i >= kMinWallIdx; --i) {
-        if (i - kDropWindow < 0 ||
-            i + kDropWindow >= static_cast<int>(smoothed.size())) continue;
-        const float before = smoothed[i - kDropWindow];
-        const float after  = smoothed[i + kDropWindow];
-        // (2) substantial downward drop
-        if (before - after < kMinDropMagnitude) continue;
-        // (3) inside must be bright
-        if (before < insideBrightMin) continue;
-        // (4) outside must be near background (not merely dimmer cell)
-        if (after >= outsideBrightMax) continue;
-        // Gradient magnitude at this position (central diff).
-        const float g = (smoothed[i + 1] - smoothed[i - 1]) * 0.5f / delta;
-        const float mag = std::abs(g);
-        if (mag < minGradMag) continue;
-        // (5) outermost — scanning from end inward, first qualifying is
-        // outermost. Refine with local-max within 4 samples of first peak.
-        if (bestPeakIdx < 0) { bestPeakIdx = i; bestPeakMag = mag; }
-        else if (std::abs(i - bestPeakIdx) <= 4 && mag > bestPeakMag) {
-            bestPeakIdx = i; bestPeakMag = mag;
-        } else if (std::abs(i - bestPeakIdx) > 4) {
-            break;  // outside outermost peak neighborhood — stop
-        }
-    }
-
-    out.peakGradMag = bestPeakMag;
-    out.peakIndex = bestPeakIdx;
-
-    if (bestPeakIdx < 0) return out;
-
-    // Subpixel refinement via parabolic fit around peak if interior.
-    float peakR = bestPeakIdx * delta;
-    if (bestPeakIdx >= 2 && bestPeakIdx + 1 < static_cast<int>(smoothed.size())) {
-        const float gL = std::abs((smoothed[bestPeakIdx] - smoothed[bestPeakIdx - 2]) * 0.5f / delta);
-        const float gR = std::abs((smoothed[bestPeakIdx + 2] - smoothed[bestPeakIdx]) * 0.5f / delta);
-        const float denom = (gL - 2.0f * bestPeakMag + gR);
-        if (std::abs(denom) > 1e-6f) {
-            const float shift = 0.5f * (gL - gR) / denom;
-            if (shift > -1.0f && shift < 1.0f) peakR += shift * delta;
-        }
-    }
-
-    out.r = peakR;
-    out.valid = true;
-    return out;
-}
-
-} // anonymous namespace
-
-// Frame method: edge-based shape fit. One-shot (no iteration). Does NOT
-// modify cell.position — only rotation + radii. Snap position is
-// authoritative for pixel gathering and walk origin.
-bool Frame::fitCellShapeViaEdges(
-    size_t cellIndex,
-    const ClaimSet &otherCellsClaimSets,
-    float snapMaxR,
-    float gatherRadiusScale,
-    float walkRadiusScale,
-    float minGradMag,
-    std::ostream *logSink)
-{
-    if (cellIndex >= cells.size()) return false;
-    Ellipsoid &cell = cells[cellIndex];
-
-    std::ostream &log = logSink ? *logSink : std::cout;
-    const std::string cellName = cell.getName();
-
-    const cv::Point3f center(cell.getX(), cell.getY(), cell.getZ());
-    const float effMaxR = std::max(snapMaxR, 1.0f);
-    const float gatherR = gatherRadiusScale * effMaxR;
-    const float walkMaxR = walkRadiusScale * effMaxR;
-
-    // -------------------------------------------------------------------
-    // Step 1 — gather bright pixels, Voronoi-filtered, for PCA rotation.
-    // -------------------------------------------------------------------
-    std::vector<cv::Point3f> selfClaim{center};
-    GatherStats gstats;
-    auto pixels = gatherBrightPixelsVoronoi(
-        _realFrame, _backgroundValue, center, gatherR,
-        selfClaim, otherCellsClaimSets, &gstats);
-
-    if (pixels.size() < 20) {
-        log << "  [EdgeFit SKIP] cell=" << cellName
-            << " pixels=" << pixels.size()
-            << " (need >= 20; keeping previous shape)" << std::endl;
-        return false;
-    }
-
-    // Brightness-weighted PCA. Using UNWEIGHTED positions produced too-
-    // spherical axes because halo positions (a large fraction of the
-    // cloud) drowned out the core elongation signal. Best22 f1 12345:
-    // (43, 36, 22) — aspect ratio 2:1. Unweighted PCA gave (35, 33, 30)
-    // — aspect 1.2:1 (lost elongation). Weighting by brightness^1.5
-    // emphasizes the core — bright pixels drive axis direction — while
-    // halo still contributes to extent. No iterative feedback because
-    // the walks (Step 2) use gradients, not variance-to-radius.
-    constexpr float kPcaWeightExponent = 1.5f;
-    double wsum = 0.0;
-    double mx = 0.0, my = 0.0, mz = 0.0;
-    for (const auto &bp : pixels) {
-        const double w = std::pow(
-            static_cast<double>(std::max(0.0f, bp.weight)), kPcaWeightExponent);
-        wsum += w;
-        mx += w * bp.pos.x; my += w * bp.pos.y; mz += w * bp.pos.z;
-    }
-    if (wsum < 1e-6) {
-        log << "  [EdgeFit SKIP] cell=" << cellName
-            << " zero total weight (keeping previous shape)" << std::endl;
-        return false;
-    }
-    mx /= wsum; my /= wsum; mz /= wsum;
-
-    double cxx = 0, cxy = 0, cxz = 0, cyy = 0, cyz = 0, czz = 0;
-    for (const auto &bp : pixels) {
-        const double w = std::pow(
-            static_cast<double>(std::max(0.0f, bp.weight)), kPcaWeightExponent);
-        const double dx = bp.pos.x - mx;
-        const double dy = bp.pos.y - my;
-        const double dz = bp.pos.z - mz;
-        cxx += w * dx * dx; cxy += w * dx * dy; cxz += w * dx * dz;
-        cyy += w * dy * dy; cyz += w * dy * dz; czz += w * dz * dz;
-    }
-    cxx /= wsum; cxy /= wsum; cxz /= wsum;
-    cyy /= wsum; cyz /= wsum; czz /= wsum;
-
-    cv::Matx33d cov(
-        cxx, cxy, cxz,
-        cxy, cyy, cyz,
-        cxz, cyz, czz);
-    cv::Matx33d eigvecs;
-    cv::Vec3d   eigvals;
-    cv::eigen(cov, eigvals, eigvecs);
-
-    cv::Point3f pcaAxis[3];
-    for (int i = 0; i < 3; ++i) {
-        pcaAxis[i] = cv::Point3f(
-            static_cast<float>(eigvecs(i, 0)),
-            static_cast<float>(eigvecs(i, 1)),
-            static_cast<float>(eigvecs(i, 2)));
-    }
-
-    // Eigenvalue degeneracy check — if the eigenvalue spread is small
-    // (cloud is near-spherical), PCA rotation is noisy across frames and
-    // can cause arbitrary 90° axis flips. Raised threshold 1.1 → 1.5 after
-    // 12345 f2 showed axisAng=73° flip at maxVar/minVar ≈ 1.3, corrupting
-    // the A-axis. Above 1.5, the cloud is clearly anisotropic and rotation
-    // is trustworthy; below, keep current rotation.
-    const double maxVar = std::max({eigvals[0], eigvals[1], eigvals[2]});
-    const double minVar = std::min({eigvals[0], eigvals[1], eigvals[2]});
-    const bool degenerate = (minVar <= 1e-6) || (maxVar / minVar < 1.5);
-
-    // Sign-align each new axis with the current cell-axis slot so the
-    // rotation jump across frames is minimal (continuity for downstream
-    // split detection which reads cell rotation).
-    std::array<double, 9> R_T;
-    cell.generateInverseRotationMatrix(R_T);
-    cv::Point3f curAxis[3];
-    for (int i = 0; i < 3; ++i) {
-        curAxis[i] = cv::Point3f(
-            static_cast<float>(R_T[i]),
-            static_cast<float>(R_T[3 + i]),
-            static_cast<float>(R_T[6 + i]));
-    }
-
-    // Greedy |dot| matching: for each current axis slot, pick the PCA
-    // eigenvector with the largest |dot product|. This keeps the a/b/c
-    // slot semantics stable across frames when eigenvalue ORDERS swap but
-    // physical directions don't (happens when eigenvalues are close, as
-    // for near-spheroidal cells). Rank-based assignment swapped 73° at
-    // 12345 f2, destroying slot coherence and collapsing A-axis radius.
-    cv::Point3f matchedAxis[3];
-    double maxAxisAngle = 0.0;
-    bool pcaUsed[3] = {false, false, false};
-    for (int slot = 0; slot < 3; ++slot) {
-        int bestPca = -1;
-        double bestAbsDot = -1.0;
-        for (int p = 0; p < 3; ++p) {
-            if (pcaUsed[p]) continue;
-            const double d = curAxis[slot].x * pcaAxis[p].x +
-                             curAxis[slot].y * pcaAxis[p].y +
-                             curAxis[slot].z * pcaAxis[p].z;
-            if (std::abs(d) > bestAbsDot) {
-                bestAbsDot = std::abs(d);
-                bestPca = p;
-            }
-        }
-        pcaUsed[bestPca] = true;
-        cv::Point3f v = pcaAxis[bestPca];
-        const double signedDot = curAxis[slot].x * v.x +
-                                 curAxis[slot].y * v.y +
-                                 curAxis[slot].z * v.z;
-        if (signedDot < 0.0) { v.x = -v.x; v.y = -v.y; v.z = -v.z; }
-        matchedAxis[slot] = v;
-        const double ang = std::acos(std::clamp(bestAbsDot, 0.0, 1.0));
-        if (ang > maxAxisAngle) maxAxisAngle = ang;
-    }
-
-    // Apply rotation (unless degenerate — keep current rotation).
-    double targetTx = cell.getThetaX();
-    double targetTy = cell.getThetaY();
-    double targetTz = cell.getThetaZ();
-    if (!degenerate) {
-        cv::Matx33d R(
-            matchedAxis[0].x, matchedAxis[1].x, matchedAxis[2].x,
-            matchedAxis[0].y, matchedAxis[1].y, matchedAxis[2].y,
-            matchedAxis[0].z, matchedAxis[1].z, matchedAxis[2].z);
-        if (cv::determinant(R) < 0.0) {
-            R(0, 2) = -R(0, 2); R(1, 2) = -R(1, 2); R(2, 2) = -R(2, 2);
-            matchedAxis[2] = cv::Point3f(-matchedAxis[2].x, -matchedAxis[2].y, -matchedAxis[2].z);
-        }
-        rotationMatrixToEulerZYX(R, targetTx, targetTy, targetTz);
-    } else {
-        // Use current axes for the walks if PCA rotation is noisy.
-        for (int i = 0; i < 3; ++i) matchedAxis[i] = curAxis[i];
-    }
-
-    // Drift diagnostic: how far is the bright-pixel centroid from snap?
-    // > ~10 px indicates the snap likely drifted from actual biology
-    // last frame. Shape fit still proceeds; operator observes the flag.
-    const double driftShift = std::sqrt(
-        (mx - center.x) * (mx - center.x) +
-        (my - center.y) * (my - center.y) +
-        (mz - center.z) * (mz - center.z));
-
-    // When the cell has drifted (snap position doesn't match the actual
-    // bright-pixel centroid this frame), walks originating from the snap
-    // center can miss or truncate the cell body. If driftShift is large,
-    // use the bright-pixel centroid as the walk origin instead. Self-claim
-    // for Voronoi stop remains the snap (otherwise a drifted cell could
-    // re-enter another cell's territory, which we want blocked).
-    cv::Point3f walkOrigin = center;
-    const bool driftedWalkOrigin = (driftShift > 5.0);
-    if (driftedWalkOrigin) {
-        walkOrigin = cv::Point3f(
-            static_cast<float>(mx),
-            static_cast<float>(my),
-            static_cast<float>(mz));
-    }
-
-    // -------------------------------------------------------------------
-    // Step 2 — gradient edge walks along each axis, ± directions.
-    // -------------------------------------------------------------------
-    const float curRadii[3] = {cell.getARadius(), cell.getBRadius(), cell.getCRadius()};
-    float targetR[3] = {curRadii[0], curRadii[1], curRadii[2]};
-
-    GradWalkResult results[3][2];  // [axis][side: 0=+, 1=-]
-    for (int ax = 0; ax < 3; ++ax) {
-        const cv::Point3f posAxis = matchedAxis[ax];
-        const cv::Point3f negAxis(-posAxis.x, -posAxis.y, -posAxis.z);
-        results[ax][0] = walkGradientEdge(
-            _realFrame, walkOrigin, posAxis, walkMaxR, _backgroundValue,
-            selfClaim, otherCellsClaimSets, minGradMag);
-        results[ax][1] = walkGradientEdge(
-            _realFrame, walkOrigin, negAxis, walkMaxR, _backgroundValue,
-            selfClaim, otherCellsClaimSets, minGradMag);
-
-        const GradWalkResult &rp = results[ax][0];
-        const GradWalkResult &rn = results[ax][1];
-
-        float rRadius = -1.0f;
-        const char *strategy = "none";
-
-        if (rp.valid && rn.valid) {
-            rRadius = 0.5f * (rp.r + rn.r);
-            strategy = "avg";
-        } else if (rp.valid && rn.partialVolume) {
-            rRadius = rp.r;
-            strategy = "mirror_neg_pv";
-        } else if (rn.valid && rp.partialVolume) {
-            rRadius = rn.r;
-            strategy = "mirror_pos_pv";
-        } else if (rp.valid) {
-            rRadius = rp.r;
-            strategy = "pos_only";
-        } else if (rn.valid) {
-            rRadius = rn.r;
-            strategy = "neg_only";
-        }
-
-        if (rRadius > 0.0f) {
-            targetR[ax] = rRadius;
-        } else {
-            // Neither side valid — keep previous radius, clamped modestly.
-            // (Growth cap is applied in CellUniverse::optimize.)
-            targetR[ax] = curRadii[ax];
-            strategy = "fallback_prev";
-        }
-
-        const char axisLabel = (ax == 0 ? 'A' : (ax == 1 ? 'B' : 'C'));
-        log << "  [EdgeFit " << axisLabel << "] cell=" << cellName
-            << " r+=" << rp.r << " r-=" << rn.r
-            << " R=" << targetR[ax]
-            << " grad+=" << rp.peakGradMag << " grad-=" << rn.peakGradMag
-            << " strategy=" << strategy
-            << (rp.partialVolume ? " pv+" : "")
-            << (rn.partialVolume ? " pv-" : "")
-            << (rp.voronoiStop ? " vor+" : "")
-            << (rn.voronoiStop ? " vor-" : "")
-            << std::endl;
-    }
-
-    // -------------------------------------------------------------------
-    // Step 3 — apply rotation + radii. Position untouched.
-    // -------------------------------------------------------------------
-    cell.setRadii(targetR[0], targetR[1], targetR[2]);
-    cell.setRotation(static_cast<float>(targetTx),
-                     static_cast<float>(targetTy),
-                     static_cast<float>(targetTz));
-
-    log << "  [EdgeFit] cell=" << cellName
-        << " R=(" << targetR[0] << "," << targetR[1] << "," << targetR[2] << ")"
-        << " n=" << pixels.size()
-        << " axisAng=" << (maxAxisAngle * 180.0 / M_PI)
-        << " driftShift=" << driftShift
-        << (degenerate ? " degen" : "")
-        << (driftedWalkOrigin ? " walkFromCentroid" : "")
-        << std::endl;
-
-    return true;
-}
 
 bool Frame::calibrateCellShapeViaPca(
     size_t cellIndex,
@@ -2385,12 +1866,16 @@ bool Frame::calibrateCellShapeViaPca(
         const bool degenerate = (minVar <= 1e-6) || (maxVar / minVar < 1.1);
 
         // Current cell axes (columns of R) in world frame.
+        // R_T is R^T stored row-major (R_T[r*3+c] = R[c,r]); column i of R
+        // = (R_T[3i], R_T[3i+1], R_T[3i+2]). See worldSplitAxis comment for
+        // the 2026-04-19 indexing bug fix history.
         cv::Point3f curAxis[3];
         for (int i = 0; i < 3; ++i) {
+            const int base = 3 * i;
             curAxis[i] = cv::Point3f(
-                static_cast<float>(R_T[i]),
-                static_cast<float>(R_T[3 + i]),
-                static_cast<float>(R_T[6 + i]));
+                static_cast<float>(R_T[base]),
+                static_cast<float>(R_T[base + 1]),
+                static_cast<float>(R_T[base + 2]));
         }
 
         // Strict eigenvalue-rank assignment: a = largest variance, b = middle,
@@ -2667,10 +2152,23 @@ CostCallbackPair Frame::trySplitCellPhased(
         }
     }
 
-    // parent now reflects the installed snapshot-state (or live fallback
-    // when snapshot is invalid). Everything downstream treats this as the
-    // baseline parent.
-    Ellipsoid parent = cells[cellIndex];
+    // Geometric reference for split candidate generation: ALWAYS use the
+    // snapshot-state parent (per 2026-04-19 design rule: split candidates
+    // use SNAP or PCA-derived data only, never LIVE).
+    //
+    // Rationale: live position/radii drift during in-frame perturbation. If
+    // axis directions, radii, or fallback midpoints were derived from the
+    // live cell, that drift would cascade into different candidate seeds
+    // each iteration, making the split decision sensitive to perturbation
+    // history (frame-3 12345 / e9077 regression in run 084534).
+    //
+    // cells[cellIndex] still holds whatever the cost comparison above chose
+    // (snapshot or live) — that is the RENDERING baseline for the cost
+    // delta, intentionally separate from the GEOMETRIC reference here.
+    //
+    // Falls back to the live cell only when no snapshot exists (frame 1,
+    // newborn daughter post-split — but those are filtered earlier).
+    Ellipsoid parent = snapshotValid ? snapshotParent : cells[cellIndex];
 
     // Restore-live-parent helper. Used on every rejection path (early
     // returns inside this function AND the callback's reject branch) to
@@ -2691,13 +2189,18 @@ CostCallbackPair Frame::trySplitCellPhased(
         Ellipsoid liveMutable = liveParent;
         auto revertedSynth = generateSynthFrameFast(snapshotMutable, liveMutable,
                                                      &affMinR, &affMaxR);
-        std::vector<double> revertedPerSlice;
-        const double revertedCost = calculateIncrementalCost(revertedSynth,
-                                                                affMinR, affMaxR,
-                                                                revertedPerSlice);
         _synthFrame = revertedSynth;
-        _currentCost = revertedCost;
-        _currentCostPerSlice = revertedPerSlice;
+        // In bbox mode the full-image cache is never read for decisions and
+        // is intentionally left stale (Change 1). Skip the incremental
+        // recompute and the stale-seeded write entirely.
+        if (!_useBboxCost) {
+            std::vector<double> revertedPerSlice;
+            const double revertedCost = calculateIncrementalCost(revertedSynth,
+                                                                    affMinR, affMaxR,
+                                                                    revertedPerSlice);
+            _currentCost = revertedCost;
+            _currentCostPerSlice = revertedPerSlice;
+        }
     };
 
     // --- 1. Gather bright pixels in a snapshot-centered bounding box ---
@@ -2816,12 +2319,15 @@ CostCallbackPair Frame::trySplitCellPhased(
     const cv::Point3f parentCenter(parent.getX(), parent.getY(), parent.getZ());
 
     // Extract all three local axes in world frame from the inverse rotation
-    // matrix. R_T is R^T stored row-major, so column i of R (the forward
-    // rotation that maps local axis i to world) is (R_T[i], R_T[3+i], R_T[6+i]).
+    // matrix. R_T is R^T stored row-major (R_T[r*3+c] = R[c,r]); the world
+    // direction of local axis i is column i of R = (R_T[3i], R_T[3i+1],
+    // R_T[3i+2]). See worldSplitAxis comment for the 2026-04-19 indexing
+    // bug fix history.
     auto extractWorldAxis = [&](int axisIdx) -> cv::Point3f {
-        const double dx = parentR_T[axisIdx];
-        const double dy = parentR_T[3 + axisIdx];
-        const double dz = parentR_T[6 + axisIdx];
+        const int base = 3 * axisIdx;
+        const double dx = parentR_T[base];
+        const double dy = parentR_T[base + 1];
+        const double dz = parentR_T[base + 2];
         const double norm = std::sqrt(dx*dx + dy*dy + dz*dz);
         if (norm < 1e-9) return {0.0f, 0.0f, 1.0f};
         return cv::Point3f(
@@ -3678,12 +3184,7 @@ CostCallbackPair Frame::trySplitCellPhased(
     // Gap:  |t| < 0.3 (middle ~30% of the span)
     // Edge: 0.6 < |t| < 1.1 (near each daughter center)
     //
-    // Rejection requires BOTH signals to indicate a flat profile:
-    //   gap_density > bio_bridge_max_gap_density  AND
-    //   valley_ratio > bio_bridge_max_valley_ratio
-    //
-    // This deliberately requires both to fire so real divisions with
-    // only partial grooves still pass.
+    // Single-metric rejection: gap / max(edge1, edge2) > bio_bridge_max_valley_ratio.
     // Adaptive bridge gate: measure brightness in the actual gap between
     // the two daughters' surfaces, not a fixed fraction of the axis.
     //
@@ -3832,10 +3333,9 @@ CostCallbackPair Frame::trySplitCellPhased(
             // decision and the dim side doesn't punish it.
             //
             // Replaces the previous worstValleyRatio-based tiered decision
-            // (2026-04-15). Retires bio_bridge_no_valley_hard_threshold
-            // and bio_bridge_max_gap_density from the decision — both
-            // were compensating for the metric's punishment of asymmetry,
-            // and are no longer needed.
+            // (2026-04-15). The legacy two-tier path (gap density + worst
+            // valley ratio) was retired — it punished legitimate asymmetric
+            // division.
             const float brighterEdge = std::max(edge1Bright, edge2Bright);
             const float valleyFromBright = (brighterEdge > 1e-6f)
                 ? (gapBright / brighterEdge)
@@ -3898,10 +3398,6 @@ CostCallbackPair Frame::trySplitCellPhased(
             // metric punished legitimate asymmetric division because the
             // dimmer daughter's edge ≈ gap inflated its ratio. The new
             // metric ignores that side correctly.
-            //
-            // bio_bridge_no_valley_hard_threshold and bio_bridge_max_gap_density
-            // are retired from the decision (config fields still parsed for
-            // backward compat, marked deprecated in YAML).
             const float valleyLimit = probConfig.bio_bridge_max_valley_ratio;
             const bool bridgeFlat = valleyFromBright > valleyLimit;
             if (edgeCount > 0 && bridgeFlat) {
@@ -4091,13 +3587,17 @@ CostCallbackPair Frame::trySplitCellPhased(
                 Ellipsoid liveMutable = liveParentCopy;
                 auto revertedSynth = this->generateSynthFrameFast(snapshotMutable, liveMutable,
                                                                     &affMinR, &affMaxR);
-                std::vector<double> revertedPerSlice;
-                const double revertedCost = this->calculateIncrementalCost(revertedSynth,
-                                                                             affMinR, affMaxR,
-                                                                             revertedPerSlice);
                 this->_synthFrame = revertedSynth;
-                this->_currentCost = revertedCost;
-                this->_currentCostPerSlice = revertedPerSlice;
+                // Bbox mode keeps the full-image cache stale (Change 1).
+                // Skip the incremental recompute on this reject path too.
+                if (!this->_useBboxCost) {
+                    std::vector<double> revertedPerSlice;
+                    const double revertedCost = this->calculateIncrementalCost(revertedSynth,
+                                                                                 affMinR, affMaxR,
+                                                                                 revertedPerSlice);
+                    this->_currentCost = revertedCost;
+                    this->_currentCostPerSlice = revertedPerSlice;
+                }
             }
         }
     };

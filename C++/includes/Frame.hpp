@@ -101,15 +101,6 @@ public:
         const std::vector<cv::Point3f> &extraPoints,
         float pointRadius) const;
 
-    // Build a Voronoi exclusion mask for the bbox: mask[v]=1 if voxel v's
-    // nearest claim point across (selfClaimPoints ∪ otherClaimSets) belongs
-    // to self, otherwise 0. Mask is linearized in (z, y, x) order with
-    // stride (nx*ny, nx, 1). Same claim-point rule as gatherBrightPixelsVoronoi.
-    std::vector<uint8_t> buildExclusionMask(
-        const BoundingBox3D &bbox,
-        const std::vector<cv::Point3f> &selfClaimPoints,
-        const ClaimSet &otherClaimSets) const;
-
     // Asymmetric L2 cost over bbox voxels where mask[v]=1. Uses the same
     // asymmetric_cost_weight as calculateCost. synthFrame must be the same
     // size as _realFrame. Inlined voxel loop (no SIMD) is acceptable because
@@ -204,28 +195,6 @@ public:
         // deterministic cell-index order after the parallel region.
         std::ostream *logSink = nullptr);
 
-    // ---- Edge-based shape fit (Phase A, 2026-04-17) ----
-    // Alternative to calibrateCellShapeViaPca. One-shot: computes rotation
-    // from unweighted PCA on Voronoi-filtered bright pixel POSITIONS in a
-    // tight sphere (gatherRadiusScale × snapMaxR), then finds radii via 6
-    // gradient-edge walks (3 axes × ±) starting at the cell's current
-    // position. Walks stop at image boundaries (partial-volume mirror) or
-    // Voronoi midpoints (neighbor becomes closer). Peak |dI/dr| along each
-    // walk is the cell edge. No iteration, no mask-based variance formula,
-    // no feedback loop. Does NOT modify cell.position.
-    //
-    // Dispatched from CellUniverse::optimize when
-    // config.prob.use_edge_shape_fit is true.
-    bool fitCellShapeViaEdges(
-        size_t cellIndex,
-        const ClaimSet &otherCellsClaimSets,
-        float snapMaxR,
-        float gatherRadiusScale,
-        float walkRadiusScale,
-        float minGradMag,
-        std::ostream *logSink = nullptr);
-
-
     std::vector<cv::Mat> getSynthFrame();
     const std::vector<cv::Mat>& getRealFrame() const { return _realFrame; }
     void setBackgroundColor(float backgroundColor) { _backgroundValue = backgroundColor; }
@@ -234,10 +203,9 @@ public:
     // Bbox-cost mode: perturb/split use a per-cell bbox with Voronoi
     // neighbor exclusion instead of full-image L2. Set at frame start
     // from ProbabilityConfig.use_bbox_cost; forwarded to per-cell paths.
-    void setUseBboxCost(bool enable, float marginScale, float overlapWeight) {
+    void setUseBboxCost(bool enable, float marginScale) {
         _useBboxCost = enable;
         _bboxMarginScale = marginScale;
-        _bboxOverlapWeight = overlapWeight;
     }
     bool getUseBboxCost() const { return _useBboxCost; }
     float getBboxMarginScale() const { return _bboxMarginScale; }
@@ -315,7 +283,6 @@ private:
     // Universal bbox cost mode — set once per frame via setUseBboxCost().
     bool  _useBboxCost = false;
     float _bboxMarginScale = 3.0f;
-    float _bboxOverlapWeight = 0.0f;  // optional cached overlap weight for bbox path
     // Mean cell brightness for brightness-proportional overlap scaling.
     // Set once per frame by CellUniverse::optimize. When > 0, perturbCell
     // scales overlap weight by (cellBrightness / mean)².
