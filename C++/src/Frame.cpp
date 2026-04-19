@@ -694,8 +694,41 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight)
         oldImageCost = _currentCost;
     }
 
-    double costDiff = (newImageCost + newOverlapCell)
-                    - (oldImageCost + oldOverlapCell);
+    // Position prior penalty (2026-04-18): quadratic penalty on distance
+    // from snap beyond a free-motion threshold. Prevents the drift
+    // escape-hatch where the snap bbox undershoot penalty saturates once
+    // the cell fully exits its bbox, leaving a flat cost landscape
+    // outside. With the prior, drift past threshold is quadratically
+    // penalized, independent of image evidence.
+    //
+    // Formula:
+    //   d = ||cell.pos - snap.pos||
+    //   penalty = weight × max(0, d - threshold)²
+    //
+    // Evaluated for both old and new cell positions; only the delta
+    // matters for the accept/reject decision.
+    double oldPositionPrior = 0.0;
+    double newPositionPrior = 0.0;
+    if (_positionPriorWeight > 0.0f) {
+        auto snapPosIt = _snapPositions.find(cells[index].getName());
+        if (snapPosIt != _snapPositions.end()) {
+            const cv::Point3f &snapPos = snapPosIt->second;
+            auto priorOf = [&](const Ellipsoid &c) -> double {
+                const float dx = c.getX() - snapPos.x;
+                const float dy = c.getY() - snapPos.y;
+                const float dz = c.getZ() - snapPos.z;
+                const float d = std::sqrt(dx * dx + dy * dy + dz * dz);
+                const float over = std::max(0.0f, d - _positionPriorThreshold);
+                return static_cast<double>(_positionPriorWeight) *
+                       static_cast<double>(over) * static_cast<double>(over);
+            };
+            oldPositionPrior = priorOf(oldCell);
+            newPositionPrior = priorOf(cells[index]);
+        }
+    }
+
+    double costDiff = (newImageCost + newOverlapCell + newPositionPrior)
+                    - (oldImageCost + oldOverlapCell + oldPositionPrior);
 
     const bool useBboxLocal = _useBboxCost;
     CallBackFunc callback = [this,
@@ -1601,6 +1634,504 @@ static void rotationMatrixToEulerZYX(const cv::Matx33d &R,
         tx = std::atan2(-R(1, 2), R(1, 1));
         tz = 0.0;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Edge-based shape fit (Phase A, 2026-04-17)
+// ---------------------------------------------------------------------------
+// Replaces the mask + weighted-PCA + variance-to-radii feedback loop with a
+// direct image-gradient approach:
+//   1. Unweighted position PCA on Voronoi-filtered bright pixels in a tight
+//      sphere around the snap center. Positions (not brightness weights)
+//      determine the rotation. No iteration, no feedback.
+//   2. For each PCA axis, walk outward in + and - directions from the snap
+//      center. Sample brightness along the walk, smooth, find the position
+//      of peak |dI/dr|. That position is the cell edge on that side.
+//   3. Combine per-axis (r+ + r-)/2; partial-volume mirror when one side
+//      hits an image boundary; fallback to previous radius × growth cap
+//      when no gradient peak exceeds the minimum magnitude.
+// Walks stop at Voronoi midpoints (neighbor becomes closer) or image
+// boundaries.
+
+namespace {
+
+// Trilinear interpolation of the real-image 3D stack at floating-point
+// (x, y, z). Returns backgroundValue when the query point is outside
+// bounds. Used by walkGradientEdge for subpixel brightness sampling.
+static inline float trilinearBrightness(
+    const std::vector<cv::Mat> &realFrame,
+    float x, float y, float z, float backgroundValue)
+{
+    if (realFrame.empty()) return backgroundValue;
+    const int nz = static_cast<int>(realFrame.size());
+    const int ny = realFrame[0].rows;
+    const int nx = realFrame[0].cols;
+
+    const int x0 = static_cast<int>(std::floor(x));
+    const int y0 = static_cast<int>(std::floor(y));
+    const int z0 = static_cast<int>(std::floor(z));
+    if (x0 < 0 || x0 + 1 >= nx ||
+        y0 < 0 || y0 + 1 >= ny ||
+        z0 < 0 || z0 + 1 >= nz) {
+        return backgroundValue;
+    }
+    const float fx = x - x0;
+    const float fy = y - y0;
+    const float fz = z - z0;
+
+    const cv::Mat &z0slice = realFrame[z0];
+    const cv::Mat &z1slice = realFrame[z0 + 1];
+    if (z0slice.type() != CV_32F || z1slice.type() != CV_32F) return backgroundValue;
+
+    const float v000 = z0slice.ptr<float>(y0)[x0];
+    const float v100 = z0slice.ptr<float>(y0)[x0 + 1];
+    const float v010 = z0slice.ptr<float>(y0 + 1)[x0];
+    const float v110 = z0slice.ptr<float>(y0 + 1)[x0 + 1];
+    const float v001 = z1slice.ptr<float>(y0)[x0];
+    const float v101 = z1slice.ptr<float>(y0)[x0 + 1];
+    const float v011 = z1slice.ptr<float>(y0 + 1)[x0];
+    const float v111 = z1slice.ptr<float>(y0 + 1)[x0 + 1];
+
+    const float c00 = v000 * (1.0f - fx) + v100 * fx;
+    const float c10 = v010 * (1.0f - fx) + v110 * fx;
+    const float c01 = v001 * (1.0f - fx) + v101 * fx;
+    const float c11 = v011 * (1.0f - fx) + v111 * fx;
+    const float c0  = c00 * (1.0f - fy) + c10 * fy;
+    const float c1  = c01 * (1.0f - fy) + c11 * fy;
+    return c0 * (1.0f - fz) + c1 * fz;
+}
+
+// Sample brightness along axis at stride `delta`, stop on partial volume
+// or Voronoi midpoint. Returns (smoothed profile, stop info, walk length).
+struct GradWalkResult {
+    float r = -1.0f;                // chosen radius (or -1 if invalid)
+    bool valid = false;
+    bool partialVolume = false;     // walk exited image bounds
+    bool voronoiStop = false;       // walk exited own Voronoi region
+    float peakGradMag = 0.0f;       // |dI/dr| at the chosen peak
+    int peakIndex = -1;             // for logging
+    int walkLen = 0;                // number of samples collected
+};
+
+static GradWalkResult walkGradientEdge(
+    const std::vector<cv::Mat> &realFrame,
+    const cv::Point3f &center,
+    const cv::Point3f &axis,
+    float maxR,
+    float background,
+    const std::vector<cv::Point3f> &selfClaim,
+    const Frame::ClaimSet &otherClaims,
+    float minGradMag,
+    float delta = 0.5f)
+{
+    GradWalkResult out;
+    if (realFrame.empty() || maxR <= 0.0f) return out;
+
+    const int nz = static_cast<int>(realFrame.size());
+    const int ny = realFrame[0].rows;
+    const int nx = realFrame[0].cols;
+    const int N = std::max(2, static_cast<int>(std::ceil(maxR / delta)));
+
+    std::vector<float> raw;
+    raw.reserve(N + 1);
+
+    const bool voronoiActive = !selfClaim.empty() && !otherClaims.empty();
+
+    for (int i = 0; i <= N; ++i) {
+        const float r = i * delta;
+        const float x = center.x + r * axis.x;
+        const float y = center.y + r * axis.y;
+        const float z = center.z + r * axis.z;
+
+        // Image boundary → partial-volume stop.
+        if (x < 1.0f || x >= nx - 1 ||
+            y < 1.0f || y >= ny - 1 ||
+            z < 1.0f || z >= nz - 1) {
+            out.partialVolume = true;
+            break;
+        }
+
+        // Voronoi stop: sample is closer to a neighbor than any self-claim.
+        if (voronoiActive) {
+            float selfBest = std::numeric_limits<float>::infinity();
+            for (const auto &sp : selfClaim) {
+                const float dx = x - sp.x, dy = y - sp.y, dz = z - sp.z;
+                const float d2 = dx * dx + dy * dy + dz * dz;
+                if (d2 < selfBest) selfBest = d2;
+            }
+            bool otherCloser = false;
+            for (const auto &kv : otherClaims) {
+                for (const auto &op : kv.second) {
+                    const float dx = x - op.x, dy = y - op.y, dz = z - op.z;
+                    const float d2 = dx * dx + dy * dy + dz * dz;
+                    if (d2 < selfBest) { otherCloser = true; break; }
+                }
+                if (otherCloser) break;
+            }
+            if (otherCloser) { out.voronoiStop = true; break; }
+        }
+
+        raw.push_back(trilinearBrightness(realFrame, x, y, z, background));
+    }
+
+    out.walkLen = static_cast<int>(raw.size());
+    if (raw.size() < 8) return out;  // need at least a few samples past min-wall-distance
+
+    // Smoothed profile — 3-tap moving average, endpoint-preserving.
+    std::vector<float> smoothed(raw.size());
+    smoothed.front() = 0.5f * (raw[0] + raw[1]);
+    for (size_t i = 1; i + 1 < raw.size(); ++i) {
+        smoothed[i] = (raw[i - 1] + raw[i] + raw[i + 1]) / 3.0f;
+    }
+    smoothed.back() = 0.5f * (raw[raw.size() - 2] + raw.back());
+
+    // Find the cell-to-exterior transition. Rules (tightened after run
+    // 054817 pathology where interior brightness variation was creating
+    // spurious gradient peaks and collapsing radii):
+    //   (1) Peak must be > min wall distance from center (5 px).
+    //   (2) Peak must represent a DOWNWARD drop of magnitude ≥ 0.05
+    //       brightness over a ±3-sample window. Interior noise gives
+    //       drops ≤ 0.03; real membrane gives drops ≥ 0.10 typically.
+    //   (3) "Before" brightness must be at least bg + 0.08 — the walk
+    //       traversed cell material before the drop.
+    //   (4) "After" brightness must be BELOW bg + 0.08 — the drop goes
+    //       to near-background, not to merely dimmer cell interior.
+    //   (5) Among peaks meeting (1-4) with |grad| ≥ minGradMag, take
+    //       the OUTERMOST — the membrane is the last bright-to-dim
+    //       transition before exterior.
+    constexpr int kMinWallIdx = 10;      // 10 × 0.5 = 5 px minimum radius
+    constexpr int kDropWindow = 3;        // samples on each side for drop check
+    constexpr float kMinDropMagnitude = 0.03f;   // min |before - after| for edge
+    // Tuned 2026-04-18 to match best22 reference radii. Prior values were
+    // stopping at halo-to-dim-halo transition (12345 A=33) instead of
+    // halo-to-background (best22 gives 43). Relaxed thresholds:
+    //   insideBrightMin  = bg + 0.04  → halo tail (≈0.05) counts as inside
+    //   outsideBrightMax = bg + 0.025 → stop only when truly near bg (≈0.015-0.02)
+    //   kMinDropMagnitude = 0.03 → catch gentler halo-to-bg transitions
+    const float insideBrightMin  = background + 0.04f;
+    const float outsideBrightMax = background + 0.025f;
+
+    float bestPeakMag = 0.0f;
+    int bestPeakIdx = -1;
+    for (int i = static_cast<int>(smoothed.size()) - 2; i >= kMinWallIdx; --i) {
+        if (i - kDropWindow < 0 ||
+            i + kDropWindow >= static_cast<int>(smoothed.size())) continue;
+        const float before = smoothed[i - kDropWindow];
+        const float after  = smoothed[i + kDropWindow];
+        // (2) substantial downward drop
+        if (before - after < kMinDropMagnitude) continue;
+        // (3) inside must be bright
+        if (before < insideBrightMin) continue;
+        // (4) outside must be near background (not merely dimmer cell)
+        if (after >= outsideBrightMax) continue;
+        // Gradient magnitude at this position (central diff).
+        const float g = (smoothed[i + 1] - smoothed[i - 1]) * 0.5f / delta;
+        const float mag = std::abs(g);
+        if (mag < minGradMag) continue;
+        // (5) outermost — scanning from end inward, first qualifying is
+        // outermost. Refine with local-max within 4 samples of first peak.
+        if (bestPeakIdx < 0) { bestPeakIdx = i; bestPeakMag = mag; }
+        else if (std::abs(i - bestPeakIdx) <= 4 && mag > bestPeakMag) {
+            bestPeakIdx = i; bestPeakMag = mag;
+        } else if (std::abs(i - bestPeakIdx) > 4) {
+            break;  // outside outermost peak neighborhood — stop
+        }
+    }
+
+    out.peakGradMag = bestPeakMag;
+    out.peakIndex = bestPeakIdx;
+
+    if (bestPeakIdx < 0) return out;
+
+    // Subpixel refinement via parabolic fit around peak if interior.
+    float peakR = bestPeakIdx * delta;
+    if (bestPeakIdx >= 2 && bestPeakIdx + 1 < static_cast<int>(smoothed.size())) {
+        const float gL = std::abs((smoothed[bestPeakIdx] - smoothed[bestPeakIdx - 2]) * 0.5f / delta);
+        const float gR = std::abs((smoothed[bestPeakIdx + 2] - smoothed[bestPeakIdx]) * 0.5f / delta);
+        const float denom = (gL - 2.0f * bestPeakMag + gR);
+        if (std::abs(denom) > 1e-6f) {
+            const float shift = 0.5f * (gL - gR) / denom;
+            if (shift > -1.0f && shift < 1.0f) peakR += shift * delta;
+        }
+    }
+
+    out.r = peakR;
+    out.valid = true;
+    return out;
+}
+
+} // anonymous namespace
+
+// Frame method: edge-based shape fit. One-shot (no iteration). Does NOT
+// modify cell.position — only rotation + radii. Snap position is
+// authoritative for pixel gathering and walk origin.
+bool Frame::fitCellShapeViaEdges(
+    size_t cellIndex,
+    const ClaimSet &otherCellsClaimSets,
+    float snapMaxR,
+    float gatherRadiusScale,
+    float walkRadiusScale,
+    float minGradMag,
+    std::ostream *logSink)
+{
+    if (cellIndex >= cells.size()) return false;
+    Ellipsoid &cell = cells[cellIndex];
+
+    std::ostream &log = logSink ? *logSink : std::cout;
+    const std::string cellName = cell.getName();
+
+    const cv::Point3f center(cell.getX(), cell.getY(), cell.getZ());
+    const float effMaxR = std::max(snapMaxR, 1.0f);
+    const float gatherR = gatherRadiusScale * effMaxR;
+    const float walkMaxR = walkRadiusScale * effMaxR;
+
+    // -------------------------------------------------------------------
+    // Step 1 — gather bright pixels, Voronoi-filtered, for PCA rotation.
+    // -------------------------------------------------------------------
+    std::vector<cv::Point3f> selfClaim{center};
+    GatherStats gstats;
+    auto pixels = gatherBrightPixelsVoronoi(
+        _realFrame, _backgroundValue, center, gatherR,
+        selfClaim, otherCellsClaimSets, &gstats);
+
+    if (pixels.size() < 20) {
+        log << "  [EdgeFit SKIP] cell=" << cellName
+            << " pixels=" << pixels.size()
+            << " (need >= 20; keeping previous shape)" << std::endl;
+        return false;
+    }
+
+    // Brightness-weighted PCA. Using UNWEIGHTED positions produced too-
+    // spherical axes because halo positions (a large fraction of the
+    // cloud) drowned out the core elongation signal. Best22 f1 12345:
+    // (43, 36, 22) — aspect ratio 2:1. Unweighted PCA gave (35, 33, 30)
+    // — aspect 1.2:1 (lost elongation). Weighting by brightness^1.5
+    // emphasizes the core — bright pixels drive axis direction — while
+    // halo still contributes to extent. No iterative feedback because
+    // the walks (Step 2) use gradients, not variance-to-radius.
+    constexpr float kPcaWeightExponent = 1.5f;
+    double wsum = 0.0;
+    double mx = 0.0, my = 0.0, mz = 0.0;
+    for (const auto &bp : pixels) {
+        const double w = std::pow(
+            static_cast<double>(std::max(0.0f, bp.weight)), kPcaWeightExponent);
+        wsum += w;
+        mx += w * bp.pos.x; my += w * bp.pos.y; mz += w * bp.pos.z;
+    }
+    if (wsum < 1e-6) {
+        log << "  [EdgeFit SKIP] cell=" << cellName
+            << " zero total weight (keeping previous shape)" << std::endl;
+        return false;
+    }
+    mx /= wsum; my /= wsum; mz /= wsum;
+
+    double cxx = 0, cxy = 0, cxz = 0, cyy = 0, cyz = 0, czz = 0;
+    for (const auto &bp : pixels) {
+        const double w = std::pow(
+            static_cast<double>(std::max(0.0f, bp.weight)), kPcaWeightExponent);
+        const double dx = bp.pos.x - mx;
+        const double dy = bp.pos.y - my;
+        const double dz = bp.pos.z - mz;
+        cxx += w * dx * dx; cxy += w * dx * dy; cxz += w * dx * dz;
+        cyy += w * dy * dy; cyz += w * dy * dz; czz += w * dz * dz;
+    }
+    cxx /= wsum; cxy /= wsum; cxz /= wsum;
+    cyy /= wsum; cyz /= wsum; czz /= wsum;
+
+    cv::Matx33d cov(
+        cxx, cxy, cxz,
+        cxy, cyy, cyz,
+        cxz, cyz, czz);
+    cv::Matx33d eigvecs;
+    cv::Vec3d   eigvals;
+    cv::eigen(cov, eigvals, eigvecs);
+
+    cv::Point3f pcaAxis[3];
+    for (int i = 0; i < 3; ++i) {
+        pcaAxis[i] = cv::Point3f(
+            static_cast<float>(eigvecs(i, 0)),
+            static_cast<float>(eigvecs(i, 1)),
+            static_cast<float>(eigvecs(i, 2)));
+    }
+
+    // Eigenvalue degeneracy check — if the eigenvalue spread is small
+    // (cloud is near-spherical), PCA rotation is noisy across frames and
+    // can cause arbitrary 90° axis flips. Raised threshold 1.1 → 1.5 after
+    // 12345 f2 showed axisAng=73° flip at maxVar/minVar ≈ 1.3, corrupting
+    // the A-axis. Above 1.5, the cloud is clearly anisotropic and rotation
+    // is trustworthy; below, keep current rotation.
+    const double maxVar = std::max({eigvals[0], eigvals[1], eigvals[2]});
+    const double minVar = std::min({eigvals[0], eigvals[1], eigvals[2]});
+    const bool degenerate = (minVar <= 1e-6) || (maxVar / minVar < 1.5);
+
+    // Sign-align each new axis with the current cell-axis slot so the
+    // rotation jump across frames is minimal (continuity for downstream
+    // split detection which reads cell rotation).
+    std::array<double, 9> R_T;
+    cell.generateInverseRotationMatrix(R_T);
+    cv::Point3f curAxis[3];
+    for (int i = 0; i < 3; ++i) {
+        curAxis[i] = cv::Point3f(
+            static_cast<float>(R_T[i]),
+            static_cast<float>(R_T[3 + i]),
+            static_cast<float>(R_T[6 + i]));
+    }
+
+    // Greedy |dot| matching: for each current axis slot, pick the PCA
+    // eigenvector with the largest |dot product|. This keeps the a/b/c
+    // slot semantics stable across frames when eigenvalue ORDERS swap but
+    // physical directions don't (happens when eigenvalues are close, as
+    // for near-spheroidal cells). Rank-based assignment swapped 73° at
+    // 12345 f2, destroying slot coherence and collapsing A-axis radius.
+    cv::Point3f matchedAxis[3];
+    double maxAxisAngle = 0.0;
+    bool pcaUsed[3] = {false, false, false};
+    for (int slot = 0; slot < 3; ++slot) {
+        int bestPca = -1;
+        double bestAbsDot = -1.0;
+        for (int p = 0; p < 3; ++p) {
+            if (pcaUsed[p]) continue;
+            const double d = curAxis[slot].x * pcaAxis[p].x +
+                             curAxis[slot].y * pcaAxis[p].y +
+                             curAxis[slot].z * pcaAxis[p].z;
+            if (std::abs(d) > bestAbsDot) {
+                bestAbsDot = std::abs(d);
+                bestPca = p;
+            }
+        }
+        pcaUsed[bestPca] = true;
+        cv::Point3f v = pcaAxis[bestPca];
+        const double signedDot = curAxis[slot].x * v.x +
+                                 curAxis[slot].y * v.y +
+                                 curAxis[slot].z * v.z;
+        if (signedDot < 0.0) { v.x = -v.x; v.y = -v.y; v.z = -v.z; }
+        matchedAxis[slot] = v;
+        const double ang = std::acos(std::clamp(bestAbsDot, 0.0, 1.0));
+        if (ang > maxAxisAngle) maxAxisAngle = ang;
+    }
+
+    // Apply rotation (unless degenerate — keep current rotation).
+    double targetTx = cell.getThetaX();
+    double targetTy = cell.getThetaY();
+    double targetTz = cell.getThetaZ();
+    if (!degenerate) {
+        cv::Matx33d R(
+            matchedAxis[0].x, matchedAxis[1].x, matchedAxis[2].x,
+            matchedAxis[0].y, matchedAxis[1].y, matchedAxis[2].y,
+            matchedAxis[0].z, matchedAxis[1].z, matchedAxis[2].z);
+        if (cv::determinant(R) < 0.0) {
+            R(0, 2) = -R(0, 2); R(1, 2) = -R(1, 2); R(2, 2) = -R(2, 2);
+            matchedAxis[2] = cv::Point3f(-matchedAxis[2].x, -matchedAxis[2].y, -matchedAxis[2].z);
+        }
+        rotationMatrixToEulerZYX(R, targetTx, targetTy, targetTz);
+    } else {
+        // Use current axes for the walks if PCA rotation is noisy.
+        for (int i = 0; i < 3; ++i) matchedAxis[i] = curAxis[i];
+    }
+
+    // Drift diagnostic: how far is the bright-pixel centroid from snap?
+    // > ~10 px indicates the snap likely drifted from actual biology
+    // last frame. Shape fit still proceeds; operator observes the flag.
+    const double driftShift = std::sqrt(
+        (mx - center.x) * (mx - center.x) +
+        (my - center.y) * (my - center.y) +
+        (mz - center.z) * (mz - center.z));
+
+    // When the cell has drifted (snap position doesn't match the actual
+    // bright-pixel centroid this frame), walks originating from the snap
+    // center can miss or truncate the cell body. If driftShift is large,
+    // use the bright-pixel centroid as the walk origin instead. Self-claim
+    // for Voronoi stop remains the snap (otherwise a drifted cell could
+    // re-enter another cell's territory, which we want blocked).
+    cv::Point3f walkOrigin = center;
+    const bool driftedWalkOrigin = (driftShift > 5.0);
+    if (driftedWalkOrigin) {
+        walkOrigin = cv::Point3f(
+            static_cast<float>(mx),
+            static_cast<float>(my),
+            static_cast<float>(mz));
+    }
+
+    // -------------------------------------------------------------------
+    // Step 2 — gradient edge walks along each axis, ± directions.
+    // -------------------------------------------------------------------
+    const float curRadii[3] = {cell.getARadius(), cell.getBRadius(), cell.getCRadius()};
+    float targetR[3] = {curRadii[0], curRadii[1], curRadii[2]};
+
+    GradWalkResult results[3][2];  // [axis][side: 0=+, 1=-]
+    for (int ax = 0; ax < 3; ++ax) {
+        const cv::Point3f posAxis = matchedAxis[ax];
+        const cv::Point3f negAxis(-posAxis.x, -posAxis.y, -posAxis.z);
+        results[ax][0] = walkGradientEdge(
+            _realFrame, walkOrigin, posAxis, walkMaxR, _backgroundValue,
+            selfClaim, otherCellsClaimSets, minGradMag);
+        results[ax][1] = walkGradientEdge(
+            _realFrame, walkOrigin, negAxis, walkMaxR, _backgroundValue,
+            selfClaim, otherCellsClaimSets, minGradMag);
+
+        const GradWalkResult &rp = results[ax][0];
+        const GradWalkResult &rn = results[ax][1];
+
+        float rRadius = -1.0f;
+        const char *strategy = "none";
+
+        if (rp.valid && rn.valid) {
+            rRadius = 0.5f * (rp.r + rn.r);
+            strategy = "avg";
+        } else if (rp.valid && rn.partialVolume) {
+            rRadius = rp.r;
+            strategy = "mirror_neg_pv";
+        } else if (rn.valid && rp.partialVolume) {
+            rRadius = rn.r;
+            strategy = "mirror_pos_pv";
+        } else if (rp.valid) {
+            rRadius = rp.r;
+            strategy = "pos_only";
+        } else if (rn.valid) {
+            rRadius = rn.r;
+            strategy = "neg_only";
+        }
+
+        if (rRadius > 0.0f) {
+            targetR[ax] = rRadius;
+        } else {
+            // Neither side valid — keep previous radius, clamped modestly.
+            // (Growth cap is applied in CellUniverse::optimize.)
+            targetR[ax] = curRadii[ax];
+            strategy = "fallback_prev";
+        }
+
+        const char axisLabel = (ax == 0 ? 'A' : (ax == 1 ? 'B' : 'C'));
+        log << "  [EdgeFit " << axisLabel << "] cell=" << cellName
+            << " r+=" << rp.r << " r-=" << rn.r
+            << " R=" << targetR[ax]
+            << " grad+=" << rp.peakGradMag << " grad-=" << rn.peakGradMag
+            << " strategy=" << strategy
+            << (rp.partialVolume ? " pv+" : "")
+            << (rn.partialVolume ? " pv-" : "")
+            << (rp.voronoiStop ? " vor+" : "")
+            << (rn.voronoiStop ? " vor-" : "")
+            << std::endl;
+    }
+
+    // -------------------------------------------------------------------
+    // Step 3 — apply rotation + radii. Position untouched.
+    // -------------------------------------------------------------------
+    cell.setRadii(targetR[0], targetR[1], targetR[2]);
+    cell.setRotation(static_cast<float>(targetTx),
+                     static_cast<float>(targetTy),
+                     static_cast<float>(targetTz));
+
+    log << "  [EdgeFit] cell=" << cellName
+        << " R=(" << targetR[0] << "," << targetR[1] << "," << targetR[2] << ")"
+        << " n=" << pixels.size()
+        << " axisAng=" << (maxAxisAngle * 180.0 / M_PI)
+        << " driftShift=" << driftShift
+        << (degenerate ? " degen" : "")
+        << (driftedWalkOrigin ? " walkFromCentroid" : "")
+        << std::endl;
+
+    return true;
 }
 
 bool Frame::calibrateCellShapeViaPca(
@@ -3489,22 +4020,43 @@ CostCallbackPair Frame::trySplitCellPhased(
                              acceptedDrift1, acceptedDrift2, acceptedLabel,
                              liveParentCopy, snapshotParentCopy, cellIndexCopy,
                              snapshotValidCopy](bool accept) mutable {
-        // Always erase the daughter snap-bboxes AND shared masks installed
-        // during the split attempt — both branches below. On accept, the
-        // new permanent daughters fall through to the live bbox + live
-        // Voronoi mask for the rest of the frame (they have no real snap,
-        // and sibling mutual-exclusion is actually CORRECT post-split —
-        // they're real cells now, not burn-in candidates). On reject, the
-        // names are stale. Erase-of-absent-key is a no-op, so this is safe
-        // even if restoreLiveParent already ran.
-        this->_snapBboxes.erase(parentName + "0");
-        this->_snapBboxes.erase(parentName + "1");
-        // _sharedMasks removed — no longer used (cost uses empty mask)
+        // Snap bbox + snap position handling for daughter names.
+        //
+        // On ACCEPT: replace the burn-in-time shared splitBbox with per-
+        // daughter snap bboxes centered on the final positions, and set
+        // snap positions so the position-prior penalty (Change 37)
+        // activates. Without this, newborn daughters had NO anchor post-
+        // split — observed in run 205041 f3 where 12345..0 drifted from
+        // (142, 176, 105) at split-accept to (-27, 265, 90) by f3 end
+        // (175 px drift, exited image). Position prior shows priorWeight=30
+        // in the log but was a no-op because _snapPositions had no entry
+        // for the newborn daughter name.
+        //
+        // On REJECT: erase the stale daughter-name entries. The parent
+        // keeps its own snap (never modified).
+        const std::string d0Name = parentName + "0";
+        const std::string d1Name = parentName + "1";
         if (accept) {
             this->cells = std::move(bestCells);
             this->_synthFrame = std::move(bestSynth);
             this->_currentCostPerSlice = std::move(bestPerSlice);
             this->_currentCost = bestImageCost;
+            // Install snap anchors at the accepted daughter positions.
+            // Use the daughter max-radius × bbox_margin_scale for the bbox.
+            const float d0MaxR = std::max({acceptedD1R.x, acceptedD1R.y, acceptedD1R.z});
+            const float d1MaxR = std::max({acceptedD2R.x, acceptedD2R.y, acceptedD2R.z});
+            if (d0MaxR > 1e-3f) {
+                BoundingBox3D b0 = this->computeBboxAtPoint(
+                    acceptedD1Pos, d0MaxR, this->_bboxMarginScale);
+                if (b0.isValid()) this->_snapBboxes[d0Name] = b0;
+                this->_snapPositions[d0Name] = acceptedD1Pos;
+            }
+            if (d1MaxR > 1e-3f) {
+                BoundingBox3D b1 = this->computeBboxAtPoint(
+                    acceptedD2Pos, d1MaxR, this->_bboxMarginScale);
+                if (b1.isValid()) this->_snapBboxes[d1Name] = b1;
+                this->_snapPositions[d1Name] = acceptedD2Pos;
+            }
             std::cout << "[Split Accepted] " << parentName
                       << " costDiff=" << costDiff
                       << " bestLabel=" << acceptedLabel
@@ -3521,7 +4073,12 @@ CostCallbackPair Frame::trySplitCellPhased(
             // Reject path: restore the snapshot-parent-state first (which
             // is what savedCellsCopy holds), then swap cells[cellIndexCopy]
             // back to the live parent and re-render the affected z-range
-            // so Phase B's live state isn't lost.
+            // so Phase B's live state isn't lost. Also erase any stale
+            // daughter-name entries in snap maps (from burn-in installation).
+            this->_snapBboxes.erase(d0Name);
+            this->_snapBboxes.erase(d1Name);
+            this->_snapPositions.erase(d0Name);
+            this->_snapPositions.erase(d1Name);
             this->cells = std::move(savedCellsCopy);  // NOLINT: move in mutable lambda
             this->_synthFrame = std::move(savedSynthCopy);
             this->_currentCostPerSlice = std::move(savedPerSliceCopy);

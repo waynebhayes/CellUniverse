@@ -204,6 +204,27 @@ public:
         // deterministic cell-index order after the parallel region.
         std::ostream *logSink = nullptr);
 
+    // ---- Edge-based shape fit (Phase A, 2026-04-17) ----
+    // Alternative to calibrateCellShapeViaPca. One-shot: computes rotation
+    // from unweighted PCA on Voronoi-filtered bright pixel POSITIONS in a
+    // tight sphere (gatherRadiusScale × snapMaxR), then finds radii via 6
+    // gradient-edge walks (3 axes × ±) starting at the cell's current
+    // position. Walks stop at image boundaries (partial-volume mirror) or
+    // Voronoi midpoints (neighbor becomes closer). Peak |dI/dr| along each
+    // walk is the cell edge. No iteration, no mask-based variance formula,
+    // no feedback loop. Does NOT modify cell.position.
+    //
+    // Dispatched from CellUniverse::optimize when
+    // config.prob.use_edge_shape_fit is true.
+    bool fitCellShapeViaEdges(
+        size_t cellIndex,
+        const ClaimSet &otherCellsClaimSets,
+        float snapMaxR,
+        float gatherRadiusScale,
+        float walkRadiusScale,
+        float minGradMag,
+        std::ostream *logSink = nullptr);
+
 
     std::vector<cv::Mat> getSynthFrame();
     const std::vector<cv::Mat>& getRealFrame() const { return _realFrame; }
@@ -234,6 +255,30 @@ public:
     bool hasSnapBbox(const std::string &name) const {
         return _snapBboxes.find(name) != _snapBboxes.end();
     }
+
+    // Position prior (2026-04-18, re-introduced after Phase A edge-fit
+    // shape stabilized). Quadratic penalty on ||cell.pos - snap.pos||
+    // beyond a threshold. Addresses the downstream drift pathology
+    // where cells escape the snap bbox during perturbation (e.g. e3d03
+    // drifting 94 px in f3 of run 063143). The snap bbox undershoot
+    // penalty saturates once the cell fully exits — the quadratic prior
+    // doesn't.
+    //
+    // Formula:
+    //   d = ||cell.pos - snap.pos||
+    //   penalty = position_prior_weight × max(0, d - threshold)²
+    // Below threshold: 0 (allow legitimate biological motion).
+    // Above threshold: grows quadratically, dominating any image gain.
+    //
+    // setSnapPosition installs one snap position per cell name.
+    // setPositionPriorWeight sets the global weight (typically 10-50).
+    // setPositionPriorThreshold sets the free-motion threshold in px.
+    void setSnapPosition(const std::string &name, const cv::Point3f &pos) {
+        _snapPositions[name] = pos;
+    }
+    void clearSnapPositions() { _snapPositions.clear(); }
+    void setPositionPriorWeight(float w) { _positionPriorWeight = w; }
+    void setPositionPriorThreshold(float t) { _positionPriorThreshold = t; }
 
     // _sharedMasks removed — cost path now uses empty mask (no Voronoi
     // exclusion). The shared mask was never read after perturbCell
@@ -283,6 +328,14 @@ private:
     // cost, anchoring the cell to its real-cell location. Missing entry
     // (frame 1, newborn daughters) → legacy live pre/post-union bbox.
     std::unordered_map<std::string, BoundingBox3D> _snapBboxes;
+    // Snap positions keyed by cell name — used for the position prior
+    // penalty in perturbCell. Populated once per frame by
+    // CellUniverse::optimize from previousSnapshots alongside snap bboxes.
+    std::unordered_map<std::string, cv::Point3f> _snapPositions;
+    // Position prior weight (0 disables). Quadratic penalty on distance
+    // from snap beyond threshold. Set once per frame from config.
+    float _positionPriorWeight = 0.0f;
+    float _positionPriorThreshold = 20.0f;
     // _sharedMasks member removed — see comment above.
     cv::Size getImageShape();
 

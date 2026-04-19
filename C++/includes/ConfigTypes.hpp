@@ -175,6 +175,11 @@ public:
     // the image-based snap anchor. Typical: 50.0 (20 px drift = 20K
     // penalty; same scale as bbox image cost).
     float position_prior_weight = 0.0f;
+    // Free-motion threshold (px). Drift below this pays no penalty.
+    // Above, quadratic penalty: w × (drift - threshold)². 20 px covers
+    // the p95 of biological motion in best22 (24 px is the p95 of
+    // drift per transition).
+    float position_prior_threshold = 20.0f;
 
     int expected_daughter_pre_pass_iterations = 1;
 
@@ -264,6 +269,30 @@ public:
     bool use_bbox_cost = false;
     float bbox_margin_scale = 3.0f;
 
+    // Edge-based shape fit (Phase A, 2026-04-17). When true,
+    // CellUniverse::optimize dispatches to Frame::fitCellShapeViaEdges
+    // instead of Frame::calibrateCellShapeViaPca. Rotation comes from
+    // unweighted position PCA on Voronoi-filtered bright pixels in a
+    // tight sphere (edge_shape_gather_radius_scale × snap_maxR); radii
+    // from 6 gradient edge walks (3 axes × ±) with stops at Voronoi
+    // midpoints and image boundaries. Decouples shape from the
+    // variance-based feedback loop of the mask+weighted-PCA path.
+    bool use_edge_shape_fit = false;
+    // Tight gather sphere for the PCA rotation step. 1.3× snap_maxR
+    // limits contamination from close neighbors while still including
+    // the cell body + halo. Can raise toward 1.5 if rotation is
+    // unstable on elongated cells.
+    float edge_shape_gather_radius_scale = 1.3f;
+    // Walk max distance = this × snap_maxR. 2.0 gives generous headroom
+    // for growing cells without running into far neighbors' territory
+    // (those are typically stopped earlier by Voronoi).
+    float edge_shape_walk_radius_scale = 2.0f;
+    // Minimum |dI/dr| gradient magnitude (per px) required to accept a
+    // walk's edge. Below this, the walk's peak is noise; fall back to
+    // previous-frame radius × growth cap. 0.008/px ≈ 10× background
+    // noise floor for the current preprocessing pipeline.
+    float edge_shape_min_grad_mag = 0.008f;
+
     // Per-daughter PCA radius refit in the split refine phase (A1).
     // After positional refine settles both daughters, each daughter runs
     // a short PCA shape fit (using its own built-in radii as the mask)
@@ -308,6 +337,7 @@ public:
         if (node["split_cost"]) split_cost = node["split_cost"].as<float>();
         if (node["split_cost_fraction"]) split_cost_fraction = node["split_cost_fraction"].as<float>();
         if (node["position_prior_weight"]) position_prior_weight = node["position_prior_weight"].as<float>();
+        if (node["position_prior_threshold"]) position_prior_threshold = node["position_prior_threshold"].as<float>();
         if (node["expected_daughter_pre_pass_iterations"]) expected_daughter_pre_pass_iterations = node["expected_daughter_pre_pass_iterations"].as<int>();
         if (node["split_candidates_per_attempt"]) split_candidates_per_attempt = node["split_candidates_per_attempt"].as<int>();
         if (node["split_candidate_burn_in_iterations"]) split_candidate_burn_in_iterations = node["split_candidate_burn_in_iterations"].as<int>();
@@ -326,6 +356,10 @@ public:
         if (node["split_burn_in_pos_sigma_scale"]) split_burn_in_pos_sigma_scale = node["split_burn_in_pos_sigma_scale"].as<float>();
         if (node["use_bbox_cost"]) use_bbox_cost = node["use_bbox_cost"].as<bool>();
         if (node["bbox_margin_scale"]) bbox_margin_scale = node["bbox_margin_scale"].as<float>();
+        if (node["use_edge_shape_fit"]) use_edge_shape_fit = node["use_edge_shape_fit"].as<bool>();
+        if (node["edge_shape_gather_radius_scale"]) edge_shape_gather_radius_scale = node["edge_shape_gather_radius_scale"].as<float>();
+        if (node["edge_shape_walk_radius_scale"]) edge_shape_walk_radius_scale = node["edge_shape_walk_radius_scale"].as<float>();
+        if (node["edge_shape_min_grad_mag"]) edge_shape_min_grad_mag = node["edge_shape_min_grad_mag"].as<float>();
         if (node["split_daughter_refit_iterations"]) split_daughter_refit_iterations = node["split_daughter_refit_iterations"].as<int>();
         if (node["split_daughter_refit_min_radius_fraction"]) split_daughter_refit_min_radius_fraction = node["split_daughter_refit_min_radius_fraction"].as<float>();
         if (node["split_daughter_refit_max_radius_fraction"]) split_daughter_refit_max_radius_fraction = node["split_daughter_refit_max_radius_fraction"].as<float>();

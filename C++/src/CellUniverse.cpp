@@ -616,12 +616,28 @@ void CellUniverse::optimize(int frameIndex)
                 }
             }
 
-            frame.calibrateCellShapeViaPca(ci, others,
-                                           pcaMaxIters, pcaScale, pcaMin,
-                                           maskScale, convR, convAng,
-                                           updatePos, posShiftCap,
-                                           maskA, maskB, maskC,
-                                           &shapeLogs[ci]);
+            if (config.prob.use_edge_shape_fit) {
+                // Edge-based shape fit (Phase A, 2026-04-17). snapMaxR =
+                // max of mask radii, which are the birth radii (falling
+                // back to snap). Gives the walk a generous upper bound.
+                const float snapMaxR = std::max({maskA, maskB, maskC,
+                                                 frame.cells[ci].getARadius(),
+                                                 frame.cells[ci].getBRadius(),
+                                                 frame.cells[ci].getCRadius()});
+                frame.fitCellShapeViaEdges(
+                    ci, others, snapMaxR,
+                    config.prob.edge_shape_gather_radius_scale,
+                    config.prob.edge_shape_walk_radius_scale,
+                    config.prob.edge_shape_min_grad_mag,
+                    &shapeLogs[ci]);
+            } else {
+                frame.calibrateCellShapeViaPca(ci, others,
+                                               pcaMaxIters, pcaScale, pcaMin,
+                                               maskScale, convR, convAng,
+                                               updatePos, posShiftCap,
+                                               maskA, maskB, maskC,
+                                               &shapeLogs[ci]);
+            }
         }
         // Serial merge: emit per-cell log blocks in cell-index order.
         for (int ci = 0; ci < nCells; ++ci) {
@@ -637,12 +653,19 @@ void CellUniverse::optimize(int frameIndex)
         // 65.2 at f20 (+57%) and hit the ceiling, cascading chaos at
         // f21/f22.
         //
-        // Fit-side growth cap: one-sided upper bound at ref × 1.10 per frame.
-        // Prevents single-frame bloat jumps (e.g., PCA seeing halo and
-        // outputting R=60 when ref=40). Downward change unconstrained —
-        // cells can pinch freely during pre-split.
+        // Fit-side growth cap: two-sided bound at ref × (1 ± fitGrowthCap)
+        // per frame.
+        //   Up:   prevents single-frame bloat (PCA seeing halo, outputting
+        //         R=60 when ref=40).
+        //   Down: prevents single-frame collapse (PCA outputting a
+        //         spuriously small radius due to Voronoi cut or neighbor
+        //         overlap, causing e.g. 12345..0 c to crash 22→14 in one
+        //         frame of run 082209, then compounding through splits
+        //         to hit the 10-px floor). 10% downward still allows
+        //         biological pre-split pinching over several frames.
         constexpr float fitGrowthCap = 0.10f;
         const float fitUpFactor = 1.0f + fitGrowthCap;
+        const float fitDownFactor = 1.0f - fitGrowthCap;
         int fitsClamped = 0;
         for (size_t ci = 0; ci < frame.cells.size(); ++ci) {
             const std::string &name = frame.cells[ci].getName();
@@ -652,13 +675,16 @@ void CellUniverse::optimize(int frameIndex)
             const float fA = frame.cells[ci].getARadius();
             const float fB = frame.cells[ci].getBRadius();
             const float fC = frame.cells[ci].getCRadius();
-            const float capA = ref[0] * fitUpFactor;
-            const float capB = ref[1] * fitUpFactor;
-            const float capC = ref[2] * fitUpFactor;
-            const float newA = std::min(fA, capA);
-            const float newB = std::min(fB, capB);
-            const float newC = std::min(fC, capC);
-            if (newA < fA || newB < fB || newC < fC) {
+            const float capUpA   = ref[0] * fitUpFactor;
+            const float capUpB   = ref[1] * fitUpFactor;
+            const float capUpC   = ref[2] * fitUpFactor;
+            const float capDownA = ref[0] * fitDownFactor;
+            const float capDownB = ref[1] * fitDownFactor;
+            const float capDownC = ref[2] * fitDownFactor;
+            const float newA = std::clamp(fA, capDownA, capUpA);
+            const float newB = std::clamp(fB, capDownB, capUpB);
+            const float newC = std::clamp(fC, capDownC, capUpC);
+            if (newA != fA || newB != fB || newC != fC) {
                 frame.cells[ci].setRadii(newA, newB, newC);
                 ++fitsClamped;
             }
@@ -738,6 +764,9 @@ void CellUniverse::optimize(int frameIndex)
     // back to the legacy live pre/post-union bbox in perturbCell. Always
     // cleared first so stale names don't leak across frames.
     frame.clearSnapBboxes();
+    frame.clearSnapPositions();
+    frame.setPositionPriorWeight(config.prob.position_prior_weight);
+    frame.setPositionPriorThreshold(config.prob.position_prior_threshold);
     if (bboxActiveThisFrame) {
         int installed = 0;
         for (const auto &cell : frame.cells) {
@@ -751,11 +780,14 @@ void CellUniverse::optimize(int frameIndex)
                 snap.position, snapMaxR, config.prob.bbox_margin_scale);
             if (!snapBbox.isValid()) continue;
             frame.setSnapBbox(name, snapBbox);
+            frame.setSnapPosition(name, snap.position);
             ++installed;
         }
         std::cout << "[Snap Bbox] frame " << displayFrame
                   << " installed=" << installed
-                  << " total=" << frame.cells.size() << std::endl;
+                  << " total=" << frame.cells.size()
+                  << " priorWeight=" << config.prob.position_prior_weight
+                  << std::endl;
     }
 
     // Seed expected-daughter positions for EVERY cell with a valid

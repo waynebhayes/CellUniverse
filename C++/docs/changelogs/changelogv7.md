@@ -831,3 +831,215 @@ All the subsequent issues (drift, undersized cells, missed splits in 170909) wer
 ### Rollback
 
 Re-apply the git diff for these fixes. Not recommended.
+
+## 2026-04-17 (late): Edge-based shape fit — Phase A
+
+### Change 36: New shape-fit entry point `Frame::fitCellShapeViaEdges`
+
+**Status: ACTIVE (behind `use_edge_shape_fit=true` toggle).**
+
+**Motivation.** The legacy `calibrateCellShapeViaPca` computes radii via `radiusScale × sqrt(variance)` over a mask-bounded pixel cloud whose variance depends on the mask size, the weighting exponent, and iteratively-fit radii. Every parameter change introduces a new feedback loop or edge case (mask-feedback collapse, halo bloat, adaptive-exponent regressions). Each regression led to another mitigation (birth-based mask, adaptive inflation, level-set walk, growth cap, etc.) and by the 2026-04-17 session each of these was fighting another.
+
+Replaces that with a direct image-gradient approach, closer to how an eye identifies a cell: find the edge and measure from there. No mask, no iteration, no variance-to-radius conversion.
+
+**Algorithm.**
+
+For each cell, at frame start (before perturbation):
+
+1. **Rotation** — unweighted position PCA on Voronoi-filtered bright pixels.
+   - Gather bright pixels (`I > bg + 0.02`) inside sphere of radius `gatherRadiusScale × snapMaxR` (default 1.3 × snapMaxR) around the cell's snap position.
+   - Voronoi-filter against other cells' snap positions: a pixel is kept only if the current cell's snap is the closest claim.
+   - Compute unweighted PCA on those pixel POSITIONS (no brightness weighting — prevents the adaptive-exponent feedback loop that plagued the prior path).
+   - Axes ordered by descending eigenvalue: `axis[0]` = major, `axis[1]` = middle, `axis[2]` = minor.
+   - Sign-align each new axis with the cell's current axis slot for frame-to-frame rotation continuity.
+2. **Radii** — gradient edge walks, 6 in total (3 axes × ± directions).
+   - Walk from the cell's current position outward along the axis at `delta = 0.5 px` increments, up to `walkRadiusScale × snapMaxR` (default 2.0 × snapMaxR).
+   - At each step, sample real-image brightness via trilinear interpolation.
+   - Walk terminates at either an image-boundary hit (partial-volume stop) or a Voronoi midpoint crossing (neighbor becomes closer).
+   - Smooth the collected brightness profile with a 3-tap moving average.
+   - Find the position of peak `|dI/dr|` (central differences, with subpixel parabolic fit around the peak).
+   - If `|peak grad| > min_grad_mag` (default 0.008/px), accept the peak position as the edge radius on that side.
+   - Otherwise (dim cell, no clear membrane): keep previous-frame radius (growth cap applied downstream).
+3. **Per-axis combine.**
+   - Both sides valid → `r = (r+ + r-) / 2`.
+   - One side partial-volume → mirror the other side's radius.
+   - Neither valid → fall back to previous radius.
+4. **Apply.** Write rotation (Euler ZYX) + radii to `cells[cellIndex]`. Position unchanged.
+
+**Diagnostic.** `[EdgeFit]` summary line and per-axis `[EdgeFit A/B/C]` breakdown:
+
+```
+[EdgeFit A] cell=NAME r+=X r-=Y R=Z grad+=G1 grad-=G2 strategy=avg|mirror_*|pos_only|...
+  [pv+/-] [vor+/-]
+[EdgeFit] cell=NAME R=(a,b,c) n=N axisAng=DEG driftShift=D [degen]
+```
+
+`driftShift` = distance between snap center and the bright-pixel centroid. Large values (> 10 px) indicate the cell likely drifted from its biology last frame; shape fit still proceeds but the flag helps correlate drift with split/shape anomalies.
+
+**Files changed.**
+
+- `C++/includes/ConfigTypes.hpp`: added `ProbabilityConfig` fields:
+  - `use_edge_shape_fit` (default false)
+  - `edge_shape_gather_radius_scale` (default 1.3)
+  - `edge_shape_walk_radius_scale` (default 2.0)
+  - `edge_shape_min_grad_mag` (default 0.008)
+  - YAML parser entries for all four.
+- `C++/includes/Frame.hpp`: declaration of `fitCellShapeViaEdges`.
+- `C++/src/Frame.cpp`:
+  - New anonymous-namespace helpers: `trilinearBrightness`, `walkGradientEdge`, `GradWalkResult` struct.
+  - New method `Frame::fitCellShapeViaEdges` (~180 lines).
+  - Inserted between `rotationMatrixToEulerZYX` and `calibrateCellShapeViaPca`.
+- `C++/src/CellUniverse.cpp`: dispatcher inside the parallel shape-fit loop:
+  ```cpp
+  if (config.prob.use_edge_shape_fit) {
+      const float snapMaxR = std::max({maskA, maskB, maskC,
+                                       frame.cells[ci].getARadius(), ...});
+      frame.fitCellShapeViaEdges(ci, others, snapMaxR, ...);
+  } else {
+      frame.calibrateCellShapeViaPca(ci, others, ...);
+  }
+  ```
+- `C++/config/config.yaml`: `use_edge_shape_fit: true` + tuning params.
+
+**Expected effects.**
+
+- No mask-based feedback — radii come from image gradients directly.
+- No iteration — single-pass fit. Cheaper per-frame.
+- Natural partial-volume handling (cells at z=0/224 mirror their in-image side).
+- Natural neighbor handling (walk Voronoi-stops).
+- Halo bleed does NOT bloat radii: the gradient peak is at the membrane's steep drop, not the halo tail.
+- Feedback-loop parameters (`pcaShapeWeightExponent`, `pcaShapeAdaptiveExponent`, `pcaShapeCoreBrightnessThreshold`, etc.) become irrelevant — they're still read for the legacy path but not consulted when `use_edge_shape_fit=true`.
+
+**Known risks and open questions.**
+
+- Voronoi partition based on snap positions is imperfect when neighbors drifted in the prior frame. Data from `best22` (f1-f15) shows median snap-drift of 12.7 px with p95 = 24 px. Voronoi midpoint shifts up to 25 px on close-neighbor pairs (e3d03 ↔ 12345 at ~50 px pair distance). Gradient walks are robust to ~10-15 px seed offset; PCA rotation can be slightly biased for close-neighbor pairs. Acceptable for Phase A validation; the `driftShift` diagnostic surfaces the problem cases.
+- `min_grad_mag=0.008` is a conservative first guess. If Phase B shows legitimate dim-cell edges being missed, lower to 0.005. If noisy images cause spurious peaks, raise to 0.012.
+- Gather sphere 1.3× snap_maxR may be too tight for cells that have grown significantly. Watch for cases where `driftShift` is low but radii come out small (growth underestimated).
+
+**Phase B.** After validation, delete `calibrateCellShapeViaPca` and the dead `pcaShape*` config params. Keep the dispatcher inline code.
+
+**Rollback.** Set `use_edge_shape_fit: false` in `config.yaml`. Baseline mask+weighted-PCA path still fully functional.
+
+## 2026-04-18 (late): Position prior re-introduced + edge-fit disabled (checkpoint)
+
+### Change 37: Position prior with free-motion threshold; edge-fit toggle OFF
+
+**Status: ACTIVE**
+
+**Motivation.** Phase A edge-fit (Change 36) stabilized shape mechanics but produced systematically under-sized radii vs best22 (mean ΔR=14.86 px at run 071958 f22). Visual inspection showed synth ellipsoids smaller than real cells. Switching back to baseline `calibrateCellShapeViaPca` recovered best22-quality radii (mean ΔR=2.58 px at f1, 10.96 px at f22) — the baseline shape fit is not the problem. The baseline's historical issue was uncontrolled drift. Re-introducing the position prior (quadratic penalty on distance from snap beyond 20 px) addresses drift while keeping baseline shape quality.
+
+**Changes:**
+
+1. **Re-added position prior machinery** (previously implemented and rolled back as part of a conservative package in run 174913):
+   - `C++/includes/Frame.hpp`: added `_snapPositions`, `_positionPriorWeight`, `_positionPriorThreshold` members; setters `setSnapPosition`, `clearSnapPositions`, `setPositionPriorWeight`, `setPositionPriorThreshold`.
+   - `C++/includes/ConfigTypes.hpp`: added `position_prior_threshold` field (was missing). `position_prior_weight` already existed.
+   - `C++/src/Frame.cpp::perturbCell`: added position-prior calculation before `costDiff` computation:
+     ```cpp
+     const float over = max(0, ||cell.pos - snap.pos|| - threshold);
+     penalty = weight × over²;
+     costDiff = (newImg + newOverlap + newPrior) - (oldImg + oldOverlap + oldPrior);
+     ```
+     Prior is zero below threshold (allows legitimate motion), quadratic above.
+   - `C++/src/CellUniverse.cpp`: calls `setSnapPosition(name, snap.position)` alongside `setSnapBbox`, `setPositionPriorWeight(config.prob.position_prior_weight)`, `setPositionPriorThreshold(config.prob.position_prior_threshold)` once per frame.
+   - `C++/config/config.yaml`: `position_prior_weight: 0.0 → 10.0`, added `position_prior_threshold: 20.0` (documented: at w=10, 40 px drift = 4000 penalty, dominates any image gain past the threshold).
+
+2. **Edge-fit toggle OFF** (checkpoint — will return to it if baseline shape ever regresses):
+   - `C++/config/config.yaml`: `use_edge_shape_fit: true → false`. Legacy `calibrateCellShapeViaPca` is active; edge-fit code remains compiled but unused.
+
+**Results (run 082209, full 22 frames):**
+
+- **8/8 GT splits accepted** (same as best22 baseline count):
+  - f3 e9077, f3 12345, f8 1f89ab, f12 1f2ed (1 late vs GT f11), f20 e9077..a50 (+1 from f19, allowed), f20 e9077..a51, f20 12345..0, f20 12345..1.
+  - No false positives on e3d03 or 8cbdf.
+- **Shape quality:** avg ΔR 2.58 at f1 → 10.96 at f22 (vs edge-fit run's 14.86 at f22).
+- **Position anchoring:** parent cells ≤ 5 px from best22; only divergence is e9077 daughters (Monte Carlo split placement at f3 put them 49 px from best22's placement; trajectories diverge further each frame).
+- **Observed remaining issue:** c-axis (minor axis) systematically under-fit over generations. Second-gen daughters at f20 have c hitting the 10-px floor. Likely cause: weighted PCA + z-interpolation (z_scaling=7 means z variance is over-concentrated since adjacent interpolated z-slices are near-duplicates). Not addressed in this change.
+
+**Files changed (this checkpoint):**
+
+- `C++/config/config.yaml`: `position_prior_weight: 10.0`, `position_prior_threshold: 20.0`, `use_edge_shape_fit: false`.
+- `C++/includes/Frame.hpp`: `_snapPositions`, `_positionPriorWeight`, `_positionPriorThreshold` members; corresponding setters.
+- `C++/includes/ConfigTypes.hpp`: `position_prior_threshold` field.
+- `C++/src/Frame.cpp::perturbCell`: prior penalty in costDiff.
+- `C++/src/CellUniverse.cpp`: `setSnapPosition`/`setPositionPriorWeight`/`setPositionPriorThreshold` calls alongside `setSnapBbox`.
+
+**Rollback.** Set `position_prior_weight: 0.0` in config.yaml (disables prior; other code paths remain but are no-ops). Set `use_edge_shape_fit: true` to restore edge-fit path.
+
+## 2026-04-18 (late): Working checkpoint — two-sided growth cap + linear weight + strong prior
+
+### Change 38: Three coordinated fixes yield best 22-frame result to date
+
+**Status: ACTIVE. Run 192227 validated: 8/8 GT splits on-time, shape avg ΔR=1.57 at f1 / 6.96 at f22 vs best22.**
+
+Three simultaneous changes, each addressing a different pathology, produced a run that matches best22 quality across all 22 frames.
+
+**1. Two-sided growth cap** (`C++/src/CellUniverse.cpp`)
+
+Before: one-sided `ref × 1.10` upper bound, downward unconstrained. PCA could fit a c-axis of 14 when ref was 23 — a 40% single-frame collapse. Daughters inherited 0.7937× of the crashed c, hitting the min radius floor.
+
+After: two-sided `[ref × 0.90, ref × 1.10]` clamp. Cells can still pinch 10%/frame (enough for biological pre-split), but single-frame collapses are blocked.
+
+```cpp
+const float capUpA   = ref[0] * fitUpFactor;
+const float capDownA = ref[0] * fitDownFactor;
+const float newA = std::clamp(fA, capDownA, capUpA);
+```
+
+Observed in run 192227: no cells hit the floor at all. Min c-axis seen across f1-f22 was 9.9 px (vs 8-15 cells at the 10 floor in 082209).
+
+**2. Minimum radius 10 → 5** (`C++/config/config.yaml`)
+
+Before: `minARadius/BRadius/CRadius: 10` — this was where the broken cells landed. Many cells stuck at 10-10-10 (catastrophic pancakes) or 10-10-* (near-total collapse).
+
+After: `5` floor. Combined with the two-sided cap, no cell actually reaches the floor — but if the cap EVER fails, the floor provides more graceful degradation.
+
+**3. Linear weight exponent** (`C++/config/config.yaml`)
+
+Before: `pcaShapeWeightExponent: 1.3`. `weight = brightness^1.3` concentrates mass on the bright core. For a cell with bright core (brightness ~0.3) + dim halo (brightness ~0.1), core pixels had 4× more weight per pixel. Halo contribution was suppressed → radii ≈ radius-of-gyration of CORE alone → cells rendered smaller than their visible halo.
+
+After: `1.0` (linear weighting). Halo pixels vote proportional to brightness. Weighted variance reflects both core and halo spread → radii match the visible cell extent.
+
+Concrete effect on 12345 at f1:
+- Before (exp=1.3): a=33.5 (vs best22 42.7, −9 px)
+- After (exp=1.0): a=40.2 (vs best22 42.7, −2.5 px)
+
+**4. Position prior 10 → 30** (`C++/config/config.yaml`)
+
+Before: `position_prior_weight: 10`, `threshold: 20`. Penalty = 10 × (drift-20)². A 60 px drift cost 16,000 — insufficient to override image-cost gains from drifting into orphan bright regions (frequently 20-40k).
+
+After: weight=30. Same drift now costs 48,000, dominating typical image-cost drift incentives. Observed in run 192227: per-frame drift stayed within the threshold for parent cells; only the e9077 daughters diverged significantly from best22's track (but due to different Monte Carlo split placement at f3, not continuous drift).
+
+**Files changed:**
+
+- `C++/src/CellUniverse.cpp:660-682`: two-sided growth cap with `std::clamp`, both up and down factors.
+- `C++/config/config.yaml`:
+  - `minARadius/BRadius/CRadius: 10 → 5`
+  - `pcaShapeWeightExponent: 1.3 → 1.0`
+  - `position_prior_weight: 10 → 30`
+  - `use_edge_shape_fit: true → false` (committed earlier — baseline PCA shape path)
+
+**Run 192227 results (full 22 frames, against best22):**
+
+| Metric | 082209 (prev best) | 192227 (this run) |
+|---|---|---|
+| Splits on-time | 7/8 (1f2ed at f12) | **8/8** |
+| f1 avg ΔR | 2.58 | **1.57** |
+| f11 avg ΔR | 6.44 | **3.97** |
+| f22 avg ΔR | 10.96 | **6.96** |
+| f22 max Δpos | 209 | 209 (e9077 daughter MC divergence — same) |
+
+### Remaining minor issues
+
+- **e3d03 trajectory over 22 frames**: starts (115, 204, 85), ends (96, 269, 60) — 67 px y drift, 25 px z drift accumulated. Per-frame drift is within bounds (≤15 px) but the direction is consistent, accumulating. Would need direction-penalized prior or trajectory-smoothness term.
+- **e9077 daughter Monte Carlo divergence**: daughters born at different positions than best22 at f3 split → tracks diverge over time (up to 200 px by f22). Biology may still be correct; just different MC path than best22.
+
+### Rollback
+
+Revert each config value:
+- `minARadius/BRadius/CRadius: 5 → 10`
+- `pcaShapeWeightExponent: 1.0 → 1.3`
+- `position_prior_weight: 30 → 10`
+- Restore one-sided growth cap in CellUniverse.cpp (change `std::clamp(fA, capDownA, capUpA)` back to `std::min(fA, capUpA)`).
+
+
+
