@@ -63,6 +63,10 @@ private:
                                                       const std::string &frameStem,
                                                       float percentileHigh) const;
     DetectedCell makeDetectedCellFromComponent(const EmbryoBrightTracker::Comp3DStat &component) const;
+    void estimateAdaptiveRadii(const EmbryoBrightTracker::Comp3DStat &component,
+                               float &majorRadius,
+                               float &bRadius,
+                               float &minorRadius) const;
     std::optional<DetectedCell> detectLocalSeededCell(const std::vector<cv::Mat> &volume,
                                                       const EmbryoBrightTracker::Comp3DStat &seedComponent,
                                                       float thresholdLow) const;
@@ -77,7 +81,9 @@ private:
                               int &clampedMinorCount,
                               int &verySmallCount,
                               int &veryLargeCount,
-                              int &nearDuplicatePairs) const;
+                              int &nearDuplicatePairs,
+                              int &flattenedCount,
+                              int &tinyFragmentCount) const;
     bool componentContainsBrightSeed(const EmbryoBrightTracker::Comp3DStat &component,
                                      const std::vector<EmbryoBrightTracker::Comp3DStat> &highComponents) const;
     std::vector<Spheroid> makeSpheroids(const std::vector<DetectedCell> &cells) const;

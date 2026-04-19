@@ -201,23 +201,56 @@ bool CellGroundTruthBuilder::componentContainsBrightSeed(
 CellGroundTruthBuilder::DetectedCell CellGroundTruthBuilder::makeDetectedCellFromComponent(
     const EmbryoBrightTracker::Comp3DStat &component) const
 {
-    const float dx = static_cast<float>(component.x1 - component.x0 + 1);
-    const float dy = static_cast<float>(component.y1 - component.y0 + 1);
-    const float dz = static_cast<float>(component.z1 - component.z0 + 1);
-
     DetectedCell cell;
     cell.centerScaled = component.center();
-    cell.majorRadius = std::max(0.5f * std::max(dx, dy),
-                                config.cell ? static_cast<float>(config.cell->minMajorRadius) : 10.0f);
-    cell.bRadius = std::max(0.5f * std::min(dx, dy), 1.0f);
-    cell.minorRadius = std::max(0.5f * dz,
-                                config.cell ? static_cast<float>(config.cell->minMinorRadius) : 5.0f);
-    cell.bRadius = std::min(cell.bRadius, cell.majorRadius);
-    cell.minorRadius = std::min(cell.minorRadius, cell.majorRadius);
+    estimateAdaptiveRadii(component, cell.majorRadius, cell.bRadius, cell.minorRadius);
     cell.voxelCount = component.vox;
     cell.meanIntensity = component.meanI();
     cell.component = component;
     return cell;
+}
+
+void CellGroundTruthBuilder::estimateAdaptiveRadii(const EmbryoBrightTracker::Comp3DStat &component,
+                                                   float &majorRadius,
+                                                   float &bRadius,
+                                                   float &minorRadius) const
+{
+    const float dx = static_cast<float>(component.x1 - component.x0 + 1);
+    const float dy = static_cast<float>(component.y1 - component.y0 + 1);
+    const float dz = static_cast<float>(component.z1 - component.z0 + 1);
+    const float xyMaxRadius = 0.5f * std::max(dx, dy);
+    const float xyMinRadius = 0.5f * std::min(dx, dy);
+    const float zRadius = 0.5f * dz;
+    const float componentVolume = std::max(1.0f, static_cast<float>(component.vox));
+    const float equivalentRadius = std::cbrt((3.0f * componentVolume) / (4.0f * static_cast<float>(M_PI)));
+    const float bboxVolume = std::max(1.0f, dx * dy * dz);
+    const float fillRatio = clampf(componentVolume / bboxVolume, 0.0f, 1.0f);
+
+    const auto blendTowardAxis = [&](float axisRadius, float supportFactor) {
+        const float safeAxis = std::max(axisRadius, 1e-3f);
+        const float safeEquiv = std::max(equivalentRadius, 1e-3f);
+        const float agreement = std::min(safeAxis, safeEquiv) / std::max(safeAxis, safeEquiv);
+        const float blend = clampf(fillRatio * agreement * supportFactor, 0.0f, 1.0f);
+        return equivalentRadius + blend * (axisRadius - equivalentRadius);
+    };
+
+    const float minMajor = config.cell ? static_cast<float>(config.cell->minMajorRadius) : 10.0f;
+    const float maxMajor = config.cell ? static_cast<float>(config.cell->maxMajorRadius) : 50.0f;
+    const float minMinor = config.cell ? static_cast<float>(config.cell->minMinorRadius) : 5.0f;
+    const float maxMinor = config.cell ? static_cast<float>(config.cell->maxMinorRadius) : 45.0f;
+    const float minB = (config.cell && config.cell->maxBRadius > 0.0f)
+        ? static_cast<float>(config.cell->minBRadius)
+        : minMajor;
+    const float maxB = (config.cell && config.cell->maxBRadius > 0.0f)
+        ? static_cast<float>(config.cell->maxBRadius)
+        : maxMajor;
+
+    const float xySupport = clampf(xyMinRadius / std::max(equivalentRadius, 1e-3f), 0.35f, 1.0f);
+    const float zSupport = clampf(zRadius / std::max(equivalentRadius, 1e-3f), 0.10f, 1.0f);
+
+    majorRadius = clampf(std::max(equivalentRadius, blendTowardAxis(xyMaxRadius, 1.0f)), minMajor, maxMajor);
+    bRadius = clampf(blendTowardAxis(xyMinRadius, xySupport), minB, majorRadius);
+    minorRadius = clampf(blendTowardAxis(zRadius, zSupport * zSupport), minMinor, std::min(maxMinor, majorRadius));
 }
 
 std::optional<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::detectLocalSeededCell(
@@ -306,8 +339,23 @@ std::vector<EmbryoBrightTracker::Comp3DStat> CellGroundTruthBuilder::collapseNea
         bool duplicate = false;
         for (const auto &existing : merged)
         {
-            if (squaredDistanceXY(seed.center(), existing.center()) <= mergeDistanceSq &&
-                absoluteDistanceZ(seed.center(), existing.center()) <= mergeDistance * 2.0f)
+            const float distXY = std::sqrt(squaredDistanceXY(seed.center(), existing.center()));
+            const float distZ = absoluteDistanceZ(seed.center(), existing.center());
+            const float sizeRatio = static_cast<float>(std::min(seed.vox, existing.vox)) /
+                                    static_cast<float>(std::max(seed.vox, existing.vox));
+            const float intensityRatio = std::min(seed.meanI(), existing.meanI()) /
+                                         std::max(std::max(seed.meanI(), existing.meanI()), 1e-6f);
+
+            const bool nearlySamePeak =
+                distXY * distXY <= (0.40f * mergeDistance) * (0.40f * mergeDistance) &&
+                distZ <= mergeDistance;
+            const bool likelySatellite =
+                distXY * distXY <= mergeDistanceSq &&
+                distZ <= mergeDistance * 2.0f &&
+                sizeRatio < 0.45f &&
+                intensityRatio < 0.95f;
+
+            if (nearlySamePeak || likelySatellite)
             {
                 duplicate = true;
                 break;
@@ -349,8 +397,18 @@ bool CellGroundTruthBuilder::shouldSplitCoarseComponent(
         }
     }
 
-    const float splitThreshold = std::max(activeProfile.seedSplitSeparation, coarseCell.majorRadius * 0.75f);
-    return maxSeedSeparationXY >= splitThreshold;
+    const float dominantSeedVox = static_cast<float>(containedSeeds.front().vox);
+    const float secondSeedVox = static_cast<float>(containedSeeds[1].vox);
+    const float balance = secondSeedVox / std::max(dominantSeedVox, 1.0f);
+
+    const float softSplitThreshold = std::max(4.0f, coarseCell.majorRadius * 0.45f);
+    if (balance >= 0.28f && maxSeedSeparationXY >= softSplitThreshold)
+    {
+        return true;
+    }
+
+    const float hardSplitThreshold = std::max(activeProfile.seedSplitSeparation, coarseCell.majorRadius * 0.75f);
+    return maxSeedSeparationXY >= hardSplitThreshold;
 }
 
 std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::detectCellsAtPercentile(
@@ -508,8 +566,27 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::pruneL
     std::sort(voxelCounts.begin(), voxelCounts.end());
     const float medianVoxelCount = static_cast<float>(voxelCounts[voxelCounts.size() / 2]);
     const float minMinor = config.cell ? static_cast<float>(config.cell->minMinorRadius) : 5.0f;
+    const float minMajor = config.cell ? static_cast<float>(config.cell->minMajorRadius) : 10.0f;
+    std::vector<float> majorRadii;
+    std::vector<float> meanIntensities;
+    majorRadii.reserve(cells.size());
+    meanIntensities.reserve(cells.size());
+    for (const auto &cell : cells)
+    {
+        majorRadii.push_back(cell.majorRadius);
+        meanIntensities.push_back(cell.meanIntensity);
+    }
+    std::sort(majorRadii.begin(), majorRadii.end());
+    std::sort(meanIntensities.begin(), meanIntensities.end());
+    const float medianMajor = majorRadii[majorRadii.size() / 2];
+    const float medianMeanIntensity = meanIntensities[meanIntensities.size() / 2];
     const float satelliteVoxelCutoff = std::max(3500.0f, medianVoxelCount * 0.50f);
     const float embryoThinFragmentCutoff = std::max(10000.0f, medianVoxelCount * 0.35f);
+    const float smallSatelliteVoxelCutoff = std::max(2200.0f, medianVoxelCount * 0.35f);
+    const float smallSatelliteMajorCutoff = std::max(minMajor + 1.0f, medianMajor * 0.82f);
+    const float microFragmentVoxelCutoff = std::max(1400.0f, medianVoxelCount * 0.16f);
+    const float microFragmentMajorCutoff = std::max(minMajor, medianMajor * 0.62f);
+    const float microFragmentIntensityCutoff = std::max(0.08f, medianMeanIntensity * 0.70f);
 
     std::vector<DetectedCell> filtered;
     filtered.reserve(cells.size());
@@ -553,6 +630,59 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::pruneL
             }
         }
 
+        if (!isSatellite &&
+            static_cast<float>(cell.voxelCount) < smallSatelliteVoxelCutoff &&
+            cell.majorRadius < smallSatelliteMajorCutoff)
+        {
+            for (size_t j = 0; j < cells.size(); ++j)
+            {
+                if (i == j)
+                {
+                    continue;
+                }
+
+                const auto &other = cells[j];
+                if (other.voxelCount < std::max(static_cast<int>(cell.voxelCount * 1.8f),
+                                                static_cast<int>(medianVoxelCount * 0.90f)))
+                {
+                    continue;
+                }
+
+                const float nearThreshold = std::max(activeProfile.dedupDistance * 1.75f,
+                                                     0.95f * std::max(cell.majorRadius, other.majorRadius));
+                if (squaredDistanceXY(cell.centerScaled, other.centerScaled) <= nearThreshold * nearThreshold &&
+                    absoluteDistanceZ(cell.centerScaled, other.centerScaled) <= std::max(18.0f, nearThreshold * 3.0f))
+                {
+                    isSatellite = true;
+                    break;
+                }
+            }
+        }
+
+        if (!isSatellite &&
+            static_cast<float>(cell.voxelCount) < microFragmentVoxelCutoff &&
+            cell.majorRadius < microFragmentMajorCutoff &&
+            cell.meanIntensity < microFragmentIntensityCutoff)
+        {
+            for (size_t j = 0; j < cells.size(); ++j)
+            {
+                if (i == j)
+                {
+                    continue;
+                }
+
+                const auto &other = cells[j];
+                const float nearThreshold = std::max(activeProfile.dedupDistance * 2.25f,
+                                                     1.10f * std::max(cell.majorRadius, other.majorRadius));
+                if (squaredDistanceXY(cell.centerScaled, other.centerScaled) <= nearThreshold * nearThreshold &&
+                    absoluteDistanceZ(cell.centerScaled, other.centerScaled) <= std::max(20.0f, nearThreshold * 4.0f))
+                {
+                    isSatellite = true;
+                    break;
+                }
+            }
+        }
+
         if (!isSatellite)
         {
             filtered.push_back(cell);
@@ -567,13 +697,17 @@ float CellGroundTruthBuilder::scoreCandidateCells(const std::vector<DetectedCell
                                                   int &clampedMinorCount,
                                                   int &verySmallCount,
                                                   int &veryLargeCount,
-                                                  int &nearDuplicatePairs) const
+                                                  int &nearDuplicatePairs,
+                                                  int &flattenedCount,
+                                                  int &tinyFragmentCount) const
 {
     totalVoxels = 0;
     clampedMinorCount = 0;
     verySmallCount = 0;
     veryLargeCount = 0;
     nearDuplicatePairs = 0;
+    flattenedCount = 0;
+    tinyFragmentCount = 0;
 
     if (cells.empty())
     {
@@ -585,11 +719,14 @@ float CellGroundTruthBuilder::scoreCandidateCells(const std::vector<DetectedCell
     const float maxMajor = config.cell ? static_cast<float>(config.cell->maxMajorRadius) : 40.0f;
 
     std::vector<float> majorRadii;
+    std::vector<int> voxelCounts;
     majorRadii.reserve(cells.size());
+    voxelCounts.reserve(cells.size());
     for (const auto &cell : cells)
     {
         totalVoxels += cell.voxelCount;
         majorRadii.push_back(cell.majorRadius);
+        voxelCounts.push_back(cell.voxelCount);
         if (cell.minorRadius <= minMinor + 0.25f)
         {
             clampedMinorCount++;
@@ -604,6 +741,7 @@ float CellGroundTruthBuilder::scoreCandidateCells(const std::vector<DetectedCell
         }
     }
 
+    std::sort(voxelCounts.begin(), voxelCounts.end());
     for (size_t i = 0; i < cells.size(); ++i)
     {
         for (size_t j = i + 1; j < cells.size(); ++j)
@@ -619,15 +757,31 @@ float CellGroundTruthBuilder::scoreCandidateCells(const std::vector<DetectedCell
 
     std::sort(majorRadii.begin(), majorRadii.end());
     const float medianMajor = majorRadii[majorRadii.size() / 2];
+    const float medianVoxelCount = static_cast<float>(voxelCounts[voxelCounts.size() / 2]);
     const float meanVoxelCount = static_cast<float>(totalVoxels) / static_cast<float>(cells.size());
 
-    return 0.03f * meanVoxelCount
+    for (const auto &cell : cells)
+    {
+        const float ratio = cell.minorRadius / std::max(cell.majorRadius, 1e-3f);
+        if (ratio < 0.72f)
+        {
+            flattenedCount++;
+        }
+        if (static_cast<float>(cell.voxelCount) < std::max(1200.0f, medianVoxelCount * 0.25f) &&
+            cell.majorRadius < medianMajor * 0.85f)
+        {
+            tinyFragmentCount++;
+        }
+    }
+
+    return 0.028f * meanVoxelCount
            + 0.20f * medianMajor
-           + 0.10f * static_cast<float>(cells.size())
            - 2.50f * static_cast<float>(clampedMinorCount)
            - 1.25f * static_cast<float>(verySmallCount)
            - 3.00f * static_cast<float>(veryLargeCount)
-           - 1.50f * static_cast<float>(nearDuplicatePairs);
+           - 1.50f * static_cast<float>(nearDuplicatePairs)
+           - 1.75f * static_cast<float>(flattenedCount)
+           - 1.25f * static_cast<float>(tinyFragmentCount);
 }
 
 std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::detectCellsInVolume(
@@ -646,13 +800,17 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::detect
         int verySmallCount = 0;
         int veryLargeCount = 0;
         int nearDuplicatePairs = 0;
+        int flattenedCount = 0;
+        int tinyFragmentCount = 0;
         const float score = scoreCandidateCells(
             cells,
             totalVoxels,
             clampedMinorCount,
             verySmallCount,
             veryLargeCount,
-            nearDuplicatePairs);
+            nearDuplicatePairs,
+            flattenedCount,
+            tinyFragmentCount);
 
         std::cout << "[GroundTruth Candidate] percentile=" << percentile
                   << " cells=" << cells.size()
@@ -661,6 +819,8 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::detect
                   << " very_small=" << verySmallCount
                   << " very_large=" << veryLargeCount
                   << " near_pairs=" << nearDuplicatePairs
+                  << " flattened=" << flattenedCount
+                  << " tiny_fragments=" << tinyFragmentCount
                   << " score=" << score
                   << std::endl;
 
