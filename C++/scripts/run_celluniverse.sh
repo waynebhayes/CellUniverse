@@ -491,17 +491,17 @@ fi
 echo "==========================================" >> "$DEBUG_LOG"
 echo "Finished: $(date)" >> "$DEBUG_LOG"
 
-# Convert output PNGs to multi-page TIFFs for easy viewing.
-CONVERT_SCRIPT="$SCRIPT_DIR/convert_png_to_tiff.py"
-if [ -f "$CONVERT_SCRIPT" ] && command -v python3 >/dev/null 2>&1; then
-  echo "Converting PNGs to TIFFs..."
-  if [ -d "$OUT_DIR/real" ]; then
-    python3 "$CONVERT_SCRIPT" --i "$OUT_DIR/real" --o "$OUT_DIR/real_tiff" && echo "  real_tiff done." || echo "  [WARN] real_tiff conversion failed."
-  fi
-  if [ -d "$OUT_DIR/synth" ]; then
-    python3 "$CONVERT_SCRIPT" --i "$OUT_DIR/synth" --o "$OUT_DIR/synth_tiff" && echo "  synth_tiff done." || echo "  [WARN] synth_tiff conversion failed."
-  fi
-fi'
+# # Convert output PNGs to multi-page TIFFs for easy viewing.
+# CONVERT_SCRIPT="$SCRIPT_DIR/convert_png_to_tiff.py"
+# if [ -f "$CONVERT_SCRIPT" ] && command -v python3 >/dev/null 2>&1; then
+#   echo "Converting PNGs to TIFFs..."
+#   if [ -d "$OUT_DIR/real" ]; then
+#     python3 "$CONVERT_SCRIPT" --i "$OUT_DIR/real" --o "$OUT_DIR/real_tiff" && echo "  real_tiff done." || echo "  [WARN] real_tiff conversion failed."
+#   fi
+#   if [ -d "$OUT_DIR/synth" ]; then
+#     python3 "$CONVERT_SCRIPT" --i "$OUT_DIR/synth" --o "$OUT_DIR/synth_tiff" && echo "  synth_tiff done." || echo "  [WARN] synth_tiff conversion failed."
+#   fi
+# fi
 
 hr "="
 echo "Run finished (exit=0)."

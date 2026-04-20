@@ -128,6 +128,12 @@ class Ellipsoid
         //   D1_seed = snapshot.center - 0.5 * splitAxisLength * splitAxisDir
         //   D2_seed = snapshot.center + 0.5 * splitAxisLength * splitAxisDir
         void worldSplitAxis(cv::Point3f &dir, float &length) const;
+        // Signal-guided perturbation override: jump cell to a new world-space
+        // position (used by the signal-guided perturbation path to teleport
+        // cells onto bright clusters). See yp ffc1917.
+        void setPosition(float x, float y, float z) {
+            _position = cv::Point3f(x, y, z);
+        }
         float getBrightness() const { return _brightness; }
         double getVolume() const {
             return static_cast<double>(getARadius()) *

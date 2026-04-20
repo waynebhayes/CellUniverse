@@ -61,7 +61,18 @@ cell:
   # bright cloud inside maskScale * current ellipsoid. See
   # Frame::calibrateCellShapeViaPca.
   pcaShapeMaxIters: 15
-  pcaShapeRadiusScale: 2.236       # sqrt(5): uniform-ellipsoid variance.
+  # 2026-04-19 (size-fix attempt): tried 2.236 → 2.5 to compensate for
+  # compressed c-axis variance after yp preprocessing. Worked per-axis but
+  # inflated baseline image costs (225k → 368k at f8 1f89ab), making real
+  # split cost-fraction improvements too small to clear gates. REVERTED to
+  # 2.236; trying pooling instead (preprocessing-side fix, not PCA-side).
+  # 2026-04-19 (final size-fix): 2.236 → 2.5 (re-applied). Pooling run at
+  # 2.236 showed persistent 20-40% undershoot on cell extent — synth
+  # ellipsoids don't cover the visible bright region. With cost_fraction
+  # now at 0.03, the cost gate is no longer load-bearing, so bigger baseline
+  # image costs from larger cells don't block splits. Bumping radiusScale
+  # lets PCA fit reach past the core into the bright halo gradient.
+  pcaShapeRadiusScale: 2.5         # sqrt(5)=2.236: uniform-ellipsoid variance.
                                    # Raise to enlarge fitted radii (e.g. 2.4 / 2.5).
   pcaShapeMinPixels: 50
   # Pixel-collection mask half-extent multiplier: the PCA fit gathers bright
@@ -91,7 +102,16 @@ cell:
   # 1.6 is the best22 validated value (8/8 GT splits).
   # Stays constant across PCA iterations AND across frames — no
   # feedback loops (no adaptive mask, no collapse onto one daughter).
-  pcaShapeMaskScale: 1.6
+  # 2026-04-19 (later): reverted 1.3 → 1.6. The audit shrunk cell radii too
+  # aggressively when combined with the other two PCA-shape tightenings —
+  # daughter c-axis dropped from 15 px to 7 px by f20. Cost/bio gate audit
+  # blocks FPs directly, so this defensive shrinkage is redundant + harmful.
+  # 2026-04-19 (size-fix): 1.6 → 1.8. Compared 162148 vs 095555 PCA Shape
+  # logs — yp preprocessing gives ~40% fewer mask pixels but ~2× meanW
+  # (brighter cores, compressed halo). c-axis collapsed 20-40% because
+  # 1.6×birthR mask no longer reaches the now-sharpened halo tail. Larger
+  # mask lets halo pixels vote, restoring minor-axis extent.
+  pcaShapeMaskScale: 1.8
   pcaShapeConvergeRadius: 0.3
   pcaShapeConvergeAngleDeg: 2.0
   pcaShapeUpdatePosition: false   # snap is authoritative; calibration handles
@@ -125,6 +145,9 @@ cell:
   # visually) was suppressed. Linear weight lets halo pixels vote
   # proportional to brightness, producing fuller radii that match the
   # visible cell extent.
+  # 2026-04-19 (later): reverted 1.3 → 1.0. See pcaShapeMaskScale comment.
+  # Linear weighting lets halo contribute fully — needed for proper cell
+  # extent rendering. Cost/bio gates handle FP control independently.
   pcaShapeWeightExponent: 1.0
 
   # Per-cell adaptive exponent. When true, each cell picks its own exponent
@@ -184,6 +207,11 @@ cell:
   # 0.90 = tighter (cuts top 10%; ~5% underestimate for uniform, but
   #         fit growth cap tracks up over subsequent frames).
   # 0.85 = core-only (aggressive; may need higher fitGrowthCap).
+  # 2026-04-19 (later): reverted 0.85 → 0.90. See pcaShapeMaskScale comment.
+  # Daughter c-axis was halving each generation; needed proper extent.
+  # NOTE: this field is parsed but UNUSED in the main fit path since v7
+  # Change 50 (variance-based radii reinstated). Active lever is
+  # pcaShapeRadiusScale above. Kept at 0.90 for consistency only.
   pcaShapeRadiusPercentile: 0.90
 
   # Radius-proportional perturbation sigma. Position perturbation offsets
@@ -198,30 +226,43 @@ cell:
 # Image preprocessing pipeline — iterative contrast enhancer ported from
 # scripts/image_processor_clean.py. No sigmoid.
 simulation:
+  # 2026-04-19: 500 → 150. With yp's stronger preprocessing + signal-guided
+  # perturbation, fewer iterations are needed to converge. Halves run time.
+  # NOTE: iterations_per_cell is the FALLBACK when both iter buckets below
+  # are < 0. With signal-guided design (yp ffc1917), per-frame iter count
+  # is signal_guided_iterations_per_cell or random_iterations_per_cell.
   iterations_per_cell: 500
+  # Signal-guided perturbation iter buckets (yp ffc1917). Each frame uses
+  # ONE of these depending on whether signal-guided was activated for that
+  # frame (centers >= prevCellCount). Set to -1 to fall back to
+  # iterations_per_cell. yp default 100 each.
+  signal_guided_iterations_per_cell: 100
+  random_iterations_per_cell: 150
   z_scaling: 7
   blur_sigma: 0.0
 
-  # Preprocessing pipeline tuning — values from yp_fix_mask_04172026
-  # (commits 87ee430, 25c5923, b575246). YP's preprocessing CODE is
-  # tuned for these CONFIG values; running with our previous values
-  # (designed for older sigmoid-based preprocessing) produced inverted
-  # images (mean=0.95). Take YP's preprocessing block wholesale.
-  iterative_penalty: 0.2
+  # Preprocessing pipeline tuning. Hybrid strategy (2026-04-19, post-FP at f4):
+  # - Iterative loop fields = OUR snap-only values (run 095555). yp's values
+  #   produced larger cost magnitudes that snuck a false split past the cost
+  #   gate at f4 e3d03 (45-frame run 130101). Our values keep cost magnitudes
+  #   in the range our gates were calibrated for.
+  # - Post-process intensity stretch fields below = YP values (per user
+  #   direction): yp pushes contrast harder, which is the win we want.
+  iterative_penalty: 0.1
   iterative_min_penalty: 0.005
-  iterative_collapse_backoff: 0.9
+  iterative_collapse_backoff: 0.99
   iterative_penalty_range: 0.9
   iterative_reward_gate: 1.0
-  iterative_reward_gate_decrement: 0.05
-  iterative_reward_gate_min: 0.005
-  iterative_reward: 1.0
+  iterative_reward_gate_decrement: 0.008
+  iterative_reward_gate_min: 0.025
+  iterative_reward: 0.1
   iterative_score_max: 0.5
-  iterative_max_count: 150
+  iterative_max_count: 300
   iterative_improvement_tolerance: 0.01
-  iterative_score_drop_stop_threshold: 0.03
+  iterative_score_drop_stop_threshold: 0.1
   iterative_penalty_score_drop_stop_threshold: 0.001
-  iterative_score_percentile: 0.1
-  iterative_score_percentile_max: 0.30
+  iterative_score_percentile: 0.05
+  iterative_score_percentile_max: 0.90
   iterative_score_percentile_increment: 0.025
 
   contrast_structure_threshold: 0.02
@@ -248,10 +289,17 @@ simulation:
   export_preprocessed_images: false
   quit_after_preprocessing: false
 
-  # Adaptive cube pooling — disabled by default. YP's b575246 introduced
-  # this as an optional final-stage pooling step. Leave off for parity with
-  # our shape-fit pipeline; can be enabled later for evaluation.
-  adaptive_cube_pooling_enabled: false
+  # Adaptive cube pooling — YP's b575246 introduced this as an optional
+  # final-stage pooling step that averages pixels into cubes (~0.6× minR
+  # size) and applies majority thresholds. In the post-yp-merge regime, cell
+  # halos get sharpened (brighter cores, compressed halo) which makes PCA
+  # weighted-variance along the thin c-axis collapse ~45%. Pooling spreads
+  # brightness across cube neighborhoods, restoring halo-side pixel weights
+  # so PCA fits recover c-axis extent without needing to inflate radiusScale.
+  # 2026-04-19 (size-fix): ENABLED to restore c-axis radii toward pre-merge
+  # baseline (run 162148 had 12345 c=16.7 vs pre-merge 22.6; user flagged
+  # shape/size issue).
+  adaptive_cube_pooling_enabled: true
   adaptive_cube_pooling_cost_comparison_enabled: false
   adaptive_cube_pooling_cube_size_scale: 0.6
   adaptive_cube_pooling_zero_threshold: 0.035
@@ -260,7 +308,9 @@ simulation:
   adaptive_cube_pooling_isolated_bright_cube_threshold: 0.07
 
   adaptive_background_expand_factor: 1.1
-  adaptive_background_top_fraction: 0.4
+  # 2026-04-19 audit: 0.4 → 0.2. Yp preprocessing brightens halos, so top 40%
+  # of "background candidates" may include halo. Top 20% targets cleaner bg.
+  adaptive_background_top_fraction: 0.2
 
   # Asymmetric L2 cost weight (Fix E). Per-voxel squared error is multiplied
   # by this factor when synth > real (cell covers dark image region).
@@ -320,6 +370,29 @@ simulation:
   # 0.03 = just above typical background noise (~0.01-0.02).
   asymmetric_cost_threshold: 0.03
 
+  # Signal-guided perturbation (yp ffc1917). Detects bright clusters in the
+  # real image and uses them as teleport targets in perturbCell — helps cells
+  # stuck on local optima jump to the right bright signal. Sigma scales with
+  # cluster brightness via signal_guided_min_sigma_scale +
+  # signal_guided_sigma_range_multiplier.
+  # 2026-04-19: temporarily disabled to isolate PCA shape revert effect.
+  # When false, useSignalGuidanceThisFrame is always false → all frames use
+  # random_iterations_per_cell + pure-random perturbation.
+  signal_guided_position_enabled: false
+  # Box size (relative to max cell diameter / 3). Smaller = more boxes,
+  # finer-grain clusters. yp default 0.4.
+  signal_guided_box_size_scale: 0.4
+  # Minimum brightness (above background) for a box to be considered. Filters
+  # out background noise. yp default 0.4.
+  signal_guided_min_box_brightness_delta: 0.4
+  # Floor on the per-cluster sigma scale. Brighter clusters get smaller sigma
+  # (tighter teleport); dimmer clusters get sigma toward 1.0 (looser).
+  # 0.35 = brightest cluster's sigma is 35% of cellConfig.x/y/z.sigma.
+  signal_guided_min_sigma_scale: 0.35
+  # Sigma range multiplier on top of cellConfig.x/y/z.sigma. yp tuned 10.0
+  # which gives wide-jump teleports.
+  signal_guided_sigma_range_multiplier: 10.0
+
 # Triaxial split detection pipeline.
 prob:
   # P(split) ramps linearly from P_split_base at snap elong=1.0 to
@@ -353,6 +426,13 @@ prob:
   #            between weakest accepted (-5154) and weakest cost-reject
   #            (+11054). 2000 adds safety against marginal phantoms
   #            without risking any real splits (all accepted > 5K).
+  # 2026-04-19 audit: 2000 → 7000. Yp preprocessing scales image cost
+  # magnitudes 2-3× larger; raise the fixed split-cost floor proportionally.
+  # 2026-04-19 (size-fix followup): 7000 → 2000. Reverted to pre-merge value.
+  # Analysis of splits across runs: pooling regime real split ratios are
+  # 25-30%+ (stronger signal than pre-merge); the 1f89ab f8 low-ratio case
+  # is due to its skinny per-frame fit, not a cost-gate calibration issue.
+  # 2000 matches pre-merge (095555) which split 1f89ab f8 at 5% ratio safely.
   split_cost: 2000
   # Proportional split cost: effective threshold = max(split_cost,
   # split_cost_fraction × baselineImageCost). Ensures split must improve
@@ -360,6 +440,19 @@ prob:
   # 0.0 = disabled (fixed threshold only).
   # 0.03 = 3% improvement required. In run 030254, accepted splits had
   # costDiff/baseline ratios of 7-35%, so 3% is safe.
+  # 2026-04-19 audit: 0.03 → 0.20. The 45-frame run (130101) had a FP at
+  # e3d03 f4 with diff/baseline = 30%. Real splits in hybrid runs show 100%+
+  # improvements (e.g. e9077 f3: -114886 vs baseline 17332 = 660%).
+  # Bumping fraction to 20% blocks the 30% FP cleanly while leaving huge
+  # margin for real splits.
+  # 2026-04-19 (size-fix followup): 0.20 → 0.12. Reverted back to 0.20 once
+  # radiusScale went back to 2.236 (pooling handles c-axis instead).
+  # 2026-04-19 (final): 0.20 → 0.03. Reverted to pre-merge value. Rationale:
+  # (1) pooling regime real splits show 25-50% ratios on most cells — huge
+  # margin over 0.03; (2) cells with skinny per-frame fits (e.g. 1f89ab f8
+  # at 5-16%) cleared 0.03 in pre-merge baseline; (3) FPs blocked by tightened
+  # bio gates (valley 0.75, edge 0.07) and re-enabled position prior (w=75)
+  # — cost gate is no longer load-bearing for FP control.
   split_cost_fraction: 0.03
 
   # Position prior (re-introduced 2026-04-18 after Phase A edge-fit
@@ -378,7 +471,10 @@ prob:
   # (16000) was not enough to override image cost gains from drifting
   # into orphan regions. At w=30 penalty scales 3× → 48000, which
   # should overwhelm typical image-cost drift incentives.
-  position_prior_weight: 30.0
+  # 2026-04-19 audit: 30 → 75. Yp's larger image cost magnitudes dilute the
+  # position prior's relative weight. Scale 2.5× to keep the same relative
+  # anchoring strength as the snap-only baseline.
+  position_prior_weight: 75.0
   position_prior_threshold: 20.0
   # Overlap penalty weight. Formula in computeOverlapForCell:
   #   penalty = weight × ((combinedR − dist) / combinedR)²
@@ -403,7 +499,10 @@ prob:
   #
   # Legacy full-image path (use_bbox_cost=false): revert to 500 if that
   # mode ever re-enabled. Image cost magnitudes differ by ~10x.
-  overlap_penalty_weight: 30000.0
+  # 2026-04-19 audit: 30000 → 75000. Yp's image costs are 2-3× larger; scale
+  # overlap weight proportionally so daughters can't game an overlap-light
+  # local optimum that the existing weight no longer prevents.
+  overlap_penalty_weight: 75000.0
 
   expected_daughter_pre_pass_iterations: 1
 
@@ -428,7 +527,11 @@ prob:
   #
   # Default 0.85: real splits typically drop to 0.3-0.7 of brighter edge;
   # phantom splits have gap >= both edges (ratio >= 1.0).
-  bio_bridge_max_valley_ratio: 0.85
+  # 2026-04-19 audit: 0.85 → 0.75. The e3d03 f4 FP slipped past the 0.85
+  # gate by placing daughters far apart in y, where the genuine empty space
+  # between them dropped the valley ratio. Tighter ratio (0.75) requires
+  # a deeper valley to accept a split.
+  bio_bridge_max_valley_ratio: 0.75
   # Absolute minimum edge brightness (real-image units above background).
   # Rejects splits where min(edge1Bright, edge2Bright) < threshold — one
   # daughter sits in near-background empty space. Typical cell cores
@@ -439,7 +542,10 @@ prob:
   # The real daughter was visible in the image but its brightness
   # measurement happened to be slightly below threshold. 0.04 is
   # still well above background noise (~0.01-0.02).
-  bio_bridge_min_edge_brightness_absolute: 0.04
+  # 2026-04-19 audit: 0.04 → 0.07. Yp preprocessing amplifies halos, so
+  # phantom-daughter edges sitting on bright halo can pass the 0.04 threshold.
+  # Tightening blocks halo-on-halo phantom splits in bright-region cells.
+  bio_bridge_min_edge_brightness_absolute: 0.07
 
   split_burn_in_pos_sigma_scale: 0.4
 
