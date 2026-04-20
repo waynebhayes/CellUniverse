@@ -111,7 +111,14 @@ cell:
   # (brighter cores, compressed halo). c-axis collapsed 20-40% because
   # 1.6×birthR mask no longer reaches the now-sharpened halo tail. Larger
   # mask lets halo pixels vote, restoring minor-axis extent.
-  pcaShapeMaskScale: 1.8
+  # 2026-04-19 (post-merge daughter growth): 1.8 → 2.2. Run 193101 showed
+  # late-frame daughters (e9077 f20 grand-daughters) stay undersized —
+  # birth mask is frozen at split-time radii, so as real cells grow post-
+  # birth, PCA hits the mask ceiling and reference stops growing. 22% extra
+  # slack lets daughters follow their real growth through the ~2-5 frames
+  # before the next mitosis. 2.2 is a moderate bump — too much risks
+  # neighbor-cell contamination in dense f20+ clusters.
+  pcaShapeMaskScale: 2.2
   pcaShapeConvergeRadius: 0.3
   pcaShapeConvergeAngleDeg: 2.0
   pcaShapeUpdatePosition: false   # snap is authoritative; calibration handles

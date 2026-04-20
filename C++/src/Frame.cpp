@@ -144,17 +144,36 @@ std::vector<cv::Mat> Frame::generateSynthFrame()
     cv::Size shape = getImageShape();
     std::vector<cv::Mat> frame;
 
+    // Pre-compute per-cell rotation matrix + inv-radii-squared once per
+    // render pass (A4 optimization; mirrors generateSynthFrameFast).
+    const size_t nCells = cells.size();
+    std::vector<std::array<double, 9>> cellRotations(nCells);
+    std::vector<std::array<double, 3>> cellInvR2(nCells);
+    std::vector<float> cellMaxR(nCells);
+    std::vector<float> cellZ(nCells);
+    for (size_t c = 0; c < nCells; ++c) {
+        cells[c].generateInverseRotationMatrix(cellRotations[c]);
+        const double aR = cells[c].getARadius();
+        const double bR = cells[c].getBRadius();
+        const double cR = cells[c].getCRadius();
+        cellInvR2[c][0] = 1.0 / (aR * aR);
+        cellInvR2[c][1] = 1.0 / (bR * bR);
+        cellInvR2[c][2] = 1.0 / (cR * cR);
+        cellMaxR[c] = static_cast<float>(std::max({aR, bR, cR}));
+        cellZ[c] = cells[c].getZ();
+    }
+
     for (double z : z_slices)
     {
         Image synthImage = cv::Mat(shape, CV_32F, cv::Scalar(_backgroundValue));
         const float zf = static_cast<float>(z);
-        for (const auto &cell : cells)
+        for (size_t c = 0; c < nCells; ++c)
         {
-            const float cellMaxR = std::max({cell.getARadius(),
-                                             cell.getBRadius(),
-                                             cell.getCRadius()});
-            if (std::abs(zf - cell.getZ()) > cellMaxR) continue;
-            cell.draw(synthImage, simulationConfig, z);
+            if (std::abs(zf - cellZ[c]) > cellMaxR[c]) continue;
+            cells[c].drawWithRotation(synthImage, simulationConfig,
+                                      cellRotations[c],
+                                      cellInvR2[c][0], cellInvR2[c][1], cellInvR2[c][2],
+                                      zf);
         }
         frame.push_back(synthImage);
     }
@@ -409,6 +428,27 @@ std::vector<cv::Mat> Frame::generateSynthFrameFast(Ellipsoid &oldCell, Ellipsoid
     int affectedMin = -1;
     int affectedMax = -1;
 
+    // Optimization (A4): pre-compute per-cell rotation matrix + inv radii.
+    // These are constant across z-slices for a given render pass, so we
+    // hoist them out of the inner z-loop — saves 6 trig calls per
+    // (cell × z-slice) pair (~21k calls/frame at f20+).
+    const size_t nCells = cells.size();
+    std::vector<std::array<double, 9>> cellRotations(nCells);
+    std::vector<std::array<double, 3>> cellInvR2(nCells);  // [invA2, invB2, invC2]
+    std::vector<float> cellMaxR(nCells);
+    std::vector<float> cellZ(nCells);
+    for (size_t c = 0; c < nCells; ++c) {
+        cells[c].generateInverseRotationMatrix(cellRotations[c]);
+        const double aR = cells[c].getARadius();
+        const double bR = cells[c].getBRadius();
+        const double cR = cells[c].getCRadius();
+        cellInvR2[c][0] = 1.0 / (aR * aR);
+        cellInvR2[c][1] = 1.0 / (bR * bR);
+        cellInvR2[c][2] = 1.0 / (cR * cR);
+        cellMaxR[c] = static_cast<float>(std::max({aR, bR, cR}));
+        cellZ[c] = cells[c].getZ();
+    }
+
     // preallocate space to avoid reallocation
     synthFrame.reserve(z_slices.size());
     for (size_t i = 0; i < z_slices.size(); ++i)
@@ -427,17 +467,17 @@ std::vector<cv::Mat> Frame::generateSynthFrameFast(Ellipsoid &oldCell, Ellipsoid
 
         cv::Mat synthImage = cv::Mat(shape, CV_32F, cv::Scalar(_backgroundValue));
 
-        for (const auto &cell : cells)
+        for (size_t c = 0; c < nCells; ++c)
         {
             // Skip cells that can't contribute to this z-slice.
             // A cell at z=100 with maxR=25 only affects slices 75-125.
             // Without this check, ALL cells are drawn on every affected
             // slice — 80%+ of draw calls produce zero pixels.
-            const float cellMaxR = std::max({cell.getARadius(),
-                                             cell.getBRadius(),
-                                             cell.getCRadius()});
-            if (std::abs(static_cast<float>(z) - cell.getZ()) > cellMaxR) continue;
-            cell.draw(synthImage, simulationConfig, z);
+            if (std::abs(static_cast<float>(z) - cellZ[c]) > cellMaxR[c]) continue;
+            cells[c].drawWithRotation(synthImage, simulationConfig,
+                                      cellRotations[c],
+                                      cellInvR2[c][0], cellInvR2[c][1], cellInvR2[c][2],
+                                      static_cast<float>(z));
         }
 
         synthFrame.push_back(synthImage);

@@ -177,6 +177,15 @@ class Ellipsoid
 
         void draw(cv::Mat &image, const SimulationConfig &simulationConfig, float z = 0) const;
 
+        // Pre-computed rotation-matrix variant. Callers rendering the same cell
+        // onto many z-slices should call generateInverseRotationMatrix() once
+        // and pass the cached matrix + inv-radii-squared to this overload,
+        // avoiding 6 trig evaluations per slice.
+        void drawWithRotation(cv::Mat &image, const SimulationConfig &simulationConfig,
+                              const std::array<double, 9> &R_T,
+                              double invA2, double invB2, double invC2,
+                              float z = 0) const;
+
         void drawOutline(cv::Mat &image, float color, float z = 0) const;
 
         // positionScale: multiplier on the position perturbation offset.

@@ -389,15 +389,20 @@ void Ellipsoid::adjustBrightnessPerturbProbability(int direction, float delta)
 // Instead of checking a voxel matrix, we analytically test each pixel
 // against the rotated spheroid by inverse-transforming back to local coords.
 void Ellipsoid::draw(cv::Mat &image, const SimulationConfig &simulationConfig, float z) const{
-    int minX, maxX, minY, maxY;
-    if (!computeSliceBounds(image, z, minX, maxX, minY, maxY)) return;
-
     std::array<double, 9> R_T;
     generateInverseRotationMatrix(R_T);
-
     const double invA2 = 1.0 / (a * a);
     const double invB2 = 1.0 / (b * b);
     const double invC2 = 1.0 / (c * c);
+    drawWithRotation(image, simulationConfig, R_T, invA2, invB2, invC2, z);
+}
+
+void Ellipsoid::drawWithRotation(cv::Mat &image, const SimulationConfig &/*simulationConfig*/,
+                                 const std::array<double, 9> &R_T,
+                                 double invA2, double invB2, double invC2,
+                                 float z) const {
+    int minX, maxX, minY, maxY;
+    if (!computeSliceBounds(image, z, minX, maxX, minY, maxY)) return;
 
     scanEllipsoidSlice(
         minX, maxX, minY, maxY,

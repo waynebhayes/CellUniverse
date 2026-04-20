@@ -303,3 +303,92 @@ Single-file revert: `git checkout HEAD~1 -- C++/config/config.yaml` reverts all 
 - **e9077..a50 f19 miss** — dedicated investigation: fit quality at f19 vs split criteria.
 - **Pooling threshold tuning** — if visual shape is still unsatisfying, `adaptive_cube_pooling_majority_threshold: 0.7 → 0.4` would preserve edge cubes (tried mentally, not empirically this session).
 
+
+---
+
+## 2026-04-19: Post-birth daughter growth fix + 45-frame full recall (Change 6)
+
+**Status: ACTIVE — validated 20/20 GT splits 15/20 on time 0 FP at 45-frame horizon; beats best45 baseline (18/20)**
+
+### Why
+
+User observed in run 193101 (Change 5) that late-frame daughters stay undersized: synth ellipsoids fit the core but miss the visibly-growing real extent. Root cause: `cellShapeBirth` is frozen at split time (gotcha B), so `mask = birthRadii × maskScale` is a hard ceiling on the post-split PCA fit. Cells born small at f20 with `maskScale=1.8` couldn't track their actual growth through f21-f22 — PCA variance stays mask-bounded, growth cap then sees no demand to grow reference.
+
+### Fields changed in `C++/config/config.yaml`
+
+| Field | Change 5 | Change 6 |
+|---|---|---|
+| `pcaShapeMaskScale` | 1.8 | **2.2** |
+
+22% extra slack on the frozen birth mask lets PCA fit track post-birth cell growth (typical daughters expand ~15-25% over 2-3 frames before dividing again). 2.2 is the moderate step — going beyond ~2.5 risks neighbor-cell pixel contamination in dense f20+ clusters.
+
+### Validation — 22-frame (run 203458)
+
+8/8 splits, 7/8 on time, 0 FP. Late-frame daughter c-axis at f22:
+- e9077..a52 (worst under 1.8): c=5.0 (−45%) → c=~13 (+4%) under 2.2. **Collapse eliminated.**
+- 1f89ab daughters now within ±10% of baseline (vs ±15-20% under 1.8)
+
+### Validation — 45-frame (run 211928)
+
+**20/20 GT splits captured. 15/20 on time. 0 FP. 26 cells (matches GT).**
+
+| GT Frame | GT Split | Our Frame | Δ |
+|---|---|---|---|
+| f3 | e9077, 12345 | f3 | **on time** |
+| f8 | 1f89ab | f8 | **on time** |
+| f11 | 1f2ed | f11 | **on time** |
+| f19 | e9077..a50 | f20 | +1 |
+| f20 | 12345..0, 12345..1, e9077..a51 | f20 | **on time** |
+| f27 | 1f89ab..1 | f28 | +1 |
+| f28 | 1f89ab..0 | f28 | **on time** |
+| f31 | 1f2ed..0 | f32 | +1 |
+| f38 | 1f2ed..1 | f38 | **on time** |
+| f39 | 12345..01, 12345..00, e9077..a511, e9077..a500, e9077..a501, 12345..10, 12345..11 | f39 | **on time** |
+| f39 | e9077..a510 | f40 | +1 |
+
+FP control: e3d03 at f4 blocked by bio gate (historical regression), all bridge-type attempts at f18/f22/f34/f40/f41/f42 blocked by bio gate. Cost gate at 0.03 did not reject any real split; all cost rejects had positive diff (fit would worsen).
+
+### vs best45 baseline (20260418_best45)
+
+| | best45 | Change 6 run |
+|---|---|---|
+| Splits captured | 18/20 | **20/20** ✓ |
+| 1f89ab..1 f27 | MISSED | captured f28 |
+| e9077..a500 f39 | MISSED | captured f39 on time |
+| FP | 0 | 0 |
+| Final cell count | 24/26 | **26/26** ✓ |
+
+**Milestone: 100% GT recall with 0 FP at the full 45-frame horizon.**
+
+### Runtime — 8351 sec (~139 min) for 45 frames
+
+Per-frame cost grows with cell count:
+- f1-f10 (6-10 cells): ~1.5 min/frame
+- f20-f30 (14-16 cells): ~3 min/frame
+- f39-f45 (25-26 cells): ~5-8 min/frame
+
+### Phase A optimization (this commit): parallelize `applyAdaptiveCubePooling`
+
+**Files changed:** `C++/src/ImageHandler.cpp`
+
+Four `#pragma omp parallel for collapse(2)` directives added to the pooling function's grid loops:
+1. Cube-stats computation (line ~178)
+2. Cube-reweighting + voxel fill (line ~233)
+3. Isolated-bright-cube neighbor check (line ~315)
+4. Isolated-bright-cube voxel zeroing (line ~357)
+
+All writes are to disjoint cube-local memory; counters use OpenMP `reduction(+:...)`.
+
+**Expected speedup:** 4-6× on pooling step. Pooling runs 45 times (once per frame in constructor) at ~1.8M cubes each → ~80M cube operations previously serial, now spread across cores. Full-run impact: ~60-90 sec saved.
+
+### Rollback
+
+`git checkout HEAD~1 -- C++/config/config.yaml C++/src/ImageHandler.cpp` reverts both the mask bump and parallel pooling.
+
+### Open follow-ups
+
+- **Benchmark Phase A** after rebuild — confirm pooling speedup and check total runtime
+- **Phase A continued**: pre-allocate `cv::Mat` scratch buffer in `generateSynthFrameFast` (eliminates ~42k Mat allocations/frame late-run), cache inverse rotation matrix per draw, parallelize split candidate burn-in with state-copy pattern
+- **Shape corners**: e3d03 still overshoots +20-25%; small-cell `pcaShapeRadiusScale` cap or adaptive exponent tune is the follow-up
+- **+1-late drift across 5 splits** — growth cap per-frame is a candidate to relax post-split (daughters get higher cap for first 2-3 frames)
+

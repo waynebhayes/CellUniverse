@@ -170,6 +170,10 @@ ImageStack applyAdaptiveCubePooling(const ImageStack &stack,
         return static_cast<size_t>((gz * gridY + gy) * gridX + gx);
     };
 
+    // Parallelize cube-stats computation. Each cube writes only to its
+    // own cubeStats[idx] → no races. collapse(2) gives threads gz/gy tiles
+    // big enough to amortize scheduling overhead.
+    #pragma omp parallel for collapse(2) schedule(static)
     for (int gz = 0; gz < gridZ; ++gz)
     {
         const int z0 = gz * cubeSize;
@@ -225,6 +229,11 @@ ImageStack applyAdaptiveCubePooling(const ImageStack &stack,
 
     int meanPooledCubes = 0;
     int maxPooledCubes = 0;
+    // Parallelize cube-reweighting + voxel fill. Each iteration reads from
+    // cubeStats (read-only) and writes to its own cube voxel range in pooled
+    // (disjoint per-tuple) and pooledCubeValues[cubeIndex(gz,gy,gx)] (disjoint).
+    // Counters updated via reduction.
+    #pragma omp parallel for collapse(2) schedule(static) reduction(+:meanPooledCubes, maxPooledCubes)
     for (int gz = 0; gz < gridZ; ++gz)
     {
         const int z0 = gz * cubeSize;
@@ -299,6 +308,10 @@ ImageStack applyAdaptiveCubePooling(const ImageStack &stack,
             std::max(zeroThreshold,
                      config.simulation.adaptive_cube_pooling_isolated_bright_cube_threshold);
         std::vector<char> clearCube(static_cast<size_t>(gridZ) * gridY * gridX, 0);
+        // Parallelize neighbor-check: each cube only writes to its own
+        // clearCube[idx] and reads from pooledCubeValues (read-only here).
+        // Candidate counter via reduction.
+        #pragma omp parallel for collapse(2) schedule(static) reduction(+:isolatedBrightCandidateCubes)
         for (int gz = 0; gz < gridZ; ++gz)
         {
             for (int gy = 0; gy < gridY; ++gy)
@@ -341,6 +354,9 @@ ImageStack applyAdaptiveCubePooling(const ImageStack &stack,
             }
         }
 
+        // Parallel voxel-zero pass. Each cube writes to its own disjoint
+        // voxel range in pooled. Counter via reduction.
+        #pragma omp parallel for collapse(2) schedule(static) reduction(+:removedIsolatedBrightCubes)
         for (int gz = 0; gz < gridZ; ++gz)
         {
             const int z0 = gz * cubeSize;
