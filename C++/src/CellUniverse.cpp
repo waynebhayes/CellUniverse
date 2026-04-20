@@ -518,14 +518,26 @@ CellUniverse::CellUniverse(std::map<std::string, std::vector<Ellipsoid>> initial
     allLoadedSlices.clear();
     allLoadedSlices.shrink_to_fit();
 
-    // Determine z_slices depth by probing the first raw frame (needed to
-    // construct lazy-load Frame placeholders with correct z_slices count).
-    // Load + discard — cheap, one frame only.
+    // Determine post-interpolation z_slices depth: run ONE frame through the
+    // full preprocess pipeline so we see the true interpolated size (raw
+    // TIFF depth * z_scaling roughly). Critical for setting
+    // Ellipsoid::cellConfig.maxZ correctly — wrong value clamps all cell z
+    // positions on first perturbation (gotcha: previous M2 commit probed
+    // loadRawFrame only = got raw depth ~32, clamped cells to z<=31).
     {
+        std::ostringstream probeRaw, probePre;
         std::vector<cv::Mat> probe = ImageHandler::loadRawFrame(
-            imagePaths.front().string(), config, nullptr);
+            imagePaths.front().string(), config, &probeRaw);
+        normalizeStackToSharedScale(probe,
+                                    globalLowReference,
+                                    globalHighReference,
+                                    config.simulation.global_intensity_hard_max);
+        probe = ImageHandler::preprocessLoadedFrame(
+            probe, imagePaths.front().string(), config, &probePre);
         config.simulation.z_slices = static_cast<int>(probe.size());
         Ellipsoid::cellConfig.maxZ = static_cast<float>(probe.size()) - 1.0f;
+        std::cout << "[M2 Probe] post-preprocess z_slices=" << probe.size()
+                  << " maxZ=" << Ellipsoid::cellConfig.maxZ << '\n';
     }
 
     // Allocate lazy-load Frame placeholders. Each holds only cells + config;
@@ -589,10 +601,10 @@ void CellUniverse::prepareFrame(int frameIndex)
                                 imagePaths[static_cast<size_t>(frameIndex)]);
     }
 
+    // loadImageStacks already generates _synthFrame + refreshes the full-image
+    // cost cache. The previous `if (config.cell) regenerateSynthFrame()` was
+    // redundant work (2x render + 2x cost cache per frame).
     frames[frameIndex].loadImageStacks(real_frame);
-    if (config.cell) {
-        frames[frameIndex].regenerateSynthFrame();
-    }
 }
 void CellUniverse::optimize(int frameIndex)
 {
