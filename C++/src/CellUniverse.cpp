@@ -1608,6 +1608,15 @@ void CellUniverse::optimize(int frameIndex)
               << " final_cells=" << frame.cells.size() << std::endl;
 }
 
+void CellUniverse::releaseFrameImages(int frameIndex)
+{
+    if (frameIndex < 0 || static_cast<size_t>(frameIndex) >= frames.size())
+    {
+        return;
+    }
+    frames[frameIndex].releaseImageStacks();
+}
+
 void CellUniverse::saveImages(int frameIndex)
 {
     if (frameIndex < 0 || static_cast<size_t>(frameIndex) >= frames.size())

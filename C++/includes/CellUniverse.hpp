@@ -33,6 +33,11 @@ public:
     void saveImages(int frameIndex);
     void saveCells(int frameIndex);
     void copyCellsForward(size_t to);
+    // Memory optimization (M1): after this frame has been optimized, saved,
+    // and its snapshot captured, release its image stacks. Cells and
+    // snapshot metadata are retained. Enables long-horizon runs (60+ frames)
+    // without 13+ GB memory peaks.
+    void releaseFrameImages(int frameIndex);
     unsigned int length();
 
     // ---- Added for realtime viewer ----

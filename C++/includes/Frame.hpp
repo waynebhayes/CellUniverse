@@ -210,6 +210,21 @@ public:
 
     std::vector<cv::Mat> getSynthFrame();
     const std::vector<cv::Mat>& getRealFrame() const { return _realFrame; }
+
+    // Memory optimization (M1): release the real + synth image stacks after
+    // the frame has been optimized, its snapshot captured, and its outputs
+    // saved. Downstream only needs `cells` + snapshot metadata. Cuts peak
+    // memory from O(N_frames × 288 MB) to O(2-3 × 288 MB) for long horizons.
+    // After calling this, do not call perturbCell/calculateCost/generateSynthFrame
+    // etc. on this frame — the image data is gone.
+    void releaseImageStacks() {
+        _realFrame.clear();
+        _realFrame.shrink_to_fit();
+        _synthFrame.clear();
+        _synthFrame.shrink_to_fit();
+        _currentCostPerSlice.clear();
+        _currentCostPerSlice.shrink_to_fit();
+    }
     void setBackgroundColor(float backgroundColor) { _backgroundValue = backgroundColor; }
     float getBackgroundValue() const { return _backgroundValue; }
     // Signal centers for signal-guided perturbation (yp ffc1917). Populated

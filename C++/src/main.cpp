@@ -122,6 +122,11 @@ int main(int argc, char *argv[])
         lineage.saveImages(frame);
 
         lineage.saveCells(frame);
+
+        // M1 memory optimization: release this frame's image stacks now that
+        // we've captured its snapshot, saved its outputs, and copied cells
+        // forward. Downstream only needs snapshot metadata + per-cell state.
+        lineage.releaseFrameImages(frame);
     }
     auto end = std::chrono::steady_clock::now(); // timer end
 
