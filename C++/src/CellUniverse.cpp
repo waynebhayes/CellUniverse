@@ -425,49 +425,56 @@ CellUniverse::CellUniverse(std::map<std::string, std::vector<Ellipsoid>> initial
                            std::string outputPath,
                            int firstFrame,
                            int continueFrom)
-: config(config), outputPath(outputPath), firstFrame(firstFrame)
+: config(config), outputPath(outputPath), firstFrame(firstFrame),
+  imagePaths(imagePaths), initialCells(initialCells), continueFrom(continueFrom)
 {
-    // Constructor ported from yp_fix_mask_04172026 (commit 25c5923):
-    // 4-pass parallel pipeline with global percentile-based intensity
-    // normalization. Replaces our prior single-pass per-frame loadFrame
-    // + brightness-mean alignment which produced inverted images when
-    // combined with yp's preprocessing CODE (yp's iterative loop assumes
-    // all frames have already been mapped to a shared low/high scale).
-    std::vector<std::vector<cv::Mat>> loadedFrames(imagePaths.size());
-    std::vector<std::ostringstream> rawLoadLogs(imagePaths.size());
-    std::vector<std::ostringstream> preprocessLogs(imagePaths.size());
-
-    // Pass 1: parallel raw-frame load (no preprocessing yet). Logs are
-    // buffered per-frame and flushed in order after the parallel region.
-    #pragma omp parallel for schedule(dynamic)
-    for (int i = 0; i < static_cast<int>(imagePaths.size()); ++i)
-    {
-        std::vector<cv::Mat> real_frame =
-            ImageHandler::loadRawFrame(imagePaths[static_cast<size_t>(i)].string(),
-                                       config,
-                                       &rawLoadLogs[static_cast<size_t>(i)]);
-        loadedFrames[static_cast<size_t>(i)] = std::move(real_frame);
+    // M2 — Option A (sample-based percentile): instead of loading all frames
+    // up front (which was peaking at ~N × 288 MB = 25+ GB for 100 frames),
+    // we sample every K-th frame for global percentile computation, then
+    // store the percentiles and lazy-load each frame individually in
+    // `prepareFrame(i)`. Peak memory becomes O(sample + 1-2 frames).
+    const size_t nFrames = imagePaths.size();
+    const size_t samplePeriod = std::max<size_t>(1, nFrames / 10);   // ~10 samples
+    std::vector<size_t> sampleIndices;
+    for (size_t i = 0; i < nFrames; i += samplePeriod) sampleIndices.push_back(i);
+    // Always include the last frame so the sample bracket covers the full sequence.
+    if (!sampleIndices.empty() && sampleIndices.back() != nFrames - 1) {
+        sampleIndices.push_back(nFrames - 1);
     }
-    for (auto &buf : rawLoadLogs) {
+
+    std::cout << "[M2 Percentile Sample] nFrames=" << nFrames
+              << " samplePeriod=" << samplePeriod
+              << " sampleCount=" << sampleIndices.size() << '\n';
+
+    // Pass 1 (sample): parallel-load only sampled frames for percentile computation.
+    std::vector<std::vector<cv::Mat>> sampleFrames(sampleIndices.size());
+    std::vector<std::ostringstream> sampleLogs(sampleIndices.size());
+    #pragma omp parallel for schedule(dynamic)
+    for (int si = 0; si < static_cast<int>(sampleIndices.size()); ++si)
+    {
+        const size_t frameIdx = sampleIndices[static_cast<size_t>(si)];
+        sampleFrames[static_cast<size_t>(si)] =
+            ImageHandler::loadRawFrame(imagePaths[frameIdx].string(),
+                                       config,
+                                       &sampleLogs[static_cast<size_t>(si)]);
+    }
+    for (auto &buf : sampleLogs) {
         const std::string s = buf.str();
         if (!s.empty()) std::cout << s;
     }
 
-    // Compute global low/high reference percentiles across ALL loaded slices.
-    // This shared scale is what makes yp's preprocessing iterative loop
-    // converge correctly (without it, every frame uses its own arbitrary
-    // scale and the iterative contrast scoring wanders off-target).
+    // Aggregate sampled slices for percentile computation.
     std::vector<cv::Mat> allLoadedSlices;
     size_t totalSlices = 0;
-    for (const auto &frame : loadedFrames) totalSlices += frame.size();
+    for (const auto &frame : sampleFrames) totalSlices += frame.size();
     allLoadedSlices.reserve(totalSlices);
-    for (const auto &frame : loadedFrames) {
+    for (const auto &frame : sampleFrames) {
         for (const auto &slice : frame) allLoadedSlices.push_back(slice);
     }
 
-    float globalLowReference = computeStackPercentile(
+    globalLowReference = computeStackPercentile(
         allLoadedSlices, config.simulation.global_intensity_scale_low_percentile);
-    float globalHighReference = computeStackPercentile(
+    globalHighReference = computeStackPercentile(
         allLoadedSlices, config.simulation.global_intensity_scale_high_percentile);
     if (config.simulation.global_intensity_hard_max > 0.0f &&
         globalHighReference > config.simulation.global_intensity_hard_max) {
@@ -505,69 +512,86 @@ CellUniverse::CellUniverse(std::map<std::string, std::vector<Ellipsoid>> initial
               << " high_ref=" << globalHighReference
               << " hard_max=" << config.simulation.global_intensity_hard_max << '\n';
 
-    // Pass 2: serially normalize each loaded frame to the shared scale.
+    // Free sample frames — percentiles are stored in member fields.
+    sampleFrames.clear();
+    sampleFrames.shrink_to_fit();
+    allLoadedSlices.clear();
+    allLoadedSlices.shrink_to_fit();
+
+    // Determine z_slices depth by probing the first raw frame (needed to
+    // construct lazy-load Frame placeholders with correct z_slices count).
+    // Load + discard — cheap, one frame only.
+    {
+        std::vector<cv::Mat> probe = ImageHandler::loadRawFrame(
+            imagePaths.front().string(), config, nullptr);
+        config.simulation.z_slices = static_cast<int>(probe.size());
+        Ellipsoid::cellConfig.maxZ = static_cast<float>(probe.size()) - 1.0f;
+    }
+
+    // Allocate lazy-load Frame placeholders. Each holds only cells + config;
+    // image stacks populated by `prepareFrame(i)` just before optimize.
+    frames.reserve(imagePaths.size());
     for (size_t i = 0; i < imagePaths.size(); ++i)
     {
-        std::vector<cv::Mat> &real_frame = loadedFrames[i];
-        normalizeStackToSharedScale(real_frame,
-                                    globalLowReference,
-                                    globalHighReference,
-                                    config.simulation.global_intensity_hard_max);
-        std::cout << "[Global Scale] frame=" << imagePaths[i].filename().string()
-                  << " mean=" << computeStackMean(real_frame)
-                  << " low_ref=" << globalLowReference
-                  << " high_ref=" << globalHighReference
-                  << " hard_max=" << config.simulation.global_intensity_hard_max << '\n';
-    }
-
-    // Pass 3: parallel preprocessing per frame using the shared-scale stacks.
-    #pragma omp parallel for schedule(dynamic)
-    for (int i = 0; i < static_cast<int>(imagePaths.size()); ++i)
-    {
-        loadedFrames[static_cast<size_t>(i)] =
-            ImageHandler::preprocessLoadedFrame(
-                loadedFrames[static_cast<size_t>(i)],
-                imagePaths[static_cast<size_t>(i)].string(),
-                config,
-                &preprocessLogs[static_cast<size_t>(i)]);
-    }
-    for (auto &buf : preprocessLogs) {
-        const std::string s = buf.str();
-        if (!s.empty()) std::cout << s;
-    }
-
-    // Pass 4: export + construct Frame objects.
-    for (size_t i = 0; i < imagePaths.size(); ++i)
-    {
-        std::vector<cv::Mat> &real_frame = loadedFrames[i];
-
-        if (config.simulation.export_preprocessed_images) {
-            exportPreprocessedStack(real_frame, fs::path(outputPath), imagePaths[i]);
-        }
-        if (config.simulation.quit_after_preprocessing) {
-            continue;
-        }
-
-        config.simulation.z_slices = real_frame.size();
-        Ellipsoid::cellConfig.maxZ = static_cast<float>(real_frame.size()) - 1.0f;
-
         fs::path path(imagePaths[i]);
         std::string file_name = path.filename();
-
-        if ((continueFrom == -1 || i < continueFrom) && initialCells.find(file_name) != initialCells.end())
-        {
-            const std::vector<Ellipsoid> &cells = initialCells.at(file_name);
-            frames.emplace_back(real_frame, config.simulation, cells, outputPath, file_name);
-        }
-        else
-        {
-            frames.emplace_back(real_frame, config.simulation, std::vector<Ellipsoid>(), outputPath, file_name);
-        }
-
+        const bool hasInitial =
+            (continueFrom == -1 || static_cast<int>(i) < continueFrom) &&
+            initialCells.find(file_name) != initialCells.end();
+        const std::vector<Ellipsoid> &cells =
+            hasInitial ? initialCells.at(file_name) : std::vector<Ellipsoid>{};
+        frames.emplace_back(config.simulation, cells, outputPath, file_name);
         if (config.cell) {
             frames.back().setBackgroundColor(config.cell->backgroundColor);
-            frames.back().regenerateSynthFrame();
         }
+    }
+    perFrameAdaptiveBackground.assign(imagePaths.size(), 0.0f);
+    perFrameMeanBrightness.assign(imagePaths.size(), 0.0f);
+}
+
+void CellUniverse::prepareFrame(int frameIndex)
+{
+    if (frameIndex < 0 || static_cast<size_t>(frameIndex) >= frames.size())
+    {
+        throw std::invalid_argument("prepareFrame: invalid frame index");
+    }
+    if (frames[frameIndex].hasImageStacks()) {
+        return;  // already loaded
+    }
+
+    // Load + normalize + preprocess just this frame.
+    std::ostringstream rawLog;
+    std::ostringstream preprocessLog;
+    std::vector<cv::Mat> real_frame =
+        ImageHandler::loadRawFrame(imagePaths[static_cast<size_t>(frameIndex)].string(),
+                                   config, &rawLog);
+    std::cout << rawLog.str();
+
+    normalizeStackToSharedScale(real_frame,
+                                globalLowReference,
+                                globalHighReference,
+                                config.simulation.global_intensity_hard_max);
+    std::cout << "[Global Scale] frame="
+              << imagePaths[static_cast<size_t>(frameIndex)].filename().string()
+              << " mean=" << computeStackMean(real_frame)
+              << " low_ref=" << globalLowReference
+              << " high_ref=" << globalHighReference
+              << " hard_max=" << config.simulation.global_intensity_hard_max << '\n';
+
+    real_frame = ImageHandler::preprocessLoadedFrame(
+        real_frame,
+        imagePaths[static_cast<size_t>(frameIndex)].string(),
+        config, &preprocessLog);
+    std::cout << preprocessLog.str();
+
+    if (config.simulation.export_preprocessed_images) {
+        exportPreprocessedStack(real_frame, fs::path(outputPath),
+                                imagePaths[static_cast<size_t>(frameIndex)]);
+    }
+
+    frames[frameIndex].loadImageStacks(real_frame);
+    if (config.cell) {
+        frames[frameIndex].regenerateSynthFrame();
     }
 }
 void CellUniverse::optimize(int frameIndex)
@@ -580,9 +604,12 @@ void CellUniverse::optimize(int frameIndex)
     Frame &frame = frames[frameIndex];
 
     if (frameIndex > 0) {
-        const Frame &previousFrame = frames[frameIndex - 1];
-        const float previousBackground = estimateAdaptiveBackgroundFromFrame(previousFrame, config.simulation);
-        const float previousMeanBrightness = computeStackMean(previousFrame.getRealFrame());
+        // Prev-frame summaries cached at end of optimize(frameIndex-1) so we
+        // don't need frames[frameIndex-1]'s image stacks (already released by
+        // M1 releaseFrameImages). Falls back to 0 if not cached (shouldn't
+        // happen if prepareFrame + optimize sequence is respected).
+        const float previousBackground = perFrameAdaptiveBackground[frameIndex - 1];
+        const float previousMeanBrightness = perFrameMeanBrightness[frameIndex - 1];
         const float currentMeanBrightness = computeStackMean(frame.getRealFrame());
         const float brightnessScale =
             (previousMeanBrightness > 1e-6f) ? (currentMeanBrightness / previousMeanBrightness) : 1.0f;
@@ -1606,6 +1633,12 @@ void CellUniverse::optimize(int frameIndex)
               << " split_attempts=" << splitAttempted
               << " split_accepted=" << splitAccepted
               << " final_cells=" << frame.cells.size() << std::endl;
+
+    // M1/M2 cache per-frame summaries so optimize(frameIndex+1) doesn't need
+    // frames[frameIndex]'s image stacks (which will be released in main.cpp).
+    perFrameAdaptiveBackground[frameIndex] =
+        estimateAdaptiveBackgroundFromFrame(frame, config.simulation);
+    perFrameMeanBrightness[frameIndex] = computeStackMean(frame.getRealFrame());
 }
 
 void CellUniverse::releaseFrameImages(int frameIndex)

@@ -58,6 +58,23 @@ public:
     // replaced the sigmoid-first / raw-analysis split.
     Frame(const std::vector<cv::Mat> &realFrame, const SimulationConfig &simulationConfig, const std::vector<Ellipsoid> &cells, const Path &outputPath, const std::string &imageName);
 
+    // Lazy-load constructor (M2): builds a placeholder Frame without image
+    // data. Cells and metadata are stored; `_realFrame` / `_synthFrame` are
+    // empty until `loadImageStacks()` is called. Used by CellUniverse to
+    // defer per-frame preprocessing until just before `optimize()` runs,
+    // keeping memory peak at ~1-2 frames' worth for long-horizon runs.
+    Frame(const SimulationConfig &simulationConfig,
+          const std::vector<Ellipsoid> &cells,
+          const Path &outputPath, const std::string &imageName);
+
+    // Populates `_realFrame` and regenerates `_synthFrame` + cost cache.
+    // Call after the lazy-load constructor and just before the first
+    // image-dependent operation (optimize / regenerateSynthFrame / etc.).
+    void loadImageStacks(const std::vector<cv::Mat> &realFrame);
+
+    // Test: has this Frame's image data been loaded yet?
+    bool hasImageStacks() const { return !_realFrame.empty(); }
+
     // Rendering
     std::vector<cv::Mat> generateSynthFrame();
     std::vector<cv::Mat> generateSynthFrameFast(Ellipsoid &oldCell, Ellipsoid &newCell,

@@ -80,6 +80,38 @@ Frame::Frame(const std::vector<cv::Mat> &realFrame, const SimulationConfig &simu
     refreshFullCostCache();
 }
 
+Frame::Frame(const SimulationConfig &simulationConfig,
+             const std::vector<Ellipsoid> &cells,
+             const Path &outputPath, const std::string &imageName)
+    : cells(cells),
+      simulationConfig(simulationConfig),
+      outputPath(outputPath),
+      imageName(imageName)
+{
+    // Lazy-load placeholder. `_realFrame` and `_synthFrame` are empty;
+    // call `loadImageStacks()` with the preprocessed stack before use.
+    // z_slices still derived from config so size-queries are valid.
+    for (int i = 0; i < simulationConfig.z_slices; ++i)
+    {
+        z_slices.push_back(static_cast<double>(i));
+    }
+}
+
+void Frame::loadImageStacks(const std::vector<cv::Mat> &realFrame)
+{
+    _realFrame = realFrame;
+    // Refresh z_slices in case the stack depth differs from config
+    // (shouldn't, but guard against drift).
+    if (static_cast<int>(realFrame.size()) != static_cast<int>(z_slices.size())) {
+        z_slices.clear();
+        for (size_t i = 0; i < realFrame.size(); ++i) {
+            z_slices.push_back(static_cast<double>(i));
+        }
+    }
+    _synthFrame = generateSynthFrame();
+    refreshFullCostCache();
+}
+
 void Frame::refreshFullCostCache()
 {
     if (_realFrame.size() != _synthFrame.size())

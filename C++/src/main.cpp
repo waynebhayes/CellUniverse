@@ -115,6 +115,11 @@ int main(int argc, char *argv[])
     auto start = std::chrono::steady_clock::now();
     for (int frame = 0; frame < lineage.length(); ++frame)
     {
+        // M2 Option A: lazy-load this frame's images (raw TIFF load +
+        // percentile normalize + iterative preprocess). Constructor only
+        // sampled for percentiles; actual frame data is loaded here.
+        lineage.prepareFrame(frame);
+
         lineage.optimize(frame);
 
         lineage.copyCellsForward(frame + 1);

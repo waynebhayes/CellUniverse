@@ -38,6 +38,12 @@ public:
     // snapshot metadata are retained. Enables long-horizon runs (60+ frames)
     // without 13+ GB memory peaks.
     void releaseFrameImages(int frameIndex);
+    // Memory optimization (M2 — Option A): lazy per-frame load. Constructor
+    // only samples percentiles; per-frame TIFF load + normalize + preprocess
+    // happens on demand in this method. Main loop calls `prepareFrame(i)`
+    // before `optimize(i)`. Keeps peak memory at ~1-2 frames (<1 GB for
+    // 100+ frame runs vs 25+ GB before).
+    void prepareFrame(int frameIndex);
     unsigned int length();
 
     // ---- Added for realtime viewer ----
@@ -63,6 +69,21 @@ private:
    // feedback loops (neither upward bloat nor downward thinning).
    // The bounded ref is used ONLY for the fit-side growth cap.
    std::map<std::string, std::array<float, 3>> cellShapeBirth;
+
+   // M2 state: per-frame paths retained for lazy load, initial-cells map,
+   // and global preprocessing percentiles (computed once from a sample in
+   // the constructor).
+   PathVec imagePaths;
+   std::map<std::string, std::vector<Ellipsoid>> initialCells;
+   float globalLowReference = 0.0f;
+   float globalHighReference = 1.0f;
+   int continueFrom = -1;
+
+   // Per-frame cached summaries for adaptive background (computed at end of
+   // optimize(N); consumed by optimize(N+1) without needing frames[N]'s
+   // image data, which has been released by M1 by then).
+   std::vector<float> perFrameAdaptiveBackground;
+   std::vector<float> perFrameMeanBrightness;
 };
 
 #endif
