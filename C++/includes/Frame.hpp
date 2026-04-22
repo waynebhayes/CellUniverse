@@ -139,7 +139,35 @@ public:
     double calculateBboxCost(
         const BoundingBox3D &bbox,
         const std::vector<cv::Mat> &synthFrame,
-        const std::vector<uint8_t> &mask) const;
+        const std::vector<uint8_t> &mask,
+        int voronoiCellIdx = -1) const;
+
+    // Static-Voronoi cost territory. When enabled, each pixel is assigned
+    // to the nearest cell's snap-anchor (or live-center fallback for
+    // cells without a snap). `calculateBboxCost(..., cellIdx)` only sums
+    // residuals at pixels assigned to cellIdx. Anchors are fixed for the
+    // whole frame (SNAP positions, captured once) so the Voronoi boundary
+    // does NOT shift when a cell is perturbed — unlike the earlier live-
+    // center attempt, the snap-anchor's claim region stays put. Prevents
+    // cell X from inflating to cover neighbor Y's bright pixels, because
+    // those pixels are never scored against X regardless of X's shape.
+    // rebuildVoronoiMap is called at frame start after snap install, and
+    // again after each split accept in the optimize loop (daughter anchors
+    // derive from the post-split live positions).
+    void enableVoronoiCost(bool on) { _voronoiEnabled = on; }
+    bool isVoronoiCostEnabled() const { return _voronoiEnabled; }
+    void rebuildVoronoiMap();
+
+    // Additive Voronoi bleed penalty. Count of voxels inside the passed
+    // cell's ellipsoid that are NOT assigned to `cellIdx` in the
+    // snap-anchored Voronoi map. perturbCell multiplies this by
+    // `_voronoiBleedWeight` and adds to the perturbation cost delta.
+    // Returns 0 when the map is empty / _voronoiEnabled is off / weight
+    // is zero, so the penalty is a no-op in those cases.
+    std::size_t computeVoronoiBleedVoxels(const Ellipsoid &cell,
+                                          int cellIdx) const;
+    void setVoronoiBleedWeight(float w) { _voronoiBleedWeight = w; }
+    float getVoronoiBleedWeight() const { return _voronoiBleedWeight; }
 
     // Split-attempt result: callback pair that either commits the split
     // (daughters replace parent) or reverts (parent restored). Returns the
@@ -296,6 +324,8 @@ public:
     void clearSnapPositions() { _snapPositions.clear(); }
     void setPositionPriorWeight(float w) { _positionPriorWeight = w; }
     void setPositionPriorThreshold(float t) { _positionPriorThreshold = t; }
+    void setMaxPerturbDriftXY(float v) { _maxPerturbDriftXY = v; }
+    void setMaxPerturbDriftZ(float v)  { _maxPerturbDriftZ  = v; }
 
     // _sharedMasks removed — cost path now uses empty mask (no Voronoi
     // exclusion). The shared mask was never read after perturbCell
@@ -355,7 +385,22 @@ private:
     // from snap beyond threshold. Set once per frame from config.
     float _positionPriorWeight = 0.0f;
     float _positionPriorThreshold = 20.0f;
+    // Per-frame velocity cap on drift from snap position. Rejects perturbs
+    // that move the cell further than these thresholds. -1 disables.
+    float _maxPerturbDriftXY = -1.0f;
+    float _maxPerturbDriftZ  = -1.0f;
     // _sharedMasks member removed — see comment above.
+
+    // Static-Voronoi cost territory — per-pixel cell index, one CV_32S slice
+    // per z. Rebuilt by rebuildVoronoiMap() using snap positions (or live
+    // centers for cells without a snap). Empty when voronoi cost disabled.
+    bool _voronoiEnabled = false;
+    std::vector<cv::Mat> _voronoiMap;
+    std::vector<cv::Point3f> _voronoiAnchors;  // parallel to cells[]
+    // Bleed penalty weight: 0 disables the penalty (default). Any >0
+    // value is multiplied by the count of ellipsoid voxels outside own
+    // Voronoi territory during perturbation cost computation.
+    float _voronoiBleedWeight = 0.0f;
     cv::Size getImageShape();
 
     // Rebuild _currentCostPerSlice and _currentCost from scratch by walking

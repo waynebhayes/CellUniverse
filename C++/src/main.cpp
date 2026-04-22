@@ -111,9 +111,29 @@ int main(int argc, char *argv[])
     // create lineage
     CellUniverse lineage = CellUniverse(cells, imageFilePaths, config, args.output, args.firstFrame, args.continueFrom);
 
+    // Checkpoint resume (Approach 2): if config.simulation.resume_from > 0
+    // and resume_source_dir is set, load the checkpoint file from
+    // `{resume_source_dir}/checkpoints/frame_{resume_from - 1:03d}.txt` and
+    // skip the main loop up to resume_from. Requires the source run's
+    // checkpoint to have been written with saveCheckpoint.
+    int loopStart = 0;
+    if (config.simulation.resume_from > 0 && !config.simulation.resume_source_dir.empty()) {
+        char buf[64];
+        std::snprintf(buf, sizeof(buf), "frame_%03d.txt", config.simulation.resume_from - 1);
+        const std::string ckptPath =
+            config.simulation.resume_source_dir + "/checkpoints/" + buf;
+        if (lineage.loadCheckpoint(config.simulation.resume_from - 1, ckptPath)) {
+            loopStart = config.simulation.resume_from;
+            std::cout << "[Resume] skipping frames 0.." << (loopStart - 1)
+                      << " — loaded checkpoint from " << ckptPath << std::endl;
+        } else {
+            std::cerr << "[Resume] checkpoint load failed, running from frame 0\n";
+        }
+    }
+
     // Run
     auto start = std::chrono::steady_clock::now();
-    for (int frame = 0; frame < lineage.length(); ++frame)
+    for (int frame = loopStart; frame < lineage.length(); ++frame)
     {
         // M2 Option A: lazy-load this frame's images (raw TIFF load +
         // percentile normalize + iterative preprocess). Constructor only
@@ -132,6 +152,9 @@ int main(int argc, char *argv[])
         // we've captured its snapshot, saved its outputs, and copied cells
         // forward. Downstream only needs snapshot metadata + per-cell state.
         lineage.releaseFrameImages(frame);
+
+        // Checkpoint for potential future resume.
+        lineage.saveCheckpoint(frame);
     }
     auto end = std::chrono::steady_clock::now(); // timer end
 

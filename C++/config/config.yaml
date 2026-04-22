@@ -296,6 +296,13 @@ simulation:
   export_preprocessed_images: false
   quit_after_preprocessing: false
 
+  # Checkpoint resume: if resume_from > 0 and resume_source_dir is set,
+  # skip frames 0..resume_from-1 and load state from
+  # {resume_source_dir}/checkpoints/frame_{resume_from-1:03d}.txt.
+  # Leave resume_from=0 for normal runs.
+  resume_from: 0
+  resume_source_dir: ""
+
   # Adaptive cube pooling — YP's b575246 introduced this as an optional
   # final-stage pooling step that averages pixels into cubes (~0.6× minR
   # size) and applies majority thresholds. In the post-yp-merge regime, cell

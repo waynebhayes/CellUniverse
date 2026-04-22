@@ -44,6 +44,19 @@ public:
     // before `optimize(i)`. Keeps peak memory at ~1-2 frames (<1 GB for
     // 100+ frame runs vs 25+ GB before).
     void prepareFrame(int frameIndex);
+
+    // Checkpoint save/load (Approach 2 — full state serialization).
+    // saveCheckpoint(N) writes all state needed to resume AT frame N+1
+    // to `{outputPath}/checkpoints/frame_{N:03d}.yaml`. Includes:
+    // cells of frame N+1 (already copied forward), previousSnapshots,
+    // cellShapeReference, cellShapeBirth, perFrameAdaptiveBackground[N],
+    // perFrameMeanBrightness[N], frame N+1 backgroundValue, z_slices/maxZ.
+    // loadCheckpoint(N) reads the file and populates state, returning true
+    // on success. Call BEFORE the main loop starts. After loading, set the
+    // loop start to N+1.
+    void saveCheckpoint(int frameIndex);
+    bool loadCheckpoint(int frameIndex, const std::string &checkpointPath);
+
     unsigned int length();
 
     // ---- Added for realtime viewer ----

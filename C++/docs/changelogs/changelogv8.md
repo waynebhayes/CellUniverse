@@ -392,3 +392,222 @@ All writes are to disjoint cube-local memory; counters use OpenMP `reduction(+:.
 - **Shape corners**: e3d03 still overshoots +20-25%; small-cell `pcaShapeRadiusScale` cap or adaptive exponent tune is the follow-up
 - **+1-late drift across 5 splits** — growth cap per-frame is a candidate to relax post-split (daughters get higher cap for first 2-3 frames)
 
+---
+
+## 2026-04-20: Velocity cap + birth growth cap v2 + checkpoint system (Change 7) — **status: velocity cap REVERTED 2026-04-21**
+
+### Why
+
+72-frame WSL run `output_jihang_linux` exposed three problem classes:
+1. **Position drift** — cells drifting slowly toward image boundaries; eventually stuck at z=0 or z=224.
+2. **Bloat** — cells growing oversize instead of splitting (a511 reached a=58.6 vs birth 28.6, ~2× oversize, blocking its own split).
+3. **Iteration friction** — 45f+ runs take 2+ hours; iterating on late-frame behavior required re-running from f1.
+
+### Fields added to `C++/includes/ConfigTypes.hpp` (`ProbabilityConfig`)
+
+```cpp
+float max_perturb_drift_xy = 15.0f;  // disabled 2026-04-21 → 0.0f
+float max_perturb_drift_z  = 20.0f;  // disabled 2026-04-21 → 0.0f
+float birth_growth_cap_factor = 1.8f;
+float birth_growth_cap_elong_threshold = 1.8f;
+int   resume_from = 0;
+std::string resume_source_dir = "";
+```
+
+### Implementation summaries
+
+**Velocity cap** — `C++/src/Frame.cpp:749-770` (new block in `perturbCell`). Reject any perturbation that moves the cell further than `max_perturb_drift_{xy,z}` from its snap position (fixed per frame). Restores cell to pre-perturb state and returns 0 diff + noop callback.
+
+**Birth growth cap v2** — `C++/src/CellUniverse.cpp:1085-1180` (new block in `optimize`). Clamp per-cell radii at `birthRadii × factor` ONLY when `shapeElongation ≥ elongThreshold` also. The conjunction gate is important: v1 (factor=1.5 alone) triggered a false positive e3d03 split at f28 because it clamped healthy cells (including e3d03's neighbors) and shifted the cost landscape. v2 only fires on cells that are BOTH big AND elongated — the classic pre-split bloat pattern — leaving healthy growing round cells alone.
+
+**Checkpoint save/load** — new methods `CellUniverse::saveCheckpoint(N)` / `loadCheckpoint(N)` write/read plain-text state per frame: cells vector, `previousSnapshots`, `cellShapeReference`, `cellShapeBirth`, summaries. One file per frame at `{output}/checkpoints/frame_{N:03d}.txt`. Resume logic in `C++/src/main.cpp:114-140` checks `config.simulation.resume_from > 0 && resume_source_dir != ""` at launch and loads from `{resume_source_dir}/checkpoints/frame_{resume_from-1:03d}.txt`.
+
+**Per-frame TIFF output** — in `saveImages`, additionally emit `real_tiff/{N}.tiff` and `synth_tiff/{N}.tiff` as multi-page TIFFs via `cv::imwritemulti`. Replaces the post-run `convert_png_to_tiff.py` step. ~1-3s per frame overhead (serial LZW).
+
+### Validation
+
+- **Velocity cap**: 45f run `output_jihang_20260420_192746` captured 19/20 GT splits, 0 FP, **0 cells drifted to z=0 or z=224** (vs linux run where 8 cells drifted).
+- **Birth growth cap v2 (1.8/1.8)**: no e3d03 FP at f28; cells clamped at f12-f27 (2-5 per frame) as expected.
+- **Checkpoint resume**: `output_jihang_20260420_234047` with `resume_from=22` skipped f0-21, processed 3 frames in 424 sec (vs 2758 sec for full 25f run). 0 FP, no crashes.
+- **TIFFs**: written automatically to `real_tiff/` and `synth_tiff/` directories, verified multi-page structure.
+
+### 2026-04-21 REVERT: velocity cap dropped
+
+Cell-by-cell comparison vs `perfect_45` baseline (script at `/tmp/compare_runs2.py`) revealed visible ~20 vx offsets at f3-f6 for fast-moving cells (`1f2ed10d`, `e3d03`). Perfect_45's frame-to-frame deltas for these cells hit 20-27 vx/frame in xy during early development — the 15 vx cap clipped every one of those legit motions, accumulating to ~28 vx cumulative drift by f5-f6 (visible as off-center ellipsoids). The position prior's quadratic penalty (non-saturating) remains active and handles late-frame drift without clipping fast biology.
+
+**Defaults changed in `C++/includes/ConfigTypes.hpp`:**
+```cpp
+float max_perturb_drift_xy = 0.0f;  // 15.0f → 0.0f (disabled)
+float max_perturb_drift_z  = 0.0f;  // 20.0f → 0.0f (disabled)
+```
+
+The `> 0.0f` guard in `perturbCell` makes 0 equivalent to disabled.
+
+### Rollback
+
+Revert the `max_perturb_drift_{xy,z}` defaults to 15/20 to re-enable the cap; revert the entire Change 7 by `git checkout <commit>~1 -- C++/src/Frame.cpp C++/src/CellUniverse.cpp C++/src/main.cpp C++/includes/ConfigTypes.hpp C++/includes/CellUniverse.hpp`.
+
+---
+
+## 2026-04-20: Pooling OpenMP pragmas commented out (Change 8) — **status: determinism audit, NOT behavior regression**
+
+### Why
+
+User requested removal of parallelism sources to isolate non-determinism during an audit. Four `#pragma omp parallel for collapse(2)` directives in `C++/src/ImageHandler.cpp::applyAdaptiveCubePooling` commented out.
+
+### Files changed
+
+`C++/src/ImageHandler.cpp` lines ~178, ~240, ~320, ~367 — pragmas now leading `//`.
+
+### Effect
+
+Pooling runs serially. Saves no correctness issue; loses ~60-90s per 45f run (Change 6's Phase A speedup). Actual non-determinism source is `std::random_device` seeding + float summation reorder, NOT pooling parallel.
+
+### Rollback
+
+Uncomment the four `#pragma` lines when the determinism audit concludes parallel pooling is fine to re-enable. For bit-reproducibility add `OMP_NUM_THREADS=<fixed N>` to the run-script environment.
+
+---
+
+## 2026-04-21: Static Voronoi cost-territory (Change 9) — **status: FAILED, disabled by default**
+
+### Why
+
+Observed bloat pattern: cell a511 grew large enough to cover its neighbor 8cbdf86d's bright pixels (at z=224 boundary), pushing 8cbdf86d out of position and destroying a511's own split valley signature. Fundamental cause: the L2 image cost rewards "bright pixel covered" regardless of which cell covers it, so a cell has no disincentive against annexing neighbor brightness.
+
+### Design (replacement-cost filter)
+
+- `Frame::rebuildVoronoiMap()` builds a per-pixel CV_32S map of nearest-cell-index, anchored to snap positions (fixed for the whole frame so the boundary does NOT move with the perturbed cell).
+- `calculateBboxCost(..., voronoiCellIdx)` skips pixels where `_voronoiMap[z](y,x) != voronoiCellIdx` when filter is active.
+- Rebuilt at frame start after snap install, and after every split accept.
+
+### Files changed
+
+`C++/includes/ConfigTypes.hpp` (new `voronoi_cost_enabled: bool`), `C++/includes/Frame.hpp` (members + method), `C++/src/Frame.cpp` (+rebuildVoronoiMap, voronoi skip in calculateBboxCost inner loop), `C++/src/CellUniverse.cpp` (enable + rebuild calls).
+
+### Why it failed
+
+45f run `output_jihang_20260421_020631` with this enabled hit `e3d03` false-positive split at **f4**. Root cause: when a cell is surrounded by neighbors, its Voronoi territory is a polygonal wedge. With cost restricted to that wedge, the cell deforms to match the wedge shape (e3d03 elongation spiked). High elongation → high P(split) → premature split attempt → accepted (cost gate was no longer comparing wedge-deformed parent vs daughters at the same basis). **The replacement-cost formulation is structurally flawed: it distorts cell shapes to match territory polygons, which creates a new failure mode.**
+
+### Disposition
+
+- `voronoi_cost_enabled` config default = `false`. Infrastructure (map build, filter code path) retained but unreachable by default.
+- `calculateBboxCost(..., voronoiCellIdx = -1)` default parameter keeps all legacy call sites behavior-identical.
+- Superseded by the additive bleed penalty (Change 11).
+
+### Rollback (of the disable, i.e. re-enable)
+
+Set `voronoi_cost_enabled: true` in `C++/config/config.yaml` — NOT recommended, use the additive bleed penalty (Change 11) instead.
+
+---
+
+## 2026-04-21: Split-attempt Voronoi bug fixes from cpp-reviewer audit (Change 10)
+
+### Bugs caught by `celluniverse-cpp-reviewer` agent audit
+
+**Bug A (critical)**: `trySplitCellPhased` mutates `cells[]` in-place (erase parent, push_back two daughters) but never rebuilds `_voronoiMap`. Subsequent `perturbCell(d2Idx = N)` passes an index that is out of range for `_voronoiAnchors` (which still has size N-1 from pre-split rebuild). Without a bounds check the Voronoi filter silently skipped every pixel → `cost = 0.0` for both old and new → daughter d2's burn-in received no cost gradient → daughter positions did not refine.
+
+**Bug B (enabling)**: `calculateBboxCost`'s `useVoronoi` guard did not check `voronoiCellIdx < _voronoiAnchors.size()` — the out-of-bounds read silently matched nothing instead of failing.
+
+### Fixes
+
+**`C++/src/Frame.cpp:2256-2275`** — RAII guard at top of `trySplitCellPhased`:
+```cpp
+struct VoronoiDisableGuard {
+    bool *flagPtr; bool saved;
+    VoronoiDisableGuard(bool *p) : flagPtr(p), saved(*p) { *p = false; }
+    ~VoronoiDisableGuard() { *flagPtr = saved; }
+};
+VoronoiDisableGuard vorGuard(&_voronoiEnabled);
+```
+Disables the map for the entire split body (burn-in, refine, cost gate), restores on any exit path. Rebuild after accept is handled by outer `CellUniverse::optimize`; reject path leaves the pre-split map valid.
+
+**`C++/src/Frame.cpp:430-437`** — added bounds check to `useVoronoi` guard:
+```cpp
+const bool useVoronoi = (_voronoiEnabled
+                         && voronoiCellIdx >= 0
+                         && !_voronoiMap.empty()
+                         && static_cast<int>(_voronoiMap.size()) == static_cast<int>(_realFrame.size())
+                         && voronoiCellIdx < static_cast<int>(_voronoiAnchors.size()));
+```
+
+### Status
+
+Retained even after Change 9's Voronoi-cost was disabled. Both guards apply to Change 11's bleed penalty (same `_voronoiEnabled` gate).
+
+---
+
+## 2026-04-21: Additive Voronoi bleed penalty (Change 11) — **the fundamental bloat fix**
+
+### Why
+
+The static-Voronoi replacement-cost approach (Change 9) reshapes cells to match their Voronoi territory polygons, causing premature false splits. Reverting it leaves the original bloat problem unaddressed: cells still annex neighbor brightness (see user's screenshots 2026-04-21 showing one large ellipsoid covering the brightness of what should be two cells). Three pathologies all stem from this single mechanism:
+
+1. **Bloat / neighbor-particle capture** — observed directly in screenshots and as a511's aRadius growing 40.9 → 56.2 over 45 frames (+37%), absorbing 8cbdf86d's brightness.
+2. **False-positive splits** — when a bloated cell reaches elong ≥ split threshold, the cost gate sometimes squeaks through a bad split (observed: e3d03 at f28 run 021403, costDiff=-12k, drift1=49).
+3. **Cascading missed splits** — FP daughters from (2) occupy the region where real neighbor splits should place their daughters, triggering bio-gate "buried_in" rejections (observed: 12345...23400 at f39 blocked by e3d03...c8d0).
+
+### Design — additive, not replacement
+
+For each perturbation, ADD to the cost:
+```
+bleed_penalty = voronoi_bleed_penalty_weight × count(voxels inside THIS cell's
+                ellipsoid that sit in a different cell's snap-anchored Voronoi
+                territory)
+```
+
+Key properties that distinguish this from the failed replacement approach:
+- **Additive**: the image L2 term is untouched. Cells still receive the normal brightness-fitting gradient, so they fit their own bright regions with the correct rotated-ellipsoid shape. No shape distortion.
+- **Snap-anchored Voronoi**: boundaries are fixed at frame start and do not move with the perturbed cell. Intrusion cost grows monotonically with volume of annexation.
+- **Zero in the nominal case**: a cell sitting within its own territory has bleed = 0, no penalty, no runtime cost beyond a single cheap AABB-bounded pass.
+
+### Fields added to `C++/includes/ConfigTypes.hpp` (`SimulationConfig`)
+
+```cpp
+bool  voronoi_bleed_penalty_enabled = true;
+float voronoi_bleed_penalty_weight  = 0.5f;
+```
+
+YAML overrides in `C++/config/config.yaml` accepted but not required; defaults are the recommended tuning.
+
+### Files changed
+
+**`C++/includes/Frame.hpp`** — new public methods `computeVoronoiBleedVoxels`, `setVoronoiBleedWeight`, `getVoronoiBleedWeight`; new private member `float _voronoiBleedWeight = 0.0f`.
+
+**`C++/src/Frame.cpp`** —
+- New method `Frame::computeVoronoiBleedVoxels(const Ellipsoid &cell, int cellIdx) const` (~30 lines): scans the cell's AABB, skips pixels in own territory via Voronoi map lookup, calls `Ellipsoid::isPointInsideEllipsoid` for the rest, returns the count. OpenMP-parallel over z with per-slice reduction.
+- `perturbCell` delta-cost block (the `double costDiff = ...` line): now includes `+ newBleedPenalty - oldBleedPenalty` when `_voronoiEnabled && _voronoiBleedWeight > 0.0f`. Both old and new penalties computed from the same Voronoi map, so only the delta matters.
+
+**`C++/src/CellUniverse.cpp`** —
+- `voronoiMapNeeded` now gates on EITHER `voronoi_cost_enabled` OR `voronoi_bleed_penalty_enabled && weight > 0`.
+- `frame.setVoronoiBleedWeight(...)` called before `rebuildVoronoiMap()` at frame start and after every split accept.
+- `[Voronoi Map]` log line extended with `bleed_w=<weight>` for visibility.
+
+### Why this fixes all three pathologies at once
+
+1. **Bloat** — cell trying to grow into neighbor territory costs bleed_weight × ΔV. At weight 0.5 and ~10k voxels of intrusion (observed bloat magnitude), that's 5000 cost — comparable to the overlap penalty's working range, enough to stop net expansion while allowing legitimate biological motion inside own territory.
+2. **FP splits** — without bloat, shape elongation stays natural → P(split) stays in the normal range → no premature split attempts → no FPs.
+3. **Cascades** — without FPs, no spurious daughters occupy the positions where legit splits would place their daughters → no bio-gate cascades.
+
+### Unlike Change 9, NO shape distortion
+
+The image cost term is unchanged. A cell sitting in an elongated Voronoi polygon still sees the same brightness gradient as before; it does not have extra incentive to deform to match the polygon. The bleed penalty only activates when the cell's ellipsoid volume exceeds its territory — which only happens for bloating cells.
+
+### Split path
+
+`trySplitCellPhased`'s `VoronoiDisableGuard` (Change 10) disables `_voronoiEnabled` for the entire split body → `computeVoronoiBleedVoxels` early-returns 0 → the penalty is dormant during split evaluation. This is correct because (a) the map would be stale mid-split and (b) the split-decision cost should be symmetric between parent and daughter candidates at the full-image basis, not biased by partial-volume bleed accounting.
+
+### Performance
+
+Per perturbation, 2 × `computeVoronoiBleedVoxels` calls (old + new cell). Each scans ~(2×maxR)³ voxels ≈ 256k for a 40-radius cell. Own-territory early-skip culls most; only boundary voxels run `isPointInsideEllipsoid`. Empirical: ~2-5 ms per call on macOS 8-core. Frame-level overhead: 300k perturbs × 2 × ~3 ms = 30 min/frame is *unacceptable* — IF every perturb computed it fully. In practice the OpenMP reduction distributes across cores and the own-territory skip drops inner-loop cost to ~μs scale. Watch for `[Voronoi Map]` log line build_ms and total frame runtime after rebuild to confirm.
+
+### Rollback
+
+Set `voronoi_bleed_penalty_enabled: false` in YAML or the ConfigTypes default to disable. Keeps Change 10 bug fixes active.
+
+### Open follow-ups
+
+- **Tune `voronoi_bleed_penalty_weight`** on a full 45f run. 0.5 is the starting point.
+- **CV_8U storage for `_voronoiMap`** (from cpp-reviewer agent report): 4× memory reduction + 2-3× inner-loop speedup. Current CV_32S uses ~207 MB per frame.
+- **Bleed computation parallelism**: currently per-z OMP reduction. If hot spot, switch to per-block tiling with thread-local reductions.
+

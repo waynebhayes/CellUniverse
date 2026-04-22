@@ -3,6 +3,7 @@
 #include <set>
 #include <cmath>
 #include <algorithm>
+#include <chrono>
 #include <limits>
 #include <numeric>
 #include <sstream>
@@ -1084,6 +1085,54 @@ void CellUniverse::optimize(int frameIndex)
             frame.regenerateSynthFrame();
         }
 
+        // ---- Birth-relative growth cap (anti-bloat over long horizons) ----
+        //
+        // Caps each radius at `birthR × birth_growth_cap_factor`. Unlike the
+        // per-frame fit growth cap above (which compounds over time since
+        // cellShapeReference updates every frame), this is a cumulative
+        // ceiling tied to the frozen birth radii. A cell that has existed
+        // for many frames and slowly bloated (observed: a511 grew a-axis
+        // from 28.6 at birth to 58.6 after 25 frames) gets caught here.
+        //
+        // When a bloated cell wants to grow but hits the cap, the only way
+        // to reduce its image cost is to split — which is exactly the
+        // biologically correct behavior.
+        const float birthCapFactor = config.prob.birth_growth_cap_factor;
+        const float birthCapElongThresh = config.prob.birth_growth_cap_elong_threshold;
+        if (birthCapFactor > 0.0f) {
+            int birthCapped = 0;
+            for (size_t ci = 0; ci < frame.cells.size(); ++ci) {
+                const std::string &name = frame.cells[ci].getName();
+                auto birthIt = cellShapeBirth.find(name);
+                if (birthIt == cellShapeBirth.end()) continue;  // not yet captured
+                const auto &birth = birthIt->second;
+                const float capA = birth[0] * birthCapFactor;
+                const float capB = birth[1] * birthCapFactor;
+                const float capC = birth[2] * birthCapFactor;
+                const float fA = frame.cells[ci].getARadius();
+                const float fB = frame.cells[ci].getBRadius();
+                const float fC = frame.cells[ci].getCRadius();
+                const bool radiusOver = (fA > capA || fB > capB || fC > capC);
+                if (!radiusOver) continue;
+                // Gate on elongation too — only classic bloat (big + elongated)
+                // gets clamped. Healthy growing cells that exceed birth×factor
+                // without elongation pass through unchanged.
+                const float elong = frame.cells[ci].shapeElongation();
+                if (elong < birthCapElongThresh) continue;
+                frame.cells[ci].setRadii(std::min(fA, capA),
+                                         std::min(fB, capB),
+                                         std::min(fC, capC));
+                ++birthCapped;
+            }
+            if (birthCapped > 0) {
+                std::cout << "[Birth Growth Cap] frame " << displayFrame
+                          << " clamped=" << birthCapped
+                          << " factor=" << birthCapFactor
+                          << " elongThresh=" << birthCapElongThresh << std::endl;
+                frame.regenerateSynthFrame();
+            }
+        }
+
         // ---- Reference-side growth cap (anti-compounding mask basis) ----
         //
         // Each frame the reference tracks toward the observed fit but is
@@ -1151,6 +1200,19 @@ void CellUniverse::optimize(int frameIndex)
     frame.clearSnapPositions();
     frame.setPositionPriorWeight(config.prob.position_prior_weight);
     frame.setPositionPriorThreshold(config.prob.position_prior_threshold);
+    frame.setMaxPerturbDriftXY(config.prob.max_perturb_drift_xy);
+    frame.setMaxPerturbDriftZ(config.prob.max_perturb_drift_z);
+    // Voronoi map is needed for EITHER the (legacy) cost-replacement filter
+    // or the additive bleed penalty — enable map build when either is on.
+    const bool voronoiMapNeeded =
+        config.simulation.voronoi_cost_enabled ||
+        (config.simulation.voronoi_bleed_penalty_enabled &&
+         config.simulation.voronoi_bleed_penalty_weight > 0.0f);
+    frame.enableVoronoiCost(voronoiMapNeeded);
+    frame.setVoronoiBleedWeight(
+        config.simulation.voronoi_bleed_penalty_enabled
+            ? config.simulation.voronoi_bleed_penalty_weight
+            : 0.0f);
     if (bboxActiveThisFrame) {
         int installed = 0;
         for (const auto &cell : frame.cells) {
@@ -1172,6 +1234,24 @@ void CellUniverse::optimize(int frameIndex)
                   << " total=" << frame.cells.size()
                   << " priorWeight=" << config.prob.position_prior_weight
                   << std::endl;
+    }
+
+    // Build the static-Voronoi cost territory map for this frame. Anchors
+    // are snap positions (for cells with a valid snap) or live centers
+    // (frame 1, newborn daughters). Pixels in each cell's bbox that are
+    // closer to another anchor contribute zero to this cell's image cost
+    // during perturbation — prevents bloat-induced territory annexation.
+    // Rebuilt after each split accept below.
+    if (voronoiMapNeeded) {
+        const auto vorT0 = std::chrono::steady_clock::now();
+        frame.rebuildVoronoiMap();
+        const auto vorT1 = std::chrono::steady_clock::now();
+        const double vorMs = std::chrono::duration<double, std::milli>(
+            vorT1 - vorT0).count();
+        std::cout << "[Voronoi Map] frame " << displayFrame
+                  << " anchors=" << frame.cells.size()
+                  << " bleed_w=" << frame.getVoronoiBleedWeight()
+                  << " build_ms=" << vorMs << std::endl;
     }
 
     // Seed expected-daughter positions for EVERY cell with a valid
@@ -1506,6 +1586,16 @@ void CellUniverse::optimize(int frameIndex)
                         for (const auto &c : frame.cells) bSum += c.getBrightness();
                         frame.setMeanCellBrightness(bSum / static_cast<float>(frame.cells.size()));
                     }
+                    // Rebuild Voronoi territory — cell count and positions
+                    // changed (parent replaced, two daughters appended).
+                    // Daughters don't have a snap entry yet, so their
+                    // live positions become their Voronoi anchors going
+                    // forward. Without a rebuild, subsequent perturbations
+                    // of the daughters would be scored against the parent's
+                    // stale claim-set.
+                    if (voronoiMapNeeded) {
+                        frame.rebuildVoronoiMap();
+                    }
                 } else {
                     splitBlacklist.insert(cellName);
                     splitRejectedInPhase.insert(cellName);
@@ -1703,6 +1793,20 @@ void CellUniverse::saveImages(int frameIndex)
         }
     }
 
+    // Also emit multi-page TIFF stacks — one file per frame per stream.
+    // `real_tiff/{frame}.tiff` holds all z-slices of the real image (outlines
+    // overlaid), `synth_tiff/{frame}.tiff` holds the synthetic render. This
+    // gives a ready-to-view stack per frame without running the separate
+    // convert_png_to_tiff.py script afterward.
+    const std::string realTiffDir  = outputPath + "/real_tiff";
+    const std::string synthTiffDir = outputPath + "/synth_tiff";
+    std::filesystem::create_directories(realTiffDir);
+    std::filesystem::create_directories(synthTiffDir);
+    const std::string realTiffPath  = realTiffDir  + "/" + std::to_string(displayFrame) + ".tiff";
+    const std::string synthTiffPath = synthTiffDir + "/" + std::to_string(displayFrame) + ".tiff";
+    cv::imwritemulti(realTiffPath, realImages);
+    cv::imwritemulti(synthTiffPath, synthImages);
+
     std::cout << "Done" << '\n';
 }
 
@@ -1750,6 +1854,195 @@ void CellUniverse::saveCells(int frameIndex)
 
     std::cout << "Saved " << frame.cells.size() << " cells for frame " << (firstFrame + frameIndex)
               << " to " << cellsPath << std::endl;
+}
+
+// ---------------------------------------------------------------------------
+// Checkpoint save / load (Approach 2).
+// ---------------------------------------------------------------------------
+//
+// Format: simple line-oriented text. One directive per line, space-separated
+// fields. Each checkpoint file holds the full state needed to resume an
+// optimization run at frameIndex+1.
+
+void CellUniverse::saveCheckpoint(int frameIndex)
+{
+    if (frameIndex < 0 || static_cast<size_t>(frameIndex) >= frames.size()) return;
+    const std::string dir = outputPath + "/checkpoints";
+    fs::create_directories(dir);
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "frame_%03d.txt", frameIndex);
+    const std::string path = dir + "/" + buf;
+
+    std::ofstream out(path);
+    if (!out.is_open()) {
+        std::cerr << "[Checkpoint] failed to open " << path << '\n';
+        return;
+    }
+
+    // Scalar header
+    out << "frame " << frameIndex << '\n';
+    out << "z_slices " << config.simulation.z_slices << '\n';
+    out << "maxZ " << Ellipsoid::cellConfig.maxZ << '\n';
+
+    // Per-frame summaries (indexed by frameIndex, since we cache AFTER
+    // optimize(frameIndex) completes).
+    const float adaptiveBg = (static_cast<size_t>(frameIndex) < perFrameAdaptiveBackground.size())
+        ? perFrameAdaptiveBackground[frameIndex] : 0.0f;
+    const float meanBright = (static_cast<size_t>(frameIndex) < perFrameMeanBrightness.size())
+        ? perFrameMeanBrightness[frameIndex] : 0.0f;
+    out << "perFrameAdaptiveBackground " << adaptiveBg << '\n';
+    out << "perFrameMeanBrightness " << meanBright << '\n';
+
+    // Next frame's background value (what optimize(frameIndex+1) will use
+    // as initial bg for the frame being optimized).
+    if (static_cast<size_t>(frameIndex + 1) < frames.size()) {
+        out << "nextFrameBackgroundValue " << frames[frameIndex + 1].getBackgroundValue() << '\n';
+    }
+
+    // Cells of frameIndex + 1 (already copied forward, ready for optimize).
+    // If frame+1 doesn't exist (last frame), save frame N's cells instead.
+    const size_t cellsFrameIdx = (static_cast<size_t>(frameIndex + 1) < frames.size())
+        ? static_cast<size_t>(frameIndex + 1) : static_cast<size_t>(frameIndex);
+    const auto &cells = frames[cellsFrameIdx].cells;
+    for (const auto &cell : cells) {
+        auto p = cell.getCellParams();
+        out << "cell " << p.name
+            << " " << p.x << " " << p.y << " " << p.z
+            << " " << p.aRadius << " " << p.bRadius << " " << p.cRadius
+            << " " << p.theta_x << " " << p.theta_y << " " << p.theta_z
+            << " " << p.brightness << '\n';
+    }
+
+    // Previous-frame snapshots (per-cell PCA fit state for split detection).
+    for (const auto &kv : previousSnapshots) {
+        const auto &s = kv.second;
+        out << "snap " << kv.first
+            << " " << (s.valid ? 1 : 0)
+            << " " << s.shapeElongation
+            << " " << s.splitAxisDir.x << " " << s.splitAxisDir.y << " " << s.splitAxisDir.z
+            << " " << s.splitAxisLength
+            << " " << s.position.x << " " << s.position.y << " " << s.position.z
+            << " " << s.aRadius << " " << s.bRadius << " " << s.cRadius
+            << " " << s.thetaX << " " << s.thetaY << " " << s.thetaZ
+            << " " << s.brightness << '\n';
+    }
+
+    // Shape reference (bounded growth ref for fit-cap).
+    for (const auto &kv : cellShapeReference) {
+        out << "ref " << kv.first
+            << " " << kv.second[0] << " " << kv.second[1] << " " << kv.second[2] << '\n';
+    }
+
+    // Shape birth (frozen birth radii for mask + birth cap).
+    for (const auto &kv : cellShapeBirth) {
+        out << "birth " << kv.first
+            << " " << kv.second[0] << " " << kv.second[1] << " " << kv.second[2] << '\n';
+    }
+
+    out.close();
+    std::cout << "[Checkpoint] saved frame " << frameIndex << " → " << path << std::endl;
+}
+
+bool CellUniverse::loadCheckpoint(int frameIndex, const std::string &checkpointPath)
+{
+    std::ifstream in(checkpointPath);
+    if (!in.is_open()) {
+        std::cerr << "[Checkpoint] cannot open " << checkpointPath << '\n';
+        return false;
+    }
+
+    // Clear maps that will be repopulated.
+    previousSnapshots.clear();
+    cellShapeReference.clear();
+    cellShapeBirth.clear();
+
+    const size_t cellsFrameIdx = (static_cast<size_t>(frameIndex + 1) < frames.size())
+        ? static_cast<size_t>(frameIndex + 1) : static_cast<size_t>(frameIndex);
+    if (cellsFrameIdx < frames.size()) {
+        frames[cellsFrameIdx].cells.clear();
+    }
+
+    std::string line;
+    int loadedCells = 0, loadedSnaps = 0, loadedRefs = 0, loadedBirths = 0;
+    while (std::getline(in, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        std::istringstream ss(line);
+        std::string tag;
+        ss >> tag;
+        if (tag == "frame") {
+            int f; ss >> f;
+            // sanity check: file's frame should match caller's expectation
+            if (f != frameIndex) {
+                std::cerr << "[Checkpoint] frame mismatch: file=" << f
+                          << " expected=" << frameIndex << '\n';
+            }
+        } else if (tag == "z_slices") {
+            int v; ss >> v;
+            config.simulation.z_slices = v;
+        } else if (tag == "maxZ") {
+            float v; ss >> v;
+            Ellipsoid::cellConfig.maxZ = v;
+        } else if (tag == "perFrameAdaptiveBackground") {
+            float v; ss >> v;
+            if (perFrameAdaptiveBackground.size() < static_cast<size_t>(frameIndex + 1)) {
+                perFrameAdaptiveBackground.resize(frameIndex + 1, 0.0f);
+            }
+            perFrameAdaptiveBackground[frameIndex] = v;
+        } else if (tag == "perFrameMeanBrightness") {
+            float v; ss >> v;
+            if (perFrameMeanBrightness.size() < static_cast<size_t>(frameIndex + 1)) {
+                perFrameMeanBrightness.resize(frameIndex + 1, 0.0f);
+            }
+            perFrameMeanBrightness[frameIndex] = v;
+        } else if (tag == "nextFrameBackgroundValue") {
+            float v; ss >> v;
+            if (cellsFrameIdx < frames.size()) {
+                frames[cellsFrameIdx].setBackgroundColor(v);
+            }
+        } else if (tag == "cell") {
+            EllipsoidParams p;
+            ss >> p.name >> p.x >> p.y >> p.z
+               >> p.aRadius >> p.bRadius >> p.cRadius
+               >> p.theta_x >> p.theta_y >> p.theta_z
+               >> p.brightness;
+            if (cellsFrameIdx < frames.size()) {
+                frames[cellsFrameIdx].cells.emplace_back(p);
+                ++loadedCells;
+            }
+        } else if (tag == "snap") {
+            PreviousFrameSnapshot s;
+            std::string name;
+            int validInt = 0;
+            ss >> name >> validInt >> s.shapeElongation
+               >> s.splitAxisDir.x >> s.splitAxisDir.y >> s.splitAxisDir.z
+               >> s.splitAxisLength
+               >> s.position.x >> s.position.y >> s.position.z
+               >> s.aRadius >> s.bRadius >> s.cRadius
+               >> s.thetaX >> s.thetaY >> s.thetaZ
+               >> s.brightness;
+            s.valid = (validInt != 0);
+            previousSnapshots[name] = s;
+            ++loadedSnaps;
+        } else if (tag == "ref") {
+            std::string name; std::array<float, 3> r;
+            ss >> name >> r[0] >> r[1] >> r[2];
+            cellShapeReference[name] = r;
+            ++loadedRefs;
+        } else if (tag == "birth") {
+            std::string name; std::array<float, 3> r;
+            ss >> name >> r[0] >> r[1] >> r[2];
+            cellShapeBirth[name] = r;
+            ++loadedBirths;
+        }
+    }
+    in.close();
+
+    std::cout << "[Checkpoint] loaded frame " << frameIndex
+              << " cells=" << loadedCells
+              << " snaps=" << loadedSnaps
+              << " refs=" << loadedRefs
+              << " births=" << loadedBirths << std::endl;
+    return true;
 }
 
 void CellUniverse::copyCellsForward(size_t to)

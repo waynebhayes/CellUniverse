@@ -1,5 +1,6 @@
 #include "../includes/Frame.hpp"
 
+#include <limits>
 #include <sstream>
 
 // OpenMP pragmas are parsed by the compiler when -fopenmp is passed;
@@ -346,15 +347,151 @@ BoundingBox3D Frame::computeUnionBboxWithPoints(
     return result;
 }
 
+std::size_t Frame::computeVoronoiBleedVoxels(const Ellipsoid &cell,
+                                             int cellIdx) const
+{
+    // No map or gate off → zero cost, no penalty.
+    if (!_voronoiEnabled || _voronoiMap.empty() || cellIdx < 0 ||
+        _realFrame.empty()) {
+        return 0;
+    }
+    const int Z = static_cast<int>(_realFrame.size());
+    if (static_cast<int>(_voronoiMap.size()) != Z) return 0;
+    const int W = _realFrame[0].cols;
+    const int H = _realFrame[0].rows;
+
+    // Bounding box around the cell (conservative: use max radius so we
+    // never miss a voxel inside the ellipsoid). Per-voxel inside-test
+    // uses Ellipsoid::isPointInsideEllipsoid so the count is exact for
+    // the rotated triaxial shape.
+    const float maxR = std::max({cell.getARadius(),
+                                  cell.getBRadius(),
+                                  cell.getCRadius()});
+    const int xMin = std::max(0,     static_cast<int>(std::floor(cell.getX() - maxR)));
+    const int xMax = std::min(W - 1, static_cast<int>(std::ceil (cell.getX() + maxR)));
+    const int yMin = std::max(0,     static_cast<int>(std::floor(cell.getY() - maxR)));
+    const int yMax = std::min(H - 1, static_cast<int>(std::ceil (cell.getY() + maxR)));
+    const int zMin = std::max(0,     static_cast<int>(std::floor(cell.getZ() - maxR)));
+    const int zMax = std::min(Z - 1, static_cast<int>(std::ceil (cell.getZ() + maxR)));
+
+    long long bleed = 0;
+    #pragma omp parallel for reduction(+:bleed) schedule(static)
+    for (int z = zMin; z <= zMax; ++z) {
+        const cv::Mat &vSlice = _voronoiMap[z];
+        if (vSlice.empty() || vSlice.type() != CV_32S) continue;
+        long long sliceBleed = 0;
+        for (int y = yMin; y <= yMax; ++y) {
+            const int *vorRow = vSlice.ptr<int>(y);
+            for (int x = xMin; x <= xMax; ++x) {
+                if (vorRow[x] == cellIdx) continue;  // own territory → no bleed
+                // Only count voxels actually inside the ellipsoid. Most
+                // pixels in the bbox are in own territory (cell sits near
+                // its Voronoi centroid) so the early-skip above handles
+                // the bulk of the work; the inside test runs only on
+                // pixels already flagged as being in a neighbor's claim.
+                if (cell.isPointInsideEllipsoid(
+                        cv::Point3f(static_cast<float>(x),
+                                    static_cast<float>(y),
+                                    static_cast<float>(z)))) {
+                    ++sliceBleed;
+                }
+            }
+        }
+        bleed += sliceBleed;
+    }
+    return static_cast<std::size_t>(bleed);
+}
+
+void Frame::rebuildVoronoiMap()
+{
+    if (!_voronoiEnabled || _realFrame.empty() || cells.empty()) {
+        _voronoiMap.clear();
+        _voronoiAnchors.clear();
+        return;
+    }
+    const int Z = static_cast<int>(_realFrame.size());
+    const int H = _realFrame[0].rows;
+    const int W = _realFrame[0].cols;
+
+    // Anchor = snap position when available, else the cell's live center.
+    // Snap anchors are installed by CellUniverse at frame start from
+    // previousSnapshots and do not move during the frame. Newborn daughters
+    // (post-split-accept) have no snap, so they use their live position —
+    // but rebuildVoronoiMap is called immediately after the split so the
+    // daughters' live positions ARE their Voronoi anchors going forward.
+    _voronoiAnchors.clear();
+    _voronoiAnchors.reserve(cells.size());
+    for (const auto &cell : cells) {
+        const std::string &name = cell.getName();
+        auto it = _snapPositions.find(name);
+        if (it != _snapPositions.end()) {
+            _voronoiAnchors.push_back(it->second);
+        } else {
+            _voronoiAnchors.push_back(
+                cv::Point3f(cell.getX(), cell.getY(), cell.getZ()));
+        }
+    }
+
+    _voronoiMap.resize(Z);
+    for (int z = 0; z < Z; ++z) {
+        if (_voronoiMap[z].empty() || _voronoiMap[z].rows != H
+            || _voronoiMap[z].cols != W
+            || _voronoiMap[z].type() != CV_32S) {
+            _voronoiMap[z] = cv::Mat(H, W, CV_32S);
+        }
+    }
+
+    const int nCells = static_cast<int>(_voronoiAnchors.size());
+    // Snapshot to contiguous arrays so the inner loop reads from tight
+    // memory (better cache behavior than cv::Point3f vector in hot loop).
+    std::vector<float> ax(nCells), ay(nCells), az(nCells);
+    for (int i = 0; i < nCells; ++i) {
+        ax[i] = _voronoiAnchors[i].x;
+        ay[i] = _voronoiAnchors[i].y;
+        az[i] = _voronoiAnchors[i].z;
+    }
+
+    #pragma omp parallel for schedule(static)
+    for (int z = 0; z < Z; ++z) {
+        cv::Mat &slice = _voronoiMap[z];
+        for (int y = 0; y < H; ++y) {
+            int *row = slice.ptr<int>(y);
+            for (int x = 0; x < W; ++x) {
+                float bestD2 = std::numeric_limits<float>::infinity();
+                int bestIdx = -1;
+                for (int i = 0; i < nCells; ++i) {
+                    const float dx = x - ax[i];
+                    const float dy = y - ay[i];
+                    const float dz = z - az[i];
+                    const float d2 = dx*dx + dy*dy + dz*dz;
+                    if (d2 < bestD2) { bestD2 = d2; bestIdx = i; }
+                }
+                row[x] = bestIdx;
+            }
+        }
+    }
+}
+
 double Frame::calculateBboxCost(
     const BoundingBox3D &bbox,
     const std::vector<cv::Mat> &synthFrame,
-    const std::vector<uint8_t> &mask) const
+    const std::vector<uint8_t> &mask,
+    int voronoiCellIdx) const
 {
     if (!bbox.isValid()) return 0.0;
     if (synthFrame.size() != _realFrame.size()) {
         throw std::runtime_error("bbox cost: synth/real stack size mismatch");
     }
+    // Voronoi cost filter is active only when the caller passes a valid
+    // cell index that matches the current anchor list — an out-of-range
+    // index would otherwise silently skip every pixel and return 0.0,
+    // masking the bug. Bounds check added 2026-04-21 together with the
+    // split-attempt disable-guard.
+    const bool useVoronoi = (_voronoiEnabled
+                             && voronoiCellIdx >= 0
+                             && !_voronoiMap.empty()
+                             && static_cast<int>(_voronoiMap.size()) == static_cast<int>(_realFrame.size())
+                             && voronoiCellIdx < static_cast<int>(_voronoiAnchors.size()));
     const float asymK = simulationConfig.asymmetric_cost_weight;
     // Threshold: only apply asymK when overshoot exceeds this value.
     // Below threshold, boundary rendering artifacts (d ≈ 0.01-0.05) are
@@ -391,12 +528,16 @@ double Frame::calculateBboxCost(
             const cv::Mat &realSlice  = _realFrame[z];
             const cv::Mat &synthSlice = synthFrame[z];
             if (realSlice.type() != CV_32F || synthSlice.type() != CV_32F) continue;
+            const int *vorRow = nullptr;  // overridden per-y when useVoronoi
+            const cv::Mat *vorSlice = useVoronoi ? &_voronoiMap[z] : nullptr;
             double sliceCost = 0.0;
             for (int y = bbox.yMin; y <= bbox.yMax; ++y) {
                 const float *rr = realSlice.ptr<float>(y);
                 const float *ss = synthSlice.ptr<float>(y);
+                if (useVoronoi) vorRow = vorSlice->ptr<int>(y);
                 if (useAsym) {
                     for (int x = bbox.xMin; x <= bbox.xMax; ++x) {
+                        if (useVoronoi && vorRow[x] != voronoiCellIdx) continue;
                         const float d = ss[x] - rr[x];
                         const float d2 = d * d;
                         const float mul = (d > asymThreshold) ? asymK : 1.0f;
@@ -404,6 +545,7 @@ double Frame::calculateBboxCost(
                     }
                 } else {
                     for (int x = bbox.xMin; x <= bbox.xMax; ++x) {
+                        if (useVoronoi && vorRow[x] != voronoiCellIdx) continue;
                         const float d = ss[x] - rr[x];
                         sliceCost += d * d;
                     }
@@ -659,6 +801,30 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight, bool useS
         }
     }
 
+    // Per-frame velocity cap: reject any perturbation that moves the cell
+    // further than _maxPerturbDrift{XY,Z} from its snap position. Guards
+    // against Monte Carlo random-walk drift that the soft position_prior
+    // penalty fails to stop in time (observed bug: cell a510 drifted +18
+    // then +23 in z over two consecutive frames, colliding with a
+    // stationary neighbor at the image ceiling).
+    {
+        auto snapPosIt = _snapPositions.find(cells[index].getName());
+        if (snapPosIt != _snapPositions.end()) {
+            const cv::Point3f &snapPos = snapPosIt->second;
+            const float dx = cells[index].getX() - snapPos.x;
+            const float dy = cells[index].getY() - snapPos.y;
+            const float dz = cells[index].getZ() - snapPos.z;
+            const float driftXY = std::sqrt(dx * dx + dy * dy);
+            const float driftZ  = std::abs(dz);
+            const bool xyOver = (_maxPerturbDriftXY > 0.0f) && (driftXY > _maxPerturbDriftXY);
+            const bool zOver  = (_maxPerturbDriftZ  > 0.0f) && (driftZ  > _maxPerturbDriftZ);
+            if (xyOver || zOver) {
+                cells[index] = oldCell;
+                return {0.0, [](bool) {}};
+            }
+        }
+    }
+
     // Min-radius hard clamp (2026-04-09): prevent cells from ratcheting down to
     // minimum radius bounds via unconstrained perturbation. The Ellipsoid ctor
     // silently clamps a/b/c radii to their configured minima,
@@ -778,8 +944,12 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight, bool useS
         // Without exclusion, every voxel in the snap-anchored bbox
         // contributes to the delta → drift from snap costs reliably.
         const std::vector<uint8_t> noMask;  // empty = all voxels count
-        oldImageCost = calculateBboxCost(bboxUnion, _synthFrame, noMask);
-        newImageCost = calculateBboxCost(bboxUnion, newSynthFrame, noMask);
+        // Voronoi cell index = this cell's position in cells[]. When the
+        // Voronoi cost is disabled (empty _voronoiMap) calculateBboxCost
+        // ignores voronoiCellIdx and behaves identically to the legacy path.
+        const int vorIdx = static_cast<int>(index);
+        oldImageCost = calculateBboxCost(bboxUnion, _synthFrame, noMask, vorIdx);
+        newImageCost = calculateBboxCost(bboxUnion, newSynthFrame, noMask, vorIdx);
     } else {
         // Legacy full-image path.
         newImageCost = calculateIncrementalCost(newSynthFrame,
@@ -821,8 +991,28 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight, bool useS
         }
     }
 
-    double costDiff = (newImageCost + newOverlapCell + newPositionPrior)
-                    - (oldImageCost + oldOverlapCell + oldPositionPrior);
+    // Additive Voronoi bleed penalty: cost grows with the count of
+    // voxels inside this cell's ellipsoid that sit in another cell's
+    // snap-anchored Voronoi territory. Prevents bloat-induced neighbor-
+    // particle capture without distorting the cell's image-cost gradient
+    // (that's why it is additive, not a replacement mask on the L2 sum).
+    // Evaluated only when weight > 0 AND the Voronoi map is live
+    // (computeVoronoiBleedVoxels returns 0 otherwise, making the term a
+    // no-op and preserving legacy behavior).
+    double oldBleedPenalty = 0.0;
+    double newBleedPenalty = 0.0;
+    if (_voronoiEnabled && _voronoiBleedWeight > 0.0f) {
+        const int vorIdx = static_cast<int>(index);
+        oldBleedPenalty = static_cast<double>(_voronoiBleedWeight) *
+                          static_cast<double>(
+                              computeVoronoiBleedVoxels(oldCell, vorIdx));
+        newBleedPenalty = static_cast<double>(_voronoiBleedWeight) *
+                          static_cast<double>(
+                              computeVoronoiBleedVoxels(cells[index], vorIdx));
+    }
+
+    double costDiff = (newImageCost + newOverlapCell + newPositionPrior + newBleedPenalty)
+                    - (oldImageCost + oldOverlapCell + oldPositionPrior + oldBleedPenalty);
 
     const bool useBboxLocal = _useBboxCost;
     CallBackFunc callback = [this,
@@ -2145,6 +2335,27 @@ CostCallbackPair Frame::trySplitCellPhased(
 {
     const auto noop = [](bool) {};
     if (cellIndex >= cells.size()) return {0.0, noop};
+
+    // Voronoi cost-territory is disabled for the entire split attempt.
+    // Reason: trySplitCellPhased mutates cells[] in-place (erase parent,
+    // push_back two daughters) but does not rebuild _voronoiMap. Any
+    // subsequent perturbCell(daughterIdx) inside burn-in / refine would
+    // query the STALE map with indices that either (a) point to an
+    // unrelated cell's pre-split claim region for d1Idx = N-1, or
+    // (b) are out of range for d2Idx = N, silently zero-ing the cost
+    // and killing the position gradient. Disabling Voronoi here routes
+    // burn-in through the legacy all-voxels cost, which is what the
+    // split-candidate geometry gates already expect. The outer
+    // CellUniverse::optimize rebuilds the map after accept; on reject,
+    // cells[] is restored so the pre-split map remains valid. The guard
+    // struct restores the flag on every exit path.
+    struct VoronoiDisableGuard {
+        bool *flagPtr;
+        bool saved;
+        VoronoiDisableGuard(bool *p) : flagPtr(p), saved(*p) { *p = false; }
+        ~VoronoiDisableGuard() { *flagPtr = saved; }
+    };
+    VoronoiDisableGuard vorGuard(&_voronoiEnabled);
 
     // --- 0. Save live parent and install snapshot-state parent ---
     //

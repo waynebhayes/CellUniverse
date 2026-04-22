@@ -173,7 +173,9 @@ ImageStack applyAdaptiveCubePooling(const ImageStack &stack,
     // Parallelize cube-stats computation. Each cube writes only to its
     // own cubeStats[idx] → no races. collapse(2) gives threads gz/gy tiles
     // big enough to amortize scheduling overhead.
-    #pragma omp parallel for schedule(static)
+    // Parallelism removed for cross-run determinism audit. Can re-enable after
+    // confirming it isn't contributing to cell-divergence issues.
+    // #pragma omp parallel for schedule(static)
     for (int gz = 0; gz < gridZ; ++gz)
     {
         const int z0 = gz * cubeSize;
@@ -233,7 +235,9 @@ ImageStack applyAdaptiveCubePooling(const ImageStack &stack,
     // cubeStats (read-only) and writes to its own cube voxel range in pooled
     // (disjoint per-tuple) and pooledCubeValues[cubeIndex(gz,gy,gx)] (disjoint).
     // Counters updated via reduction.
-    #pragma omp parallel for schedule(static) reduction(+:meanPooledCubes, maxPooledCubes)
+    // Parallelism removed for cross-run determinism audit. Can re-enable after
+    // confirming it isn't contributing to cell-divergence issues.
+    // #pragma omp parallel for schedule(static) reduction(+:meanPooledCubes, maxPooledCubes)
     for (int gz = 0; gz < gridZ; ++gz)
     {
         const int z0 = gz * cubeSize;
@@ -311,7 +315,9 @@ ImageStack applyAdaptiveCubePooling(const ImageStack &stack,
         // Parallelize neighbor-check: each cube only writes to its own
         // clearCube[idx] and reads from pooledCubeValues (read-only here).
         // Candidate counter via reduction.
-        #pragma omp parallel for schedule(static) reduction(+:isolatedBrightCandidateCubes)
+        // Parallelism removed for cross-run determinism audit. Can re-enable after
+    // confirming it isn't contributing to cell-divergence issues.
+    // #pragma omp parallel for schedule(static) reduction(+:isolatedBrightCandidateCubes)
         for (int gz = 0; gz < gridZ; ++gz)
         {
             for (int gy = 0; gy < gridY; ++gy)
@@ -356,7 +362,9 @@ ImageStack applyAdaptiveCubePooling(const ImageStack &stack,
 
         // Parallel voxel-zero pass. Each cube writes to its own disjoint
         // voxel range in pooled. Counter via reduction.
-        #pragma omp parallel for schedule(static) reduction(+:removedIsolatedBrightCubes)
+        // Parallelism removed for cross-run determinism audit. Can re-enable after
+    // confirming it isn't contributing to cell-divergence issues.
+    // #pragma omp parallel for schedule(static) reduction(+:removedIsolatedBrightCubes)
         for (int gz = 0; gz < gridZ; ++gz)
         {
             const int z0 = gz * cubeSize;

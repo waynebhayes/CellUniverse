@@ -56,6 +56,13 @@ public:
     bool brightness_alignment_enabled = true;
     bool export_preprocessed_images = false;
     bool quit_after_preprocessing = false;
+
+    // Checkpoint resume (Approach 2): skip frames 0..resume_from-1 and
+    // load state from {resume_source_dir}/checkpoints/frame_{resume_from-1:03d}.txt.
+    // Set resume_from=0 or -1 to disable. resume_source_dir is the output
+    // folder of the run being resumed FROM.
+    int resume_from = 0;
+    std::string resume_source_dir = "";
     bool export_post_localization_images = false;
     bool adaptive_cube_pooling_enabled = false;
     bool adaptive_cube_pooling_cost_comparison_enabled = true;
@@ -87,6 +94,63 @@ public:
     // full asymK applies. Eliminates double-boundary bias where two
     // daughters' boundary artifacts cost more than one parent's.
     float asymmetric_cost_threshold = 0.03f;
+
+    // Static-Voronoi cost territory (2026-04-21). When true, each pixel in
+    // a cell's bbox contributes to that cell's image cost only if the pixel
+    // is closer to THIS cell's snap-anchor than to any other cell's snap-
+    // anchor. Anchors are captured once per frame from previousSnapshots
+    // (snap position, held fixed for the whole frame), so the Voronoi
+    // boundary does NOT shift with the perturbed cell — unlike the earlier
+    // live-center Voronoi attempt, this preserves the snap-anchor drift
+    // penalty because a cell's own claim-region stays put even when the
+    // cell moves. Prevents bloat-induced territory annexation (a511-case):
+    // growing cell X to cover pixels assigned to neighbor Y gives zero
+    // image-cost improvement, so there is no gradient toward bloat.
+    // Rebuilt at frame start and after every split accept.
+    //
+    // DEFAULT OFF (2026-04-21): when enabled, cells deform to match their
+    // Voronoi territory geometry — a cell surrounded by neighbors sits in a
+    // polygonal wedge, and with its cost restricted to that wedge it
+    // elongates to match. High elongation triggers early false-positive
+    // splits (observed: e3d03 FP at f4 on 2026-04-21 with factor=static).
+    // Keep disabled until the replacement "additive bleed penalty" design
+    // lands — that version adds a penalty for ellipsoid volume outside own
+    // territory WITHOUT replacing image cost, so shape fitting is preserved
+    // and bloat is still suppressed.
+    bool voronoi_cost_enabled = false;
+
+    // Additive Voronoi bleed penalty (2026-04-21 — the fundamental bloat
+    // fix). For each perturbation, we add:
+    //   penalty = voronoi_bleed_penalty_weight × (count of voxels inside
+    //             this cell's ellipsoid that are assigned to ANOTHER cell
+    //             in the snap-anchored Voronoi map)
+    // to the cost. This is ADDITIVE — it does NOT replace image cost, so
+    // the normal brightness-fitting gradient is intact. But growing into
+    // a neighbor's territory costs extra (proportional to the volume of
+    // intrusion), so the Monte Carlo optimizer no longer has a free lunch
+    // by annexing neighbor pixels.
+    //
+    // Why additive not replacement: the earlier replacement-cost approach
+    // (voronoi_cost_enabled above) distorted cell shapes to match polygonal
+    // territories → premature false splits. Additive only adds cost where
+    // intrusion happens; cells still fit their own bright regions normally.
+    //
+    // Three pathologies directly addressed:
+    //   (1) Bloat / neighbor-particle capture — expansion into neighbor
+    //       territory incurs roughly quadratic growth in bleed.
+    //   (2) False-positive splits — cells that would have bloated to
+    //       trigger premature split-attempts now stay at normal size.
+    //   (3) Cascading missed splits — FP daughters stop appearing, so
+    //       they no longer block neighbor split attempts via the bio-gate
+    //       "buried_in" check.
+    //
+    // Weight tuning: bleed counts are O(10k) for a moderately-bloating
+    // cell (radius 40 in xy, 20 in z). With weight 0.5 that's 5k cost —
+    // comparable to asymmetric L2 image cost per voxel times a few
+    // percent of the cell volume. Tune up if bloat slips through; down
+    // if legitimate growth is resisted.
+    bool voronoi_bleed_penalty_enabled = true;
+    float voronoi_bleed_penalty_weight = 0.5f;
 
     // Constructor with default values
     SimulationConfig() : iterations_per_cell(0),
@@ -136,6 +200,8 @@ public:
         if (node["brightness_alignment_enabled"]) brightness_alignment_enabled = node["brightness_alignment_enabled"].as<bool>();
         if (node["export_preprocessed_images"]) export_preprocessed_images = node["export_preprocessed_images"].as<bool>();
         if (node["quit_after_preprocessing"]) quit_after_preprocessing = node["quit_after_preprocessing"].as<bool>();
+        if (node["resume_from"]) resume_from = node["resume_from"].as<int>();
+        if (node["resume_source_dir"]) resume_source_dir = node["resume_source_dir"].as<std::string>();
         if (node["export_post_localization_images"]) export_post_localization_images = node["export_post_localization_images"].as<bool>();
         if (node["adaptive_cube_pooling_enabled"]) adaptive_cube_pooling_enabled = node["adaptive_cube_pooling_enabled"].as<bool>();
         if (node["adaptive_cube_pooling_cost_comparison_enabled"]) adaptive_cube_pooling_cost_comparison_enabled = node["adaptive_cube_pooling_cost_comparison_enabled"].as<bool>();
@@ -153,6 +219,9 @@ public:
         if (node["signal_guided_sigma_range_multiplier"]) signal_guided_sigma_range_multiplier = node["signal_guided_sigma_range_multiplier"].as<float>();
         if (node["asymmetric_cost_weight"]) asymmetric_cost_weight = node["asymmetric_cost_weight"].as<float>();
         if (node["asymmetric_cost_threshold"]) asymmetric_cost_threshold = node["asymmetric_cost_threshold"].as<float>();
+        if (node["voronoi_cost_enabled"]) voronoi_cost_enabled = node["voronoi_cost_enabled"].as<bool>();
+        if (node["voronoi_bleed_penalty_enabled"]) voronoi_bleed_penalty_enabled = node["voronoi_bleed_penalty_enabled"].as<bool>();
+        if (node["voronoi_bleed_penalty_weight"]) voronoi_bleed_penalty_weight = node["voronoi_bleed_penalty_weight"].as<float>();
     }
     void printConfig() const {
         std::cout << "Simulation Config\n";
@@ -242,6 +311,46 @@ public:
     // the p95 of biological motion in best22 (24 px is the p95 of
     // drift per transition).
     float position_prior_threshold = 20.0f;
+
+    // Hard per-frame velocity cap on cell position drift from snap.
+    // Any perturbation proposing a position more than this many voxels
+    // from the snap position is rejected outright (not penalized, not
+    // clamped — just refused). Complements the soft position_prior
+    // penalty: while the prior provides a quadratic pull-back signal,
+    // the cap acts as a guardrail against runaway Monte Carlo random
+    // walks that the prior fails to stop in time.
+    // xy limit is typically smaller (cells move slowly in plane) than
+    // z limit (z can have larger per-frame drift from splits or
+    // interpolation artifacts). Set to -1 to disable.
+    // Recommended: xy=15, z=20 for most datasets. Observed bug case:
+    // a510 drifted +18 in z (f41→f42) then +23 (f42→f43) before
+    // hitting z=224 ceiling. A z cap of 15 would have blocked both.
+    // 2026-04-21 (drop the cap): disabled by default. At 15 vx/frame xy the
+    // cap was clipping legit biological motion during early frames (e.g.
+    // 1f2ed10d and e3d03 moved 20-27 vx/frame in xy between f3-f6 in
+    // perfect_45, hitting the cap and lagging ~5-13 vx per frame → ~28 vx
+    // cumulative drift visible as off-center ellipsoids by f5-f6). The
+    // position_prior_weight quadratic penalty (non-saturating) remains
+    // active and handles late-frame drift without clipping fast biology.
+    // Set to > 0 to re-enable.
+    float max_perturb_drift_xy = 0.0f;
+    float max_perturb_drift_z = 0.0f;
+
+    // Birth-relative growth budget (anti-bloat). A cell's radii are capped
+    // at `birthRadii × birth_growth_cap_factor` per axis, BUT only when the
+    // cell also shows shape elongation >= birth_growth_cap_elong_threshold.
+    // Both conditions must be true to trigger clamping — this catches the
+    // classic bloat signature (big radius + elongated, meaning a cell that
+    // should have split but merged into one oversize ellipsoid) while
+    // leaving healthy growing cells alone.
+    //
+    // Example tuning (current defaults):
+    //   a511 at f37: radius 1.9× birth + elong 2.07 → BOTH conditions met → clamped
+    //   e3d03 at f28: radius 1.2× birth + elong 1.83 → radius condition not met → NOT clamped
+    //
+    // Set factor to 0 or negative to disable.
+    float birth_growth_cap_factor = 1.8f;
+    float birth_growth_cap_elong_threshold = 1.8f;
 
     int expected_daughter_pre_pass_iterations = 1;
 
@@ -376,6 +485,10 @@ public:
         if (node["split_cost_fraction"]) split_cost_fraction = node["split_cost_fraction"].as<float>();
         if (node["position_prior_weight"]) position_prior_weight = node["position_prior_weight"].as<float>();
         if (node["position_prior_threshold"]) position_prior_threshold = node["position_prior_threshold"].as<float>();
+        if (node["max_perturb_drift_xy"]) max_perturb_drift_xy = node["max_perturb_drift_xy"].as<float>();
+        if (node["max_perturb_drift_z"]) max_perturb_drift_z = node["max_perturb_drift_z"].as<float>();
+        if (node["birth_growth_cap_factor"]) birth_growth_cap_factor = node["birth_growth_cap_factor"].as<float>();
+        if (node["birth_growth_cap_elong_threshold"]) birth_growth_cap_elong_threshold = node["birth_growth_cap_elong_threshold"].as<float>();
         if (node["expected_daughter_pre_pass_iterations"]) expected_daughter_pre_pass_iterations = node["expected_daughter_pre_pass_iterations"].as<int>();
         if (node["split_candidates_per_attempt"]) split_candidates_per_attempt = node["split_candidates_per_attempt"].as<int>();
         if (node["split_candidate_burn_in_iterations"]) split_candidate_burn_in_iterations = node["split_candidate_burn_in_iterations"].as<int>();
