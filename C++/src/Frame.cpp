@@ -1,5 +1,6 @@
 #include "../includes/Frame.hpp"
 
+#include <array>
 #include <limits>
 #include <sstream>
 
@@ -3165,6 +3166,13 @@ CostCallbackPair Frame::trySplitCellPhased(
                 const float halfLen = 0.5f * axLen;
                 const float gapHalf = std::max(0.15f * halfLen, 1.0f);
 
+                // Match the final-bridge slab-min logic so the pre-filter
+                // doesn't reject candidates whose mean-gap is artifact-
+                // inflated but whose min cross-section is actually dark.
+                static constexpr int kPreFilterSlabs = 5;
+                std::array<double, kPreFilterSlabs> slabSum{};
+                std::array<int,    kPreFilterSlabs> slabCnt{};
+                const float slabW = (2.0f * gapHalf) / static_cast<float>(kPreFilterSlabs);
                 double gapSum=0, e1Sum=0, e2Sum=0;
                 int gapN=0, e1N=0, e2N=0;
                 for (const auto &bp : pixels) {
@@ -3175,13 +3183,31 @@ CostCallbackPair Frame::trySplitCellPhased(
                     if (std::abs(proj) > 1.5f*halfLen) continue;
                     if (std::abs(proj) < gapHalf) {
                         gapSum += bp.weight; ++gapN;
+                        int bin = (slabW > 0.0f)
+                            ? static_cast<int>((proj + gapHalf) / slabW)
+                            : 0;
+                        if (bin < 0) bin = 0;
+                        if (bin >= kPreFilterSlabs) bin = kPreFilterSlabs - 1;
+                        slabSum[bin] += bp.weight;
+                        slabCnt[bin] += 1;
                     } else if (proj < -gapHalf && proj > -halfLen*1.1f) {
                         e1Sum += bp.weight; ++e1N;
                     } else if (proj > gapHalf && proj < halfLen*1.1f) {
                         e2Sum += bp.weight; ++e2N;
                     }
                 }
-                const float gB = (gapN>0) ? static_cast<float>(gapSum/gapN) : 0.0f;
+                const float gBMean = (gapN>0) ? static_cast<float>(gapSum/gapN) : 0.0f;
+                const int minPxPerSlab = std::max(3, gapN / (kPreFilterSlabs * 3));
+                float gBMinSlab = std::numeric_limits<float>::infinity();
+                int winSlab = -1;
+                for (int i = 0; i < kPreFilterSlabs; ++i) {
+                    if (slabCnt[i] >= minPxPerSlab) {
+                        const float b = static_cast<float>(slabSum[i])
+                                        / static_cast<float>(slabCnt[i]);
+                        if (b < gBMinSlab) { gBMinSlab = b; winSlab = i; }
+                    }
+                }
+                const float gB = (winSlab >= 0) ? gBMinSlab : gBMean;
                 const float e1B = (e1N>0) ? static_cast<float>(e1Sum/e1N) : 0.0f;
                 const float e2B = (e2N>0) ? static_cast<float>(e2Sum/e2N) : 0.0f;
                 const float maxE = std::max(e1B, e2B);
@@ -3584,6 +3610,36 @@ CostCallbackPair Frame::trySplitCellPhased(
             double gapBrightSum = 0.0;
             double edge1BrightSum = 0.0, edge2BrightSum = 0.0;
 
+            // Slab-binned gap brightness (2026-04-21). The legacy mean
+            // `gapBrightSum / gapCount` smears across the whole gap zone
+            // (~15 vx on a moderate a510 case). Adaptive-cube pooling uses
+            // cubes ~0.6×minR ≈ 9 vx wide, so a single pooled cube bridging
+            // the gap averages bright neighbors with the narrow dark bridge,
+            // inflating the mean and masking real valleys. Example: a510
+            // f39 of run 212000 had mean gapBright=0.161 → ratio 0.76 →
+            // bridge_flat reject; perfect_45's equivalent at f40 read 0.15
+            // → ratio 0.66 only because its cell was more bloated and the
+            // split axis long enough to place daughters 48 vx apart (many
+            // consecutive cubes dominated by dark voxels).
+            //
+            // The slab-min approach samples "darkest cross-section along
+            // the bridge": bin the gap zone into kGapSlabs slabs of equal
+            // width along the axis, compute mean per slab, take the slab
+            // with minimum brightness as gapBright. Insensitive to a
+            // single contaminated cube because its effect is confined to
+            // one slab; any neighboring slabs that are truly dark still
+            // show through. Slab width ≈ gapWidth/kGapSlabs ≈ 3 vx at
+            // kGapSlabs=5 — smaller than the pooling cube, so per-cube
+            // artifacts cannot dominate all slabs at once.
+            //
+            // Guard: only consider slabs with ≥ minPixPerSlab pixels to
+            // avoid single-pixel noise dominating. Fallback to legacy mean
+            // if no slab qualifies.
+            static constexpr int kGapSlabs = 5;
+            std::array<double, kGapSlabs> slabSum{};
+            std::array<int,    kGapSlabs> slabCount{};
+            const float slabWidth = (gapHi - gapLo) / static_cast<float>(kGapSlabs);
+
             for (const auto &bp : pixels) {
                 const cv::Point3f delta(
                     bp.pos.x - daughterMidpoint.x,
@@ -3600,6 +3656,13 @@ CostCallbackPair Frame::trySplitCellPhased(
                 if (proj >= gapLo && proj <= gapHi) {
                     ++gapCount;
                     gapBrightSum += bp.weight;
+                    int bin = (slabWidth > 0.0f)
+                        ? static_cast<int>((proj - gapLo) / slabWidth)
+                        : 0;
+                    if (bin < 0) bin = 0;
+                    if (bin >= kGapSlabs) bin = kGapSlabs - 1;
+                    slabSum[bin] += bp.weight;
+                    slabCount[bin] += 1;
                 } else if (proj >= edge1Lo && proj <= edge1Hi) {
                     ++edge1Count;
                     edge1BrightSum += bp.weight;
@@ -3615,9 +3678,32 @@ CostCallbackPair Frame::trySplitCellPhased(
             const float gapDensity = (totalInRange > 0)
                 ? static_cast<float>(gapCount) / static_cast<float>(totalInRange)
                 : 0.0f;
-            const float gapBright = (gapCount > 0)
+            // Legacy mean — kept for diagnostic continuity in the log line.
+            const float gapBrightMean = (gapCount > 0)
                 ? static_cast<float>(gapBrightSum / gapCount)
                 : 0.0f;
+
+            // Slab-min: darkest cross-section across the gap zone. Requires
+            // ≥ minPixPerSlab pixels in the slab to be considered (guards
+            // against a single stray dark pixel winning). Falls back to the
+            // legacy mean when no slab meets the threshold (sparse gaps,
+            // very short effective gap half-width).
+            const int minPixPerSlab = std::max(3, gapCount / (kGapSlabs * 3));
+            float gapBrightMinSlab = std::numeric_limits<float>::infinity();
+            int   minSlabIdx = -1;
+            for (int i = 0; i < kGapSlabs; ++i) {
+                if (slabCount[i] >= minPixPerSlab) {
+                    const float b = static_cast<float>(slabSum[i])
+                                    / static_cast<float>(slabCount[i]);
+                    if (b < gapBrightMinSlab) {
+                        gapBrightMinSlab = b;
+                        minSlabIdx = i;
+                    }
+                }
+            }
+            const float gapBright = (minSlabIdx >= 0)
+                ? gapBrightMinSlab
+                : gapBrightMean;
             const float edgeBright = (edgeCount > 0)
                 ? static_cast<float>(edgeBrightSum / edgeCount)
                 : 0.0f;
@@ -3679,6 +3765,9 @@ CostCallbackPair Frame::trySplitCellPhased(
                       << " edgeCount=" << edgeCount
                       << " gapDensity=" << gapDensity
                       << " gapBright=" << gapBright
+                      << " gapBrightMean=" << gapBrightMean
+                      << " gapBrightMinSlab=" << gapBrightMinSlab
+                      << " minSlabIdx=" << minSlabIdx
                       << " edge1Bright=" << edge1Bright
                       << " edge2Bright=" << edge2Bright
                       << " edgeBright=" << edgeBright

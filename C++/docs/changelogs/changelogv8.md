@@ -611,3 +611,85 @@ Set `voronoi_bleed_penalty_enabled: false` in YAML or the ConfigTypes default to
 - **CV_8U storage for `_voronoiMap`** (from cpp-reviewer agent report): 4× memory reduction + 2-3× inner-loop speedup. Current CV_32S uses ~207 MB per frame.
 - **Bleed computation parallelism**: currently per-z OMP reduction. If hot spot, switch to per-block tiling with thread-local reductions.
 
+---
+
+## 2026-04-21: Slab-min gap brightness in bridge valley gate (Change 12) — **the a510-miss fix**
+
+### Why
+
+After Change 11 eliminated the e3d03 FP and the cascade-blocked 23400 miss, the remaining failure at a510 f39 was NOT a bloat problem — a510 was properly sized. The bridge-gate valley check was reading the gap too bright: `valleyFromBright = 0.762` (just 0.012 above the 0.75 rejection threshold). Cell-by-cell comparison with `perfect_45`'s accepted a510 at f40 showed a geometric asymmetry, but the deeper cause was a **pooling-width vs gap-width** mismatch:
+
+- Real-image gap between a510's two pre-division bright lobes: **~5-6 vx wide** (visible dark bridge in the TIFF).
+- Adaptive cube pooling cube size: `0.6 × minR ≈ 9 vx` (from `adaptive_cube_pooling_cube_size_scale: 0.6`).
+- Result: any single pooled cube straddling the gap **averages** its dark interior with its bright neighbors, smearing the valley closed. The gap zone's mean brightness came out at ~0.16 instead of the true ~0.10 — enough to push the valley ratio from ~0.45 to ~0.76.
+
+Perfect_45 only passed its a510 split at f40 because its cell was more bloated at that point — longer split axis (~48 vx daughter separation vs our ~18 vx) forced the sampling line to cross *multiple* consecutive gap-adjacent cubes, dominating the mean with actually-dark cubes.
+
+**The issue was an image-processing artifact of the same width as the biological feature we were trying to measure**, not a bug in the bleed penalty or the valley threshold.
+
+### Design — slab-min within the gap zone
+
+Partition the gap zone (`±effectiveGapHalf` along the split axis) into `kGapSlabs=5` thin slabs. Compute mean brightness per slab. Take the **minimum** slab as `gapBright` — "the darkest cross-section along the bridge." A single contaminated cube's smear is confined to one slab; any cleanly-dark adjacent slab still shows through. Slab width ~3 vx < pooling cube ~9 vx, so per-cube artifacts cannot dominate all slabs at once.
+
+Guard: require ≥ `max(3, gapCount / (kGapSlabs × 3))` pixels per slab before considering it, to prevent a single stray dark pixel from winning. Fallback to legacy mean if no slab qualifies (sparse gap zones). Log line emits **both** `gapBrightMean` and `gapBrightMinSlab` plus `minSlabIdx` for continued diagnosis.
+
+### Files changed
+
+**`C++/src/Frame.cpp`** —
+- Final `[Split Bridge]` gate (~lines 3581-3675 in the old offset, moved by edits): added `slabSum[kGapSlabs]` / `slabCount[kGapSlabs]` arrays, bin each in-gap pixel by its projected coordinate, compute min-qualifying slab after the loop, use as `gapBright` (with legacy mean fallback).
+- Per-candidate `[Split Cand PreFilter]` (~lines 3168-3188): same slab-min logic applied so candidates aren't filtered out on artifact-inflated means before they can reach the final bridge.
+- `[Split Bridge]` log line extended: `gapBrightMean=<legacy> gapBrightMinSlab=<new> minSlabIdx=<0..4 or -1>`.
+- New include: `<array>` for the fixed-size slab accumulators.
+
+### Why this doesn't admit false positives
+
+The change is **strictly one-sided**: slab-min is always ≤ mean (min ≤ mean for same sample set). It can only *lower* the reported gap brightness, never raise it. That means:
+
+- Real valleys (biological dark bridge exists): mean is inflated by artifacts, slab-min finds the truer value → gate passes where it previously failed. Correct outcome.
+- No valley (single cell, false split candidate): all slabs are similarly bright, min ≈ mean → no change in behavior. Still rejects.
+- Geometric overlap (daughters inside parent body): gap projection is inside bright core, all slabs bright → min still ≈ mean → still rejects.
+
+Confirmed empirically during the f22-f45 resume run at `output_jihang_20260421_230314`:
+- `8cbdf86d` at f42: valley 0.98 (slab-min 0.33, mean 0.34 — both reject, no change).
+- `23411` sub-split at f37: valley 0.97 (slab-min 0.20, mean 0.20 — both reject).
+- `e3d03` at f41: valley 0.53 (slab-min 0.11, mean 0.13 — both pass bridge, but correctly caught by downstream `d1_buried_in_cb00` bio check).
+
+### Validation — output_jihang_20260421_230314 (f22-f45 resume from f21 checkpoint of 174140)
+
+Config at run time: `voronoi_bleed_penalty_enabled: true, weight=0.5`; `voronoi_cost_enabled: false`; `max_perturb_drift_{xy,z}: 0` (velocity cap disabled); `bio_bridge_max_valley_ratio: 0.75` unchanged; slab-min gate active.
+
+**Result: 20/20 GT splits, 0 FP, 0 FN, 26 cells at f45.** First full-horizon run with complete GT recall since the yp-merge regression.
+
+Key per-frame evidence:
+- **f28**: `cb0` + `cb1` both accepted, drifts 4-12, valleys 0.35/0.35. No e3d03 FP (bleed prevented bloat; bridge gate valley 0.53 still caught by `d1_buried_in` downstream).
+- **f32**: `1f2ed10d...f0-sibling` accepted, valley 0.39.
+- **f38**: `1f2ed10d...f1-sibling` accepted, valley 0.27.
+- **f39**: 7 splits accepted (a511, a501, a500, 23400, 23401, 23410, 23411). Every bridge valley ≤ 0.52.
+  - `23400` drifts 0.8/0.3 — **cascade miss from run 021403 now clean** because there's no e3d03 FP daughter to bury it.
+- **f40**: **`a510` accepted** via `snap_imgPca_trans-`, drifts 22/17, cost -43k, bridge valley 0.44.
+  - Slab-min pulled gapBright from 0.152 (mean) to 0.100. With mean, valley would be 0.152/0.211 = **0.72** — just passes here, but would have failed at f39 where mean gave 0.76.
+  - Slab-min made the difference: f39 valley with mean=0.76 (reject) → slab-min=0.71 (accept at bridge, then cost-reject), continuing to f40 where cell geometry shifted and cost gate also passed.
+- **No false positives anywhere**: e3d03 never split, 8cbdf86d never split, no 3-deep sub-subdivisions.
+
+### Combined impact of Changes 7-12 vs the original problem set
+
+| Issue | Before (session start, run 174140 → 000145 lineage) | After (session end, run 230314) |
+|---|---|---|
+| Cell drift → z=0/z=224 boundary | 8 cells drifted | 0 |
+| a511-style bloat (neighbor annexation) | Observed in screenshots | Suppressed by bleed penalty |
+| e3d03 FP at f28 | Occurred (costDiff -12k, drift 49) | **Eliminated** |
+| 23400 cascade miss at f39 | Blocked by e3d03 FP daughter | **Clean split (drifts 0.8/0.3)** |
+| a510 miss at f39-f45 | Valley 0.76 > 0.75 (artifact-inflated) | **Accepted at f40 via slab-min** |
+| Early-frame visible cell offset (f3-f6) | ~20 vx drift vs perfect_45 | Resolved by velocity-cap drop |
+| Final cell count vs GT 26 | 25 (1 FP + 1 FN) or 25 (0 FP + 1 FN) | **26 (0 FP, 0 FN)** |
+
+### Rollback
+
+Revert `C++/src/Frame.cpp` bridge-gate slab accumulator additions. The old `gapBrightSum / gapCount` mean path remains as the `gapBrightMean` computation so reverting is a matter of setting `gapBright = gapBrightMean` and removing the slab loop. Legacy behavior restored.
+
+### Open follow-ups
+
+- **Tune `kGapSlabs`**: 5 is a reasonable default for typical ~15 vx gap zones (3 vx slabs). Could expose as `bio_bridge_gap_slabs` config for experimentation on longer split axes.
+- **Investigate whether pre-pooled image** (used in other valley-like checks?) would help elsewhere. The slab-min approach is a per-metric fix; sampling raw pixels through the pooled output is the deeper architectural option.
+- **Capture the slab-min log** in the validation run's artifact for any future regression — the `minSlabIdx` field tells us at a glance when slab-min was the deciding factor.
+
