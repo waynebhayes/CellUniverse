@@ -76,6 +76,71 @@ static float computeMeanOfTopFraction(std::vector<float> values, float topFracti
     return static_cast<float>(sum / selectedCount);
 }
 
+static cv::Mat makeNapariFriendlyTiffSlice(const cv::Mat &slice)
+{
+    if (slice.empty()) {
+        return {};
+    }
+
+    cv::Mat gray;
+    if (slice.channels() == 1) {
+        gray = slice;
+    } else if (slice.channels() == 3) {
+        cv::cvtColor(slice, gray, cv::COLOR_BGR2GRAY);
+    } else if (slice.channels() == 4) {
+        cv::cvtColor(slice, gray, cv::COLOR_BGRA2GRAY);
+    } else {
+        throw std::runtime_error("Unsupported channel count for TIFF export: " +
+                                 std::to_string(slice.channels()));
+    }
+
+    cv::Mat output;
+    if (gray.depth() == CV_8U) {
+        output = gray.clone();
+    } else {
+        gray.convertTo(output, CV_8U, 255.0);
+    }
+    return output;
+}
+
+static std::vector<cv::Mat> makeNapariFriendlyTiffStack(const std::vector<cv::Mat> &stack)
+{
+    std::vector<cv::Mat> output;
+    output.reserve(stack.size());
+
+    cv::Size expectedSize;
+    for (const auto &slice : stack) {
+        cv::Mat converted = makeNapariFriendlyTiffSlice(slice);
+        if (converted.empty()) {
+            continue;
+        }
+        if (expectedSize.empty()) {
+            expectedSize = converted.size();
+        } else if (converted.size() != expectedSize) {
+            throw std::runtime_error("TIFF export requires all slices to have the same size");
+        }
+        output.push_back(std::move(converted));
+    }
+
+    if (output.empty()) {
+        throw std::runtime_error("TIFF export received an empty image stack");
+    }
+    return output;
+}
+
+static void writeNapariFriendlyTiffStack(const std::string &path,
+                                         const std::vector<cv::Mat> &stack)
+{
+    std::vector<cv::Mat> output = makeNapariFriendlyTiffStack(stack);
+    const std::vector<int> params = {
+        cv::IMWRITE_TIFF_COMPRESSION, 1 // COMPRESSION_NONE: easiest for TIFF readers.
+    };
+
+    if (!cv::imwritemulti(path, output, params)) {
+        throw std::runtime_error("Failed to write TIFF stack: " + path);
+    }
+}
+
 static void scaleStackBrightness(std::vector<cv::Mat> &stack, float scale)
 {
     if (std::abs(scale - 1.0f) <= 1e-6f) {
@@ -1656,8 +1721,10 @@ void CellUniverse::saveImages(int frameIndex)
         std::filesystem::create_directories(realTiffOutputPath);
         std::filesystem::create_directories(synthTiffOutputPath);
 
-        cv::imwritemulti(realTiffOutputPath + "/" + std::to_string(displayFrame) + ".tif", realImages);
-        cv::imwritemulti(synthTiffOutputPath + "/" + std::to_string(displayFrame) + ".tif", synthImages);
+        writeNapariFriendlyTiffStack(realTiffOutputPath + "/" + std::to_string(displayFrame) + ".tif",
+                                     realImages);
+        writeNapariFriendlyTiffStack(synthTiffOutputPath + "/" + std::to_string(displayFrame) + ".tif",
+                                     synthImages);
     }
 
     std::cout << "Done" << '\n';
