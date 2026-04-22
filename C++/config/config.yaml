@@ -296,6 +296,7 @@ simulation:
   export_preprocessed_images: false
   export_frame_png: false
   export_frame_tiff: true
+  export_post_localization_images: true
   quit_after_preprocessing: false
 
   # Adaptive cube pooling — YP's b575246 introduced this as an optional

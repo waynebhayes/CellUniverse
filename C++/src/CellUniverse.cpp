@@ -942,6 +942,12 @@ void CellUniverse::optimize(int frameIndex)
         Ellipsoid::cellConfig.z = savedCalZ;
     }
 
+    if (config.simulation.export_post_localization_images) {
+        std::cout << "[Post Localization Export] frame " << displayFrame
+                  << " stage=post_localization" << std::endl;
+        saveImages(frameIndex, "post_localization");
+    }
+
     // ---- Per-cell iterative PCA shape fit ----
     // Runs AFTER position calibration so Voronoi neighbor exclusion uses
     // refined positions. PCA on the Voronoi-filtered bright pixels inside
@@ -1673,7 +1679,7 @@ void CellUniverse::optimize(int frameIndex)
               << " final_cells=" << frame.cells.size() << std::endl;
 }
 
-void CellUniverse::saveImages(int frameIndex)
+void CellUniverse::saveImages(int frameIndex, const std::string &stage)
 {
     if (frameIndex < 0 || static_cast<size_t>(frameIndex) >= frames.size())
     {
@@ -1686,15 +1692,16 @@ void CellUniverse::saveImages(int frameIndex)
     std::cout << "Saving images for frame " << displayFrame << "..." << '\n';
     std::cout << "Real Image Type: " << realImages[0].type() << '\n';
     std::cout << "Synth Image Type: " << synthImages[0].type() << '\n';
+    const std::string exportRoot = stage.empty() ? outputPath : (outputPath + "/" + stage);
 
     if (config.simulation.export_frame_png)
     {
-        std::string realOutputPath = outputPath + "/png/real/" + std::to_string(displayFrame);
+        std::string realOutputPath = exportRoot + "/png/real/" + std::to_string(displayFrame);
         if (!std::filesystem::exists(realOutputPath))
         {
             std::filesystem::create_directories(realOutputPath);
         }
-        std::string synthOutputPath = outputPath + "/png/synth/" + std::to_string(displayFrame);
+        std::string synthOutputPath = exportRoot + "/png/synth/" + std::to_string(displayFrame);
         if (!std::filesystem::exists(synthOutputPath))
         {
             std::filesystem::create_directories(synthOutputPath);
@@ -1716,8 +1723,8 @@ void CellUniverse::saveImages(int frameIndex)
 
     if (config.simulation.export_frame_tiff)
     {
-        const std::string realTiffOutputPath = outputPath + "/tiff/real";
-        const std::string synthTiffOutputPath = outputPath + "/tiff/synth";
+        const std::string realTiffOutputPath = exportRoot + "/tiff/real";
+        const std::string synthTiffOutputPath = exportRoot + "/tiff/synth";
         std::filesystem::create_directories(realTiffOutputPath);
         std::filesystem::create_directories(synthTiffOutputPath);
 
