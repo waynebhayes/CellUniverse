@@ -412,6 +412,11 @@ INITIAL_RAW="$(ini_get "$INI_FILE" "$PRESET" "initial_csv_file")"
 CLI_ARGS_RAW="$(ini_get "$INI_FILE" "$PRESET" "cli_args_file")"
 FIRST_FRAME="$(ini_get "$INI_FILE" "$PRESET" "first_frame")"
 LAST_FRAME="$(ini_get "$INI_FILE" "$PRESET" "last_frame")"
+# Optional checkpoint-resume fields (2026-04-22). Moved out of config.yaml so
+# presets can set resume per-run without editing the YAML. Missing keys →
+# resume disabled (celluniverse treats 0 / empty as no-resume).
+RESUME_FROM_RAW="$(ini_get "$INI_FILE" "$PRESET" "resume_from")"
+RESUME_SRC_RAW="$(ini_get "$INI_FILE" "$PRESET" "resume_source_dir")"
 
 [ -n "$BUILD_DIR_RAW" ] || { err "[FATAL] missing key: build_dir"; exit 1; }
 [ -n "$INPUT_PATH_RAW" ] || { err "[FATAL] missing key: input_path"; exit 1; }
@@ -472,6 +477,23 @@ fi
 cd "$BUILD_DIR"
 
 CMD=(./celluniverse "$FIRST_FRAME" "$LAST_FRAME" "$INPUT_PATH" "$OUT_DIR" "$CELL_CONFIG_FILE" "$INITIAL_FILE")
+
+# Append optional resume args only when both are set. If resume_source_dir is
+# a relative path in the INI, resolve it like the other path fields. A
+# resume_from value of 0 (or missing) means no-resume; pass nothing so the
+# binary also sees no-resume. If resume_from > 0 we pass both args (source
+# dir defaults to empty string, which celluniverse treats as disabled).
+RESUME_FROM="${RESUME_FROM_RAW:-0}"
+RESUME_SOURCE_DIR=""
+if [ -n "$RESUME_SRC_RAW" ]; then
+  RESUME_SOURCE_DIR="$(resolve_path "$RESUME_SRC_RAW" "$INI_DIR")"
+fi
+if [ "$RESUME_FROM" -gt 0 ] 2>/dev/null && [ -n "$RESUME_SOURCE_DIR" ]; then
+  CMD+=("$RESUME_FROM" "$RESUME_SOURCE_DIR")
+  print_kv "Resume from frame" "$RESUME_FROM"
+  print_kv "Resume source dir" "$RESUME_SOURCE_DIR"
+fi
+
 if [ "${#EXTRA_ARGS[@]}" -gt 0 ]; then
   CMD+=("${EXTRA_ARGS[@]}")
 fi

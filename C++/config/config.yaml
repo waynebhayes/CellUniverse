@@ -296,12 +296,11 @@ simulation:
   export_preprocessed_images: false
   quit_after_preprocessing: false
 
-  # Checkpoint resume: if resume_from > 0 and resume_source_dir is set,
-  # skip frames 0..resume_from-1 and load state from
-  # {resume_source_dir}/checkpoints/frame_{resume_from-1:03d}.txt.
-  # Leave resume_from=0 for normal runs.
-  resume_from: 22
-  resume_source_dir: "/Users/jihangli/MCS/3D_Cell_Tracking/CellUniverse/C++/outputs/output_jihang_20260421_174140"
+  # Checkpoint resume: moved to run_celluniverse.sh INI preset on 2026-04-22.
+  # Set `resume_from` and `resume_source_dir` in user_input_configurations.ini
+  # under the preset. Override via CLI positional args 7 and 8 also possible.
+  # This YAML no longer controls resume — the INI preset is the source of
+  # truth so resume decisions stay alongside frame-range and I/O config.
 
   # Adaptive cube pooling — YP's b575246 introduced this as an optional
   # final-stage pooling step that averages pixels into cubes (~0.6× minR

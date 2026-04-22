@@ -19,7 +19,13 @@ enum argKeywords {
     input,
     output,
     config,
-    initial
+    initial,
+    // Optional positional args 7 and 8 for checkpoint resume (2026-04-22).
+    // Passed via run_celluniverse.sh from the INI preset so the user can
+    // set resume per-preset without editing config.yaml. When absent,
+    // defaults are resume_from=0 (disabled) and resume_source_dir="".
+    resumeFrom,
+    resumeSourceDir
 };
 
 using Path = std::string;

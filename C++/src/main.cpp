@@ -25,6 +25,12 @@ public:
     std::string initial{};
     std::string output{};
     int continueFrom = -1;
+    // Optional checkpoint-resume args (2026-04-22). When provided via the
+    // run_celluniverse.sh launcher (sourced from the INI preset), these
+    // override config.simulation.resume_from / resume_source_dir. Absent
+    // (argc < 9) → resume defaults to disabled (0 / "").
+    int resumeFromFrame = 0;
+    std::string resumeSourceDir{};
 };
 
 // helper function to load the config
@@ -34,7 +40,7 @@ void loadConfig(const std::string &path, BaseConfig &config)
     config.explodeConfig(node);
 }
 
-Args initArgs(char *argv[]) {
+Args initArgs(int argc, char *argv[]) {
     // parse args here
     Args args;
 
@@ -59,6 +65,25 @@ Args initArgs(char *argv[]) {
               << std::flush;
     args.continueFrom = -1;
 
+    // Optional resume args (positions 7 and 8). Both must be present to
+    // activate resume; either missing → leave defaults (resume disabled).
+    // argc indexing: argv[0]=binary, argv[1]=ff, ..., argv[6]=initial,
+    // argv[7]=resumeFrom, argv[8]=resumeSourceDir.
+    if (argc > static_cast<int>(resumeFrom)) {
+        try {
+            args.resumeFromFrame = std::stoi(argv[resumeFrom]);
+        } catch (const std::exception &) {
+            args.resumeFromFrame = 0;
+        }
+        std::cout << "Resume from frame (arg): " << args.resumeFromFrame
+                  << '\n' << std::flush;
+    }
+    if (argc > static_cast<int>(resumeSourceDir)) {
+        args.resumeSourceDir = argv[resumeSourceDir];
+        std::cout << "Resume source dir (arg): " << args.resumeSourceDir
+                  << '\n' << std::flush;
+    }
+
     return args;
 }
 
@@ -79,11 +104,22 @@ int main(int argc, char *argv[])
 
 
     // parse args
-    Args args = initArgs(argv);
+    Args args = initArgs(argc, argv);
 
     // load config
     BaseConfig config;
     loadConfig(args.config, config);
+
+    // CLI resume args (from run_celluniverse.sh INI preset) override whatever
+    // was parsed from the YAML. Use argv-based detection so "absent CLI arg"
+    // (argc < 8 / 9) does NOT clobber a YAML-set value.
+    if (argc > static_cast<int>(resumeFrom)) {
+        config.simulation.resume_from = args.resumeFromFrame;
+    }
+    if (argc > static_cast<int>(resumeSourceDir)) {
+        config.simulation.resume_source_dir = args.resumeSourceDir;
+    }
+
     config.printConfig();
 
     // load file paths
