@@ -1,5 +1,93 @@
 #include "CellFactory.hpp"
 
+#include <cctype>
+#include <unordered_map>
+
+namespace
+{
+std::string trim(std::string value)
+{
+    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.front()))) {
+        value.erase(value.begin());
+    }
+    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back()))) {
+        value.pop_back();
+    }
+    return value;
+}
+
+std::vector<std::string> splitCsvLine(const std::string &line)
+{
+    std::vector<std::string> tokens;
+    std::string token;
+    bool inQuotes = false;
+
+    for (char ch : line) {
+        if (ch == '"') {
+            inQuotes = !inQuotes;
+            continue;
+        }
+        if (ch == ',' && !inQuotes) {
+            tokens.push_back(trim(token));
+            token.clear();
+            continue;
+        }
+        token.push_back(ch);
+    }
+    tokens.push_back(trim(token));
+    return tokens;
+}
+
+std::string normalizeHeaderName(const std::string &header)
+{
+    std::string normalized;
+    for (char ch : header) {
+        if (std::isalnum(static_cast<unsigned char>(ch))) {
+            normalized.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(ch))));
+        }
+    }
+    return normalized;
+}
+
+std::unordered_map<std::string, size_t> buildHeaderIndex(const std::vector<std::string> &headers)
+{
+    std::unordered_map<std::string, size_t> index;
+    for (size_t i = 0; i < headers.size(); ++i) {
+        index[normalizeHeaderName(headers[i])] = i;
+    }
+    return index;
+}
+
+bool findColumn(const std::unordered_map<std::string, size_t> &index,
+                std::initializer_list<const char *> names,
+                size_t &column)
+{
+    for (const char *name : names) {
+        auto it = index.find(normalizeHeaderName(name));
+        if (it != index.end()) {
+            column = it->second;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool getToken(const std::vector<std::string> &tokens, size_t column, std::string &value)
+{
+    if (column >= tokens.size()) {
+        return false;
+    }
+    value = tokens[column];
+    const std::string normalized = normalizeHeaderName(value);
+    return !value.empty() && normalized != "none" && normalized != "null" && normalized != "nan";
+}
+
+float parseScaledFloat(const std::string &value, float scale)
+{
+    return std::stof(value) * scale;
+}
+}
+
 CellFactory::CellFactory(const BaseConfig &config) {
     std::string cellType = config.cellType;
     // Frame-1 seed for per-cell _brightness. After frame 1, the per-cell EMA
@@ -22,6 +110,7 @@ std::map<Path, std::vector<Ellipsoid>> CellFactory::createCells(const Path &init
     std::string line;
     std::string firstLine;
     std::getline(file, firstLine); // remove the header
+    const std::unordered_map<std::string, size_t> headerIndex = buildHeaderIndex(splitCsvLine(firstLine));
     std::map<Path, std::vector<Ellipsoid>> initialCells;
     int line_cnt = 0;
 
@@ -30,18 +119,108 @@ while (std::getline(file, line)) {
         continue;
     }
 
-    // Split CSV row into tokens (supports both 7-col and 4-col formats).
-    std::vector<std::string> tokens;
-    {
-        std::istringstream ss(line);
-        std::string tok;
-        while (std::getline(ss, tok, ',')) {
-            // Trim spaces (very simple trim)
-            while (!tok.empty() && (tok.front() == ' ' || tok.front() == '\t')) tok.erase(tok.begin());
-            while (!tok.empty() && (tok.back() == ' ' || tok.back() == '\t' || tok.back() == '\r')) tok.pop_back();
-            tokens.push_back(tok);
+    const std::vector<std::string> tokens = splitCsvLine(line);
+
+    try {
+        size_t filePathCol = 0;
+        size_t cellNameCol = 0;
+        size_t xCol = 0;
+        size_t yCol = 0;
+        size_t zCol = 0;
+        size_t aRadiusCol = 0;
+        size_t bRadiusCol = 0;
+        size_t cRadiusCol = 0;
+        const bool hasNamedCellColumns =
+            findColumn(headerIndex, {"filePath", "file", "frame", "frameName", "image", "imageFile", "imagePath"}, filePathCol) &&
+            findColumn(headerIndex, {"cellName", "name", "id", "cellId", "label"}, cellNameCol) &&
+            findColumn(headerIndex, {"x"}, xCol) &&
+            findColumn(headerIndex, {"y"}, yCol) &&
+            findColumn(headerIndex, {"z"}, zCol) &&
+            findColumn(headerIndex, {"aRadius", "majorRadius", "radiusA", "radius", "r"}, aRadiusCol) &&
+            findColumn(headerIndex, {"cRadius", "minorRadius", "radiusC", "zRadius"}, cRadiusCol);
+
+        if (hasNamedCellColumns) {
+            std::string filePath;
+            std::string cellName;
+            std::string xText;
+            std::string yText;
+            std::string zText;
+            std::string aRadiusText;
+            std::string cRadiusText;
+            if (!getToken(tokens, filePathCol, filePath) ||
+                !getToken(tokens, cellNameCol, cellName) ||
+                !getToken(tokens, xCol, xText) ||
+                !getToken(tokens, yCol, yText) ||
+                !getToken(tokens, zCol, zText) ||
+                !getToken(tokens, aRadiusCol, aRadiusText) ||
+                !getToken(tokens, cRadiusCol, cRadiusText)) {
+                std::cerr << "[WARN] Skipping invalid initial CSV row (missing named columns): " << line << '\n';
+                continue;
+            }
+
+            float x = std::stof(xText);
+            float y = std::stof(yText);
+            float z = std::stof(zText);
+            float aRadius = parseScaledFloat(aRadiusText, initialRadiusScale);
+            float bRadius = aRadius;
+            if (findColumn(headerIndex, {"bRadius", "radiusB", "middleRadius", "intermediateRadius"}, bRadiusCol)) {
+                std::string bRadiusText;
+                if (getToken(tokens, bRadiusCol, bRadiusText)) {
+                    bRadius = parseScaledFloat(bRadiusText, initialRadiusScale);
+                }
+            }
+            float cRadius = parseScaledFloat(cRadiusText, initialRadiusScale);
+
+            z *= z_scaling;
+
+            EllipsoidParams params(cellName, x, y, z, aRadius, cRadius,
+                                  0.0f, 0.0f, 0.0f, initialBrightness);
+            params.bRadius = bRadius;
+            initialCells[filePath].push_back(Ellipsoid(params));
+
+            ++line_cnt;
+            continue;
         }
-    }
+
+        size_t cellTypeCol = 0;
+        const bool hasNamedNapariColumns =
+            findColumn(headerIndex, {"cell_type", "cellType", "type"}, cellTypeCol) &&
+            findColumn(headerIndex, {"z"}, zCol) &&
+            findColumn(headerIndex, {"y"}, yCol) &&
+            findColumn(headerIndex, {"x"}, xCol);
+
+        if (hasNamedNapariColumns && tokens.size() >= 4) {
+            std::string cellType;
+            std::string zText;
+            std::string yText;
+            std::string xText;
+            if (!getToken(tokens, cellTypeCol, cellType) ||
+                !getToken(tokens, zCol, zText) ||
+                !getToken(tokens, yCol, yText) ||
+                !getToken(tokens, xCol, xText)) {
+                std::cerr << "[WARN] Skipping invalid initial CSV row (missing Napari columns): " << line << '\n';
+                continue;
+            }
+
+            std::string filePath = !firstFrameFile.empty() ? firstFrameFile : std::string("t000.tif");
+            float z = std::stof(zText);
+            float y = std::stof(yText);
+            float x = std::stof(xText);
+
+            z *= z_scaling;
+
+            const float defaultMajorRadius = 10.0f * initialRadiusScale;
+            const float defaultMinorRadius = 10.0f * initialRadiusScale;
+            const std::string cellName = cellType + "_" + std::to_string(line_cnt + 1);
+
+            EllipsoidParams params(cellName, x, y, z, defaultMajorRadius, defaultMinorRadius,
+                                  0.0f, 0.0f, 0.0f, initialBrightness);
+            params.bRadius = defaultMajorRadius;
+            initialCells[filePath].push_back(Ellipsoid(params));
+
+            ++line_cnt;
+            continue;
+        }
 
     // ----------------------------
     // Case A: Original 7-column format:
@@ -117,9 +296,12 @@ while (std::getline(file, line)) {
         continue;
     }
 
-    // Unknown/invalid line
-    std::cerr << "[WARN] Skipping invalid initial CSV row (expected 7 or 4 columns): " << line << '\n';
-}
+	    // Unknown/invalid line
+	    std::cerr << "[WARN] Skipping invalid initial CSV row (expected 7 or 4 columns): " << line << '\n';
+    } catch (const std::exception &e) {
+        std::cerr << "[WARN] Skipping invalid initial CSV row (" << e.what() << "): " << line << '\n';
+    }
+	}
 
     std::cout << "Input Line Count : " << line_cnt << '\n';
     std::cout << "Initial frame keys loaded : " << initialCells.size() << '\n';

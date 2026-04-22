@@ -1622,31 +1622,42 @@ void CellUniverse::saveImages(int frameIndex)
     std::cout << "Real Image Type: " << realImages[0].type() << '\n';
     std::cout << "Synth Image Type: " << synthImages[0].type() << '\n';
 
-    std::string realOutputPath = outputPath + "/real/" + std::to_string(displayFrame);
-    if (!std::filesystem::exists(realOutputPath))
+    if (config.simulation.export_frame_png)
     {
-        std::filesystem::create_directories(realOutputPath);
-    }
-    std::string synthOutputPath = outputPath + "/synth/" + std::to_string(displayFrame);
-    if (!std::filesystem::exists(synthOutputPath))
-    {
-        std::filesystem::create_directories(synthOutputPath);
+        std::string realOutputPath = outputPath + "/png/real/" + std::to_string(displayFrame);
+        if (!std::filesystem::exists(realOutputPath))
+        {
+            std::filesystem::create_directories(realOutputPath);
+        }
+        std::string synthOutputPath = outputPath + "/png/synth/" + std::to_string(displayFrame);
+        if (!std::filesystem::exists(synthOutputPath))
+        {
+            std::filesystem::create_directories(synthOutputPath);
+        }
+
+        // Parallelize PNG encoding/write: independent across slices and stacks.
+        const int nSlices = static_cast<int>(std::max(realImages.size(), synthImages.size()));
+        #pragma omp parallel for schedule(static)
+        for (int i = 0; i < nSlices; ++i)
+        {
+            if (static_cast<size_t>(i) < realImages.size()) {
+                cv::imwrite(realOutputPath + "/" + std::to_string(i) + ".png", realImages[i]);
+            }
+            if (static_cast<size_t>(i) < synthImages.size()) {
+                cv::imwrite(synthOutputPath + "/" + std::to_string(i) + ".png", synthImages[i]);
+            }
+        }
     }
 
-    // Parallelize PNG encoding/write — independent across slices and across
-    // real/synth. cv::imwrite is CPU-bound (zlib compression). With 225
-    // slices × 2 streams = 450 independent writes per frame this typically
-    // saves several seconds per frame on a multi-core machine.
-    const int nSlices = static_cast<int>(std::max(realImages.size(), synthImages.size()));
-    #pragma omp parallel for schedule(static)
-    for (int i = 0; i < nSlices; ++i)
+    if (config.simulation.export_frame_tiff)
     {
-        if (static_cast<size_t>(i) < realImages.size()) {
-            cv::imwrite(realOutputPath + "/" + std::to_string(i) + ".png", realImages[i]);
-        }
-        if (static_cast<size_t>(i) < synthImages.size()) {
-            cv::imwrite(synthOutputPath + "/" + std::to_string(i) + ".png", synthImages[i]);
-        }
+        const std::string realTiffOutputPath = outputPath + "/tiff/real";
+        const std::string synthTiffOutputPath = outputPath + "/tiff/synth";
+        std::filesystem::create_directories(realTiffOutputPath);
+        std::filesystem::create_directories(synthTiffOutputPath);
+
+        cv::imwritemulti(realTiffOutputPath + "/" + std::to_string(displayFrame) + ".tif", realImages);
+        cv::imwritemulti(synthTiffOutputPath + "/" + std::to_string(displayFrame) + ".tif", synthImages);
     }
 
     std::cout << "Done" << '\n';

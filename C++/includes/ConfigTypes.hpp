@@ -55,6 +55,8 @@ public:
     float post_process_white_percentile = 0.3f;
     bool brightness_alignment_enabled = true;
     bool export_preprocessed_images = false;
+    bool export_frame_png = true;
+    bool export_frame_tiff = false;
     bool quit_after_preprocessing = false;
     bool export_post_localization_images = false;
     bool adaptive_cube_pooling_enabled = false;
@@ -135,6 +137,8 @@ public:
         if (node["post_process_white_percentile"]) post_process_white_percentile = node["post_process_white_percentile"].as<float>();
         if (node["brightness_alignment_enabled"]) brightness_alignment_enabled = node["brightness_alignment_enabled"].as<bool>();
         if (node["export_preprocessed_images"]) export_preprocessed_images = node["export_preprocessed_images"].as<bool>();
+        if (node["export_frame_png"]) export_frame_png = node["export_frame_png"].as<bool>();
+        if (node["export_frame_tiff"]) export_frame_tiff = node["export_frame_tiff"].as<bool>();
         if (node["quit_after_preprocessing"]) quit_after_preprocessing = node["quit_after_preprocessing"].as<bool>();
         if (node["export_post_localization_images"]) export_post_localization_images = node["export_post_localization_images"].as<bool>();
         if (node["adaptive_cube_pooling_enabled"]) adaptive_cube_pooling_enabled = node["adaptive_cube_pooling_enabled"].as<bool>();
@@ -198,6 +202,8 @@ public:
         std::cout << "post_process_white_percentile: " << post_process_white_percentile << '\n';
         std::cout << "brightness_alignment_enabled: " << brightness_alignment_enabled << '\n';
         std::cout << "export_preprocessed_images: " << export_preprocessed_images << '\n';
+        std::cout << "export_frame_png: " << export_frame_png << '\n';
+        std::cout << "export_frame_tiff: " << export_frame_tiff << '\n';
         std::cout << "quit_after_preprocessing: " << quit_after_preprocessing << '\n';
         std::cout << "export_post_localization_images: " << export_post_localization_images << '\n';
         std::cout << "adaptive_cube_pooling_enabled: " << adaptive_cube_pooling_enabled << '\n';
