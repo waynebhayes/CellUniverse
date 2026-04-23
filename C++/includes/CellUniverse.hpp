@@ -30,7 +30,7 @@ public:
                  int continueFrom = -1);
 
     void optimize(int frameIndex);
-    void saveImages(int frameIndex);
+    void saveImages(int frameIndex, const std::string &stage = "");
     void saveCells(int frameIndex);
     void copyCellsForward(size_t to);
     // Memory optimization (M1): after this frame has been optimized, saved,

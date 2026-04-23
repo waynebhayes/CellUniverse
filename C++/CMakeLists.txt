@@ -102,6 +102,7 @@ set(cwd ${CMAKE_CURRENT_SOURCE_DIR})
 add_executable(${PROJECT_NAME}
         ${cwd}/src/main.cpp
         ${cwd}/src/CellFactory.cpp
+        ${cwd}/src/CsvHandler.cpp
         ${cwd}/src/CellUniverse.cpp
         ${cwd}/src/Frame.cpp
         ${cwd}/src/ImageHandler.cpp

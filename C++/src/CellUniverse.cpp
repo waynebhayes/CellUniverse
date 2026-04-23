@@ -77,6 +77,71 @@ static float computeMeanOfTopFraction(std::vector<float> values, float topFracti
     return static_cast<float>(sum / selectedCount);
 }
 
+static cv::Mat makeNapariFriendlyTiffSlice(const cv::Mat &slice)
+{
+    if (slice.empty()) {
+        return {};
+    }
+
+    cv::Mat gray;
+    if (slice.channels() == 1) {
+        gray = slice;
+    } else if (slice.channels() == 3) {
+        cv::cvtColor(slice, gray, cv::COLOR_BGR2GRAY);
+    } else if (slice.channels() == 4) {
+        cv::cvtColor(slice, gray, cv::COLOR_BGRA2GRAY);
+    } else {
+        throw std::runtime_error("Unsupported channel count for TIFF export: " +
+                                 std::to_string(slice.channels()));
+    }
+
+    cv::Mat output;
+    if (gray.depth() == CV_8U) {
+        output = gray.clone();
+    } else {
+        gray.convertTo(output, CV_8U, 255.0);
+    }
+    return output;
+}
+
+static std::vector<cv::Mat> makeNapariFriendlyTiffStack(const std::vector<cv::Mat> &stack)
+{
+    std::vector<cv::Mat> output;
+    output.reserve(stack.size());
+
+    cv::Size expectedSize;
+    for (const auto &slice : stack) {
+        cv::Mat converted = makeNapariFriendlyTiffSlice(slice);
+        if (converted.empty()) {
+            continue;
+        }
+        if (expectedSize.empty()) {
+            expectedSize = converted.size();
+        } else if (converted.size() != expectedSize) {
+            throw std::runtime_error("TIFF export requires all slices to have the same size");
+        }
+        output.push_back(std::move(converted));
+    }
+
+    if (output.empty()) {
+        throw std::runtime_error("TIFF export received an empty image stack");
+    }
+    return output;
+}
+
+static void writeNapariFriendlyTiffStack(const std::string &path,
+                                         const std::vector<cv::Mat> &stack)
+{
+    std::vector<cv::Mat> output = makeNapariFriendlyTiffStack(stack);
+    const std::vector<int> params = {
+        cv::IMWRITE_TIFF_COMPRESSION, 1 // COMPRESSION_NONE: easiest for TIFF readers.
+    };
+
+    if (!cv::imwritemulti(path, output, params)) {
+        throw std::runtime_error("Failed to write TIFF stack: " + path);
+    }
+}
+
 static void scaleStackBrightness(std::vector<cv::Mat> &stack, float scale)
 {
     if (std::abs(scale - 1.0f) <= 1e-6f) {
@@ -917,6 +982,12 @@ void CellUniverse::optimize(int frameIndex)
         Ellipsoid::cellConfig.z = savedCalZ;
     }
 
+    if (config.simulation.export_post_localization_images) {
+        std::cout << "[Post Localization Export] frame " << displayFrame
+                  << " stage=post_localization" << std::endl;
+        saveImages(frameIndex, "post_localization");
+    }
+
     // ---- Per-cell iterative PCA shape fit ----
     // Runs AFTER position calibration so Voronoi neighbor exclusion uses
     // refined positions. PCA on the Voronoi-filtered bright pixels inside
@@ -1752,7 +1823,7 @@ void CellUniverse::releaseFrameImages(int frameIndex)
     frames[frameIndex].releaseImageStacks();
 }
 
-void CellUniverse::saveImages(int frameIndex)
+void CellUniverse::saveImages(int frameIndex, const std::string &stage)
 {
     if (frameIndex < 0 || static_cast<size_t>(frameIndex) >= frames.size())
     {
@@ -1765,32 +1836,46 @@ void CellUniverse::saveImages(int frameIndex)
     std::cout << "Saving images for frame " << displayFrame << "..." << '\n';
     std::cout << "Real Image Type: " << realImages[0].type() << '\n';
     std::cout << "Synth Image Type: " << synthImages[0].type() << '\n';
+    const std::string exportRoot = stage.empty() ? outputPath : (outputPath + "/" + stage);
 
-    std::string realOutputPath = outputPath + "/real/" + std::to_string(displayFrame);
-    if (!std::filesystem::exists(realOutputPath))
+    if (config.simulation.export_frame_png)
     {
-        std::filesystem::create_directories(realOutputPath);
-    }
-    std::string synthOutputPath = outputPath + "/synth/" + std::to_string(displayFrame);
-    if (!std::filesystem::exists(synthOutputPath))
-    {
-        std::filesystem::create_directories(synthOutputPath);
+        std::string realOutputPath = exportRoot + "/png/real/" + std::to_string(displayFrame);
+        if (!std::filesystem::exists(realOutputPath))
+        {
+            std::filesystem::create_directories(realOutputPath);
+        }
+        std::string synthOutputPath = exportRoot + "/png/synth/" + std::to_string(displayFrame);
+        if (!std::filesystem::exists(synthOutputPath))
+        {
+            std::filesystem::create_directories(synthOutputPath);
+        }
+
+        // Parallelize PNG encoding/write: independent across slices and stacks.
+        const int nSlices = static_cast<int>(std::max(realImages.size(), synthImages.size()));
+        #pragma omp parallel for schedule(static)
+        for (int i = 0; i < nSlices; ++i)
+        {
+            if (static_cast<size_t>(i) < realImages.size()) {
+                cv::imwrite(realOutputPath + "/" + std::to_string(i) + ".png", realImages[i]);
+            }
+            if (static_cast<size_t>(i) < synthImages.size()) {
+                cv::imwrite(synthOutputPath + "/" + std::to_string(i) + ".png", synthImages[i]);
+            }
+        }
     }
 
-    // Parallelize PNG encoding/write — independent across slices and across
-    // real/synth. cv::imwrite is CPU-bound (zlib compression). With 225
-    // slices × 2 streams = 450 independent writes per frame this typically
-    // saves several seconds per frame on a multi-core machine.
-    const int nSlices = static_cast<int>(std::max(realImages.size(), synthImages.size()));
-    #pragma omp parallel for schedule(static)
-    for (int i = 0; i < nSlices; ++i)
+    if (config.simulation.export_frame_tiff)
     {
-        if (static_cast<size_t>(i) < realImages.size()) {
-            cv::imwrite(realOutputPath + "/" + std::to_string(i) + ".png", realImages[i]);
-        }
-        if (static_cast<size_t>(i) < synthImages.size()) {
-            cv::imwrite(synthOutputPath + "/" + std::to_string(i) + ".png", synthImages[i]);
-        }
+        const std::string realTiffOutputPath = exportRoot + "/tiff/real";
+        const std::string synthTiffOutputPath = exportRoot + "/tiff/synth";
+        std::filesystem::create_directories(realTiffOutputPath);
+        std::filesystem::create_directories(synthTiffOutputPath);
+
+        writeNapariFriendlyTiffStack(realTiffOutputPath + "/" + std::to_string(displayFrame) + ".tif",
+                                     realImages);
+        writeNapariFriendlyTiffStack(synthTiffOutputPath + "/" + std::to_string(displayFrame) + ".tif",
+                                     synthImages);
     }
 
     // Also emit multi-page TIFF stacks — one file per frame per stream.

@@ -294,6 +294,9 @@ simulation:
   brightness_alignment_enabled: false
 
   export_preprocessed_images: false
+  export_frame_png: false
+  export_frame_tiff: true
+  export_post_localization_images: true
   quit_after_preprocessing: false
 
   # Checkpoint resume: moved to run_celluniverse.sh INI preset on 2026-04-22.
