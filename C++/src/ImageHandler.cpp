@@ -788,20 +788,29 @@ float ImageHandler::evaluateBestWindowContrastScore(const ImageStack &sequence, 
               config.cell->maxCRadius})))
         : defaultMaxRadius;
     const float radiusStep = std::max(1.0f, config.simulation.contrast_window_radius_step);
+    const float radiusStart = 0.5f * (minRadius + maxRadius);
+    const float penaltyRadius = std::clamp(
+        minRadius * std::max(1.0f, config.simulation.contrast_penalty_min_radius_scale),
+        minRadius,
+        maxRadius);
+    const float rewardWeight = config.simulation.contrast_reward_weight;
+    const float penaltyWeight = config.simulation.contrast_penalty_weight;
 
     std::vector<float> scoringRadii;
-    for (float radius = minRadius; radius < maxRadius - 1e-6f; radius += radiusStep) {
+    for (float radius = radiusStart; radius < maxRadius - 1e-6f; radius += radiusStep) {
         scoringRadii.push_back(radius);
     }
     if (scoringRadii.empty() || std::abs(scoringRadii.back() - maxRadius) > 1e-6f) {
         scoringRadii.push_back(maxRadius);
     }
 
+    const float penaltyScore = evaluateSequenceContrastScoreForRadius(sequence, config, penaltyRadius);
     std::vector<float> scores(scoringRadii.size(), 0.0f);
     #pragma omp parallel for schedule(dynamic)
     for (int i = 0; i < static_cast<int>(scoringRadii.size()); ++i) {
-        scores[static_cast<std::size_t>(i)] = evaluateSequenceContrastScoreForRadius(
+        const float rawScore = evaluateSequenceContrastScoreForRadius(
             sequence, config, scoringRadii[static_cast<std::size_t>(i)]);
+        scores[static_cast<std::size_t>(i)] = rewardWeight * rawScore - penaltyWeight * penaltyScore;
     }
 
     return *std::max_element(scores.begin(), scores.end());
@@ -931,9 +940,16 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
               config.cell->maxCRadius})))
         : defaultMaxRadius;
     const float radiusStep = std::max(1.0f, config.simulation.contrast_window_radius_step);
+    const float radiusStart = 0.5f * (minRadius + maxRadius);
+    const float penaltyRadius = std::clamp(
+        minRadius * std::max(1.0f, config.simulation.contrast_penalty_min_radius_scale),
+        minRadius,
+        maxRadius);
+    const float rewardWeight = config.simulation.contrast_reward_weight;
+    const float penaltyWeight = config.simulation.contrast_penalty_weight;
 
     std::vector<float> scoringRadii;
-    for (float radius = minRadius; radius < maxRadius - 1e-6f; radius += radiusStep) {
+    for (float radius = radiusStart; radius < maxRadius - 1e-6f; radius += radiusStep) {
         scoringRadii.push_back(radius);
     }
     if (scoringRadii.empty() || std::abs(scoringRadii.back() - maxRadius) > 1e-6f) {
@@ -952,7 +968,13 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
         std::ostringstream trialLog;
         ImageStack current = cloneStack(sequence);
         ImageStack bestSequence = cloneStack(current);
-        float currentScore = evaluateSequenceContrastScoreForRadius(current, config, scoringRadius);
+        auto scoreForRadiusWithPenalty = [&](const ImageStack &stack) {
+            const float rewardScore = evaluateSequenceContrastScoreForRadius(stack, config, scoringRadius);
+            const float penaltyScore = evaluateSequenceContrastScoreForRadius(stack, config, penaltyRadius);
+            return rewardWeight * rewardScore - penaltyWeight * penaltyScore;
+        };
+
+        float currentScore = scoreForRadiusWithPenalty(current);
         float bestScore = currentScore;
         float currentPenalty = config.simulation.iterative_penalty;
 
@@ -990,6 +1012,9 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
         std::mt19937 rng(rngSeed);
 
         trialLog << "[IterPreprocess] radius=" << scoringRadius
+                 << " penalty_radius=" << penaltyRadius
+                 << " reward_weight=" << rewardWeight
+                 << " penalty_weight=" << penaltyWeight
                  << " initial_score=" << currentScore
                  << " gate_count=" << rewardGates.size()
                  << " learning_rate=" << learningRate
@@ -1055,7 +1080,7 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
                 }
             }
 
-            const float score = evaluateSequenceContrastScoreForRadius(candidate, config, scoringRadius);
+            const float score = scoreForRadiusWithPenalty(candidate);
             if (!std::isfinite(score) || score > explosionThreshold) {
                 trialLog << "[IterPreprocess] radius=" << scoringRadius
                          << " stop=score_explosion"
@@ -1130,9 +1155,12 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
     };
 
     log << "[IterPreprocess] radius_trials=" << scoringRadii.size()
-        << " radius_min=" << minRadius
+        << " radius_start=" << radiusStart
         << " radius_max=" << maxRadius
         << " radius_step=" << radiusStep
+        << " penalty_radius=" << penaltyRadius
+        << " reward_weight=" << rewardWeight
+        << " penalty_weight=" << penaltyWeight
         << std::endl;
 
     std::vector<PreprocessTrialResult> trialResults(scoringRadii.size());

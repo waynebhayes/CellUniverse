@@ -39,7 +39,10 @@ public:
     float contrast_background_floor = 0.02f;
     float contrast_bright_fraction = 0.02f;
     float contrast_brightness_weight = 0.25f;
-    float contrast_window_radius_step = 10.0f;
+    float contrast_window_radius_step = 5.0f;
+    float contrast_penalty_min_radius_scale = 2.0f;
+    float contrast_reward_weight = 1.0f;
+    float contrast_penalty_weight = 1.0f;
     float contrast_eps = 1e-6f;
     float global_intensity_scale_low_percentile = 0.01f;
     float global_intensity_scale_high_percentile = 0.995f;
@@ -185,6 +188,9 @@ public:
         if (node["contrast_bright_fraction"]) contrast_bright_fraction = node["contrast_bright_fraction"].as<float>();
         if (node["contrast_brightness_weight"]) contrast_brightness_weight = node["contrast_brightness_weight"].as<float>();
         if (node["contrast_window_radius_step"]) contrast_window_radius_step = node["contrast_window_radius_step"].as<float>();
+        if (node["contrast_penalty_min_radius_scale"]) contrast_penalty_min_radius_scale = node["contrast_penalty_min_radius_scale"].as<float>();
+        if (node["contrast_reward_weight"]) contrast_reward_weight = node["contrast_reward_weight"].as<float>();
+        if (node["contrast_penalty_weight"]) contrast_penalty_weight = node["contrast_penalty_weight"].as<float>();
         if (node["contrast_eps"]) contrast_eps = node["contrast_eps"].as<float>();
         if (node["global_intensity_scale_low_percentile"]) global_intensity_scale_low_percentile = node["global_intensity_scale_low_percentile"].as<float>();
         if (node["global_intensity_scale_high_percentile"]) global_intensity_scale_high_percentile = node["global_intensity_scale_high_percentile"].as<float>();
@@ -254,6 +260,9 @@ public:
         std::cout << "contrast_bright_fraction: " << contrast_bright_fraction << '\n';
         std::cout << "contrast_brightness_weight: " << contrast_brightness_weight << '\n';
         std::cout << "contrast_window_radius_step: " << contrast_window_radius_step << '\n';
+        std::cout << "contrast_penalty_min_radius_scale: " << contrast_penalty_min_radius_scale << '\n';
+        std::cout << "contrast_reward_weight: " << contrast_reward_weight << '\n';
+        std::cout << "contrast_penalty_weight: " << contrast_penalty_weight << '\n';
         std::cout << "contrast_eps: " << contrast_eps << '\n';
         std::cout << "global_intensity_scale_low_percentile: " << global_intensity_scale_low_percentile << '\n';
         std::cout << "global_intensity_scale_high_percentile: " << global_intensity_scale_high_percentile << '\n';

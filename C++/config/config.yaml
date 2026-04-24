@@ -265,7 +265,7 @@ simulation:
   iterative_reward: 0.1
   iterative_reward_gate_learning_rate: 0.001
   iterative_reward_gate_min_probability: 0.0001
-  iterative_no_improvement_patience: 50
+  iterative_no_improvement_patience: 100
   iterative_score_explosion_threshold: 5.0
   iterative_reward_gate_seed: 12345
   iterative_score_max: 0.7
@@ -277,7 +277,10 @@ simulation:
   contrast_background_floor: 0.02
   contrast_bright_fraction: 0.02
   contrast_brightness_weight: 0.25
-  contrast_window_radius_step: 10.0
+  contrast_window_radius_step: 5.0
+  contrast_penalty_min_radius_scale: 2.5
+  contrast_reward_weight: 1.0
+  contrast_penalty_weight: 0.1
   contrast_eps: 0.000001
   global_intensity_scale_low_percentile: 0.05
   global_intensity_scale_high_percentile: 1.0
@@ -292,7 +295,7 @@ simulation:
   post_process_amplification: 5.0
   post_process_black_percentile: 0.08
   post_process_white_percentile: 0.3
-  brightness_alignment_enabled: false
+  brightness_alignment_enabled: true
 
   export_preprocessed_images: true
   export_frame_png: false
