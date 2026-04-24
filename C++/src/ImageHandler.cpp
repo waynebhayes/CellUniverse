@@ -51,26 +51,21 @@ StackStats computeStackStats(const ImageStack &stack)
     StackStats stats;
     double sum = 0.0;
     double sumSq = 0.0;
-    bool firstValue = true;
+    double minValue = std::numeric_limits<double>::infinity();
+    double maxValue = -std::numeric_limits<double>::infinity();
+    std::size_t count = 0;
 
-    for (const auto &slice : stack)
+    #pragma omp parallel for schedule(static) reduction(+:sum,sumSq,count) reduction(min:minValue) reduction(max:maxValue)
+    for (int i = 0; i < static_cast<int>(stack.size()); ++i)
     {
+        const auto &slice = stack[static_cast<std::size_t>(i)];
         CV_Assert(slice.type() == CV_32F);
 
         double sliceMin = 0.0;
         double sliceMax = 0.0;
         cv::minMaxLoc(slice, &sliceMin, &sliceMax);
-        if (firstValue)
-        {
-            stats.minValue = sliceMin;
-            stats.maxValue = sliceMax;
-            firstValue = false;
-        }
-        else
-        {
-            stats.minValue = std::min(stats.minValue, sliceMin);
-            stats.maxValue = std::max(stats.maxValue, sliceMax);
-        }
+        minValue = std::min(minValue, sliceMin);
+        maxValue = std::max(maxValue, sliceMax);
 
         for (int y = 0; y < slice.rows; ++y)
         {
@@ -80,16 +75,19 @@ StackStats computeStackStats(const ImageStack &stack)
                 const double value = row[x];
                 sum += value;
                 sumSq += value * value;
-                ++stats.count;
+                ++count;
             }
         }
     }
 
+    stats.count = count;
     if (stats.count == 0)
     {
         return stats;
     }
 
+    stats.minValue = minValue;
+    stats.maxValue = maxValue;
     stats.mean = sum / static_cast<double>(stats.count);
     const double variance =
         std::max(0.0, sumSq / static_cast<double>(stats.count) - stats.mean * stats.mean);
@@ -116,11 +114,12 @@ void printStackStats(std::ostream &log,
 
 ImageStack cloneStack(const ImageStack &sequence)
 {
-    ImageStack cloned;
-    cloned.reserve(sequence.size());
-    for (const auto &slice : sequence)
+    ImageStack cloned(sequence.size());
+
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < static_cast<int>(sequence.size()); ++i)
     {
-        cloned.push_back(slice.clone());
+        cloned[static_cast<std::size_t>(i)] = sequence[static_cast<std::size_t>(i)].clone();
     }
     return cloned;
 }
@@ -645,8 +644,10 @@ std::vector<Frame::SignalCenter> localizeSignalCentersInStack(const ImageStack &
 
 void clipStack(ImageStack &sequence)
 {
-    for (auto &slice : sequence)
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < static_cast<int>(sequence.size()); ++i)
     {
+        auto &slice = sequence[static_cast<std::size_t>(i)];
         cv::min(slice, 1.0f, slice);
         cv::max(slice, 0.0f, slice);
     }
@@ -763,13 +764,8 @@ float ImageHandler::evaluateSequenceContrastScore(const ImageStack &sequence, co
         (config.cell ? static_cast<float>(config.cell->maxARadius) : 40.0f);
     const float cRadius =
         (config.cell ? static_cast<float>(config.cell->maxCRadius) : 35.0f);
-    const float minRadius = std::max(1.0f, std::min(aRadius, cRadius));
     const float maxRadius = std::max(1.0f, std::max(aRadius, cRadius));
-    const float midRadius = 0.5f * (minRadius + maxRadius);
-    const std::array<float, 2> radii = {
-        midRadius,
-        maxRadius
-    };
+    const std::array<float, 1> radii = {maxRadius};
 
     std::vector<float> scaleScores;
     scaleScores.reserve(radii.size());
@@ -782,11 +778,12 @@ float ImageHandler::evaluateSequenceContrastScore(const ImageStack &sequence, co
             static_cast<int>(std::lround(radiusAtScale * 4.0f + 1.0f)),
             innerWindow + 2);
 
-        std::vector<float> sliceScores;
-        sliceScores.reserve(sequence.size());
+        std::vector<float> sliceScores(sequence.size(), 0.0f);
 
-        for (const auto &slice : sequence)
+        #pragma omp parallel for schedule(dynamic)
+        for (int sliceIndex = 0; sliceIndex < static_cast<int>(sequence.size()); ++sliceIndex)
         {
+            const auto &slice = sequence[static_cast<std::size_t>(sliceIndex)];
             CV_Assert(slice.type() == CV_32F);
 
             const cv::Mat innerMean = boxMean(slice, innerWindow);
@@ -833,7 +830,7 @@ float ImageHandler::evaluateSequenceContrastScore(const ImageStack &sequence, co
 
             if (contrastValues.empty())
             {
-                sliceScores.push_back(0.0f);
+                sliceScores[static_cast<std::size_t>(sliceIndex)] = 0.0f;
                 continue;
             }
 
@@ -847,10 +844,10 @@ float ImageHandler::evaluateSequenceContrastScore(const ImageStack &sequence, co
                 std::move(hollowPenaltyValues),
                 config.simulation.contrast_bright_fraction);
 
-            sliceScores.push_back(
+            sliceScores[static_cast<std::size_t>(sliceIndex)] =
                 contrastScore +
                 config.simulation.contrast_brightness_weight * brightInteriorScore -
-                config.simulation.contrast_hollow_penalty_weight * hollowPenaltyScore);
+                config.simulation.contrast_hollow_penalty_weight * hollowPenaltyScore;
         }
 
         if (sliceScores.empty())
@@ -884,8 +881,8 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
 
     ImageStack bestSequence = cloneStack(current);
     float bestScore = -std::numeric_limits<float>::infinity();
-    float previousScore = 0.0f;
-    bool hasPreviousScore = false;
+    float historyMaxScore = -std::numeric_limits<float>::infinity();
+    bool hasHistoryScore = false;
 
     int count = 0;
     float currentPenalty = config.simulation.iterative_penalty;
@@ -901,8 +898,10 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
             restoreBestBeforeReward = false;
         }
 
-        for (auto &slice : current)
+        #pragma omp parallel for schedule(static)
+        for (int sliceIndex = 0; sliceIndex < static_cast<int>(current.size()); ++sliceIndex)
         {
+            auto &slice = current[static_cast<std::size_t>(sliceIndex)];
             for (int y = 0; y < slice.rows; ++y)
             {
                 float *row = slice.ptr<float>(y);
@@ -931,22 +930,30 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
         penaltyScoringConfig.simulation.iterative_score_percentile = scorePercentile;
         const float penaltyScore = evaluateSequenceContrastScore(current, penaltyScoringConfig);
 
-        if (hasPreviousScore &&
-            previousScore - penaltyScore >=
+        if (penaltyScore > bestScore + config.simulation.iterative_improvement_tolerance)
+        {
+            bestScore = penaltyScore;
+            bestSequence = cloneStack(current);
+        }
+
+        if (hasHistoryScore &&
+            historyMaxScore - penaltyScore >=
                 config.simulation.iterative_penalty_score_drop_stop_threshold)
         {
             restoreBestBeforeReward = true;
             currentPenalty = std::max(
                 config.simulation.iterative_min_penalty,
                 currentPenalty * config.simulation.iterative_collapse_backoff);
-            previousScore = penaltyScore;
-            hasPreviousScore = true;
             ++count;
             continue;
         }
+        historyMaxScore = std::max(historyMaxScore, penaltyScore);
+        hasHistoryScore = true;
 
-        for (auto &slice : current)
+        #pragma omp parallel for schedule(static)
+        for (int sliceIndex = 0; sliceIndex < static_cast<int>(current.size()); ++sliceIndex)
         {
+            auto &slice = current[static_cast<std::size_t>(sliceIndex)];
             for (int y = 0; y < slice.rows; ++y)
             {
                 float *row = slice.ptr<float>(y);
@@ -976,15 +983,13 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
         rewardScoringConfig.simulation.iterative_score_percentile = scorePercentile;
         const float score = evaluateSequenceContrastScore(current, rewardScoringConfig);
 
-        if (hasPreviousScore &&
-            previousScore - score >= config.simulation.iterative_score_drop_stop_threshold)
+        if (hasHistoryScore &&
+            historyMaxScore - score >= config.simulation.iterative_score_drop_stop_threshold)
         {
             restoreBestBeforeReward = true;
             currentPenalty = std::max(
                 config.simulation.iterative_min_penalty,
                 currentPenalty * config.simulation.iterative_collapse_backoff);
-            previousScore = score;
-            hasPreviousScore = true;
             ++count;
             continue;
         }
@@ -1001,8 +1006,8 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
                 << " score=" << score << std::endl;
         }
 
-        previousScore = score;
-        hasPreviousScore = true;
+        historyMaxScore = std::max(historyMaxScore, score);
+        hasHistoryScore = true;
         ++count;
 
         if (score >= config.simulation.iterative_score_max)
@@ -1023,8 +1028,10 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
 
     log << "[IterPreprocess] best_score=" << bestScore << std::endl;
 
-    for (auto &slice : bestSequence)
+    #pragma omp parallel for schedule(static)
+    for (int sliceIndex = 0; sliceIndex < static_cast<int>(bestSequence.size()); ++sliceIndex)
     {
+        auto &slice = bestSequence[static_cast<std::size_t>(sliceIndex)];
         if (config.simulation.post_process_blur_sigma > 0.0f)
         {
             cv::GaussianBlur(slice,
@@ -1064,8 +1071,10 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
         const float blurredAmplification =
             std::max(0.0f, config.simulation.post_process_final_blurred_amplification);
 
-        for (auto &slice : bestSequence)
+        #pragma omp parallel for schedule(static)
+        for (int sliceIndex = 0; sliceIndex < static_cast<int>(bestSequence.size()); ++sliceIndex)
         {
+            auto &slice = bestSequence[static_cast<std::size_t>(sliceIndex)];
             cv::Mat directSlice = slice.clone();
             cv::Mat blurredSlice;
             cv::GaussianBlur(slice,
@@ -1130,15 +1139,16 @@ std::vector<cv::Mat> ImageHandler::loadRawFrame(const std::string &imageFile,
             << " rawCols=" << firstSlice.cols
             << std::endl;
 
-        normalizedSlices.reserve(numTiffSlices);
-        for (const auto &rawSlice : tiffImage)
+        normalizedSlices.resize(numTiffSlices);
+        #pragma omp parallel for schedule(static)
+        for (int i = 0; i < static_cast<int>(numTiffSlices); ++i)
         {
-            cv::Mat slice = rawSlice;
+            cv::Mat slice = tiffImage[static_cast<std::size_t>(i)];
             if (slice.channels() == 3)
             {
                 cv::cvtColor(slice, slice, cv::COLOR_BGR2GRAY);
             }
-            normalizedSlices.push_back(processImage(slice, config));
+            normalizedSlices[static_cast<std::size_t>(i)] = processImage(slice, config);
         }
     }
     else
@@ -1195,19 +1205,24 @@ std::vector<cv::Mat> ImageHandler::preprocessLoadedFrame(const std::vector<cv::M
         const unsigned numSynthSlices =
             static_cast<unsigned>(expandFactor) * (processedZSlices.size() - 1U) + 1U;
 
-        for (unsigned synthSlice = 0; synthSlice < numSynthSlices; ++synthSlice)
+        interpolatedZSlices.resize(numSynthSlices);
+        #pragma omp parallel for schedule(static)
+        for (int synthSliceIndex = 0; synthSliceIndex < static_cast<int>(numSynthSlices); ++synthSliceIndex)
         {
+            const unsigned synthSlice = static_cast<unsigned>(synthSliceIndex);
             const int sourceSlice = static_cast<int>(synthSlice / expandFactor);
             if (synthSlice % expandFactor == 0)
             {
-                interpolatedZSlices.push_back(processedZSlices[sourceSlice]);
+                interpolatedZSlices[static_cast<std::size_t>(synthSlice)] =
+                    processedZSlices[static_cast<std::size_t>(sourceSlice)];
             }
-            else if (synthSlice % expandFactor == 1)
+            else
             {
-                interpolateSlices(processedZSlices[sourceSlice],
-                                  processedZSlices[sourceSlice + 1],
-                                  interpolatedZSlices,
-                                  expandFactor - 1);
+                const double t = static_cast<double>(synthSlice % expandFactor) /
+                                 static_cast<double>(expandFactor);
+                interpolatedZSlices[static_cast<std::size_t>(synthSlice)] =
+                    (1.0 - t) * processedZSlices[static_cast<std::size_t>(sourceSlice)] +
+                    t * processedZSlices[static_cast<std::size_t>(sourceSlice + 1)];
             }
         }
 
