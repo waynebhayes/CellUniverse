@@ -3,8 +3,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <functional>
 #include <iostream>
 #include <limits>
+#include <random>
+#include <sstream>
 #include <stdexcept>
 
 namespace
@@ -765,268 +768,395 @@ float ImageHandler::evaluateSequenceContrastScore(const ImageStack &sequence, co
     const float cRadius =
         (config.cell ? static_cast<float>(config.cell->maxCRadius) : 35.0f);
     const float maxRadius = std::max(1.0f, std::max(aRadius, cRadius));
-    const std::array<float, 1> radii = {maxRadius};
+    return evaluateSequenceContrastScoreForRadius(sequence, config, maxRadius);
+}
 
-    std::vector<float> scaleScores;
-    scaleScores.reserve(radii.size());
+float ImageHandler::evaluateBestWindowContrastScore(const ImageStack &sequence, const BaseConfig &config)
+{
+    const float defaultMinRadius = 5.0f;
+    const float defaultMaxRadius = 65.0f;
+    const float minRadius = config.cell
+        ? std::max(1.0f, static_cast<float>(std::min({
+              config.cell->minARadius,
+              config.cell->minBRadius,
+              config.cell->minCRadius})))
+        : defaultMinRadius;
+    const float maxRadius = config.cell
+        ? std::max(minRadius, static_cast<float>(std::max({
+              config.cell->maxARadius,
+              config.cell->maxBRadius > 0.0 ? config.cell->maxBRadius : config.cell->maxARadius,
+              config.cell->maxCRadius})))
+        : defaultMaxRadius;
+    const float radiusStep = std::max(1.0f, config.simulation.contrast_window_radius_step);
 
-    for (const float radiusAtScale : radii)
+    std::vector<float> scoringRadii;
+    for (float radius = minRadius; radius < maxRadius - 1e-6f; radius += radiusStep) {
+        scoringRadii.push_back(radius);
+    }
+    if (scoringRadii.empty() || std::abs(scoringRadii.back() - maxRadius) > 1e-6f) {
+        scoringRadii.push_back(maxRadius);
+    }
+
+    std::vector<float> scores(scoringRadii.size(), 0.0f);
+    #pragma omp parallel for schedule(dynamic)
+    for (int i = 0; i < static_cast<int>(scoringRadii.size()); ++i) {
+        scores[static_cast<std::size_t>(i)] = evaluateSequenceContrastScoreForRadius(
+            sequence, config, scoringRadii[static_cast<std::size_t>(i)]);
+    }
+
+    return *std::max_element(scores.begin(), scores.end());
+}
+
+float ImageHandler::evaluateSequenceContrastScoreForRadius(const ImageStack &sequence,
+                                                           const BaseConfig &config,
+                                                           float radiusAtScale)
+{
+    const int innerWindow = makeOddAtLeast(
+        static_cast<int>(std::lround(radiusAtScale * 2.0f + 1.0f)));
+    const int outerWindow = makeOddAtLeast(
+        static_cast<int>(std::lround(radiusAtScale * 4.0f + 1.0f)),
+        innerWindow + 2);
+
+    std::vector<float> sliceScores(sequence.size(), 0.0f);
+
+    #pragma omp parallel for schedule(dynamic)
+    for (int sliceIndex = 0; sliceIndex < static_cast<int>(sequence.size()); ++sliceIndex)
     {
-        const int innerWindow = makeOddAtLeast(
-            static_cast<int>(std::lround(radiusAtScale * 2.0f + 1.0f)));
-        const int outerWindow = makeOddAtLeast(
-            static_cast<int>(std::lround(radiusAtScale * 4.0f + 1.0f)),
-            innerWindow + 2);
+        const auto &slice = sequence[static_cast<std::size_t>(sliceIndex)];
+        CV_Assert(slice.type() == CV_32F);
 
-        std::vector<float> sliceScores(sequence.size(), 0.0f);
+        const cv::Mat innerMean = boxMean(slice, innerWindow);
+        const cv::Mat outerMean = boxMean(slice, outerWindow);
 
-        #pragma omp parallel for schedule(dynamic)
-        for (int sliceIndex = 0; sliceIndex < static_cast<int>(sequence.size()); ++sliceIndex)
+        std::vector<float> contrastValues;
+        std::vector<float> brightInteriorValues;
+        contrastValues.reserve(static_cast<std::size_t>(slice.total()));
+        brightInteriorValues.reserve(static_cast<std::size_t>(slice.total() / 8));
+
+        for (int y = 0; y < slice.rows; ++y)
         {
-            const auto &slice = sequence[static_cast<std::size_t>(sliceIndex)];
-            CV_Assert(slice.type() == CV_32F);
-
-            const cv::Mat innerMean = boxMean(slice, innerWindow);
-            const cv::Mat outerMean = boxMean(slice, outerWindow);
-
-            std::vector<float> contrastValues;
-            std::vector<float> brightInteriorValues;
-            std::vector<float> hollowPenaltyValues;
-            contrastValues.reserve(static_cast<std::size_t>(slice.total()));
-            brightInteriorValues.reserve(static_cast<std::size_t>(slice.total() / 8));
-            hollowPenaltyValues.reserve(static_cast<std::size_t>(slice.total() / 8));
-
-            for (int y = 0; y < slice.rows; ++y)
+            const float *sliceRow = slice.ptr<float>(y);
+            const float *innerRow = innerMean.ptr<float>(y);
+            const float *outerRow = outerMean.ptr<float>(y);
+            for (int x = 0; x < slice.cols; ++x)
             {
-                const float *sliceRow = slice.ptr<float>(y);
-                const float *innerRow = innerMean.ptr<float>(y);
-                const float *outerRow = outerMean.ptr<float>(y);
-                for (int x = 0; x < slice.cols; ++x)
+                const float localDifference = innerRow[x] - outerRow[x];
+                if (localDifference < config.simulation.contrast_structure_threshold)
                 {
-                    const float localDifference = innerRow[x] - outerRow[x];
-                    if (localDifference < config.simulation.contrast_structure_threshold)
-                    {
-                        continue;
-                    }
-
-                    const float stableBackground =
-                        std::max(outerRow[x], config.simulation.contrast_background_floor);
-                    const float localContrast =
-                        localDifference / (stableBackground + config.simulation.contrast_eps);
-                    contrastValues.push_back(localContrast);
-
-                    // Reward bright filled interiors in regions that already
-                    // exhibit positive local contrast.
-                    brightInteriorValues.push_back(sliceRow[x]);
-
-                    const float hollowDifference = outerRow[x] - innerRow[x];
-                    if (hollowDifference > config.simulation.contrast_structure_threshold)
-                    {
-                        hollowPenaltyValues.push_back(
-                            hollowDifference / (stableBackground + config.simulation.contrast_eps));
-                    }
+                    continue;
                 }
+
+                const float stableBackground =
+                    std::max(outerRow[x], config.simulation.contrast_background_floor);
+                const float localContrast =
+                    localDifference / (stableBackground + config.simulation.contrast_eps);
+                contrastValues.push_back(localContrast);
+
+                // Reward bright filled interiors in regions that already
+                // exhibit positive local contrast.
+                brightInteriorValues.push_back(sliceRow[x]);
             }
-
-            if (contrastValues.empty())
-            {
-                sliceScores[static_cast<std::size_t>(sliceIndex)] = 0.0f;
-                continue;
-            }
-
-            const float contrastScore = computePercentileFromValues(
-                std::move(contrastValues),
-                config.simulation.iterative_score_percentile);
-            const float brightInteriorScore = computeMeanOfTopFraction(
-                std::move(brightInteriorValues),
-                config.simulation.contrast_bright_fraction);
-            const float hollowPenaltyScore = computeMeanOfTopFraction(
-                std::move(hollowPenaltyValues),
-                config.simulation.contrast_bright_fraction);
-
-            sliceScores[static_cast<std::size_t>(sliceIndex)] =
-                contrastScore +
-                config.simulation.contrast_brightness_weight * brightInteriorScore -
-                config.simulation.contrast_hollow_penalty_weight * hollowPenaltyScore;
         }
 
-        if (sliceScores.empty())
+        if (contrastValues.empty())
         {
-            scaleScores.push_back(0.0f);
+            sliceScores[static_cast<std::size_t>(sliceIndex)] = 0.0f;
             continue;
         }
 
-        scaleScores.push_back(computePercentileFromValues(std::move(sliceScores), 0.5f));
+        const float contrastScore = computePercentileFromValues(
+            std::move(contrastValues),
+            config.simulation.iterative_score_percentile);
+        const float brightInteriorScore = computeMeanOfTopFraction(
+            std::move(brightInteriorValues),
+            config.simulation.contrast_bright_fraction);
+
+        sliceScores[static_cast<std::size_t>(sliceIndex)] =
+            contrastScore +
+            config.simulation.contrast_brightness_weight * brightInteriorScore;
     }
 
-    if (scaleScores.empty())
+    if (sliceScores.empty())
     {
         return 0.0f;
     }
 
-    float sumScores = 0.0f;
-    for (float score : scaleScores)
-    {
-        sumScores += score;
-    }
-    return sumScores / static_cast<float>(scaleScores.size());
+    return computePercentileFromValues(std::move(sliceScores), 0.5f);
 }
 
 ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
                                                 const BaseConfig &config,
-                                                std::ostream &log)
+                                                std::ostream &log,
+                                                const std::string &imageFile)
 {
-    ImageStack current = cloneStack(sequence);
     const int maxIterations = std::max(1, config.simulation.iterative_max_count);
+    const float gateStart = config.simulation.iterative_reward_gate;
+    const float gateMin = std::min(gateStart, config.simulation.iterative_reward_gate_min);
+    const float gateStep = config.simulation.iterative_reward_gate_decrement;
 
-    ImageStack bestSequence = cloneStack(current);
-    float bestScore = -std::numeric_limits<float>::infinity();
-    float historyMaxScore = -std::numeric_limits<float>::infinity();
-    bool hasHistoryScore = false;
-
-    int count = 0;
-    float currentPenalty = config.simulation.iterative_penalty;
-    bool restoreBestBeforeReward = false;
-    float scorePercentile = config.simulation.iterative_score_percentile;
-    float rewardGate = config.simulation.iterative_reward_gate;
-
-    while (count < maxIterations)
-    {
-        if (restoreBestBeforeReward)
-        {
-            current = cloneStack(bestSequence);
-            restoreBestBeforeReward = false;
+    std::vector<float> rewardGates;
+    if (gateStep <= 1e-6f || gateStart <= gateMin + 1e-6f) {
+        rewardGates.push_back(gateStart);
+    } else {
+        for (float gate = gateStart; gate > gateMin + 1e-6f; gate -= gateStep) {
+            rewardGates.push_back(gate);
         }
-
-        #pragma omp parallel for schedule(static)
-        for (int sliceIndex = 0; sliceIndex < static_cast<int>(current.size()); ++sliceIndex)
-        {
-            auto &slice = current[static_cast<std::size_t>(sliceIndex)];
-            for (int y = 0; y < slice.rows; ++y)
-            {
-                float *row = slice.ptr<float>(y);
-                for (int x = 0; x < slice.cols; ++x)
-                {
-                    if (row[x] < config.simulation.iterative_penalty_range)
-                    {
-                        const float normalizedDistanceToKeep =
-                            (config.simulation.iterative_penalty_range > 1e-6f)
-                                ? ((config.simulation.iterative_penalty_range - row[x]) /
-                                   config.simulation.iterative_penalty_range)
-                                : 1.0f;
-                        const float penaltyStrength =
-                            std::clamp(normalizedDistanceToKeep, 0.0f, 1.0f);
-                        row[x] -= currentPenalty * penaltyStrength;
-                        if (row[x] < 0.0f)
-                        {
-                            row[x] = 0.0f;
-                        }
-                    }
-                }
-            }
+        if (rewardGates.empty() || std::abs(rewardGates.back() - gateMin) > 1e-6f) {
+            rewardGates.push_back(gateMin);
         }
-
-        BaseConfig penaltyScoringConfig = config;
-        penaltyScoringConfig.simulation.iterative_score_percentile = scorePercentile;
-        const float penaltyScore = evaluateSequenceContrastScore(current, penaltyScoringConfig);
-
-        if (penaltyScore > bestScore + config.simulation.iterative_improvement_tolerance)
-        {
-            bestScore = penaltyScore;
-            bestSequence = cloneStack(current);
-        }
-
-        if (hasHistoryScore &&
-            historyMaxScore - penaltyScore >=
-                config.simulation.iterative_penalty_score_drop_stop_threshold)
-        {
-            restoreBestBeforeReward = true;
-            currentPenalty = std::max(
-                config.simulation.iterative_min_penalty,
-                currentPenalty * config.simulation.iterative_collapse_backoff);
-            ++count;
-            continue;
-        }
-        historyMaxScore = std::max(historyMaxScore, penaltyScore);
-        hasHistoryScore = true;
-
-        #pragma omp parallel for schedule(static)
-        for (int sliceIndex = 0; sliceIndex < static_cast<int>(current.size()); ++sliceIndex)
-        {
-            auto &slice = current[static_cast<std::size_t>(sliceIndex)];
-            for (int y = 0; y < slice.rows; ++y)
-            {
-                float *row = slice.ptr<float>(y);
-                for (int x = 0; x < slice.cols; ++x)
-                {
-                    if (row[x] > rewardGate)
-                    {
-                        row[x] += config.simulation.iterative_reward;
-                        if (row[x] > 1.0f)
-                        {
-                            row[x] = 1.0f;
-                        }
-                    }
-                }
-            }
-        }
-
-        scorePercentile = std::min(
-            scorePercentile + config.simulation.iterative_score_percentile_increment,
-            config.simulation.iterative_score_percentile_max);
-        rewardGate = std::max(
-            config.simulation.iterative_reward_gate_min,
-            rewardGate -
-                config.simulation.iterative_reward_gate_decrement);
-
-        BaseConfig rewardScoringConfig = config;
-        rewardScoringConfig.simulation.iterative_score_percentile = scorePercentile;
-        const float score = evaluateSequenceContrastScore(current, rewardScoringConfig);
-
-        if (hasHistoryScore &&
-            historyMaxScore - score >= config.simulation.iterative_score_drop_stop_threshold)
-        {
-            restoreBestBeforeReward = true;
-            currentPenalty = std::max(
-                config.simulation.iterative_min_penalty,
-                currentPenalty * config.simulation.iterative_collapse_backoff);
-            ++count;
-            continue;
-        }
-
-        if (score > bestScore + config.simulation.iterative_improvement_tolerance)
-        {
-            bestScore = score;
-            bestSequence = cloneStack(current);
-        }
-
-        if (count % 50 == 0)
-        {
-            log << "[IterPreprocess] round=" << count
-                << " score=" << score << std::endl;
-        }
-
-        historyMaxScore = std::max(historyMaxScore, score);
-        hasHistoryScore = true;
-        ++count;
-
-        if (score >= config.simulation.iterative_score_max)
-        {
-            break;
-        }
-
-        if (score == 0.0f)
-        {
-            currentPenalty = std::max(
-                config.simulation.iterative_min_penalty,
-                currentPenalty * config.simulation.iterative_collapse_backoff);
-            current = cloneStack(bestSequence);
-            continue;
-        }
-
     }
 
-    log << "[IterPreprocess] best_score=" << bestScore << std::endl;
+    const double learningRate = std::clamp(
+        static_cast<double>(config.simulation.iterative_reward_gate_learning_rate),
+        0.0,
+        1.0);
+    const int noImprovementPatience = std::max(1, config.simulation.iterative_no_improvement_patience);
+    const float explosionThreshold = std::max(
+        config.simulation.iterative_score_explosion_threshold,
+        config.simulation.iterative_score_max);
+    const std::size_t imageHash = std::hash<std::string>{}(fs::path(imageFile).filename().string());
+
+    const float defaultMinRadius = 5.0f;
+    const float defaultMaxRadius = 65.0f;
+    const float minRadius = config.cell
+        ? std::max(1.0f, static_cast<float>(std::min({
+              config.cell->minARadius,
+              config.cell->minBRadius,
+              config.cell->minCRadius})))
+        : defaultMinRadius;
+    const float maxRadius = config.cell
+        ? std::max(minRadius, static_cast<float>(std::max({
+              config.cell->maxARadius,
+              config.cell->maxBRadius > 0.0 ? config.cell->maxBRadius : config.cell->maxARadius,
+              config.cell->maxCRadius})))
+        : defaultMaxRadius;
+    const float radiusStep = std::max(1.0f, config.simulation.contrast_window_radius_step);
+
+    std::vector<float> scoringRadii;
+    for (float radius = minRadius; radius < maxRadius - 1e-6f; radius += radiusStep) {
+        scoringRadii.push_back(radius);
+    }
+    if (scoringRadii.empty() || std::abs(scoringRadii.back() - maxRadius) > 1e-6f) {
+        scoringRadii.push_back(maxRadius);
+    }
+
+    struct PreprocessTrialResult
+    {
+        ImageStack sequence;
+        float score = -std::numeric_limits<float>::infinity();
+        float radius = 0.0f;
+        std::string logText;
+    };
+
+    auto runRadiusTrial = [&](float scoringRadius, int radiusIndex) {
+        std::ostringstream trialLog;
+        ImageStack current = cloneStack(sequence);
+        ImageStack bestSequence = cloneStack(current);
+        float currentScore = evaluateSequenceContrastScoreForRadius(current, config, scoringRadius);
+        float bestScore = currentScore;
+        float currentPenalty = config.simulation.iterative_penalty;
+
+        std::vector<double> gateProbabilities(
+            rewardGates.size(), 1.0 / static_cast<double>(rewardGates.size()));
+        const double minProbability = std::min(
+            std::max(0.0, static_cast<double>(config.simulation.iterative_reward_gate_min_probability)),
+            1.0 / static_cast<double>(rewardGates.size()));
+        auto normalizeGateProbabilities = [&]() {
+            double sum = 0.0;
+            for (double &probability : gateProbabilities) {
+                probability = std::max(probability, minProbability);
+                sum += probability;
+            }
+            if (sum <= 0.0) {
+                const double uniform = 1.0 / static_cast<double>(gateProbabilities.size());
+                std::fill(gateProbabilities.begin(), gateProbabilities.end(), uniform);
+                return;
+            }
+            for (double &probability : gateProbabilities) {
+                probability /= sum;
+            }
+        };
+
+        auto updateGateProbability = [&](std::size_t gateIndex, bool improved) {
+            const double multiplier = improved ? (1.0 + learningRate) : (1.0 - learningRate);
+            gateProbabilities[gateIndex] *= multiplier;
+            normalizeGateProbabilities();
+        };
+
+        const unsigned int rngSeed =
+            static_cast<unsigned int>(config.simulation.iterative_reward_gate_seed) ^
+            static_cast<unsigned int>(imageHash & 0xffffffffU) ^
+            (static_cast<unsigned int>(radiusIndex) * 0x9e3779b9U);
+        std::mt19937 rng(rngSeed);
+
+        trialLog << "[IterPreprocess] radius=" << scoringRadius
+                 << " initial_score=" << currentScore
+                 << " gate_count=" << rewardGates.size()
+                 << " learning_rate=" << learningRate
+                 << " min_probability=" << minProbability
+                 << std::endl;
+
+        int noImprovementCount = 0;
+        for (int count = 0; count < maxIterations; ++count)
+        {
+            std::discrete_distribution<int> gateDistribution(
+                gateProbabilities.begin(), gateProbabilities.end());
+            const int selectedGateIndex = gateDistribution(rng);
+            const float selectedGate = rewardGates[static_cast<std::size_t>(selectedGateIndex)];
+
+            ImageStack candidate = cloneStack(current);
+
+            #pragma omp parallel for schedule(static)
+            for (int sliceIndex = 0; sliceIndex < static_cast<int>(candidate.size()); ++sliceIndex)
+            {
+                auto &slice = candidate[static_cast<std::size_t>(sliceIndex)];
+                for (int y = 0; y < slice.rows; ++y)
+                {
+                    float *row = slice.ptr<float>(y);
+                    for (int x = 0; x < slice.cols; ++x)
+                    {
+                        if (row[x] < config.simulation.iterative_penalty_range)
+                        {
+                            const float normalizedDistanceToKeep =
+                                (config.simulation.iterative_penalty_range > 1e-6f)
+                                    ? ((config.simulation.iterative_penalty_range - row[x]) /
+                                       config.simulation.iterative_penalty_range)
+                                    : 1.0f;
+                            const float penaltyStrength =
+                                std::clamp(normalizedDistanceToKeep, 0.0f, 1.0f);
+                            row[x] -= currentPenalty * penaltyStrength;
+                            if (row[x] < 0.0f)
+                            {
+                                row[x] = 0.0f;
+                            }
+                        }
+                    }
+                }
+            }
+
+            #pragma omp parallel for schedule(static)
+            for (int sliceIndex = 0; sliceIndex < static_cast<int>(candidate.size()); ++sliceIndex)
+            {
+                auto &slice = candidate[static_cast<std::size_t>(sliceIndex)];
+                for (int y = 0; y < slice.rows; ++y)
+                {
+                    float *row = slice.ptr<float>(y);
+                    for (int x = 0; x < slice.cols; ++x)
+                    {
+                        if (row[x] > selectedGate)
+                        {
+                            row[x] += config.simulation.iterative_reward;
+                            if (row[x] > 1.0f)
+                            {
+                                row[x] = 1.0f;
+                            }
+                        }
+                    }
+                }
+            }
+
+            const float score = evaluateSequenceContrastScoreForRadius(candidate, config, scoringRadius);
+            if (!std::isfinite(score) || score > explosionThreshold) {
+                trialLog << "[IterPreprocess] radius=" << scoringRadius
+                         << " stop=score_explosion"
+                         << " round=" << count
+                         << " score=" << score
+                         << " threshold=" << explosionThreshold
+                         << std::endl;
+                break;
+            }
+
+            const bool improvedCurrent =
+                score > currentScore + config.simulation.iterative_improvement_tolerance;
+            updateGateProbability(static_cast<std::size_t>(selectedGateIndex), improvedCurrent);
+
+            if (improvedCurrent) {
+                currentPenalty = config.simulation.iterative_penalty;
+                currentScore = score;
+                current = std::move(candidate);
+            } else {
+                currentPenalty = std::max(
+                    config.simulation.iterative_min_penalty,
+                    currentPenalty * config.simulation.iterative_collapse_backoff);
+            }
+
+            const bool improvedBest =
+                currentScore > bestScore + config.simulation.iterative_improvement_tolerance;
+            if (improvedBest) {
+                bestScore = currentScore;
+                bestSequence = cloneStack(current);
+                noImprovementCount = 0;
+            } else {
+                ++noImprovementCount;
+            }
+
+            if (count % 50 == 0)
+            {
+                trialLog << "[IterPreprocess] radius=" << scoringRadius
+                         << " round=" << count
+                         << " score=" << score
+                         << " current_score=" << currentScore
+                         << " best_score=" << bestScore
+                         << " gate=" << selectedGate
+                         << " gate_probability="
+                         << gateProbabilities[static_cast<std::size_t>(selectedGateIndex)]
+                         << std::endl;
+            }
+
+            if (bestScore >= config.simulation.iterative_score_max)
+            {
+                break;
+            }
+
+            if (noImprovementCount >= noImprovementPatience) {
+                trialLog << "[IterPreprocess] radius=" << scoringRadius
+                         << " stop=no_improvement"
+                         << " round=" << count
+                         << " patience=" << noImprovementPatience
+                         << " best_score=" << bestScore
+                         << std::endl;
+                break;
+            }
+        }
+
+        trialLog << "[IterPreprocess] radius=" << scoringRadius
+                 << " best_score=" << bestScore << std::endl;
+        return PreprocessTrialResult{
+            std::move(bestSequence),
+            bestScore,
+            scoringRadius,
+            trialLog.str()
+        };
+    };
+
+    log << "[IterPreprocess] radius_trials=" << scoringRadii.size()
+        << " radius_min=" << minRadius
+        << " radius_max=" << maxRadius
+        << " radius_step=" << radiusStep
+        << std::endl;
+
+    std::vector<PreprocessTrialResult> trialResults(scoringRadii.size());
+    #pragma omp parallel for schedule(dynamic)
+    for (int radiusIndex = 0; radiusIndex < static_cast<int>(scoringRadii.size()); ++radiusIndex)
+    {
+        trialResults[static_cast<std::size_t>(radiusIndex)] =
+            runRadiusTrial(scoringRadii[static_cast<std::size_t>(radiusIndex)], radiusIndex);
+    }
+
+    std::size_t bestTrialIndex = 0;
+    for (std::size_t i = 1; i < trialResults.size(); ++i) {
+        if (trialResults[i].score > trialResults[bestTrialIndex].score) {
+            bestTrialIndex = i;
+        }
+    }
+
+    for (const auto &result : trialResults) {
+        log << result.logText;
+    }
+    ImageStack bestSequence = std::move(trialResults[bestTrialIndex].sequence);
+    const float bestScore = trialResults[bestTrialIndex].score;
+    log << "[IterPreprocess] selected_radius=" << trialResults[bestTrialIndex].radius
+        << " best_score=" << bestScore << std::endl;
 
     #pragma omp parallel for schedule(static)
     for (int sliceIndex = 0; sliceIndex < static_cast<int>(bestSequence.size()); ++sliceIndex)
@@ -1181,9 +1311,9 @@ std::vector<cv::Mat> ImageHandler::preprocessLoadedFrame(const std::vector<cv::M
     std::vector<cv::Mat> processedZSlices = cloneStack(normalizedSlices);
     std::vector<cv::Mat> interpolatedZSlices;
 
-    processedZSlices = processPreparedSequence(processedZSlices, config, log);
+    processedZSlices = processPreparedSequence(processedZSlices, config, log, imageFile);
 
-    const float localScore = evaluateSequenceContrastScore(processedZSlices, config);
+    const float localScore = evaluateBestWindowContrastScore(processedZSlices, config);
     log << "[PreprocessScores] file=" << fs::path(imageFile).filename().string()
         << " local=" << localScore
         << std::endl;

@@ -263,20 +263,21 @@ simulation:
   iterative_reward_gate_decrement: 0.008
   iterative_reward_gate_min: 0.025
   iterative_reward: 0.1
-  iterative_score_max: 0.5
-  iterative_max_count: 300
+  iterative_reward_gate_learning_rate: 0.001
+  iterative_reward_gate_min_probability: 0.0001
+  iterative_no_improvement_patience: 50
+  iterative_score_explosion_threshold: 5.0
+  iterative_reward_gate_seed: 12345
+  iterative_score_max: 0.7
+  iterative_max_count: 1000
   iterative_improvement_tolerance: 0.01
-  iterative_score_drop_stop_threshold: 0.1
-  iterative_penalty_score_drop_stop_threshold: 0.001
   iterative_score_percentile: 0.05
-  iterative_score_percentile_max: 0.90
-  iterative_score_percentile_increment: 0.025
 
   contrast_structure_threshold: 0.02
   contrast_background_floor: 0.02
   contrast_bright_fraction: 0.02
   contrast_brightness_weight: 0.25
-  contrast_hollow_penalty_weight: 0.15
+  contrast_window_radius_step: 10.0
   contrast_eps: 0.000001
   global_intensity_scale_low_percentile: 0.05
   global_intensity_scale_high_percentile: 1.0
