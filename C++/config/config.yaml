@@ -293,11 +293,11 @@ simulation:
   post_process_white_percentile: 0.3
   brightness_alignment_enabled: false
 
-  export_preprocessed_images: false
+  export_preprocessed_images: true
   export_frame_png: false
   export_frame_tiff: true
   export_post_localization_images: true
-  quit_after_preprocessing: false
+  quit_after_preprocessing: true
 
   # Checkpoint resume: moved to run_celluniverse.sh INI preset on 2026-04-22.
   # Set `resume_from` and `resume_source_dir` in user_input_configurations.ini

@@ -227,25 +227,37 @@ static void normalizeStackToSharedScale(std::vector<cv::Mat> &stack,
 
 static void exportPreprocessedStack(const std::vector<cv::Mat> &stack,
                                     const fs::path &baseOutputDir,
-                                    const fs::path &framePath)
+                                    const fs::path &framePath,
+                                    bool exportPng,
+                                    bool exportTiff)
 {
-    const fs::path frameOutputDir = baseOutputDir / "preprocessed" / framePath.stem();
-    fs::create_directories(frameOutputDir);
+    const fs::path preprocessedDir = baseOutputDir / "preprocessed";
 
-    for (size_t i = 0; i < stack.size(); ++i) {
-        if (stack[i].empty()) {
-            continue;
+    if (exportPng) {
+        const fs::path frameOutputDir = preprocessedDir / framePath.stem();
+        fs::create_directories(frameOutputDir);
+
+        for (size_t i = 0; i < stack.size(); ++i) {
+            if (stack[i].empty()) {
+                continue;
+            }
+
+            cv::Mat outputImage;
+            if (stack[i].depth() != CV_8U) {
+                stack[i].convertTo(outputImage, CV_8U, 255.0);
+            } else {
+                outputImage = stack[i].clone();
+            }
+
+            const fs::path outputFile = frameOutputDir / (std::to_string(i) + ".png");
+            cv::imwrite(outputFile.string(), outputImage);
         }
+    }
 
-        cv::Mat outputImage;
-        if (stack[i].depth() != CV_8U) {
-            stack[i].convertTo(outputImage, CV_8U, 255.0);
-        } else {
-            outputImage = stack[i].clone();
-        }
-
-        const fs::path outputFile = frameOutputDir / (std::to_string(i) + ".png");
-        cv::imwrite(outputFile.string(), outputImage);
+    if (exportTiff) {
+        fs::create_directories(preprocessedDir);
+        const fs::path outputFile = preprocessedDir / (framePath.stem().string() + ".tif");
+        writeNapariFriendlyTiffStack(outputFile.string(), stack);
     }
 }
 
@@ -664,7 +676,9 @@ void CellUniverse::prepareFrame(int frameIndex)
 
     if (config.simulation.export_preprocessed_images) {
         exportPreprocessedStack(real_frame, fs::path(outputPath),
-                                imagePaths[static_cast<size_t>(frameIndex)]);
+                                imagePaths[static_cast<size_t>(frameIndex)],
+                                config.simulation.export_frame_png,
+                                config.simulation.export_frame_tiff);
     }
 
     // loadImageStacks already generates _synthFrame + refreshes the full-image
