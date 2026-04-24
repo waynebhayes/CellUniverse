@@ -269,7 +269,7 @@ simulation:
   iterative_score_explosion_threshold: 5.0
   iterative_reward_gate_seed: 12345
   iterative_score_max: 0.5
-  iterative_max_count: 500
+  iterative_max_count: 800
   iterative_improvement_tolerance: 0.01
   iterative_score_percentile: 0.05
 
@@ -278,9 +278,9 @@ simulation:
   contrast_bright_fraction: 0.02
   contrast_brightness_weight: 0.25
   contrast_window_radius_step: 5.0
-  contrast_penalty_min_radius_scale: 2.0
-  contrast_reward_weight: 0.8
-  contrast_penalty_weight: 0.1
+  contrast_penalty_min_radius_scale: 2.5
+  contrast_reward_weight: 0.85
+  contrast_penalty_weight: 0.07
   contrast_eps: 0.000001
 
   global_intensity_scale_low_percentile: 0.05
@@ -325,7 +325,7 @@ simulation:
   adaptive_cube_pooling_cube_size_scale: 0.6
   adaptive_cube_pooling_zero_threshold: 0.035
   adaptive_cube_pooling_majority_threshold: 0.7
-  adaptive_cube_pooling_remove_isolated_bright_cubes: true
+  adaptive_cube_pooling_remove_isolated_bright_cubes: false
   adaptive_cube_pooling_isolated_bright_cube_threshold: 0.07
 
   adaptive_background_expand_factor: 1.1

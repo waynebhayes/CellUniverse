@@ -964,6 +964,18 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
         std::string logText;
     };
 
+    enum class PreprocessOperation
+    {
+        Penalty,
+        Reward
+    };
+
+    struct PreprocessStep
+    {
+        PreprocessOperation operation = PreprocessOperation::Reward;
+        float gate = 0.0f;
+    };
+
     auto runRadiusTrial = [&](float scoringRadius, int radiusIndex) {
         std::ostringstream trialLog;
         ImageStack current = cloneStack(sequence);
@@ -978,31 +990,38 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
         float bestScore = currentScore;
         float currentPenalty = config.simulation.iterative_penalty;
 
-        std::vector<double> gateProbabilities(
-            rewardGates.size(), 1.0 / static_cast<double>(rewardGates.size()));
+        std::vector<PreprocessStep> steps;
+        steps.reserve(rewardGates.size() * 2U);
+        for (float gate : rewardGates) {
+            steps.push_back({PreprocessOperation::Penalty, gate});
+            steps.push_back({PreprocessOperation::Reward, gate});
+        }
+
+        std::vector<double> stepProbabilities(
+            steps.size(), 1.0 / static_cast<double>(steps.size()));
         const double minProbability = std::min(
             std::max(0.0, static_cast<double>(config.simulation.iterative_reward_gate_min_probability)),
-            1.0 / static_cast<double>(rewardGates.size()));
-        auto normalizeGateProbabilities = [&]() {
+            1.0 / static_cast<double>(steps.size()));
+        auto normalizeStepProbabilities = [&]() {
             double sum = 0.0;
-            for (double &probability : gateProbabilities) {
+            for (double &probability : stepProbabilities) {
                 probability = std::max(probability, minProbability);
                 sum += probability;
             }
             if (sum <= 0.0) {
-                const double uniform = 1.0 / static_cast<double>(gateProbabilities.size());
-                std::fill(gateProbabilities.begin(), gateProbabilities.end(), uniform);
+                const double uniform = 1.0 / static_cast<double>(stepProbabilities.size());
+                std::fill(stepProbabilities.begin(), stepProbabilities.end(), uniform);
                 return;
             }
-            for (double &probability : gateProbabilities) {
+            for (double &probability : stepProbabilities) {
                 probability /= sum;
             }
         };
 
-        auto updateGateProbability = [&](std::size_t gateIndex, bool improved) {
+        auto updateStepProbability = [&](std::size_t stepIndex, bool improved) {
             const double multiplier = improved ? (1.0 + learningRate) : (1.0 - learningRate);
-            gateProbabilities[gateIndex] *= multiplier;
-            normalizeGateProbabilities();
+            stepProbabilities[stepIndex] *= multiplier;
+            normalizeStepProbabilities();
         };
 
         const unsigned int rngSeed =
@@ -1016,7 +1035,7 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
                  << " reward_weight=" << rewardWeight
                  << " penalty_weight=" << penaltyWeight
                  << " initial_score=" << currentScore
-                 << " gate_count=" << rewardGates.size()
+                 << " step_count=" << steps.size()
                  << " learning_rate=" << learningRate
                  << " min_probability=" << minProbability
                  << std::endl;
@@ -1024,56 +1043,60 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
         int noImprovementCount = 0;
         for (int count = 0; count < maxIterations; ++count)
         {
-            std::discrete_distribution<int> gateDistribution(
-                gateProbabilities.begin(), gateProbabilities.end());
-            const int selectedGateIndex = gateDistribution(rng);
-            const float selectedGate = rewardGates[static_cast<std::size_t>(selectedGateIndex)];
+            std::discrete_distribution<int> stepDistribution(
+                stepProbabilities.begin(), stepProbabilities.end());
+            const int selectedStepIndex = stepDistribution(rng);
+            const PreprocessStep selectedStep = steps[static_cast<std::size_t>(selectedStepIndex)];
 
             ImageStack candidate = cloneStack(current);
 
-            #pragma omp parallel for schedule(static)
-            for (int sliceIndex = 0; sliceIndex < static_cast<int>(candidate.size()); ++sliceIndex)
-            {
-                auto &slice = candidate[static_cast<std::size_t>(sliceIndex)];
-                for (int y = 0; y < slice.rows; ++y)
+            if (selectedStep.operation == PreprocessOperation::Penalty) {
+                const float penaltyGate = std::min(
+                    selectedStep.gate,
+                    std::max(1e-6f, config.simulation.iterative_penalty_range));
+                #pragma omp parallel for schedule(static)
+                for (int sliceIndex = 0; sliceIndex < static_cast<int>(candidate.size()); ++sliceIndex)
                 {
-                    float *row = slice.ptr<float>(y);
-                    for (int x = 0; x < slice.cols; ++x)
+                    auto &slice = candidate[static_cast<std::size_t>(sliceIndex)];
+                    for (int y = 0; y < slice.rows; ++y)
                     {
-                        if (row[x] < config.simulation.iterative_penalty_range)
+                        float *row = slice.ptr<float>(y);
+                        for (int x = 0; x < slice.cols; ++x)
                         {
-                            const float normalizedDistanceToKeep =
-                                (config.simulation.iterative_penalty_range > 1e-6f)
-                                    ? ((config.simulation.iterative_penalty_range - row[x]) /
-                                       config.simulation.iterative_penalty_range)
-                                    : 1.0f;
-                            const float penaltyStrength =
-                                std::clamp(normalizedDistanceToKeep, 0.0f, 1.0f);
-                            row[x] -= currentPenalty * penaltyStrength;
-                            if (row[x] < 0.0f)
+                            if (row[x] < penaltyGate)
                             {
-                                row[x] = 0.0f;
+                                const float normalizedDistanceToKeep =
+                                    (penaltyGate > 1e-6f)
+                                        ? ((penaltyGate - row[x]) / penaltyGate)
+                                        : 1.0f;
+                                const float penaltyStrength =
+                                    std::clamp(normalizedDistanceToKeep, 0.0f, 1.0f);
+                                row[x] -= currentPenalty * penaltyStrength;
+                                if (row[x] < 0.0f)
+                                {
+                                    row[x] = 0.0f;
+                                }
                             }
                         }
                     }
                 }
-            }
-
-            #pragma omp parallel for schedule(static)
-            for (int sliceIndex = 0; sliceIndex < static_cast<int>(candidate.size()); ++sliceIndex)
-            {
-                auto &slice = candidate[static_cast<std::size_t>(sliceIndex)];
-                for (int y = 0; y < slice.rows; ++y)
+            } else {
+                #pragma omp parallel for schedule(static)
+                for (int sliceIndex = 0; sliceIndex < static_cast<int>(candidate.size()); ++sliceIndex)
                 {
-                    float *row = slice.ptr<float>(y);
-                    for (int x = 0; x < slice.cols; ++x)
+                    auto &slice = candidate[static_cast<std::size_t>(sliceIndex)];
+                    for (int y = 0; y < slice.rows; ++y)
                     {
-                        if (row[x] > selectedGate)
+                        float *row = slice.ptr<float>(y);
+                        for (int x = 0; x < slice.cols; ++x)
                         {
-                            row[x] += config.simulation.iterative_reward;
-                            if (row[x] > 1.0f)
+                            if (row[x] > selectedStep.gate)
                             {
-                                row[x] = 1.0f;
+                                row[x] += config.simulation.iterative_reward;
+                                if (row[x] > 1.0f)
+                                {
+                                    row[x] = 1.0f;
+                                }
                             }
                         }
                     }
@@ -1093,7 +1116,7 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
 
             const bool improvedCurrent =
                 score > currentScore + config.simulation.iterative_improvement_tolerance;
-            updateGateProbability(static_cast<std::size_t>(selectedGateIndex), improvedCurrent);
+            updateStepProbability(static_cast<std::size_t>(selectedStepIndex), improvedCurrent);
 
             if (improvedCurrent) {
                 currentPenalty = config.simulation.iterative_penalty;
@@ -1122,9 +1145,11 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
                          << " score=" << score
                          << " current_score=" << currentScore
                          << " best_score=" << bestScore
-                         << " gate=" << selectedGate
-                         << " gate_probability="
-                         << gateProbabilities[static_cast<std::size_t>(selectedGateIndex)]
+                         << " operation="
+                         << (selectedStep.operation == PreprocessOperation::Penalty ? "penalty" : "reward")
+                         << " gate=" << selectedStep.gate
+                         << " step_probability="
+                         << stepProbabilities[static_cast<std::size_t>(selectedStepIndex)]
                          << std::endl;
             }
 
