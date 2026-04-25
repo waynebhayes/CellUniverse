@@ -31,10 +31,6 @@ private:
                                              const BaseConfig &config,
                                              std::ostream &log,
                                              const std::string &imageFile);
-    static ImageStack applyPostBlackpointLift(const ImageStack &sequence,
-                                             const BaseConfig &config,
-                                             std::ostream &log,
-                                             const std::string &imageFile);
     static cv::Mat boxMean(const cv::Mat &image, int windowSize);
     static float evaluateSequenceContrastScoreForRadius(const ImageStack &sequence,
                                                         const BaseConfig &config,

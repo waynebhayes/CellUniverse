@@ -229,6 +229,118 @@ static void normalizeStackToSharedScale(std::vector<cv::Mat> &stack,
     }
 }
 
+static int clampEdgeLimit(int requestedLimit, int axisLength)
+{
+    if (axisLength <= 0) {
+        return 0;
+    }
+    return std::clamp(requestedLimit, 0, axisLength);
+}
+
+static float computeEdgeBrightnessMean(const std::vector<cv::Mat> &stack,
+                                       const SimulationConfig &config)
+{
+    double sum = 0.0;
+    double count = 0.0;
+
+    for (const auto &slice : stack) {
+        if (slice.empty()) continue;
+        CV_Assert(slice.type() == CV_32F);
+
+        const int margin = std::max(1, config.edge_brightness_alignment_xy_margin);
+        const int leftOffset = std::max(0, config.edge_brightness_alignment_left_offset);
+        const int rightOffset = std::max(0, config.edge_brightness_alignment_right_offset);
+        const int topOffset = std::max(0, config.edge_brightness_alignment_top_offset);
+        const int bottomOffset = std::max(0, config.edge_brightness_alignment_bottom_offset);
+        const int xInnerStart = clampEdgeLimit(leftOffset, slice.cols);
+        const int xInnerEnd = clampEdgeLimit(leftOffset + margin, slice.cols);
+        const int xOuterStart = clampEdgeLimit(slice.cols - rightOffset - margin, slice.cols);
+        const int xOuterEnd = clampEdgeLimit(slice.cols - rightOffset, slice.cols);
+        const int yInnerStart = clampEdgeLimit(topOffset, slice.rows);
+        const int yInnerEnd = clampEdgeLimit(topOffset + margin, slice.rows);
+        const int yOuterStart = clampEdgeLimit(slice.rows - bottomOffset - margin, slice.rows);
+        const int yOuterEnd = clampEdgeLimit(slice.rows - bottomOffset, slice.rows);
+
+        for (int y = 0; y < slice.rows; ++y) {
+            const float *row = slice.ptr<float>(y);
+            const bool inYBand =
+                (y >= yInnerStart && y < yInnerEnd) ||
+                (y >= yOuterStart && y < yOuterEnd);
+            for (int x = 0; x < slice.cols; ++x) {
+                const bool inXBand =
+                    (x >= xInnerStart && x < xInnerEnd) ||
+                    (x >= xOuterStart && x < xOuterEnd);
+                if (!inYBand && !inXBand) {
+                    continue;
+                }
+                const float value = row[x];
+                if (!std::isfinite(value)) {
+                    continue;
+                }
+                sum += value;
+                count += 1.0;
+            }
+        }
+    }
+
+    return count > 0.0 ? static_cast<float>(sum / count) : 0.0f;
+}
+
+static void alignStackToEdgeBrightness(std::vector<cv::Mat> &stack,
+                                       const SimulationConfig &config,
+                                       float targetEdgeMean,
+                                       const fs::path &framePath,
+                                       std::ostream &log)
+{
+    if (!config.edge_brightness_alignment_enabled || stack.empty()) {
+        return;
+    }
+
+    const float edgeMean = computeEdgeBrightnessMean(
+        stack, config);
+    const float maxShift = std::max(0.0f, config.edge_brightness_alignment_max_shift);
+    const float shift = std::clamp(edgeMean - targetEdgeMean, -maxShift, maxShift);
+    if (std::abs(shift) <= 1e-6f) {
+        log << "[EdgeBrightnessAlignment] frame=" << framePath.filename().string()
+            << " edge_mean=" << edgeMean
+            << " target=" << targetEdgeMean
+            << " shift=0"
+            << " xy_margin=" << std::max(1, config.edge_brightness_alignment_xy_margin)
+            << " offsets=("
+            << std::max(0, config.edge_brightness_alignment_left_offset) << ","
+            << std::max(0, config.edge_brightness_alignment_right_offset) << ","
+            << std::max(0, config.edge_brightness_alignment_top_offset) << ","
+            << std::max(0, config.edge_brightness_alignment_bottom_offset) << ")"
+            << std::endl;
+        return;
+    }
+
+    #pragma omp parallel for schedule(static)
+    for (int sliceIndex = 0; sliceIndex < static_cast<int>(stack.size()); ++sliceIndex) {
+        auto &slice = stack[static_cast<size_t>(sliceIndex)];
+        if (slice.empty()) continue;
+        slice -= shift;
+        cv::min(slice, 1.0f, slice);
+        cv::max(slice, 0.0f, slice);
+    }
+
+    const float alignedEdgeMean = computeEdgeBrightnessMean(
+        stack, config);
+    log << "[EdgeBrightnessAlignment] frame=" << framePath.filename().string()
+        << " edge_mean=" << edgeMean
+        << " target=" << targetEdgeMean
+        << " shift=" << shift
+        << " aligned_edge_mean=" << alignedEdgeMean
+        << " xy_margin=" << std::max(1, config.edge_brightness_alignment_xy_margin)
+        << " offsets=("
+        << std::max(0, config.edge_brightness_alignment_left_offset) << ","
+        << std::max(0, config.edge_brightness_alignment_right_offset) << ","
+        << std::max(0, config.edge_brightness_alignment_top_offset) << ","
+        << std::max(0, config.edge_brightness_alignment_bottom_offset) << ")"
+        << " max_shift=" << maxShift
+        << std::endl;
+}
+
 static void exportPreprocessedStack(const std::vector<cv::Mat> &stack,
                                     const fs::path &baseOutputDir,
                                     const fs::path &framePath,
@@ -598,6 +710,45 @@ CellUniverse::CellUniverse(std::map<std::string, std::vector<Ellipsoid>> initial
               << " high_ref=" << globalHighReference
               << " hard_max=" << config.simulation.global_intensity_hard_max << '\n';
 
+    if (config.simulation.edge_brightness_alignment_enabled) {
+        std::vector<float> sampleEdgeMeans;
+        sampleEdgeMeans.reserve(sampleFrames.size());
+        for (int si = 0; si < static_cast<int>(sampleFrames.size()); ++si) {
+            auto &sampleFrame = sampleFrames[static_cast<size_t>(si)];
+            normalizeStackToSharedScale(sampleFrame,
+                                        globalLowReference,
+                                        globalHighReference,
+                                        config.simulation.global_intensity_hard_max);
+            std::ostringstream samplePreprocessLog;
+            sampleFrame = ImageHandler::preprocessLoadedFrame(
+                sampleFrame,
+                imagePaths[sampleIndices[static_cast<size_t>(si)]].string(),
+                config,
+                &samplePreprocessLog);
+            sampleEdgeMeans.push_back(computeEdgeBrightnessMean(
+                sampleFrame, config.simulation));
+        }
+        if (!sampleEdgeMeans.empty()) {
+            edgeBrightnessAlignmentTarget =
+                std::accumulate(sampleEdgeMeans.begin(),
+                                sampleEdgeMeans.end(),
+                                0.0f) / static_cast<float>(sampleEdgeMeans.size());
+        }
+        std::cout << "[EdgeBrightnessAlignment] enabled=1"
+                  << " sample_count=" << sampleEdgeMeans.size()
+                  << " target=" << edgeBrightnessAlignmentTarget
+                  << " xy_margin=" << std::max(1, config.simulation.edge_brightness_alignment_xy_margin)
+                  << " offsets=("
+                  << std::max(0, config.simulation.edge_brightness_alignment_left_offset) << ","
+                  << std::max(0, config.simulation.edge_brightness_alignment_right_offset) << ","
+                  << std::max(0, config.simulation.edge_brightness_alignment_top_offset) << ","
+                  << std::max(0, config.simulation.edge_brightness_alignment_bottom_offset) << ")"
+                  << " max_shift=" << std::max(0.0f, config.simulation.edge_brightness_alignment_max_shift)
+                  << '\n';
+    } else {
+        std::cout << "[EdgeBrightnessAlignment] enabled=0\n";
+    }
+
     // Free sample frames — percentiles are stored in member fields.
     sampleFrames.clear();
     sampleFrames.shrink_to_fit();
@@ -606,11 +757,10 @@ CellUniverse::CellUniverse(std::map<std::string, std::vector<Ellipsoid>> initial
 
     // Determine post-interpolation z_slices depth: run ONE frame through the
     // full preprocess pipeline so we see the true interpolated size (raw
-    // TIFF depth * z_scaling roughly). Critical for setting
-    // Ellipsoid::cellConfig.maxZ correctly — wrong value clamps all cell z
-    // positions on first perturbation (gotcha: previous M2 commit probed
-    // loadRawFrame only = got raw depth ~32, clamped cells to z<=31).
-    {
+    // TIFF depth * z_scaling roughly). Preprocess-only export does not need
+    // cell z-bounds, so skip this expensive probe there to avoid processing
+    // frame 1 twice.
+    if (!config.simulation.quit_after_preprocessing) {
         std::ostringstream probeRaw, probePre;
         std::vector<cv::Mat> probe = ImageHandler::loadRawFrame(
             imagePaths.front().string(), config, &probeRaw);
@@ -620,10 +770,17 @@ CellUniverse::CellUniverse(std::map<std::string, std::vector<Ellipsoid>> initial
                                     config.simulation.global_intensity_hard_max);
         probe = ImageHandler::preprocessLoadedFrame(
             probe, imagePaths.front().string(), config, &probePre);
+        alignStackToEdgeBrightness(probe,
+                                   config.simulation,
+                                   edgeBrightnessAlignmentTarget,
+                                   imagePaths.front(),
+                                   std::cout);
         config.simulation.z_slices = static_cast<int>(probe.size());
         Ellipsoid::cellConfig.maxZ = static_cast<float>(probe.size()) - 1.0f;
         std::cout << "[M2 Probe] post-preprocess z_slices=" << probe.size()
                   << " maxZ=" << Ellipsoid::cellConfig.maxZ << '\n';
+    } else {
+        std::cout << "[M2 Probe] skipped for preprocess-only mode\n";
     }
 
     // Allocate lazy-load Frame placeholders. Each holds only cells + config;
@@ -681,6 +838,11 @@ void CellUniverse::prepareFrame(int frameIndex)
         imagePaths[static_cast<size_t>(frameIndex)].string(),
         config, &preprocessLog);
     std::cout << preprocessLog.str();
+    alignStackToEdgeBrightness(real_frame,
+                               config.simulation,
+                               edgeBrightnessAlignmentTarget,
+                               imagePaths[static_cast<size_t>(frameIndex)],
+                               std::cout);
 
     if (config.simulation.export_preprocessed_images) {
         exportPreprocessedStack(real_frame, fs::path(outputPath),
@@ -694,6 +856,7 @@ void CellUniverse::prepareFrame(int frameIndex)
     // redundant work (2x render + 2x cost cache per frame).
     frames[frameIndex].loadImageStacks(real_frame);
 }
+
 void CellUniverse::optimize(int frameIndex)
 {
     if (frameIndex < 0 || static_cast<size_t>(frameIndex) >= frames.size())

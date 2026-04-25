@@ -263,14 +263,14 @@ simulation:
   iterative_reward_gate_decrement: 0.005
   iterative_reward_gate_min: 0.025
   iterative_reward: 0.1
-  iterative_reward_gate_learning_rate: 0.001
+  iterative_reward_gate_learning_rate: 0.0025
   iterative_reward_gate_min_probability: 0.001
-  iterative_no_improvement_patience: 50
+  iterative_no_improvement_patience: 200
   iterative_score_explosion_threshold: 5.0
   iterative_candidate_max_mean: 0.40
   iterative_candidate_max_saturated_fraction: 0.02
   iterative_reward_gate_seed: 12345
-  iterative_score_max: 0.5
+  iterative_score_max: 0.6
   iterative_score_target_tolerance: 0.05
   iterative_max_count: 400
   iterative_improvement_tolerance: 0.01
@@ -280,7 +280,7 @@ simulation:
   contrast_background_floor: 0.02
   contrast_bright_fraction: 0.02
   contrast_brightness_weight: 0.25
-  contrast_window_radius_step: 5.0
+  contrast_window_radius_step: 2.5
   contrast_penalty_min_radius_scale: 2.5
   contrast_reward_weight: 0.85
   contrast_penalty_weight: 0.07
@@ -290,23 +290,29 @@ simulation:
   global_intensity_scale_high_percentile: 1.0
   global_intensity_hard_max: 512.0
 
+  # Edge brightness alignment runs after preprocessing and samples a
+  # frame-shaped region on each XY slice.
+  # left/right are relative to x=0 / x=image_width-1.
+  # top/bottom are relative to y=0 / y=image_height-1.
+  # Each offset moves the sampled band inward from that real edge; xy_margin
+  # is the shared band thickness after the offset. All Z slices are sampled.
+  edge_brightness_alignment_enabled: true
+  edge_brightness_alignment_xy_margin: 5
+  edge_brightness_alignment_left_offset: 0
+  edge_brightness_alignment_right_offset: 16
+  edge_brightness_alignment_top_offset: 16
+  edge_brightness_alignment_bottom_offset: 0
+  edge_brightness_alignment_max_shift: 0.20
+
   post_process_blur_sigma: 1.1
-  post_process_final_blur_sigma: 5.0
+  post_process_final_blur_sigma: 2.5
   post_process_final_direct_weight: 0.7
-  post_process_final_direct_amplification: 0.4
-  post_process_final_blurred_amplification: 2.0
+  post_process_final_direct_amplification: 0.6
+  post_process_final_blurred_amplification: 1.5
 
   post_process_amplification: 1.0
-  post_process_black_percentile: 0.01
-  post_process_white_percentile: 0.3
-  post_blackpoint_enabled: false
-  post_blackpoint_step: 0.005
-  post_blackpoint_max: 0.1
-  post_blackpoint_contrast_drop_tolerance: 0.02
-  post_blackpoint_background_zero_threshold: 0.02
-  post_blackpoint_outer_zero_fraction: 0.80
-  post_blackpoint_inner_background_min_delta: 0.02
-  brightness_alignment_enabled: false
+  post_process_black_percentile: 0.05
+  post_process_white_percentile: 1.0
 
   export_preprocessed_images: true
   export_frame_png: false

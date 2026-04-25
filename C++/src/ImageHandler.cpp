@@ -1125,10 +1125,13 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
         << " penalty_weight=" << penaltyWeight
         << " target_score=" << targetScore
         << " target_tolerance=" << targetScoreTolerance
+        << " radius_threads=" << std::min(5, static_cast<int>(scoringRadii.size()))
         << std::endl;
 
     std::vector<PreprocessTrialResult> trialResults(scoringRadii.size());
-    #pragma omp parallel for schedule(dynamic)
+    const int radiusThreadCount =
+        std::min(5, static_cast<int>(scoringRadii.size()));
+    #pragma omp parallel for schedule(dynamic) num_threads(radiusThreadCount)
     for (int radiusIndex = 0; radiusIndex < static_cast<int>(scoringRadii.size()); ++radiusIndex)
     {
         trialResults[static_cast<std::size_t>(radiusIndex)] =
@@ -1251,232 +1254,6 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
     return bestSequence;
 }
 
-ImageStack ImageHandler::applyPostBlackpointLift(const ImageStack &sequence,
-                                                 const BaseConfig &config,
-                                                 std::ostream &log,
-                                                 const std::string &imageFile)
-{
-    if (sequence.empty() || !config.simulation.post_blackpoint_enabled)
-    {
-        return cloneStack(sequence);
-    }
-
-    const float step = std::max(0.0f, config.simulation.post_blackpoint_step);
-    const float maxBlackpoint = std::clamp(config.simulation.post_blackpoint_max, 0.0f, 0.95f);
-    if (step <= 1e-6f || maxBlackpoint <= 1e-6f)
-    {
-        return cloneStack(sequence);
-    }
-
-    const float defaultMinRadius = 5.0f;
-    const float defaultMaxRadius = 65.0f;
-    const float minRadius = config.cell
-        ? std::max(1.0f, static_cast<float>(std::min({
-              config.cell->minARadius,
-              config.cell->minBRadius,
-              config.cell->minCRadius})))
-        : defaultMinRadius;
-    const float maxRadius = config.cell
-        ? std::max(minRadius, static_cast<float>(std::max({
-              config.cell->maxARadius,
-              config.cell->maxBRadius > 0.0 ? config.cell->maxBRadius : config.cell->maxARadius,
-              config.cell->maxCRadius})))
-        : defaultMaxRadius;
-    const float radiusAtScale = 0.5f * (minRadius + maxRadius);
-    const int innerWindow = makeOddAtLeast(
-        static_cast<int>(std::lround(radiusAtScale * 2.0f + 1.0f)));
-    const int outerWindow = makeOddAtLeast(
-        static_cast<int>(std::lround(radiusAtScale * 4.0f + 1.0f)),
-        innerWindow + 2);
-
-    struct BlackpointMetrics
-    {
-        float outerZeroFraction = 0.0f;
-        float outerMean = 0.0f;
-        float innerSignalMean = 0.0f;
-        bool hasInnerSignal = false;
-    };
-
-    auto computeMetrics = [&](const ImageStack &stack) {
-        const float zeroThreshold =
-            std::max(0.0f, config.simulation.post_blackpoint_background_zero_threshold);
-        double outerZeroCount = 0.0;
-        double outerCount = 0.0;
-        double outerSum = 0.0;
-        std::vector<float> innerSignalValues;
-
-        #pragma omp parallel
-        {
-            double localOuterZeroCount = 0.0;
-            double localOuterCount = 0.0;
-            double localOuterSum = 0.0;
-            std::vector<float> localInnerSignalValues;
-
-            #pragma omp for schedule(dynamic)
-            for (int sliceIndex = 0; sliceIndex < static_cast<int>(stack.size()); ++sliceIndex)
-            {
-                const auto &slice = stack[static_cast<std::size_t>(sliceIndex)];
-                if (slice.empty())
-                {
-                    continue;
-                }
-
-                const cv::Mat innerMean = boxMean(slice, innerWindow);
-                const cv::Mat outerMean = boxMean(slice, outerWindow);
-                localInnerSignalValues.reserve(
-                    localInnerSignalValues.size() + static_cast<std::size_t>(slice.total() / 16));
-
-                for (int y = 0; y < slice.rows; ++y)
-                {
-                    const float *innerRow = innerMean.ptr<float>(y);
-                    const float *outerRow = outerMean.ptr<float>(y);
-                    for (int x = 0; x < slice.cols; ++x)
-                    {
-                        const float outerValue = outerRow[x];
-                        localOuterSum += outerValue;
-                        localOuterCount += 1.0;
-                        if (outerValue <= zeroThreshold)
-                        {
-                            localOuterZeroCount += 1.0;
-                        }
-
-                        if (innerRow[x] - outerValue >= config.simulation.contrast_structure_threshold)
-                        {
-                            localInnerSignalValues.push_back(innerRow[x]);
-                        }
-                    }
-                }
-            }
-
-            #pragma omp critical
-            {
-                outerZeroCount += localOuterZeroCount;
-                outerCount += localOuterCount;
-                outerSum += localOuterSum;
-                innerSignalValues.insert(innerSignalValues.end(),
-                                         localInnerSignalValues.begin(),
-                                         localInnerSignalValues.end());
-            }
-        }
-
-        BlackpointMetrics metrics;
-        metrics.outerZeroFraction = outerCount > 0.0
-            ? static_cast<float>(outerZeroCount / outerCount)
-            : 0.0f;
-        metrics.outerMean = outerCount > 0.0
-            ? static_cast<float>(outerSum / outerCount)
-            : 0.0f;
-        metrics.hasInnerSignal = !innerSignalValues.empty();
-        metrics.innerSignalMean = computeMeanOfTopFraction(
-            std::move(innerSignalValues),
-            config.simulation.contrast_bright_fraction);
-        return metrics;
-    };
-
-    auto applyBlackpoint = [](const ImageStack &stack, float blackpoint) {
-        ImageStack lifted = cloneStack(stack);
-        const float denominator = std::max(1e-6f, 1.0f - blackpoint);
-
-        #pragma omp parallel for schedule(static)
-        for (int sliceIndex = 0; sliceIndex < static_cast<int>(lifted.size()); ++sliceIndex)
-        {
-            auto &slice = lifted[static_cast<std::size_t>(sliceIndex)];
-            if (slice.empty())
-            {
-                continue;
-            }
-            for (int y = 0; y < slice.rows; ++y)
-            {
-                float *row = slice.ptr<float>(y);
-                for (int x = 0; x < slice.cols; ++x)
-                {
-                    row[x] = std::clamp((row[x] - blackpoint) / denominator, 0.0f, 1.0f);
-                }
-            }
-        }
-        return lifted;
-    };
-
-    const float baselineScore = evaluateBestWindowContrastScore(sequence, config);
-    const BlackpointMetrics baselineMetrics = computeMetrics(sequence);
-    ImageStack bestAccepted = cloneStack(sequence);
-    float acceptedBlackpoint = 0.0f;
-    float acceptedScore = baselineScore;
-    BlackpointMetrics acceptedMetrics = baselineMetrics;
-
-    const float minAllowedScore =
-        baselineScore - std::max(0.0f, config.simulation.post_blackpoint_contrast_drop_tolerance);
-    const float targetOuterZeroFraction =
-        std::clamp(config.simulation.post_blackpoint_outer_zero_fraction, 0.0f, 1.0f);
-    const float innerBackgroundMinDelta =
-        std::max(0.0f, config.simulation.post_blackpoint_inner_background_min_delta);
-
-    log << "[PostBlackpoint] file=" << fs::path(imageFile).filename().string()
-        << " baseline_score=" << baselineScore
-        << " baseline_outer_zero_fraction=" << baselineMetrics.outerZeroFraction
-        << " baseline_outer_mean=" << baselineMetrics.outerMean
-        << " baseline_inner_signal_mean=" << baselineMetrics.innerSignalMean
-        << " step=" << step
-        << " max=" << maxBlackpoint
-        << " min_allowed_score=" << minAllowedScore
-        << " target_outer_zero_fraction=" << targetOuterZeroFraction
-        << " inner_background_min_delta=" << innerBackgroundMinDelta
-        << std::endl;
-
-    for (float blackpoint = step; blackpoint <= maxBlackpoint + 1e-6f; blackpoint += step)
-    {
-        ImageStack candidate = applyBlackpoint(sequence, std::min(blackpoint, maxBlackpoint));
-        const float score = evaluateBestWindowContrastScore(candidate, config);
-        const BlackpointMetrics metrics = computeMetrics(candidate);
-        const bool contrastOk = score >= minAllowedScore;
-        const bool innerOk =
-            metrics.hasInnerSignal &&
-            metrics.innerSignalMean >= metrics.outerMean + innerBackgroundMinDelta;
-
-        log << "[PostBlackpoint] blackpoint=" << std::min(blackpoint, maxBlackpoint)
-            << " score=" << score
-            << " outer_zero_fraction=" << metrics.outerZeroFraction
-            << " outer_mean=" << metrics.outerMean
-            << " inner_signal_mean=" << metrics.innerSignalMean
-            << " contrast_ok=" << contrastOk
-            << " inner_ok=" << innerOk
-            << std::endl;
-
-        if (!contrastOk || !innerOk)
-        {
-            log << "[PostBlackpoint] stop=guard_failed"
-                << " attempted_blackpoint=" << std::min(blackpoint, maxBlackpoint)
-                << " contrast_ok=" << contrastOk
-                << " inner_ok=" << innerOk
-                << std::endl;
-            break;
-        }
-
-        acceptedBlackpoint = std::min(blackpoint, maxBlackpoint);
-        acceptedScore = score;
-        acceptedMetrics = metrics;
-        bestAccepted = std::move(candidate);
-
-        if (metrics.outerZeroFraction >= targetOuterZeroFraction)
-        {
-            log << "[PostBlackpoint] stop=target_reached"
-                << " blackpoint=" << acceptedBlackpoint
-                << std::endl;
-            break;
-        }
-    }
-
-    log << "[PostBlackpoint] selected_blackpoint=" << acceptedBlackpoint
-        << " selected_score=" << acceptedScore
-        << " selected_outer_zero_fraction=" << acceptedMetrics.outerZeroFraction
-        << " selected_outer_mean=" << acceptedMetrics.outerMean
-        << " selected_inner_signal_mean=" << acceptedMetrics.innerSignalMean
-        << std::endl;
-
-    clipStack(bestAccepted);
-    return bestAccepted;
-}
-
 std::vector<cv::Mat> ImageHandler::loadRawFrame(const std::string &imageFile,
                                                 const BaseConfig &config,
                                                 std::ostream *logSink)
@@ -1554,7 +1331,6 @@ std::vector<cv::Mat> ImageHandler::preprocessLoadedFrame(const std::vector<cv::M
     std::vector<cv::Mat> interpolatedZSlices;
 
     processedZSlices = processPreparedSequence(processedZSlices, config, log, imageFile);
-    processedZSlices = applyPostBlackpointLift(processedZSlices, config, log, imageFile);
 
     const float localScore = evaluateBestWindowContrastScore(processedZSlices, config);
     log << "[PreprocessScores] file=" << fs::path(imageFile).filename().string()
