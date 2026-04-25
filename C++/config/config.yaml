@@ -36,11 +36,11 @@ cell:
     sigma: 0.05
 
   minARadius: 5
-  maxARadius: 65
+  maxARadius: 70
   minBRadius: 5
-  maxBRadius: 65
+  maxBRadius: 70
   minCRadius: 5
-  maxCRadius: 65
+  maxCRadius: 70
 
   initialRadiusScale: 1.0
   initialBrightness: 0.22
@@ -258,18 +258,21 @@ simulation:
   iterative_penalty: 0.1
   iterative_min_penalty: 0.005
   iterative_collapse_backoff: 0.99
-  iterative_penalty_range: 0.9
-  iterative_reward_gate: 1.0
-  iterative_reward_gate_decrement: 0.008
+  iterative_penalty_range: 1.0
+  iterative_reward_gate: 0.5
+  iterative_reward_gate_decrement: 0.005
   iterative_reward_gate_min: 0.025
   iterative_reward: 0.1
   iterative_reward_gate_learning_rate: 0.001
-  iterative_reward_gate_min_probability: 0.0001
-  iterative_no_improvement_patience: 100
+  iterative_reward_gate_min_probability: 0.001
+  iterative_no_improvement_patience: 50
   iterative_score_explosion_threshold: 5.0
+  iterative_candidate_max_mean: 0.40
+  iterative_candidate_max_saturated_fraction: 0.02
   iterative_reward_gate_seed: 12345
   iterative_score_max: 0.5
-  iterative_max_count: 800
+  iterative_score_target_tolerance: 0.05
+  iterative_max_count: 400
   iterative_improvement_tolerance: 0.01
   iterative_score_percentile: 0.05
 
@@ -293,9 +296,16 @@ simulation:
   post_process_final_direct_amplification: 0.4
   post_process_final_blurred_amplification: 2.0
 
-  post_process_amplification: 5.0
-  post_process_black_percentile: 0.08
+  post_process_amplification: 1.0
+  post_process_black_percentile: 0.01
   post_process_white_percentile: 0.3
+  post_blackpoint_enabled: false
+  post_blackpoint_step: 0.005
+  post_blackpoint_max: 0.1
+  post_blackpoint_contrast_drop_tolerance: 0.02
+  post_blackpoint_background_zero_threshold: 0.02
+  post_blackpoint_outer_zero_fraction: 0.80
+  post_blackpoint_inner_background_min_delta: 0.02
   brightness_alignment_enabled: false
 
   export_preprocessed_images: true
@@ -310,23 +320,10 @@ simulation:
   # This YAML no longer controls resume — the INI preset is the source of
   # truth so resume decisions stay alongside frame-range and I/O config.
 
-  # Adaptive cube pooling — YP's b575246 introduced this as an optional
-  # final-stage pooling step that averages pixels into cubes (~0.6× minR
-  # size) and applies majority thresholds. In the post-yp-merge regime, cell
-  # halos get sharpened (brighter cores, compressed halo) which makes PCA
-  # weighted-variance along the thin c-axis collapse ~45%. Pooling spreads
-  # brightness across cube neighborhoods, restoring halo-side pixel weights
-  # so PCA fits recover c-axis extent without needing to inflate radiusScale.
-  # 2026-04-19 (size-fix): ENABLED to restore c-axis radii toward pre-merge
-  # baseline (run 162148 had 12345 c=16.7 vs pre-merge 22.6; user flagged
-  # shape/size issue).
-  adaptive_cube_pooling_enabled: true
+  # Adaptive cube pooling: fixed-size mean pooling over 3D cubes.
+  adaptive_cube_pooling_enabled: false
   adaptive_cube_pooling_cost_comparison_enabled: false
-  adaptive_cube_pooling_cube_size_scale: 0.6
-  adaptive_cube_pooling_zero_threshold: 0.035
-  adaptive_cube_pooling_majority_threshold: 0.7
-  adaptive_cube_pooling_remove_isolated_bright_cubes: false
-  adaptive_cube_pooling_isolated_bright_cube_threshold: 0.07
+  adaptive_cube_pooling_cube_size: 5
 
   adaptive_background_expand_factor: 1.1
   # 2026-04-19 audit: 0.4 → 0.2. Yp preprocessing brightens halos, so top 40%

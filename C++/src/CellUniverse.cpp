@@ -99,7 +99,11 @@ static cv::Mat makeNapariFriendlyTiffSlice(const cv::Mat &slice)
     if (gray.depth() == CV_8U) {
         output = gray.clone();
     } else {
-        gray.convertTo(output, CV_8U, 255.0);
+        cv::Mat clipped = gray.clone();
+        cv::patchNaNs(clipped, 0.0);
+        cv::min(clipped, 1.0f, clipped);
+        cv::max(clipped, 0.0f, clipped);
+        clipped.convertTo(output, CV_8U, 255.0);
     }
     return output;
 }
@@ -244,7 +248,11 @@ static void exportPreprocessedStack(const std::vector<cv::Mat> &stack,
 
             cv::Mat outputImage;
             if (stack[i].depth() != CV_8U) {
-                stack[i].convertTo(outputImage, CV_8U, 255.0);
+                cv::Mat clipped = stack[i].clone();
+                cv::patchNaNs(clipped, 0.0);
+                cv::min(clipped, 1.0f, clipped);
+                cv::max(clipped, 0.0f, clipped);
+                clipped.convertTo(outputImage, CV_8U, 255.0);
             } else {
                 outputImage = stack[i].clone();
             }

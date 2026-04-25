@@ -46,7 +46,9 @@ struct StackStats
     double maxValue = 0.0;
     double mean = 0.0;
     double stddev = 0.0;
+    double saturatedFraction = 0.0;
     std::size_t count = 0;
+    std::size_t nonFiniteCount = 0;
 };
 
 StackStats computeStackStats(const ImageStack &stack)
@@ -57,18 +59,14 @@ StackStats computeStackStats(const ImageStack &stack)
     double minValue = std::numeric_limits<double>::infinity();
     double maxValue = -std::numeric_limits<double>::infinity();
     std::size_t count = 0;
+    std::size_t saturatedCount = 0;
+    std::size_t nonFiniteCount = 0;
 
-    #pragma omp parallel for schedule(static) reduction(+:sum,sumSq,count) reduction(min:minValue) reduction(max:maxValue)
+    #pragma omp parallel for schedule(static) reduction(+:sum,sumSq,count,saturatedCount,nonFiniteCount) reduction(min:minValue) reduction(max:maxValue)
     for (int i = 0; i < static_cast<int>(stack.size()); ++i)
     {
         const auto &slice = stack[static_cast<std::size_t>(i)];
         CV_Assert(slice.type() == CV_32F);
-
-        double sliceMin = 0.0;
-        double sliceMax = 0.0;
-        cv::minMaxLoc(slice, &sliceMin, &sliceMax);
-        minValue = std::min(minValue, sliceMin);
-        maxValue = std::max(maxValue, sliceMax);
 
         for (int y = 0; y < slice.rows; ++y)
         {
@@ -76,6 +74,18 @@ StackStats computeStackStats(const ImageStack &stack)
             for (int x = 0; x < slice.cols; ++x)
             {
                 const double value = row[x];
+                if (!std::isfinite(value))
+                {
+                    ++nonFiniteCount;
+                    ++count;
+                    continue;
+                }
+                minValue = std::min(minValue, value);
+                maxValue = std::max(maxValue, value);
+                if (value >= 1.0 - 1e-6 && value <= 1.0 + 1e-6)
+                {
+                    ++saturatedCount;
+                }
                 sum += value;
                 sumSq += value * value;
                 ++count;
@@ -92,6 +102,9 @@ StackStats computeStackStats(const ImageStack &stack)
     stats.minValue = minValue;
     stats.maxValue = maxValue;
     stats.mean = sum / static_cast<double>(stats.count);
+    stats.saturatedFraction =
+        static_cast<double>(saturatedCount) / static_cast<double>(stats.count);
+    stats.nonFiniteCount = nonFiniteCount;
     const double variance =
         std::max(0.0, sumSq / static_cast<double>(stats.count) - stats.mean * stats.mean);
     stats.stddev = std::sqrt(variance);
@@ -112,6 +125,8 @@ void printStackStats(std::ostream &log,
         << " max=" << stats.maxValue
         << " mean=" << stats.mean
         << " stddev=" << stats.stddev
+        << " saturated_fraction=" << stats.saturatedFraction
+        << " nonfinite=" << stats.nonFiniteCount
         << std::endl;
 }
 
@@ -131,7 +146,7 @@ ImageStack applyAdaptiveCubePooling(const ImageStack &stack,
                                     const BaseConfig &config,
                                     std::ostream &log)
 {
-    if (stack.empty() || !config.cell || !config.simulation.adaptive_cube_pooling_enabled)
+    if (stack.empty() || !config.simulation.adaptive_cube_pooling_enabled)
     {
         return cloneStack(stack);
     }
@@ -144,36 +159,17 @@ ImageStack applyAdaptiveCubePooling(const ImageStack &stack,
         return cloneStack(stack);
     }
 
-    const float minRadius = std::max(
-        1.0f,
-        static_cast<float>(std::min({config.cell->minARadius,
-                                     config.cell->minBRadius,
-                                     config.cell->minCRadius})));
-    const float cubeSizeTarget =
-        std::max(1.0f, config.simulation.adaptive_cube_pooling_cube_size_scale * minRadius);
-    const int cubeSize = std::max(1, static_cast<int>(std::lround(cubeSizeTarget)));
-    const float zeroThreshold = std::max(0.0f, config.simulation.adaptive_cube_pooling_zero_threshold);
-    const float majorityThreshold =
-        std::clamp(config.simulation.adaptive_cube_pooling_majority_threshold, 0.0f, 1.0f);
-
+    const int cubeSize = std::max(1, config.simulation.adaptive_cube_pooling_cube_size);
     const int gridZ = (depth + cubeSize - 1) / cubeSize;
     const int gridY = (rows + cubeSize - 1) / cubeSize;
     const int gridX = (cols + cubeSize - 1) / cubeSize;
 
-    struct CubeStats
+    ImageStack pooled(depth);
+    for (int z = 0; z < depth; ++z)
     {
-        float mean = 0.0f;
-        float maxValue = 0.0f;
-        float zeroFraction = 0.0f;
-    };
+        pooled[static_cast<size_t>(z)] = cv::Mat::zeros(rows, cols, CV_32F);
+    }
 
-    std::vector<CubeStats> cubeStats(static_cast<size_t>(gridZ) * gridY * gridX);
-    auto cubeIndex = [gridX, gridY](int gz, int gy, int gx) -> size_t {
-        return static_cast<size_t>((gz * gridY + gy) * gridX + gx);
-    };
-
-    // Parallelize cube-stats computation. Each cube writes only to its
-    // own cubeStats[idx] -> no races.
     #pragma omp parallel for collapse(3) schedule(static)
     for (int gz = 0; gz < gridZ; ++gz)
     {
@@ -189,8 +185,6 @@ ImageStack applyAdaptiveCubePooling(const ImageStack &stack,
                 const int x1 = std::min(cols, x0 + cubeSize);
 
                 double sum = 0.0;
-                float maxValue = 0.0f;
-                int zeroCount = 0;
                 int voxelCount = 0;
                 for (int z = z0; z < z1; ++z)
                 {
@@ -200,90 +194,14 @@ ImageStack applyAdaptiveCubePooling(const ImageStack &stack,
                         const float *row = slice.ptr<float>(y);
                         for (int x = x0; x < x1; ++x)
                         {
-                            const float value = row[x];
-                            sum += value;
-                            maxValue = std::max(maxValue, value);
-                            zeroCount += (value <= zeroThreshold) ? 1 : 0;
+                            sum += row[x];
                             ++voxelCount;
                         }
                     }
                 }
-
-                CubeStats &stats = cubeStats[cubeIndex(gz, gy, gx)];
-                if (voxelCount > 0)
-                {
-                    stats.mean = static_cast<float>(sum / static_cast<double>(voxelCount));
-                    stats.maxValue = maxValue;
-                    stats.zeroFraction = static_cast<float>(zeroCount) /
-                                         static_cast<float>(voxelCount);
-                }
-            }
-        }
-    }
-
-    ImageStack pooled(depth);
-    for (int z = 0; z < depth; ++z)
-    {
-        pooled[static_cast<size_t>(z)] = cv::Mat::zeros(rows, cols, CV_32F);
-    }
-    std::vector<float> pooledCubeValues(static_cast<size_t>(gridZ) * gridY * gridX, 0.0f);
-
-    int meanPooledCubes = 0;
-    int maxPooledCubes = 0;
-    // Parallelize cube-reweighting + voxel fill. Each iteration reads from
-    // cubeStats (read-only) and writes to its own cube voxel range in pooled
-    // (disjoint per-tuple) and pooledCubeValues[cubeIndex(gz,gy,gx)] (disjoint).
-    // Counters updated via reduction.
-    #pragma omp parallel for collapse(3) schedule(static) reduction(+:meanPooledCubes, maxPooledCubes)
-    for (int gz = 0; gz < gridZ; ++gz)
-    {
-        for (int gy = 0; gy < gridY; ++gy)
-        {
-            for (int gx = 0; gx < gridX; ++gx)
-            {
-                const int z0 = gz * cubeSize;
-                const int z1 = std::min(depth, z0 + cubeSize);
-                const int y0 = gy * cubeSize;
-                const int y1 = std::min(rows, y0 + cubeSize);
-                const int x0 = gx * cubeSize;
-                const int x1 = std::min(cols, x0 + cubeSize);
-                const CubeStats &stats = cubeStats[cubeIndex(gz, gy, gx)];
-
-                float neighborMean = 0.0f;
-                int neighborCount = 0;
-                for (int nz = std::max(0, gz - 1); nz <= std::min(gridZ - 1, gz + 1); ++nz)
-                {
-                    for (int ny = std::max(0, gy - 1); ny <= std::min(gridY - 1, gy + 1); ++ny)
-                    {
-                        for (int nx = std::max(0, gx - 1); nx <= std::min(gridX - 1, gx + 1); ++nx)
-                        {
-                            if (nz == gz && ny == gy && nx == gx)
-                            {
-                                continue;
-                            }
-                            neighborMean += cubeStats[cubeIndex(nz, ny, nx)].mean;
-                            ++neighborCount;
-                        }
-                    }
-                }
-                if (neighborCount > 0)
-                {
-                    neighborMean /= static_cast<float>(neighborCount);
-                }
-
-                const bool useMeanPooling =
-                    stats.zeroFraction >= majorityThreshold &&
-                    neighborMean <= zeroThreshold;
-                const float pooledValue = useMeanPooling ? stats.mean : stats.maxValue;
-                pooledCubeValues[cubeIndex(gz, gy, gx)] = pooledValue;
-                if (useMeanPooling)
-                {
-                    ++meanPooledCubes;
-                }
-                else
-                {
-                    ++maxPooledCubes;
-                }
+                const float pooledValue = voxelCount > 0
+                    ? static_cast<float>(sum / static_cast<double>(voxelCount))
+                    : 0.0f;
 
                 for (int z = z0; z < z1; ++z)
                 {
@@ -301,112 +219,10 @@ ImageStack applyAdaptiveCubePooling(const ImageStack &stack,
         }
     }
 
-    int removedIsolatedBrightCubes = 0;
-    int isolatedBrightCandidateCubes = 0;
-    if (config.simulation.adaptive_cube_pooling_remove_isolated_bright_cubes)
-    {
-        const float isolatedBrightThreshold =
-            std::max(zeroThreshold,
-                     config.simulation.adaptive_cube_pooling_isolated_bright_cube_threshold);
-        std::vector<char> clearCube(static_cast<size_t>(gridZ) * gridY * gridX, 0);
-        // Parallelize neighbor-check: each cube only writes to its own
-        // clearCube[idx] and reads from pooledCubeValues (read-only here).
-        // Candidate counter via reduction.
-        #pragma omp parallel for collapse(3) schedule(static) reduction(+:isolatedBrightCandidateCubes)
-        for (int gz = 0; gz < gridZ; ++gz)
-        {
-            for (int gy = 0; gy < gridY; ++gy)
-            {
-                for (int gx = 0; gx < gridX; ++gx)
-                {
-                    const size_t idx = cubeIndex(gz, gy, gx);
-                    const float centerValue = pooledCubeValues[idx];
-                    if (centerValue <= isolatedBrightThreshold)
-                    {
-                        continue;
-                    }
-                    ++isolatedBrightCandidateCubes;
-
-                    bool hasBrightNeighbor = false;
-                    for (int nz = std::max(0, gz - 1); nz <= std::min(gridZ - 1, gz + 1) && !hasBrightNeighbor; ++nz)
-                    {
-                        for (int ny = std::max(0, gy - 1); ny <= std::min(gridY - 1, gy + 1) && !hasBrightNeighbor; ++ny)
-                        {
-                            for (int nx = std::max(0, gx - 1); nx <= std::min(gridX - 1, gx + 1); ++nx)
-                            {
-                                if (nz == gz && ny == gy && nx == gx)
-                                {
-                                    continue;
-                                }
-                                if (pooledCubeValues[cubeIndex(nz, ny, nx)] > zeroThreshold)
-                                {
-                                    hasBrightNeighbor = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    if (!hasBrightNeighbor)
-                    {
-                        clearCube[idx] = 1;
-                    }
-                }
-            }
-        }
-
-        // Parallel voxel-zero pass. Each cube writes to its own disjoint
-        // voxel range in pooled. Counter via reduction.
-        #pragma omp parallel for collapse(3) schedule(static) reduction(+:removedIsolatedBrightCubes)
-        for (int gz = 0; gz < gridZ; ++gz)
-        {
-            for (int gy = 0; gy < gridY; ++gy)
-            {
-                for (int gx = 0; gx < gridX; ++gx)
-                {
-                    const int z0 = gz * cubeSize;
-                    const int z1 = std::min(depth, z0 + cubeSize);
-                    const int y0 = gy * cubeSize;
-                    const int y1 = std::min(rows, y0 + cubeSize);
-                    if (!clearCube[cubeIndex(gz, gy, gx)])
-                    {
-                        continue;
-                    }
-
-                    ++removedIsolatedBrightCubes;
-                    const int x0 = gx * cubeSize;
-                    const int x1 = std::min(cols, x0 + cubeSize);
-                    for (int z = z0; z < z1; ++z)
-                    {
-                        cv::Mat &slice = pooled[static_cast<size_t>(z)];
-                        for (int y = y0; y < y1; ++y)
-                        {
-                            float *row = slice.ptr<float>(y);
-                            for (int x = x0; x < x1; ++x)
-                            {
-                                row[x] = 0.0f;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     log << "[AdaptiveCubePooling]"
         << " cubeSize=" << cubeSize
         << " grid=" << gridX << "x" << gridY << "x" << gridZ
-        << " zeroThreshold=" << zeroThreshold
-        << " majorityThreshold=" << majorityThreshold
-        << " meanCubes=" << meanPooledCubes
-        << " maxCubes=" << maxPooledCubes
-        << " isolatedBrightThreshold="
-        << (config.simulation.adaptive_cube_pooling_remove_isolated_bright_cubes
-                ? std::max(zeroThreshold,
-                           config.simulation.adaptive_cube_pooling_isolated_bright_cube_threshold)
-                : 0.0f)
-        << " isolatedBrightCandidates=" << isolatedBrightCandidateCubes
-        << " removedIsolatedBrightCubes=" << removedIsolatedBrightCubes
+        << " mode=mean"
         << std::endl;
 
     return pooled;
@@ -651,8 +467,21 @@ void clipStack(ImageStack &sequence)
     for (int i = 0; i < static_cast<int>(sequence.size()); ++i)
     {
         auto &slice = sequence[static_cast<std::size_t>(i)];
-        cv::min(slice, 1.0f, slice);
-        cv::max(slice, 0.0f, slice);
+        for (int y = 0; y < slice.rows; ++y)
+        {
+            float *row = slice.ptr<float>(y);
+            for (int x = 0; x < slice.cols; ++x)
+            {
+                if (!std::isfinite(row[x]) || row[x] < 0.0f)
+                {
+                    row[x] = 0.0f;
+                }
+                else if (row[x] > 1.0f)
+                {
+                    row[x] = 1.0f;
+                }
+            }
+        }
     }
 }
 } // namespace
@@ -976,6 +805,65 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
         float gate = 0.0f;
     };
 
+    const float targetScore = config.simulation.iterative_score_max;
+    const float targetScoreTolerance =
+        std::max(0.0f, config.simulation.iterative_score_target_tolerance);
+    const float targetScoreLowerBound = targetScore - targetScoreTolerance;
+    const float targetScoreUpperBound = targetScore + targetScoreTolerance;
+
+    struct ScoreSelectionQuality
+    {
+        bool inTargetWindow = false;
+        bool belowTargetWindow = false;
+        bool aboveTargetWindow = false;
+        float distanceToTarget = std::numeric_limits<float>::infinity();
+        float score = -std::numeric_limits<float>::infinity();
+    };
+
+    auto scoreSelectionQuality = [&](float score) {
+        ScoreSelectionQuality quality;
+        quality.score = score;
+        if (!std::isfinite(score)) {
+            return quality;
+        }
+        quality.distanceToTarget = std::abs(score - targetScore);
+        quality.inTargetWindow =
+            score >= targetScoreLowerBound && score <= targetScoreUpperBound;
+        quality.belowTargetWindow = score < targetScoreLowerBound;
+        quality.aboveTargetWindow = score > targetScoreUpperBound;
+        return quality;
+    };
+
+    auto isBetterScoreForSelection = [&](float candidateScore, float selectedScore) {
+        const ScoreSelectionQuality candidate = scoreSelectionQuality(candidateScore);
+        const ScoreSelectionQuality selected = scoreSelectionQuality(selectedScore);
+        if (!std::isfinite(candidate.score)) {
+            return false;
+        }
+        if (!std::isfinite(selected.score)) {
+            return true;
+        }
+        if (candidate.inTargetWindow || selected.inTargetWindow) {
+            if (candidate.inTargetWindow != selected.inTargetWindow) {
+                return candidate.inTargetWindow;
+            }
+            if (std::abs(candidate.distanceToTarget - selected.distanceToTarget) > 1e-6f) {
+                return candidate.distanceToTarget < selected.distanceToTarget;
+            }
+            if (candidate.score <= targetScore && selected.score > targetScore) {
+                return true;
+            }
+            return false;
+        }
+        if (candidate.belowTargetWindow || selected.belowTargetWindow) {
+            if (candidate.belowTargetWindow != selected.belowTargetWindow) {
+                return candidate.belowTargetWindow;
+            }
+            return candidate.score > selected.score + config.simulation.iterative_improvement_tolerance;
+        }
+        return candidate.distanceToTarget < selected.distanceToTarget;
+    };
+
     auto runRadiusTrial = [&](float scoringRadius, int radiusIndex) {
         std::ostringstream trialLog;
         ImageStack current = cloneStack(sequence);
@@ -989,6 +877,9 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
         float currentScore = scoreForRadiusWithPenalty(current);
         float bestScore = currentScore;
         float currentPenalty = config.simulation.iterative_penalty;
+        const float candidateMaxMean = std::max(0.0f, config.simulation.iterative_candidate_max_mean);
+        const float candidateMaxSaturatedFraction = std::clamp(
+            config.simulation.iterative_candidate_max_saturated_fraction, 0.0f, 1.0f);
 
         std::vector<PreprocessStep> steps;
         steps.reserve(rewardGates.size() * 2U);
@@ -1035,9 +926,13 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
                  << " reward_weight=" << rewardWeight
                  << " penalty_weight=" << penaltyWeight
                  << " initial_score=" << currentScore
+                 << " target_score=" << targetScore
+                 << " target_tolerance=" << targetScoreTolerance
                  << " step_count=" << steps.size()
                  << " learning_rate=" << learningRate
                  << " min_probability=" << minProbability
+                 << " max_mean=" << candidateMaxMean
+                 << " max_saturated_fraction=" << candidateMaxSaturatedFraction
                  << std::endl;
 
         int noImprovementCount = 0;
@@ -1103,6 +998,49 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
                 }
             }
 
+            clipStack(candidate);
+            const StackStats candidateStats = computeStackStats(candidate);
+            const bool candidateMeanOk =
+                candidateMaxMean <= 0.0f || candidateStats.mean <= candidateMaxMean;
+            const bool candidateSaturationOk =
+                candidateMaxSaturatedFraction <= 0.0f ||
+                candidateStats.saturatedFraction <= candidateMaxSaturatedFraction;
+            if (!candidateMeanOk || !candidateSaturationOk || candidateStats.nonFiniteCount > 0)
+            {
+                updateStepProbability(static_cast<std::size_t>(selectedStepIndex), false);
+                currentPenalty = std::max(
+                    config.simulation.iterative_min_penalty,
+                    currentPenalty * config.simulation.iterative_collapse_backoff);
+                ++noImprovementCount;
+
+                if (count % 50 == 0)
+                {
+                    trialLog << "[IterPreprocess] radius=" << scoringRadius
+                             << " round=" << count
+                             << " reject=candidate_range"
+                             << " operation="
+                             << (selectedStep.operation == PreprocessOperation::Penalty ? "penalty" : "reward")
+                             << " gate=" << selectedStep.gate
+                             << " mean=" << candidateStats.mean
+                             << " saturated_fraction=" << candidateStats.saturatedFraction
+                             << " nonfinite=" << candidateStats.nonFiniteCount
+                             << " max_mean=" << candidateMaxMean
+                             << " max_saturated_fraction=" << candidateMaxSaturatedFraction
+                             << std::endl;
+                }
+
+                if (noImprovementCount >= noImprovementPatience) {
+                    trialLog << "[IterPreprocess] radius=" << scoringRadius
+                             << " stop=no_improvement"
+                             << " round=" << count
+                             << " patience=" << noImprovementPatience
+                             << " best_score=" << bestScore
+                             << std::endl;
+                    break;
+                }
+                continue;
+            }
+
             const float score = scoreForRadiusWithPenalty(candidate);
             if (!std::isfinite(score) || score > explosionThreshold) {
                 trialLog << "[IterPreprocess] radius=" << scoringRadius
@@ -1128,8 +1066,7 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
                     currentPenalty * config.simulation.iterative_collapse_backoff);
             }
 
-            const bool improvedBest =
-                currentScore > bestScore + config.simulation.iterative_improvement_tolerance;
+            const bool improvedBest = isBetterScoreForSelection(currentScore, bestScore);
             if (improvedBest) {
                 bestScore = currentScore;
                 bestSequence = cloneStack(current);
@@ -1153,7 +1090,7 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
                          << std::endl;
             }
 
-            if (bestScore >= config.simulation.iterative_score_max)
+            if (scoreSelectionQuality(bestScore).inTargetWindow)
             {
                 break;
             }
@@ -1186,6 +1123,8 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
         << " penalty_radius=" << penaltyRadius
         << " reward_weight=" << rewardWeight
         << " penalty_weight=" << penaltyWeight
+        << " target_score=" << targetScore
+        << " target_tolerance=" << targetScoreTolerance
         << std::endl;
 
     std::vector<PreprocessTrialResult> trialResults(scoringRadii.size());
@@ -1198,7 +1137,7 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
 
     std::size_t bestTrialIndex = 0;
     for (std::size_t i = 1; i < trialResults.size(); ++i) {
-        if (trialResults[i].score > trialResults[bestTrialIndex].score) {
+        if (isBetterScoreForSelection(trialResults[i].score, trialResults[bestTrialIndex].score)) {
             bestTrialIndex = i;
         }
     }
@@ -1210,6 +1149,8 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
     const float bestScore = trialResults[bestTrialIndex].score;
     log << "[IterPreprocess] selected_radius=" << trialResults[bestTrialIndex].radius
         << " best_score=" << bestScore << std::endl;
+
+    const ImageStack prePostProcessSequence = cloneStack(bestSequence);
 
     #pragma omp parallel for schedule(static)
     for (int sliceIndex = 0; sliceIndex < static_cast<int>(bestSequence.size()); ++sliceIndex)
@@ -1285,7 +1226,255 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
     }
 
     clipStack(bestSequence);
+    const StackStats postProcessStats = computeStackStats(bestSequence);
+    const float candidateMaxMean = std::max(0.0f, config.simulation.iterative_candidate_max_mean);
+    const float candidateMaxSaturatedFraction = std::clamp(
+        config.simulation.iterative_candidate_max_saturated_fraction, 0.0f, 1.0f);
+    const bool postMeanOk =
+        candidateMaxMean <= 0.0f || postProcessStats.mean <= candidateMaxMean;
+    const bool postSaturationOk =
+        candidateMaxSaturatedFraction <= 0.0f ||
+        postProcessStats.saturatedFraction <= candidateMaxSaturatedFraction;
+    if (!postMeanOk || !postSaturationOk || postProcessStats.nonFiniteCount > 0)
+    {
+        log << "[IterPreprocess] reject=post_process_range"
+            << " mean=" << postProcessStats.mean
+            << " saturated_fraction=" << postProcessStats.saturatedFraction
+            << " nonfinite=" << postProcessStats.nonFiniteCount
+            << " max_mean=" << candidateMaxMean
+            << " max_saturated_fraction=" << candidateMaxSaturatedFraction
+            << "; using_pre_postprocess_sequence=1"
+            << std::endl;
+        bestSequence = cloneStack(prePostProcessSequence);
+        clipStack(bestSequence);
+    }
     return bestSequence;
+}
+
+ImageStack ImageHandler::applyPostBlackpointLift(const ImageStack &sequence,
+                                                 const BaseConfig &config,
+                                                 std::ostream &log,
+                                                 const std::string &imageFile)
+{
+    if (sequence.empty() || !config.simulation.post_blackpoint_enabled)
+    {
+        return cloneStack(sequence);
+    }
+
+    const float step = std::max(0.0f, config.simulation.post_blackpoint_step);
+    const float maxBlackpoint = std::clamp(config.simulation.post_blackpoint_max, 0.0f, 0.95f);
+    if (step <= 1e-6f || maxBlackpoint <= 1e-6f)
+    {
+        return cloneStack(sequence);
+    }
+
+    const float defaultMinRadius = 5.0f;
+    const float defaultMaxRadius = 65.0f;
+    const float minRadius = config.cell
+        ? std::max(1.0f, static_cast<float>(std::min({
+              config.cell->minARadius,
+              config.cell->minBRadius,
+              config.cell->minCRadius})))
+        : defaultMinRadius;
+    const float maxRadius = config.cell
+        ? std::max(minRadius, static_cast<float>(std::max({
+              config.cell->maxARadius,
+              config.cell->maxBRadius > 0.0 ? config.cell->maxBRadius : config.cell->maxARadius,
+              config.cell->maxCRadius})))
+        : defaultMaxRadius;
+    const float radiusAtScale = 0.5f * (minRadius + maxRadius);
+    const int innerWindow = makeOddAtLeast(
+        static_cast<int>(std::lround(radiusAtScale * 2.0f + 1.0f)));
+    const int outerWindow = makeOddAtLeast(
+        static_cast<int>(std::lround(radiusAtScale * 4.0f + 1.0f)),
+        innerWindow + 2);
+
+    struct BlackpointMetrics
+    {
+        float outerZeroFraction = 0.0f;
+        float outerMean = 0.0f;
+        float innerSignalMean = 0.0f;
+        bool hasInnerSignal = false;
+    };
+
+    auto computeMetrics = [&](const ImageStack &stack) {
+        const float zeroThreshold =
+            std::max(0.0f, config.simulation.post_blackpoint_background_zero_threshold);
+        double outerZeroCount = 0.0;
+        double outerCount = 0.0;
+        double outerSum = 0.0;
+        std::vector<float> innerSignalValues;
+
+        #pragma omp parallel
+        {
+            double localOuterZeroCount = 0.0;
+            double localOuterCount = 0.0;
+            double localOuterSum = 0.0;
+            std::vector<float> localInnerSignalValues;
+
+            #pragma omp for schedule(dynamic)
+            for (int sliceIndex = 0; sliceIndex < static_cast<int>(stack.size()); ++sliceIndex)
+            {
+                const auto &slice = stack[static_cast<std::size_t>(sliceIndex)];
+                if (slice.empty())
+                {
+                    continue;
+                }
+
+                const cv::Mat innerMean = boxMean(slice, innerWindow);
+                const cv::Mat outerMean = boxMean(slice, outerWindow);
+                localInnerSignalValues.reserve(
+                    localInnerSignalValues.size() + static_cast<std::size_t>(slice.total() / 16));
+
+                for (int y = 0; y < slice.rows; ++y)
+                {
+                    const float *innerRow = innerMean.ptr<float>(y);
+                    const float *outerRow = outerMean.ptr<float>(y);
+                    for (int x = 0; x < slice.cols; ++x)
+                    {
+                        const float outerValue = outerRow[x];
+                        localOuterSum += outerValue;
+                        localOuterCount += 1.0;
+                        if (outerValue <= zeroThreshold)
+                        {
+                            localOuterZeroCount += 1.0;
+                        }
+
+                        if (innerRow[x] - outerValue >= config.simulation.contrast_structure_threshold)
+                        {
+                            localInnerSignalValues.push_back(innerRow[x]);
+                        }
+                    }
+                }
+            }
+
+            #pragma omp critical
+            {
+                outerZeroCount += localOuterZeroCount;
+                outerCount += localOuterCount;
+                outerSum += localOuterSum;
+                innerSignalValues.insert(innerSignalValues.end(),
+                                         localInnerSignalValues.begin(),
+                                         localInnerSignalValues.end());
+            }
+        }
+
+        BlackpointMetrics metrics;
+        metrics.outerZeroFraction = outerCount > 0.0
+            ? static_cast<float>(outerZeroCount / outerCount)
+            : 0.0f;
+        metrics.outerMean = outerCount > 0.0
+            ? static_cast<float>(outerSum / outerCount)
+            : 0.0f;
+        metrics.hasInnerSignal = !innerSignalValues.empty();
+        metrics.innerSignalMean = computeMeanOfTopFraction(
+            std::move(innerSignalValues),
+            config.simulation.contrast_bright_fraction);
+        return metrics;
+    };
+
+    auto applyBlackpoint = [](const ImageStack &stack, float blackpoint) {
+        ImageStack lifted = cloneStack(stack);
+        const float denominator = std::max(1e-6f, 1.0f - blackpoint);
+
+        #pragma omp parallel for schedule(static)
+        for (int sliceIndex = 0; sliceIndex < static_cast<int>(lifted.size()); ++sliceIndex)
+        {
+            auto &slice = lifted[static_cast<std::size_t>(sliceIndex)];
+            if (slice.empty())
+            {
+                continue;
+            }
+            for (int y = 0; y < slice.rows; ++y)
+            {
+                float *row = slice.ptr<float>(y);
+                for (int x = 0; x < slice.cols; ++x)
+                {
+                    row[x] = std::clamp((row[x] - blackpoint) / denominator, 0.0f, 1.0f);
+                }
+            }
+        }
+        return lifted;
+    };
+
+    const float baselineScore = evaluateBestWindowContrastScore(sequence, config);
+    const BlackpointMetrics baselineMetrics = computeMetrics(sequence);
+    ImageStack bestAccepted = cloneStack(sequence);
+    float acceptedBlackpoint = 0.0f;
+    float acceptedScore = baselineScore;
+    BlackpointMetrics acceptedMetrics = baselineMetrics;
+
+    const float minAllowedScore =
+        baselineScore - std::max(0.0f, config.simulation.post_blackpoint_contrast_drop_tolerance);
+    const float targetOuterZeroFraction =
+        std::clamp(config.simulation.post_blackpoint_outer_zero_fraction, 0.0f, 1.0f);
+    const float innerBackgroundMinDelta =
+        std::max(0.0f, config.simulation.post_blackpoint_inner_background_min_delta);
+
+    log << "[PostBlackpoint] file=" << fs::path(imageFile).filename().string()
+        << " baseline_score=" << baselineScore
+        << " baseline_outer_zero_fraction=" << baselineMetrics.outerZeroFraction
+        << " baseline_outer_mean=" << baselineMetrics.outerMean
+        << " baseline_inner_signal_mean=" << baselineMetrics.innerSignalMean
+        << " step=" << step
+        << " max=" << maxBlackpoint
+        << " min_allowed_score=" << minAllowedScore
+        << " target_outer_zero_fraction=" << targetOuterZeroFraction
+        << " inner_background_min_delta=" << innerBackgroundMinDelta
+        << std::endl;
+
+    for (float blackpoint = step; blackpoint <= maxBlackpoint + 1e-6f; blackpoint += step)
+    {
+        ImageStack candidate = applyBlackpoint(sequence, std::min(blackpoint, maxBlackpoint));
+        const float score = evaluateBestWindowContrastScore(candidate, config);
+        const BlackpointMetrics metrics = computeMetrics(candidate);
+        const bool contrastOk = score >= minAllowedScore;
+        const bool innerOk =
+            metrics.hasInnerSignal &&
+            metrics.innerSignalMean >= metrics.outerMean + innerBackgroundMinDelta;
+
+        log << "[PostBlackpoint] blackpoint=" << std::min(blackpoint, maxBlackpoint)
+            << " score=" << score
+            << " outer_zero_fraction=" << metrics.outerZeroFraction
+            << " outer_mean=" << metrics.outerMean
+            << " inner_signal_mean=" << metrics.innerSignalMean
+            << " contrast_ok=" << contrastOk
+            << " inner_ok=" << innerOk
+            << std::endl;
+
+        if (!contrastOk || !innerOk)
+        {
+            log << "[PostBlackpoint] stop=guard_failed"
+                << " attempted_blackpoint=" << std::min(blackpoint, maxBlackpoint)
+                << " contrast_ok=" << contrastOk
+                << " inner_ok=" << innerOk
+                << std::endl;
+            break;
+        }
+
+        acceptedBlackpoint = std::min(blackpoint, maxBlackpoint);
+        acceptedScore = score;
+        acceptedMetrics = metrics;
+        bestAccepted = std::move(candidate);
+
+        if (metrics.outerZeroFraction >= targetOuterZeroFraction)
+        {
+            log << "[PostBlackpoint] stop=target_reached"
+                << " blackpoint=" << acceptedBlackpoint
+                << std::endl;
+            break;
+        }
+    }
+
+    log << "[PostBlackpoint] selected_blackpoint=" << acceptedBlackpoint
+        << " selected_score=" << acceptedScore
+        << " selected_outer_zero_fraction=" << acceptedMetrics.outerZeroFraction
+        << " selected_outer_mean=" << acceptedMetrics.outerMean
+        << " selected_inner_signal_mean=" << acceptedMetrics.innerSignalMean
+        << std::endl;
+
+    clipStack(bestAccepted);
+    return bestAccepted;
 }
 
 std::vector<cv::Mat> ImageHandler::loadRawFrame(const std::string &imageFile,
@@ -1365,6 +1554,7 @@ std::vector<cv::Mat> ImageHandler::preprocessLoadedFrame(const std::vector<cv::M
     std::vector<cv::Mat> interpolatedZSlices;
 
     processedZSlices = processPreparedSequence(processedZSlices, config, log, imageFile);
+    processedZSlices = applyPostBlackpointLift(processedZSlices, config, log, imageFile);
 
     const float localScore = evaluateBestWindowContrastScore(processedZSlices, config);
     log << "[PreprocessScores] file=" << fs::path(imageFile).filename().string()
@@ -1418,7 +1608,30 @@ std::vector<cv::Mat> ImageHandler::preprocessLoadedFrame(const std::vector<cv::M
     }
 
     printStackStats(log, "post_interpolation", imageFile, interpolatedZSlices);
+    ImageStack preCubePoolingSlices = cloneStack(interpolatedZSlices);
     interpolatedZSlices = applyAdaptiveCubePooling(interpolatedZSlices, config, log);
+    clipStack(interpolatedZSlices);
+    const StackStats cubeStats = computeStackStats(interpolatedZSlices);
+    const float candidateMaxMean = std::max(0.0f, config.simulation.iterative_candidate_max_mean);
+    const float candidateMaxSaturatedFraction = std::clamp(
+        config.simulation.iterative_candidate_max_saturated_fraction, 0.0f, 1.0f);
+    const bool cubeMeanOk =
+        candidateMaxMean <= 0.0f || cubeStats.mean <= candidateMaxMean;
+    const bool cubeSaturationOk =
+        candidateMaxSaturatedFraction <= 0.0f ||
+        cubeStats.saturatedFraction <= candidateMaxSaturatedFraction;
+    if (!cubeMeanOk || !cubeSaturationOk || cubeStats.nonFiniteCount > 0)
+    {
+        log << "[AdaptiveCubePooling] reject=range"
+            << " mean=" << cubeStats.mean
+            << " saturated_fraction=" << cubeStats.saturatedFraction
+            << " nonfinite=" << cubeStats.nonFiniteCount
+            << " max_mean=" << candidateMaxMean
+            << " max_saturated_fraction=" << candidateMaxSaturatedFraction
+            << "; using_pre_cube_pooling_sequence=1"
+            << std::endl;
+        interpolatedZSlices = std::move(preCubePoolingSlices);
+    }
     printStackStats(log, "post_cube_pooling", imageFile, interpolatedZSlices);
     log << std::to_string(interpolatedZSlices.size()) << "slices built successfully" << std::endl;
     return interpolatedZSlices;
