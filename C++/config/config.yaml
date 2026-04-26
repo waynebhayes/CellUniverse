@@ -312,16 +312,16 @@ simulation:
   post_alignment_black_threshold: 0.045
   # After the fixed threshold above, each frame independently forces its
   # lowest brightness percentile to black. Set <=0 to disable.
-  post_alignment_black_percentile: 0.987 # frame 6 0.987 frame 2 0.99
+  post_alignment_black_percentile: 0.98 # frame 6 0.987 frame 2 0.99
   # Number of radius trials to run in parallel during each frame's contrast
   # preprocessing radius search.
   preprocess_radius_batch_size: 8
 
   post_process_blur_sigma: 1.1
   post_process_final_blur_sigma: 2.5
-  post_process_final_direct_weight: 0.7
+  post_process_final_direct_weight: 0.6
   post_process_final_direct_amplification: 0.6
-  post_process_final_blurred_amplification: 1.5
+  post_process_final_blurred_amplification: 2.0
 
   export_preprocessed_images: true
   export_frame_png: false
@@ -339,7 +339,7 @@ simulation:
   # cube_pooling_mode can be mean, max, or min.
   cube_pooling_enabled: false
   cube_pooling_cost_comparison_enabled: false
-  cube_pooling_cube_size: 3
+  cube_pooling_cube_size: 5
   cube_pooling_mode: max
 
   adaptive_background_expand_factor: 1.1
