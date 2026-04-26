@@ -344,7 +344,7 @@ simulation:
   # cube_pooling_mode can be mean, max, or min.
   cube_pooling_enabled: false
   cube_pooling_cost_comparison_enabled: false
-  cube_pooling_cube_size: 2.5
+  cube_pooling_cube_size: 3
   cube_pooling_mode: max
 
   adaptive_background_expand_factor: 1.1
