@@ -47,6 +47,9 @@ public:
     float contrast_reward_weight = 1.0f;
     float contrast_penalty_weight = 1.0f;
     float contrast_eps = 1e-6f;
+    bool global_intensity_normalization_enabled = true;
+    bool global_intensity_per_frame_normalization_enabled = false;
+    bool global_intensity_percentile_exclude_zeros = false;
     float global_intensity_scale_low_percentile = 0.01f;
     float global_intensity_scale_high_percentile = 0.995f;
     float global_intensity_hard_max = 0.0f;
@@ -58,6 +61,7 @@ public:
     int edge_brightness_alignment_bottom_offset = 0;
     float edge_brightness_alignment_max_shift = 0.20f;
     float post_alignment_black_threshold = 0.05f;
+    float post_alignment_black_percentile = 0.30f;
     int preprocess_radius_batch_size = 5;
     float post_process_blur_sigma = 2.5f;
     float post_process_final_blur_sigma = 0.0f;
@@ -203,6 +207,9 @@ public:
         if (node["contrast_reward_weight"]) contrast_reward_weight = node["contrast_reward_weight"].as<float>();
         if (node["contrast_penalty_weight"]) contrast_penalty_weight = node["contrast_penalty_weight"].as<float>();
         if (node["contrast_eps"]) contrast_eps = node["contrast_eps"].as<float>();
+        if (node["global_intensity_normalization_enabled"]) global_intensity_normalization_enabled = node["global_intensity_normalization_enabled"].as<bool>();
+        if (node["global_intensity_per_frame_normalization_enabled"]) global_intensity_per_frame_normalization_enabled = node["global_intensity_per_frame_normalization_enabled"].as<bool>();
+        if (node["global_intensity_percentile_exclude_zeros"]) global_intensity_percentile_exclude_zeros = node["global_intensity_percentile_exclude_zeros"].as<bool>();
         if (node["global_intensity_scale_low_percentile"]) global_intensity_scale_low_percentile = node["global_intensity_scale_low_percentile"].as<float>();
         if (node["global_intensity_scale_high_percentile"]) global_intensity_scale_high_percentile = node["global_intensity_scale_high_percentile"].as<float>();
         if (node["global_intensity_hard_max"]) global_intensity_hard_max = node["global_intensity_hard_max"].as<float>();
@@ -214,6 +221,7 @@ public:
         if (node["edge_brightness_alignment_bottom_offset"]) edge_brightness_alignment_bottom_offset = node["edge_brightness_alignment_bottom_offset"].as<int>();
         if (node["edge_brightness_alignment_max_shift"]) edge_brightness_alignment_max_shift = node["edge_brightness_alignment_max_shift"].as<float>();
         if (node["post_alignment_black_threshold"]) post_alignment_black_threshold = node["post_alignment_black_threshold"].as<float>();
+        if (node["post_alignment_black_percentile"]) post_alignment_black_percentile = node["post_alignment_black_percentile"].as<float>();
         if (node["preprocess_radius_batch_size"]) preprocess_radius_batch_size = node["preprocess_radius_batch_size"].as<int>();
         if (node["post_process_blur_sigma"]) post_process_blur_sigma = node["post_process_blur_sigma"].as<float>();
         if (node["post_process_final_blur_sigma"]) post_process_final_blur_sigma = node["post_process_final_blur_sigma"].as<float>();
@@ -283,6 +291,9 @@ public:
         std::cout << "contrast_reward_weight: " << contrast_reward_weight << '\n';
         std::cout << "contrast_penalty_weight: " << contrast_penalty_weight << '\n';
         std::cout << "contrast_eps: " << contrast_eps << '\n';
+        std::cout << "global_intensity_normalization_enabled: " << global_intensity_normalization_enabled << '\n';
+        std::cout << "global_intensity_per_frame_normalization_enabled: " << global_intensity_per_frame_normalization_enabled << '\n';
+        std::cout << "global_intensity_percentile_exclude_zeros: " << global_intensity_percentile_exclude_zeros << '\n';
         std::cout << "global_intensity_scale_low_percentile: " << global_intensity_scale_low_percentile << '\n';
         std::cout << "global_intensity_scale_high_percentile: " << global_intensity_scale_high_percentile << '\n';
         std::cout << "global_intensity_hard_max: " << global_intensity_hard_max << '\n';
@@ -294,6 +305,7 @@ public:
         std::cout << "edge_brightness_alignment_bottom_offset: " << edge_brightness_alignment_bottom_offset << '\n';
         std::cout << "edge_brightness_alignment_max_shift: " << edge_brightness_alignment_max_shift << '\n';
         std::cout << "post_alignment_black_threshold: " << post_alignment_black_threshold << '\n';
+        std::cout << "post_alignment_black_percentile: " << post_alignment_black_percentile << '\n';
         std::cout << "preprocess_radius_batch_size: " << preprocess_radius_batch_size << '\n';
         std::cout << "post_process_blur_sigma: " << post_process_blur_sigma << '\n';
         std::cout << "post_process_final_blur_sigma: " << post_process_final_blur_sigma << '\n';
