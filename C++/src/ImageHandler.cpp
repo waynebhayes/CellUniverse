@@ -1198,28 +1198,6 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
                              config.simulation.post_process_blur_sigma,
                              config.simulation.post_process_blur_sigma);
         }
-
-        if (!config.simulation.post_process_intensity_adjustment_enabled)
-        {
-            continue;
-        }
-
-        for (int y = 0; y < slice.rows; ++y)
-        {
-            float *row = slice.ptr<float>(y);
-            for (int x = 0; x < slice.cols; ++x)
-            {
-                if (row[x] < config.simulation.post_process_black_percentile)
-                {
-                    row[x] = 0.0f;
-                }
-                else if (row[x] < config.simulation.post_process_white_percentile)
-                {
-                    row[x] *= config.simulation.post_process_amplification;
-                }
-            }
-        }
-
     }
 
     if (config.simulation.post_process_final_blur_sigma > 0.0f)

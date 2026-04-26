@@ -67,10 +67,6 @@ public:
     float post_process_final_direct_weight = 1.0f;
     float post_process_final_direct_amplification = 1.0f;
     float post_process_final_blurred_amplification = 1.0f;
-    bool post_process_intensity_adjustment_enabled = true;
-    float post_process_amplification = 15.0f;
-    float post_process_black_percentile = 0.005f;
-    float post_process_white_percentile = 0.3f;
     bool export_preprocessed_images = false;
     bool export_frame_png = true;
     bool export_frame_tiff = false;
@@ -227,10 +223,6 @@ public:
         if (node["post_process_final_direct_weight"]) post_process_final_direct_weight = node["post_process_final_direct_weight"].as<float>();
         if (node["post_process_final_direct_amplification"]) post_process_final_direct_amplification = node["post_process_final_direct_amplification"].as<float>();
         if (node["post_process_final_blurred_amplification"]) post_process_final_blurred_amplification = node["post_process_final_blurred_amplification"].as<float>();
-        if (node["post_process_intensity_adjustment_enabled"]) post_process_intensity_adjustment_enabled = node["post_process_intensity_adjustment_enabled"].as<bool>();
-        if (node["post_process_amplification"]) post_process_amplification = node["post_process_amplification"].as<float>();
-        if (node["post_process_black_percentile"]) post_process_black_percentile = node["post_process_black_percentile"].as<float>();
-        if (node["post_process_white_percentile"]) post_process_white_percentile = node["post_process_white_percentile"].as<float>();
         if (node["export_preprocessed_images"]) export_preprocessed_images = node["export_preprocessed_images"].as<bool>();
         if (node["export_frame_png"]) export_frame_png = node["export_frame_png"].as<bool>();
         if (node["export_frame_tiff"]) export_frame_tiff = node["export_frame_tiff"].as<bool>();
@@ -311,10 +303,6 @@ public:
         std::cout << "post_process_final_direct_weight: " << post_process_final_direct_weight << '\n';
         std::cout << "post_process_final_direct_amplification: " << post_process_final_direct_amplification << '\n';
         std::cout << "post_process_final_blurred_amplification: " << post_process_final_blurred_amplification << '\n';
-        std::cout << "post_process_intensity_adjustment_enabled: " << post_process_intensity_adjustment_enabled << '\n';
-        std::cout << "post_process_amplification: " << post_process_amplification << '\n';
-        std::cout << "post_process_black_percentile: " << post_process_black_percentile << '\n';
-        std::cout << "post_process_white_percentile: " << post_process_white_percentile << '\n';
         std::cout << "export_preprocessed_images: " << export_preprocessed_images << '\n';
         std::cout << "export_frame_png: " << export_frame_png << '\n';
         std::cout << "export_frame_tiff: " << export_frame_tiff << '\n';

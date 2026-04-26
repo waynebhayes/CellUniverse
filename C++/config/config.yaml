@@ -323,11 +323,6 @@ simulation:
   post_process_final_direct_amplification: 0.6
   post_process_final_blurred_amplification: 1.5
 
-  post_process_intensity_adjustment_enabled: true
-  post_process_amplification: 1.0
-  post_process_black_percentile: 0.05
-  post_process_white_percentile: 1.0
-
   export_preprocessed_images: true
   export_frame_png: false
   export_frame_tiff: true

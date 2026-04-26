@@ -191,9 +191,6 @@ def process_prepared_sequence(sequence: np.ndarray) -> np.ndarray:
     score_percentile_increment = 0.025
 
     post_process_blur_sigma = 2.5
-    post_process_amplification = 15.0
-    post_process_black_percentile = 0.005
-    post_process_white_percentile = 0.3
 
     current = _as_3d_float_sequence(sequence).copy()
     best_sequence = current.copy()
@@ -283,15 +280,6 @@ def process_prepared_sequence(sequence: np.ndarray) -> np.ndarray:
             break
 
     print("best round score: ", best_score)
-
-    best_sequence[best_sequence < post_process_black_percentile] = 0.0
-    # Only amplify the middle intensity band; very dark pixels stay black and
-    # brighter pixels are left untouched.
-    amplification_mask = (
-        (best_sequence >= post_process_black_percentile)
-        & (best_sequence < post_process_white_percentile)
-    )
-    best_sequence[amplification_mask] *= post_process_amplification
 
     # Apply a final gentle blur slice-by-slice after the iterative loop.
     best_sequence = np.stack(
