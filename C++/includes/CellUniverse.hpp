@@ -83,13 +83,9 @@ private:
    // The bounded ref is used ONLY for the fit-side growth cap.
    std::map<std::string, std::array<float, 3>> cellShapeBirth;
 
-   // M2 state: per-frame paths retained for lazy load, initial-cells map,
-   // and global preprocessing percentiles (computed once from a sample in
-   // the constructor).
+   // M2 state: per-frame paths retained for lazy load and initial-cells map.
    PathVec imagePaths;
    std::map<std::string, std::vector<Ellipsoid>> initialCells;
-   float globalLowReference = 0.0f;
-   float globalHighReference = 1.0f;
    float edgeBrightnessAlignmentTarget = 0.0f;
    bool edgeBrightnessAlignmentTargetInitialized = false;
    int continueFrom = -1;

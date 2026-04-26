@@ -1199,6 +1199,11 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
                              config.simulation.post_process_blur_sigma);
         }
 
+        if (!config.simulation.post_process_intensity_adjustment_enabled)
+        {
+            continue;
+        }
+
         for (int y = 0; y < slice.rows; ++y)
         {
             float *row = slice.ptr<float>(y);

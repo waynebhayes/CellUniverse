@@ -164,7 +164,7 @@ static void scaleStackBrightness(std::vector<cv::Mat> &stack, float scale)
 }
 
 // === Helpers ported from yp_fix_mask_04172026 (commits 25c5923, b575246) ===
-// Used by the new constructor's global-percentile normalization step.
+// Used by the per-frame percentile normalization step.
 
 static float computeStackPercentile(const std::vector<cv::Mat> &stack,
                                     float percentile,
@@ -218,10 +218,10 @@ static float computeStackMax(const std::vector<cv::Mat> &stack)
     return foundValue ? maxValue : 0.0f;
 }
 
-static void normalizeStackToSharedScale(std::vector<cv::Mat> &stack,
-                                        float lowReference,
-                                        float highReference,
-                                        float hardMax)
+static void normalizeStackToFrameScale(std::vector<cv::Mat> &stack,
+                                       float lowReference,
+                                       float highReference,
+                                       float hardMax)
 {
     if (hardMax > 0.0f) highReference = std::min(highReference, hardMax);
     const float denominator = highReference - lowReference;
@@ -241,42 +241,42 @@ static void normalizeStackToSharedScale(std::vector<cv::Mat> &stack,
     }
 }
 
-static std::pair<float, float> normalizeStackToOwnScale(std::vector<cv::Mat> &stack,
-                                                        const SimulationConfig &config)
+static std::pair<float, float> normalizeStackToFrameIntensity(std::vector<cv::Mat> &stack,
+                                                              const SimulationConfig &config)
 {
     float lowReference = computeStackPercentile(
         stack,
-        config.global_intensity_scale_low_percentile,
-        config.global_intensity_percentile_exclude_zeros);
+        config.frame_intensity_scale_low_percentile,
+        config.frame_intensity_percentile_exclude_zeros);
     float highReference = computeStackPercentile(
         stack,
-        config.global_intensity_scale_high_percentile,
-        config.global_intensity_percentile_exclude_zeros);
-    if (config.global_intensity_hard_max > 0.0f &&
-        highReference > config.global_intensity_hard_max) {
-        highReference = config.global_intensity_hard_max;
+        config.frame_intensity_scale_high_percentile,
+        config.frame_intensity_percentile_exclude_zeros);
+    if (config.frame_intensity_hard_max > 0.0f &&
+        highReference > config.frame_intensity_hard_max) {
+        highReference = config.frame_intensity_hard_max;
     }
 
     if (highReference <= lowReference + 1e-6f) {
         const float fallback = computeStackMax(stack);
         if (fallback > lowReference + 1e-6f) {
             highReference = fallback;
-            if (config.global_intensity_hard_max > 0.0f) {
-                highReference = std::min(highReference, config.global_intensity_hard_max);
+            if (config.frame_intensity_hard_max > 0.0f) {
+                highReference = std::min(highReference, config.frame_intensity_hard_max);
             }
         } else {
             lowReference = 0.0f;
             highReference = 1.0f;
-            if (config.global_intensity_hard_max > 0.0f) {
-                highReference = std::min(highReference, config.global_intensity_hard_max);
+            if (config.frame_intensity_hard_max > 0.0f) {
+                highReference = std::min(highReference, config.frame_intensity_hard_max);
             }
         }
     }
 
-    normalizeStackToSharedScale(stack,
-                                lowReference,
-                                highReference,
-                                config.global_intensity_hard_max);
+    normalizeStackToFrameScale(stack,
+                               lowReference,
+                               highReference,
+                               config.frame_intensity_hard_max);
     return {lowReference, highReference};
 }
 
@@ -795,109 +795,16 @@ CellUniverse::CellUniverse(std::map<std::string, std::vector<Ellipsoid>> initial
 : config(config), outputPath(outputPath), firstFrame(firstFrame),
   imagePaths(imagePaths), initialCells(initialCells), continueFrom(continueFrom)
 {
-    // M2 — Option A (sample-based percentile): instead of loading all frames
-    // up front (which was peaking at ~N × 288 MB = 25+ GB for 100 frames),
-    // we sample every K-th frame for global percentile computation, then
-    // store the percentiles and lazy-load each frame individually in
-    // `prepareFrame(i)`. Peak memory becomes O(sample + 1-2 frames).
-    std::vector<cv::Mat> allLoadedSlices;
-    const bool sharedGlobalNormalization =
-        config.simulation.global_intensity_normalization_enabled &&
-        !config.simulation.global_intensity_per_frame_normalization_enabled;
-    if (sharedGlobalNormalization) {
-        const size_t nFrames = imagePaths.size();
-        const size_t samplePeriod = std::max<size_t>(1, nFrames / 10);   // ~10 samples
-        std::vector<size_t> sampleIndices;
-        for (size_t i = 0; i < nFrames; i += samplePeriod) sampleIndices.push_back(i);
-        // Always include the last frame so the sample bracket covers the full sequence.
-        if (!sampleIndices.empty() && sampleIndices.back() != nFrames - 1) {
-            sampleIndices.push_back(nFrames - 1);
-        }
-
-        std::cout << "[M2 Percentile Sample] nFrames=" << nFrames
-                  << " samplePeriod=" << samplePeriod
-                  << " sampleCount=" << sampleIndices.size() << '\n';
-
-        // Pass 1 (sample): parallel-load only sampled frames for percentile computation.
-        std::vector<std::vector<cv::Mat>> sampleFrames(sampleIndices.size());
-        std::vector<std::ostringstream> sampleLogs(sampleIndices.size());
-        #pragma omp parallel for schedule(dynamic)
-        for (int si = 0; si < static_cast<int>(sampleIndices.size()); ++si)
-        {
-            const size_t frameIdx = sampleIndices[static_cast<size_t>(si)];
-            sampleFrames[static_cast<size_t>(si)] =
-                ImageHandler::loadRawFrame(imagePaths[frameIdx].string(),
-                                           config,
-                                           &sampleLogs[static_cast<size_t>(si)]);
-        }
-        for (auto &buf : sampleLogs) {
-            const std::string s = buf.str();
-            if (!s.empty()) std::cout << s;
-        }
-
-        // Aggregate sampled slices for percentile computation.
-        size_t totalSlices = 0;
-        for (const auto &frame : sampleFrames) totalSlices += frame.size();
-        allLoadedSlices.reserve(totalSlices);
-        for (const auto &frame : sampleFrames) {
-            for (const auto &slice : frame) allLoadedSlices.push_back(slice);
-        }
-
-        globalLowReference = computeStackPercentile(
-            allLoadedSlices,
-            config.simulation.global_intensity_scale_low_percentile,
-            config.simulation.global_intensity_percentile_exclude_zeros);
-        globalHighReference = computeStackPercentile(
-            allLoadedSlices,
-            config.simulation.global_intensity_scale_high_percentile,
-            config.simulation.global_intensity_percentile_exclude_zeros);
-        if (config.simulation.global_intensity_hard_max > 0.0f &&
-            globalHighReference > config.simulation.global_intensity_hard_max) {
-            globalHighReference = config.simulation.global_intensity_hard_max;
-        }
-
-        if (globalHighReference <= globalLowReference + 1e-6f) {
-            const float fallback = computeStackMax(allLoadedSlices);
-            if (fallback > globalLowReference + 1e-6f) {
-                globalHighReference = fallback;
-                if (config.simulation.global_intensity_hard_max > 0.0f) {
-                    globalHighReference = std::min(globalHighReference,
-                                                   config.simulation.global_intensity_hard_max);
-                }
-                std::cout << "[Global Scale Warning] percentile range collapsed;"
-                          << " using stack max fallback low_ref=" << globalLowReference
-                          << " high_ref=" << globalHighReference << '\n';
-            } else {
-                globalLowReference = 0.0f;
-                globalHighReference = 1.0f;
-                if (config.simulation.global_intensity_hard_max > 0.0f) {
-                    globalHighReference = std::min(globalHighReference,
-                                                   config.simulation.global_intensity_hard_max);
-                }
-                std::cout << "[Global Scale Warning] percentile range collapsed; stack max unusable;"
-                          << " falling back to low_ref=" << globalLowReference
-                          << " high_ref=" << globalHighReference << '\n';
-            }
-        }
-        std::cout << "[Global Scale] enabled=1"
-                  << " low_percentile="
-                  << config.simulation.global_intensity_scale_low_percentile
-                  << " high_percentile="
-                  << config.simulation.global_intensity_scale_high_percentile
-                  << " low_ref=" << globalLowReference
-                  << " high_ref=" << globalHighReference
-                  << " hard_max=" << config.simulation.global_intensity_hard_max << '\n';
-        // Free sample frames — percentiles are stored in member fields.
-        sampleFrames.clear();
-        sampleFrames.shrink_to_fit();
-    } else {
-        globalLowReference = 0.0f;
-        globalHighReference = 1.0f;
-        std::cout << "[Global Scale] shared_enabled=0"
-                  << " per_frame_enabled="
-                  << config.simulation.global_intensity_per_frame_normalization_enabled
-                  << "; shared percentile sampling skipped\n";
-    }
+    std::cout << "[Frame Intensity Scale] enabled="
+              << config.simulation.frame_intensity_normalization_enabled
+              << " low_percentile="
+              << config.simulation.frame_intensity_scale_low_percentile
+              << " high_percentile="
+              << config.simulation.frame_intensity_scale_high_percentile
+              << " exclude_zeros="
+              << config.simulation.frame_intensity_percentile_exclude_zeros
+              << " hard_max=" << config.simulation.frame_intensity_hard_max
+              << '\n';
 
     if (config.simulation.edge_brightness_alignment_enabled) {
         std::cout << "[EdgeBrightnessAlignment] enabled=1"
@@ -914,9 +821,6 @@ CellUniverse::CellUniverse(std::map<std::string, std::vector<Ellipsoid>> initial
         std::cout << "[EdgeBrightnessAlignment] enabled=0\n";
     }
 
-    allLoadedSlices.clear();
-    allLoadedSlices.shrink_to_fit();
-
     // Determine post-interpolation z_slices depth: run ONE frame through the
     // full preprocess pipeline so we see the true interpolated size (raw
     // TIFF depth * z_scaling roughly). Preprocess-only export does not need
@@ -926,13 +830,8 @@ CellUniverse::CellUniverse(std::map<std::string, std::vector<Ellipsoid>> initial
         std::ostringstream probeRaw, probePre;
         std::vector<cv::Mat> probe = ImageHandler::loadRawFrame(
             imagePaths.front().string(), config, &probeRaw);
-        if (config.simulation.global_intensity_per_frame_normalization_enabled) {
-            normalizeStackToOwnScale(probe, config.simulation);
-        } else if (config.simulation.global_intensity_normalization_enabled) {
-            normalizeStackToSharedScale(probe,
-                                        globalLowReference,
-                                        globalHighReference,
-                                        config.simulation.global_intensity_hard_max);
+        if (config.simulation.frame_intensity_normalization_enabled) {
+            normalizeStackToFrameIntensity(probe, config.simulation);
         }
         probe = ImageHandler::preprocessLoadedFrame(
             probe, imagePaths.front().string(), config, &probePre);
@@ -983,32 +882,19 @@ void CellUniverse::prepareFrame(int frameIndex)
                                    config, &rawLog);
     std::cout << rawLog.str();
 
-    if (config.simulation.global_intensity_per_frame_normalization_enabled) {
+    if (config.simulation.frame_intensity_normalization_enabled) {
         const auto [lowReference, highReference] =
-            normalizeStackToOwnScale(real_frame, config.simulation);
-        std::cout << "[Global Scale] frame="
+            normalizeStackToFrameIntensity(real_frame, config.simulation);
+        std::cout << "[Frame Intensity Scale] frame="
                   << imagePaths[static_cast<size_t>(frameIndex)].filename().string()
-                  << " mode=per_frame"
                   << " mean=" << computeStackMean(real_frame)
                   << " low_ref=" << lowReference
                   << " high_ref=" << highReference
-                  << " hard_max=" << config.simulation.global_intensity_hard_max << '\n';
-    } else if (config.simulation.global_intensity_normalization_enabled) {
-        normalizeStackToSharedScale(real_frame,
-                                    globalLowReference,
-                                    globalHighReference,
-                                    config.simulation.global_intensity_hard_max);
-        std::cout << "[Global Scale] frame="
-                  << imagePaths[static_cast<size_t>(frameIndex)].filename().string()
-                  << " mode=shared"
-                  << " mean=" << computeStackMean(real_frame)
-                  << " low_ref=" << globalLowReference
-                  << " high_ref=" << globalHighReference
-                  << " hard_max=" << config.simulation.global_intensity_hard_max << '\n';
+                  << " hard_max=" << config.simulation.frame_intensity_hard_max << '\n';
     } else {
-        std::cout << "[Global Scale] frame="
+        std::cout << "[Frame Intensity Scale] frame="
                   << imagePaths[static_cast<size_t>(frameIndex)].filename().string()
-                  << " mode=disabled"
+                  << " enabled=0"
                   << " mean=" << computeStackMean(real_frame)
                   << '\n';
     }
@@ -1069,32 +955,19 @@ void CellUniverse::preprocessAllFramesAlignedToMinimumBackground(bool loadIntoFr
                                        &rawLog);
         std::cout << rawLog.str();
 
-        if (config.simulation.global_intensity_per_frame_normalization_enabled) {
+        if (config.simulation.frame_intensity_normalization_enabled) {
             const auto [lowReference, highReference] =
-                normalizeStackToOwnScale(realFrame, config.simulation);
-            std::cout << "[Global Scale] frame="
+                normalizeStackToFrameIntensity(realFrame, config.simulation);
+            std::cout << "[Frame Intensity Scale] frame="
                       << imagePaths[static_cast<size_t>(frameIndex)].filename().string()
-                      << " mode=per_frame"
                       << " mean=" << computeStackMean(realFrame)
                       << " low_ref=" << lowReference
                       << " high_ref=" << highReference
-                      << " hard_max=" << config.simulation.global_intensity_hard_max << '\n';
-        } else if (config.simulation.global_intensity_normalization_enabled) {
-            normalizeStackToSharedScale(realFrame,
-                                        globalLowReference,
-                                        globalHighReference,
-                                        config.simulation.global_intensity_hard_max);
-            std::cout << "[Global Scale] frame="
-                      << imagePaths[static_cast<size_t>(frameIndex)].filename().string()
-                      << " mode=shared"
-                      << " mean=" << computeStackMean(realFrame)
-                      << " low_ref=" << globalLowReference
-                      << " high_ref=" << globalHighReference
-                      << " hard_max=" << config.simulation.global_intensity_hard_max << '\n';
+                      << " hard_max=" << config.simulation.frame_intensity_hard_max << '\n';
         } else {
-            std::cout << "[Global Scale] frame="
+            std::cout << "[Frame Intensity Scale] frame="
                       << imagePaths[static_cast<size_t>(frameIndex)].filename().string()
-                      << " mode=disabled"
+                      << " enabled=0"
                       << " mean=" << computeStackMean(realFrame)
                       << '\n';
         }

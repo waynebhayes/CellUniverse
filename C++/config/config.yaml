@@ -286,12 +286,11 @@ simulation:
   contrast_penalty_weight: 0.07
   contrast_eps: 0.000001
 
-  global_intensity_normalization_enabled: true
-  global_intensity_per_frame_normalization_enabled: true
-  global_intensity_percentile_exclude_zeros: true
-  global_intensity_scale_low_percentile: 0.05
-  global_intensity_scale_high_percentile: 0.99
-  global_intensity_hard_max: 512.0
+  frame_intensity_normalization_enabled: true
+  frame_intensity_percentile_exclude_zeros: true
+  frame_intensity_scale_low_percentile: 0.05
+  frame_intensity_scale_high_percentile: 0.99
+  frame_intensity_hard_max: 512.0
 
   # Edge brightness alignment runs after preprocessing and samples a
   # frame-shaped region on each XY slice.
@@ -324,6 +323,7 @@ simulation:
   post_process_final_direct_amplification: 0.6
   post_process_final_blurred_amplification: 1.5
 
+  post_process_intensity_adjustment_enabled: true
   post_process_amplification: 1.0
   post_process_black_percentile: 0.05
   post_process_white_percentile: 1.0
