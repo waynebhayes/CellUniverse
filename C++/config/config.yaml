@@ -296,6 +296,8 @@ simulation:
   # top/bottom are relative to y=0 / y=image_height-1.
   # Each offset moves the sampled band inward from that real edge; xy_margin
   # is the shared band thickness after the offset. All Z slices are sampled.
+  # All frames are preprocessed first, then aligned to the minimum sampled
+  # background across those completed frames before export/analysis.
   edge_brightness_alignment_enabled: true
   edge_brightness_alignment_xy_margin: 5
   edge_brightness_alignment_left_offset: 0
@@ -303,6 +305,12 @@ simulation:
   edge_brightness_alignment_top_offset: 16
   edge_brightness_alignment_bottom_offset: 0
   edge_brightness_alignment_max_shift: 0.20
+  # After all-frame brightness alignment, pixels below this normalized
+  # brightness are forced to black. Set <=0 to disable.
+  post_alignment_black_threshold: 0.045
+  # Number of radius trials to run in parallel during each frame's contrast
+  # preprocessing radius search.
+  preprocess_radius_batch_size: 4
 
   post_process_blur_sigma: 1.1
   post_process_final_blur_sigma: 2.5
@@ -326,10 +334,12 @@ simulation:
   # This YAML no longer controls resume — the INI preset is the source of
   # truth so resume decisions stay alongside frame-range and I/O config.
 
-  # Adaptive cube pooling: fixed-size mean pooling over 3D cubes.
-  adaptive_cube_pooling_enabled: false
-  adaptive_cube_pooling_cost_comparison_enabled: false
-  adaptive_cube_pooling_cube_size: 5
+  # Cube pooling: fixed-size pooling over 3D cubes.
+  # cube_pooling_mode can be mean, max, or min.
+  cube_pooling_enabled: false
+  cube_pooling_cost_comparison_enabled: false
+  cube_pooling_cube_size: 5
+  cube_pooling_mode: mean
 
   adaptive_background_expand_factor: 1.1
   # 2026-04-19 audit: 0.4 → 0.2. Yp preprocessing brightens halos, so top 40%

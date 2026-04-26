@@ -1,6 +1,7 @@
 #include "../includes/ImageHandler.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <functional>
@@ -142,11 +143,11 @@ ImageStack cloneStack(const ImageStack &sequence)
     return cloned;
 }
 
-ImageStack applyAdaptiveCubePooling(const ImageStack &stack,
-                                    const BaseConfig &config,
-                                    std::ostream &log)
+ImageStack applyCubePooling(const ImageStack &stack,
+                            const BaseConfig &config,
+                            std::ostream &log)
 {
-    if (stack.empty() || !config.simulation.adaptive_cube_pooling_enabled)
+    if (stack.empty() || !config.simulation.cube_pooling_enabled)
     {
         return cloneStack(stack);
     }
@@ -159,7 +160,16 @@ ImageStack applyAdaptiveCubePooling(const ImageStack &stack,
         return cloneStack(stack);
     }
 
-    const int cubeSize = std::max(1, config.simulation.adaptive_cube_pooling_cube_size);
+    const int cubeSize = std::max(1, config.simulation.cube_pooling_cube_size);
+    std::string poolingMode = config.simulation.cube_pooling_mode;
+    std::transform(poolingMode.begin(), poolingMode.end(), poolingMode.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    if (poolingMode != "mean" && poolingMode != "max" && poolingMode != "min")
+    {
+        log << "[CubePooling] unsupported mode=" << config.simulation.cube_pooling_mode
+            << "; using mean" << std::endl;
+        poolingMode = "mean";
+    }
     const int gridZ = (depth + cubeSize - 1) / cubeSize;
     const int gridY = (rows + cubeSize - 1) / cubeSize;
     const int gridX = (cols + cubeSize - 1) / cubeSize;
@@ -185,6 +195,9 @@ ImageStack applyAdaptiveCubePooling(const ImageStack &stack,
                 const int x1 = std::min(cols, x0 + cubeSize);
 
                 double sum = 0.0;
+                float extrema = poolingMode == "min"
+                    ? std::numeric_limits<float>::infinity()
+                    : -std::numeric_limits<float>::infinity();
                 int voxelCount = 0;
                 for (int z = z0; z < z1; ++z)
                 {
@@ -194,14 +207,27 @@ ImageStack applyAdaptiveCubePooling(const ImageStack &stack,
                         const float *row = slice.ptr<float>(y);
                         for (int x = x0; x < x1; ++x)
                         {
-                            sum += row[x];
+                            const float value = row[x];
+                            sum += value;
+                            if (poolingMode == "min")
+                            {
+                                extrema = std::min(extrema, value);
+                            }
+                            else if (poolingMode == "max")
+                            {
+                                extrema = std::max(extrema, value);
+                            }
                             ++voxelCount;
                         }
                     }
                 }
-                const float pooledValue = voxelCount > 0
-                    ? static_cast<float>(sum / static_cast<double>(voxelCount))
-                    : 0.0f;
+                float pooledValue = 0.0f;
+                if (voxelCount > 0)
+                {
+                    pooledValue = poolingMode == "mean"
+                        ? static_cast<float>(sum / static_cast<double>(voxelCount))
+                        : extrema;
+                }
 
                 for (int z = z0; z < z1; ++z)
                 {
@@ -219,10 +245,10 @@ ImageStack applyAdaptiveCubePooling(const ImageStack &stack,
         }
     }
 
-    log << "[AdaptiveCubePooling]"
+    log << "[CubePooling]"
         << " cubeSize=" << cubeSize
         << " grid=" << gridX << "x" << gridY << "x" << gridZ
-        << " mode=mean"
+        << " mode=" << poolingMode
         << std::endl;
 
     return pooled;
@@ -1116,6 +1142,12 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
         };
     };
 
+    const int configuredRadiusBatchSize =
+        config.simulation.preprocess_radius_batch_size;
+    const int radiusThreadCount = std::min(
+        std::max(1, configuredRadiusBatchSize),
+        static_cast<int>(scoringRadii.size()));
+
     log << "[IterPreprocess] radius_trials=" << scoringRadii.size()
         << " radius_start=" << radiusStart
         << " radius_max=" << maxRadius
@@ -1125,12 +1157,11 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
         << " penalty_weight=" << penaltyWeight
         << " target_score=" << targetScore
         << " target_tolerance=" << targetScoreTolerance
-        << " radius_threads=" << std::min(5, static_cast<int>(scoringRadii.size()))
+        << " radius_threads=" << radiusThreadCount
+        << " configured_radius_batch_size=" << configuredRadiusBatchSize
         << std::endl;
 
     std::vector<PreprocessTrialResult> trialResults(scoringRadii.size());
-    const int radiusThreadCount =
-        std::min(5, static_cast<int>(scoringRadii.size()));
     #pragma omp parallel for schedule(dynamic) num_threads(radiusThreadCount)
     for (int radiusIndex = 0; radiusIndex < static_cast<int>(scoringRadii.size()); ++radiusIndex)
     {
@@ -1385,7 +1416,7 @@ std::vector<cv::Mat> ImageHandler::preprocessLoadedFrame(const std::vector<cv::M
 
     printStackStats(log, "post_interpolation", imageFile, interpolatedZSlices);
     ImageStack preCubePoolingSlices = cloneStack(interpolatedZSlices);
-    interpolatedZSlices = applyAdaptiveCubePooling(interpolatedZSlices, config, log);
+    interpolatedZSlices = applyCubePooling(interpolatedZSlices, config, log);
     clipStack(interpolatedZSlices);
     const StackStats cubeStats = computeStackStats(interpolatedZSlices);
     const float candidateMaxMean = std::max(0.0f, config.simulation.iterative_candidate_max_mean);
@@ -1398,7 +1429,7 @@ std::vector<cv::Mat> ImageHandler::preprocessLoadedFrame(const std::vector<cv::M
         cubeStats.saturatedFraction <= candidateMaxSaturatedFraction;
     if (!cubeMeanOk || !cubeSaturationOk || cubeStats.nonFiniteCount > 0)
     {
-        log << "[AdaptiveCubePooling] reject=range"
+        log << "[CubePooling] reject=range"
             << " mean=" << cubeStats.mean
             << " saturated_fraction=" << cubeStats.saturatedFraction
             << " nonfinite=" << cubeStats.nonFiniteCount

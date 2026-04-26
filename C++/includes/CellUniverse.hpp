@@ -44,6 +44,7 @@ public:
     // before `optimize(i)`. Keeps peak memory at ~1-2 frames (<1 GB for
     // 100+ frame runs vs 25+ GB before).
     void prepareFrame(int frameIndex);
+    void preprocessAllFramesAlignedToMinimumBackground(bool loadIntoFrames);
     // Checkpoint save/load (Approach 2 — full state serialization).
     // saveCheckpoint(N) writes all state needed to resume AT frame N+1
     // to `{outputPath}/checkpoints/frame_{N:03d}.yaml`. Includes:
@@ -90,6 +91,7 @@ private:
    float globalLowReference = 0.0f;
    float globalHighReference = 1.0f;
    float edgeBrightnessAlignmentTarget = 0.0f;
+   bool edgeBrightnessAlignmentTargetInitialized = false;
    int continueFrom = -1;
 
    // Per-frame cached summaries for adaptive background (computed at end of

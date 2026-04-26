@@ -341,6 +341,46 @@ static void alignStackToEdgeBrightness(std::vector<cv::Mat> &stack,
         << std::endl;
 }
 
+static void blackThresholdStackAfterAlignment(std::vector<cv::Mat> &stack,
+                                              const SimulationConfig &config,
+                                              const fs::path &framePath,
+                                              std::ostream &log)
+{
+    const float threshold = std::max(0.0f, config.post_alignment_black_threshold);
+    if (threshold <= 0.0f || stack.empty()) {
+        return;
+    }
+
+    std::size_t changedCount = 0;
+    std::size_t totalCount = 0;
+    #pragma omp parallel for schedule(static) reduction(+:changedCount,totalCount)
+    for (int sliceIndex = 0; sliceIndex < static_cast<int>(stack.size()); ++sliceIndex) {
+        auto &slice = stack[static_cast<size_t>(sliceIndex)];
+        if (slice.empty()) continue;
+        CV_Assert(slice.type() == CV_32F);
+        for (int y = 0; y < slice.rows; ++y) {
+            float *row = slice.ptr<float>(y);
+            for (int x = 0; x < slice.cols; ++x) {
+                ++totalCount;
+                if (row[x] < threshold) {
+                    if (row[x] != 0.0f) {
+                        ++changedCount;
+                    }
+                    row[x] = 0.0f;
+                }
+            }
+        }
+    }
+
+    const double changedFraction = totalCount > 0
+        ? static_cast<double>(changedCount) / static_cast<double>(totalCount)
+        : 0.0;
+    log << "[PostAlignmentBlackThreshold] frame=" << framePath.filename().string()
+        << " threshold=" << threshold
+        << " changed_fraction=" << changedFraction
+        << std::endl;
+}
+
 static void exportPreprocessedStack(const std::vector<cv::Mat> &stack,
                                     const fs::path &baseOutputDir,
                                     const fs::path &framePath,
@@ -711,32 +751,8 @@ CellUniverse::CellUniverse(std::map<std::string, std::vector<Ellipsoid>> initial
               << " hard_max=" << config.simulation.global_intensity_hard_max << '\n';
 
     if (config.simulation.edge_brightness_alignment_enabled) {
-        std::vector<float> sampleEdgeMeans;
-        sampleEdgeMeans.reserve(sampleFrames.size());
-        for (int si = 0; si < static_cast<int>(sampleFrames.size()); ++si) {
-            auto &sampleFrame = sampleFrames[static_cast<size_t>(si)];
-            normalizeStackToSharedScale(sampleFrame,
-                                        globalLowReference,
-                                        globalHighReference,
-                                        config.simulation.global_intensity_hard_max);
-            std::ostringstream samplePreprocessLog;
-            sampleFrame = ImageHandler::preprocessLoadedFrame(
-                sampleFrame,
-                imagePaths[sampleIndices[static_cast<size_t>(si)]].string(),
-                config,
-                &samplePreprocessLog);
-            sampleEdgeMeans.push_back(computeEdgeBrightnessMean(
-                sampleFrame, config.simulation));
-        }
-        if (!sampleEdgeMeans.empty()) {
-            edgeBrightnessAlignmentTarget =
-                std::accumulate(sampleEdgeMeans.begin(),
-                                sampleEdgeMeans.end(),
-                                0.0f) / static_cast<float>(sampleEdgeMeans.size());
-        }
         std::cout << "[EdgeBrightnessAlignment] enabled=1"
-                  << " sample_count=" << sampleEdgeMeans.size()
-                  << " target=" << edgeBrightnessAlignmentTarget
+                  << " target=pending_all_frames_min_background"
                   << " xy_margin=" << std::max(1, config.simulation.edge_brightness_alignment_xy_margin)
                   << " offsets=("
                   << std::max(0, config.simulation.edge_brightness_alignment_left_offset) << ","
@@ -770,11 +786,6 @@ CellUniverse::CellUniverse(std::map<std::string, std::vector<Ellipsoid>> initial
                                     config.simulation.global_intensity_hard_max);
         probe = ImageHandler::preprocessLoadedFrame(
             probe, imagePaths.front().string(), config, &probePre);
-        alignStackToEdgeBrightness(probe,
-                                   config.simulation,
-                                   edgeBrightnessAlignmentTarget,
-                                   imagePaths.front(),
-                                   std::cout);
         config.simulation.z_slices = static_cast<int>(probe.size());
         Ellipsoid::cellConfig.maxZ = static_cast<float>(probe.size()) - 1.0f;
         std::cout << "[M2 Probe] post-preprocess z_slices=" << probe.size()
@@ -838,6 +849,15 @@ void CellUniverse::prepareFrame(int frameIndex)
         imagePaths[static_cast<size_t>(frameIndex)].string(),
         config, &preprocessLog);
     std::cout << preprocessLog.str();
+    if (config.simulation.edge_brightness_alignment_enabled &&
+        !edgeBrightnessAlignmentTargetInitialized) {
+        edgeBrightnessAlignmentTarget =
+            computeEdgeBrightnessMean(real_frame, config.simulation);
+        edgeBrightnessAlignmentTargetInitialized = true;
+        std::cout << "[EdgeBrightnessAlignment] target_initialized_from="
+                  << imagePaths[static_cast<size_t>(frameIndex)].filename().string()
+                  << " target=" << edgeBrightnessAlignmentTarget << '\n';
+    }
     alignStackToEdgeBrightness(real_frame,
                                config.simulation,
                                edgeBrightnessAlignmentTarget,
@@ -855,6 +875,100 @@ void CellUniverse::prepareFrame(int frameIndex)
     // cost cache. The previous `if (config.cell) regenerateSynthFrame()` was
     // redundant work (2x render + 2x cost cache per frame).
     frames[frameIndex].loadImageStacks(real_frame);
+}
+
+void CellUniverse::preprocessAllFramesAlignedToMinimumBackground(bool loadIntoFrames)
+{
+    struct PreprocessedFrame
+    {
+        std::vector<cv::Mat> stack;
+        float sampledBackground = 0.0f;
+    };
+
+    std::vector<PreprocessedFrame> preprocessedFrames(imagePaths.size());
+    float minimumSampledBackground = std::numeric_limits<float>::infinity();
+    const int frameCount = static_cast<int>(imagePaths.size());
+
+    for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex)
+    {
+        std::ostringstream rawLog;
+        std::ostringstream preprocessLog;
+        std::vector<cv::Mat> realFrame =
+            ImageHandler::loadRawFrame(imagePaths[static_cast<size_t>(frameIndex)].string(),
+                                       config,
+                                       &rawLog);
+        std::cout << rawLog.str();
+
+        normalizeStackToSharedScale(realFrame,
+                                    globalLowReference,
+                                    globalHighReference,
+                                    config.simulation.global_intensity_hard_max);
+        std::cout << "[Global Scale] frame="
+                  << imagePaths[static_cast<size_t>(frameIndex)].filename().string()
+                  << " mean=" << computeStackMean(realFrame)
+                  << " low_ref=" << globalLowReference
+                  << " high_ref=" << globalHighReference
+                  << " hard_max=" << config.simulation.global_intensity_hard_max << '\n';
+
+        realFrame = ImageHandler::preprocessLoadedFrame(
+            realFrame,
+            imagePaths[static_cast<size_t>(frameIndex)].string(),
+            config,
+            &preprocessLog);
+        std::cout << preprocessLog.str();
+
+        const float sampledBackground =
+            computeEdgeBrightnessMean(realFrame, config.simulation);
+        minimumSampledBackground =
+            std::min(minimumSampledBackground, sampledBackground);
+        preprocessedFrames[static_cast<size_t>(frameIndex)] = {
+            std::move(realFrame),
+            sampledBackground
+        };
+
+        std::cout << "[EdgeBrightnessAlignment] frame="
+                  << imagePaths[static_cast<size_t>(frameIndex)].filename().string()
+                  << " sampled_background=" << sampledBackground
+                  << " pending_minimum_background=1"
+                  << std::endl;
+    }
+
+    if (!std::isfinite(minimumSampledBackground))
+    {
+        minimumSampledBackground = 0.0f;
+    }
+
+    edgeBrightnessAlignmentTarget = minimumSampledBackground;
+    edgeBrightnessAlignmentTargetInitialized = true;
+    std::cout << "[EdgeBrightnessAlignment] batch_target=min_sampled_background"
+              << " target=" << edgeBrightnessAlignmentTarget
+              << " frame_count=" << preprocessedFrames.size()
+              << std::endl;
+
+    for (int frameIndex = 0; frameIndex < static_cast<int>(preprocessedFrames.size()); ++frameIndex)
+    {
+        auto &item = preprocessedFrames[static_cast<size_t>(frameIndex)];
+        alignStackToEdgeBrightness(item.stack,
+                                   config.simulation,
+                                   edgeBrightnessAlignmentTarget,
+                                   imagePaths[static_cast<size_t>(frameIndex)],
+                                   std::cout);
+        blackThresholdStackAfterAlignment(item.stack,
+                                          config.simulation,
+                                          imagePaths[static_cast<size_t>(frameIndex)],
+                                          std::cout);
+
+        if (config.simulation.export_preprocessed_images) {
+            exportPreprocessedStack(item.stack, fs::path(outputPath),
+                                    imagePaths[static_cast<size_t>(frameIndex)],
+                                    config.simulation.export_frame_png,
+                                    config.simulation.export_frame_tiff);
+        }
+
+        if (loadIntoFrames) {
+            frames[static_cast<size_t>(frameIndex)].loadImageStacks(item.stack);
+        }
+    }
 }
 
 void CellUniverse::optimize(int frameIndex)

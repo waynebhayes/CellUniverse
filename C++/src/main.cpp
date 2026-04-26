@@ -136,10 +136,7 @@ int main(int argc, char *argv[])
 
     if (config.simulation.quit_after_preprocessing) {
         CellUniverse preprocessOnlyLineage({}, imageFilePaths, config, args.output, args.firstFrame, args.continueFrom);
-        for (int frame = 0; frame < preprocessOnlyLineage.length(); ++frame) {
-            preprocessOnlyLineage.prepareFrame(frame);
-            preprocessOnlyLineage.releaseFrameImages(frame);
-        }
+        preprocessOnlyLineage.preprocessAllFramesAlignedToMinimumBackground(false);
         std::cout << "[DEBUG] quit_after_preprocessing=true; exiting after preprocessing/load phase." << std::endl;
         return 0;
     }
@@ -150,6 +147,7 @@ int main(int argc, char *argv[])
                                                                         config.simulation.z_scaling, firstFrameFile);
     // create lineage
     CellUniverse lineage = CellUniverse(cells, imageFilePaths, config, args.output, args.firstFrame, args.continueFrom);
+    lineage.preprocessAllFramesAlignedToMinimumBackground(true);
 
     // Checkpoint resume (Approach 2): if config.simulation.resume_from > 0
     // and resume_source_dir is set, load the checkpoint file from

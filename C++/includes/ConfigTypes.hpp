@@ -57,6 +57,8 @@ public:
     int edge_brightness_alignment_top_offset = 0;
     int edge_brightness_alignment_bottom_offset = 0;
     float edge_brightness_alignment_max_shift = 0.20f;
+    float post_alignment_black_threshold = 0.05f;
+    int preprocess_radius_batch_size = 5;
     float post_process_blur_sigma = 2.5f;
     float post_process_final_blur_sigma = 0.0f;
     float post_process_final_direct_weight = 1.0f;
@@ -77,9 +79,10 @@ public:
     int resume_from = 0;
     std::string resume_source_dir = "";
     bool export_post_localization_images = false;
-    bool adaptive_cube_pooling_enabled = false;
-    bool adaptive_cube_pooling_cost_comparison_enabled = true;
-    int adaptive_cube_pooling_cube_size = 5;
+    bool cube_pooling_enabled = false;
+    bool cube_pooling_cost_comparison_enabled = true;
+    int cube_pooling_cube_size = 5;
+    std::string cube_pooling_mode = "mean";
     float adaptive_background_expand_factor = 1.1f;
     float adaptive_background_top_fraction = 0.4f;
     bool signal_guided_position_enabled = false;
@@ -210,6 +213,8 @@ public:
         if (node["edge_brightness_alignment_top_offset"]) edge_brightness_alignment_top_offset = node["edge_brightness_alignment_top_offset"].as<int>();
         if (node["edge_brightness_alignment_bottom_offset"]) edge_brightness_alignment_bottom_offset = node["edge_brightness_alignment_bottom_offset"].as<int>();
         if (node["edge_brightness_alignment_max_shift"]) edge_brightness_alignment_max_shift = node["edge_brightness_alignment_max_shift"].as<float>();
+        if (node["post_alignment_black_threshold"]) post_alignment_black_threshold = node["post_alignment_black_threshold"].as<float>();
+        if (node["preprocess_radius_batch_size"]) preprocess_radius_batch_size = node["preprocess_radius_batch_size"].as<int>();
         if (node["post_process_blur_sigma"]) post_process_blur_sigma = node["post_process_blur_sigma"].as<float>();
         if (node["post_process_final_blur_sigma"]) post_process_final_blur_sigma = node["post_process_final_blur_sigma"].as<float>();
         if (node["post_process_final_direct_weight"]) post_process_final_direct_weight = node["post_process_final_direct_weight"].as<float>();
@@ -225,9 +230,10 @@ public:
         if (node["resume_from"]) resume_from = node["resume_from"].as<int>();
         if (node["resume_source_dir"]) resume_source_dir = node["resume_source_dir"].as<std::string>();
         if (node["export_post_localization_images"]) export_post_localization_images = node["export_post_localization_images"].as<bool>();
-        if (node["adaptive_cube_pooling_enabled"]) adaptive_cube_pooling_enabled = node["adaptive_cube_pooling_enabled"].as<bool>();
-        if (node["adaptive_cube_pooling_cost_comparison_enabled"]) adaptive_cube_pooling_cost_comparison_enabled = node["adaptive_cube_pooling_cost_comparison_enabled"].as<bool>();
-        if (node["adaptive_cube_pooling_cube_size"]) adaptive_cube_pooling_cube_size = node["adaptive_cube_pooling_cube_size"].as<int>();
+        if (node["cube_pooling_enabled"]) cube_pooling_enabled = node["cube_pooling_enabled"].as<bool>();
+        if (node["cube_pooling_cost_comparison_enabled"]) cube_pooling_cost_comparison_enabled = node["cube_pooling_cost_comparison_enabled"].as<bool>();
+        if (node["cube_pooling_cube_size"]) cube_pooling_cube_size = node["cube_pooling_cube_size"].as<int>();
+        if (node["cube_pooling_mode"]) cube_pooling_mode = node["cube_pooling_mode"].as<std::string>();
         if (node["adaptive_background_expand_factor"]) adaptive_background_expand_factor = node["adaptive_background_expand_factor"].as<float>();
         if (node["adaptive_background_top_fraction"]) adaptive_background_top_fraction = node["adaptive_background_top_fraction"].as<float>();
         if (node["signal_guided_position_enabled"]) signal_guided_position_enabled = node["signal_guided_position_enabled"].as<bool>();
@@ -287,6 +293,8 @@ public:
         std::cout << "edge_brightness_alignment_top_offset: " << edge_brightness_alignment_top_offset << '\n';
         std::cout << "edge_brightness_alignment_bottom_offset: " << edge_brightness_alignment_bottom_offset << '\n';
         std::cout << "edge_brightness_alignment_max_shift: " << edge_brightness_alignment_max_shift << '\n';
+        std::cout << "post_alignment_black_threshold: " << post_alignment_black_threshold << '\n';
+        std::cout << "preprocess_radius_batch_size: " << preprocess_radius_batch_size << '\n';
         std::cout << "post_process_blur_sigma: " << post_process_blur_sigma << '\n';
         std::cout << "post_process_final_blur_sigma: " << post_process_final_blur_sigma << '\n';
         std::cout << "post_process_final_direct_weight: " << post_process_final_direct_weight << '\n';
@@ -300,9 +308,10 @@ public:
         std::cout << "export_frame_tiff: " << export_frame_tiff << '\n';
         std::cout << "quit_after_preprocessing: " << quit_after_preprocessing << '\n';
         std::cout << "export_post_localization_images: " << export_post_localization_images << '\n';
-        std::cout << "adaptive_cube_pooling_enabled: " << adaptive_cube_pooling_enabled << '\n';
-        std::cout << "adaptive_cube_pooling_cost_comparison_enabled: " << adaptive_cube_pooling_cost_comparison_enabled << '\n';
-        std::cout << "adaptive_cube_pooling_cube_size: " << adaptive_cube_pooling_cube_size << '\n';
+        std::cout << "cube_pooling_enabled: " << cube_pooling_enabled << '\n';
+        std::cout << "cube_pooling_cost_comparison_enabled: " << cube_pooling_cost_comparison_enabled << '\n';
+        std::cout << "cube_pooling_cube_size: " << cube_pooling_cube_size << '\n';
+        std::cout << "cube_pooling_mode: " << cube_pooling_mode << '\n';
         std::cout << "adaptive_background_expand_factor: " << adaptive_background_expand_factor << '\n';
         std::cout << "adaptive_background_top_fraction: " << adaptive_background_top_fraction << '\n';
         std::cout << "signal_guided_position_enabled: " << signal_guided_position_enabled << '\n';
