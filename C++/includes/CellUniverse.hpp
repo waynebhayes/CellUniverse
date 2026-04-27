@@ -95,6 +95,10 @@ private:
    // image data, which has been released by M1 by then).
    std::vector<float> perFrameAdaptiveBackground;
    std::vector<float> perFrameMeanBrightness;
+
+   void prepareSignalCentersForFrame(int frameIndex,
+                                     const std::vector<cv::Mat> &realFrame,
+                                     bool keepLoaded);
 };
 
 #endif

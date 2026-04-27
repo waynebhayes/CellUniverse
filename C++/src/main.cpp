@@ -122,6 +122,10 @@ int main(int argc, char *argv[])
 
     config.printConfig();
 
+    if (config.cellType == "ellipsoid" && config.cell) {
+        Ellipsoid::cellConfig = *config.cell;
+    }
+
     // load file paths
     PathVec imageFilePaths = ImageHandler::getImageFilePaths(args.input, args.firstFrame, args.lastFrame, config);
 

@@ -326,7 +326,7 @@ simulation:
   post_alignment_chunk_target_count: 5
   post_alignment_chunk_min_size: 5
   post_alignment_chunk_max_size: 10
-  post_alignment_chunk_percentile_step: 0.0001
+  post_alignment_chunk_percentile_step: 0.0005
   post_alignment_chunk_max_percentile: 0.999
   # Thread cap for the chunk detector foreground-mask prepass. The exact
   # connected-component flood fill remains serial to avoid racy overcounts.
@@ -345,15 +345,15 @@ simulation:
   post_process_final_direct_amplification: 0.6
   post_process_final_blurred_amplification: 2.0
 
-  export_preprocessed_images: false
+  export_preprocessed_images: true
   # Debug signal-guidance localization. When true, exports two stacks per
   # frame under signal_debug/: center cubes on black background and a
-  # grayscale perturb-probability overlay on the preprocessed image.
-  export_signal_debug_images: false
+  # grayscale perturb-probability field on black background.
+  export_signal_debug_images: true
   export_frame_png: false
   export_frame_tiff: true
   export_post_localization_images: true
-  quit_after_preprocessing: false
+  quit_after_preprocessing: true
   # When true, skip the upfront "preprocess all frames into memory" pass and
   # run prepareFrame(frame) immediately before optimize(frame). This reduces
   # peak memory by keeping the pipeline frame-by-frame. Ignored when
@@ -451,19 +451,29 @@ simulation:
   # When false, useSignalGuidanceThisFrame is always false → all frames use
   # random_iterations_per_cell + pure-random perturbation.
   signal_guided_position_enabled: false
-  # Box size (relative to max cell diameter / 3). Smaller = more boxes,
-  # finer-grain clusters. yp default 0.4.
-  signal_guided_box_size_scale: 0.4
+  # Signal-detection box side length in voxels/pixels. Smaller = more boxes,
+  # finer-grain clusters.
+  signal_guided_box_side_length: 10
   # Minimum brightness (above background) for a box to be considered. Filters
   # out background noise. yp default 0.4.
-  signal_guided_min_box_brightness_delta: 0.4
+  signal_guided_min_box_brightness_delta: 0.01
   # Floor on the per-cluster sigma scale. Brighter clusters get smaller sigma
   # (tighter teleport); dimmer clusters get sigma toward 1.0 (looser).
   # 0.35 = brightest cluster's sigma is 35% of cellConfig.x/y/z.sigma.
-  signal_guided_min_sigma_scale: 0.35
+  signal_guided_min_sigma_scale: 0.15
   # Sigma range multiplier on top of cellConfig.x/y/z.sigma. yp tuned 10.0
   # which gives wide-jump teleports.
-  signal_guided_sigma_range_multiplier: 10.0
+  signal_guided_sigma_range_multiplier: 15.0
+  # Initial signal grouping keeps only this brightest fraction of candidate
+  # boxes after the background+delta noise floor. 0.70 = top 70%.
+  signal_guided_initial_bright_fraction: 0.70
+  # Recursive center splitting keeps this brightest fraction inside each
+  # already-grouped center and checks whether it breaks into separate BFS
+  # face-connected islands. 0.50 = top 50%.
+  signal_guided_recursive_bright_fraction: 0.60
+  # Maximum recursive split depth. 0 disables recursive splitting while
+  # keeping the initial bright-fraction filter active.
+  signal_guided_max_recursive_depth: 2
 
 # Triaxial split detection pipeline.
 prob:

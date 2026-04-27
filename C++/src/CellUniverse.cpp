@@ -962,6 +962,157 @@ static int chooseNearestDivisorSize(int axisLength, float targetSize)
     return bestDivisor;
 }
 
+static constexpr std::array<std::array<int, 3>, 6> kSignalFaceNeighbors{{
+    {{ 1,  0,  0}}, {{-1,  0,  0}},
+    {{ 0,  1,  0}}, {{ 0, -1,  0}},
+    {{ 0,  0,  1}}, {{ 0,  0, -1}}
+}};
+
+static std::vector<size_t> keepBrightestBoxFraction(const std::vector<BrightBox> &boxes,
+                                                    std::vector<size_t> members,
+                                                    float fraction)
+{
+    if (members.empty()) {
+        return members;
+    }
+
+    const float clampedFraction = std::clamp(fraction, 0.0f, 1.0f);
+    if (clampedFraction >= 1.0f - 1e-6f) {
+        return members;
+    }
+    if (clampedFraction <= 0.0f) {
+        return {};
+    }
+
+    std::sort(members.begin(), members.end(),
+              [&](size_t lhs, size_t rhs) {
+                  return boxes[lhs].brightness > boxes[rhs].brightness;
+              });
+    const size_t keepCount = std::max<size_t>(
+        1, static_cast<size_t>(std::ceil(clampedFraction * static_cast<float>(members.size()))));
+    members.resize(std::min(keepCount, members.size()));
+    return members;
+}
+
+static std::vector<std::vector<size_t>> connectedSignalBoxComponents(
+    const std::vector<BrightBox> &boxes,
+    const std::vector<size_t> &members)
+{
+    std::map<std::tuple<int, int, int>, size_t> memberIndex;
+    for (size_t local = 0; local < members.size(); ++local) {
+        const BrightBox &box = boxes[members[local]];
+        memberIndex[{box.ix, box.iy, box.iz}] = local;
+    }
+
+    std::vector<std::vector<size_t>> components;
+    std::vector<char> visited(members.size(), 0);
+    for (size_t seedLocal = 0; seedLocal < members.size(); ++seedLocal) {
+        if (visited[seedLocal]) continue;
+
+        std::vector<size_t> component;
+        std::queue<size_t> queue;
+        queue.push(seedLocal);
+        visited[seedLocal] = 1;
+        while (!queue.empty()) {
+            const size_t local = queue.front();
+            queue.pop();
+            const size_t boxIdx = members[local];
+            component.push_back(boxIdx);
+            const BrightBox &box = boxes[boxIdx];
+
+            for (const auto &offset : kSignalFaceNeighbors) {
+                auto it = memberIndex.find({
+                    box.ix + offset[0],
+                    box.iy + offset[1],
+                    box.iz + offset[2]});
+                if (it == memberIndex.end()) continue;
+                const size_t neighborLocal = it->second;
+                if (visited[neighborLocal]) continue;
+                visited[neighborLocal] = 1;
+                queue.push(neighborLocal);
+            }
+        }
+        components.push_back(std::move(component));
+    }
+    return components;
+}
+
+static Frame::SignalCenter makeSignalCenterFromBoxes(const std::vector<BrightBox> &boxes,
+                                                     const std::vector<size_t> &members,
+                                                     float backgroundValue)
+{
+    double weightSum = 0.0;
+    double xSum = 0.0;
+    double ySum = 0.0;
+    double zSum = 0.0;
+    double brightnessSum = 0.0;
+    for (size_t boxIdx : members) {
+        const BrightBox &box = boxes[boxIdx];
+        const float weight = std::max(1e-6f, box.brightness - backgroundValue);
+        weightSum += weight;
+        xSum += weight * static_cast<double>(box.center.x);
+        ySum += weight * static_cast<double>(box.center.y);
+        zSum += weight * static_cast<double>(box.center.z);
+        brightnessSum += static_cast<double>(box.brightness);
+    }
+
+    Frame::SignalCenter center;
+    if (!members.empty() && weightSum > 0.0) {
+        center.position = cv::Point3f(
+            static_cast<float>(xSum / weightSum),
+            static_cast<float>(ySum / weightSum),
+            static_cast<float>(zSum / weightSum));
+        center.brightness = static_cast<float>(brightnessSum / static_cast<double>(members.size()));
+        center.boxes = static_cast<int>(members.size());
+    }
+    return center;
+}
+
+static void splitSignalClusterRecursive(const std::vector<BrightBox> &boxes,
+                                        const std::vector<size_t> &members,
+                                        float backgroundValue,
+                                        float recursiveBrightFraction,
+                                        int depth,
+                                        int maxDepth,
+                                        std::vector<Frame::SignalCenter> &outCenters)
+{
+    if (members.empty()) {
+        return;
+    }
+
+    if (depth >= maxDepth || members.size() < 2) {
+        outCenters.push_back(makeSignalCenterFromBoxes(boxes, members, backgroundValue));
+        return;
+    }
+
+    std::vector<size_t> splitMembers =
+        keepBrightestBoxFraction(boxes, members, recursiveBrightFraction);
+    if (splitMembers.size() < 2) {
+        outCenters.push_back(makeSignalCenterFromBoxes(boxes, members, backgroundValue));
+        return;
+    }
+
+    std::vector<std::vector<size_t>> components =
+        connectedSignalBoxComponents(boxes, splitMembers);
+    if (components.size() < 2) {
+        outCenters.push_back(makeSignalCenterFromBoxes(boxes, members, backgroundValue));
+        return;
+    }
+
+    std::sort(components.begin(), components.end(),
+              [&](const std::vector<size_t> &lhs, const std::vector<size_t> &rhs) {
+                  const Frame::SignalCenter a = makeSignalCenterFromBoxes(boxes, lhs, backgroundValue);
+                  const Frame::SignalCenter b = makeSignalCenterFromBoxes(boxes, rhs, backgroundValue);
+                  return a.brightness > b.brightness;
+              });
+
+    for (const auto &component : components) {
+        splitSignalClusterRecursive(boxes, component, backgroundValue,
+                                    recursiveBrightFraction, depth + 1,
+                                    maxDepth, outCenters);
+    }
+}
+
 static std::vector<Frame::SignalCenter> localizeSignalCentersForFrame(
     const Frame &frame,
     const BaseConfig &config,
@@ -976,18 +1127,12 @@ static std::vector<Frame::SignalCenter> localizeSignalCentersForFrame(
     const int sizeZ = static_cast<int>(realFrame.size());
     if (sizeX <= 0 || sizeY <= 0 || sizeZ <= 0) return centers;
 
-    const float boxScale = std::max(0.1f, config.simulation.signal_guided_box_size_scale);
-    const float maxDiamX = 2.0f * static_cast<float>(config.cell->maxARadius);
-    const float maxDiamY = 2.0f * static_cast<float>(
-        config.cell->maxBRadius > 0.0 ? config.cell->maxBRadius : config.cell->maxARadius);
-    const float maxDiamZ = 2.0f * static_cast<float>(config.cell->maxCRadius);
-    const float targetBoxX = std::max(1.0f, (maxDiamX / 3.0f) * boxScale);
-    const float targetBoxY = std::max(1.0f, (maxDiamY / 3.0f) * boxScale);
-    const float targetBoxZ = std::max(1.0f, (maxDiamZ / 3.0f) * boxScale);
+    const float targetBoxSize =
+        static_cast<float>(std::max(1, config.simulation.signal_guided_box_side_length));
 
-    const int boxSizeX = chooseNearestDivisorSize(sizeX, targetBoxX);
-    const int boxSizeY = chooseNearestDivisorSize(sizeY, targetBoxY);
-    const int boxSizeZ = chooseNearestDivisorSize(sizeZ, targetBoxZ);
+    const int boxSizeX = chooseNearestDivisorSize(sizeX, targetBoxSize);
+    const int boxSizeY = chooseNearestDivisorSize(sizeY, targetBoxSize);
+    const int boxSizeZ = chooseNearestDivisorSize(sizeZ, targetBoxSize);
     const int gridX = std::max(1, sizeX / boxSizeX);
     const int gridY = std::max(1, sizeY / boxSizeY);
     const int gridZ = std::max(1, sizeZ / boxSizeZ);
@@ -1035,55 +1180,40 @@ static std::vector<Frame::SignalCenter> localizeSignalCentersForFrame(
     std::sort(boxes.begin(), boxes.end(),
               [](const BrightBox &a, const BrightBox &b) { return a.brightness > b.brightness; });
 
-    std::map<std::tuple<int, int, int>, size_t> boxIndex;
-    for (size_t i = 0; i < boxes.size(); ++i) boxIndex[{boxes[i].ix, boxes[i].iy, boxes[i].iz}] = i;
+    if (boxes.empty()) {
+        std::cout << "[Signal Centers] frame " << displayFrame
+                  << " enabled=" << config.simulation.signal_guided_position_enabled
+                  << " boxSize=(" << boxSizeX << "," << boxSizeY << "," << boxSizeZ << ")"
+                  << " grid=(" << gridX << "," << gridY << "," << gridZ << ")"
+                  << " background=" << backgroundValue
+                  << " minDelta=" << minDelta
+                  << " keptBoxes=0 clusters=0"
+                  << " reason=no_boxes_above_background_delta"
+                  << '\n';
+        return centers;
+    }
 
-    std::vector<char> visited(boxes.size(), 0);
+    std::vector<size_t> initialMembers(boxes.size());
+    std::iota(initialMembers.begin(), initialMembers.end(), 0);
+    const float initialBrightFraction =
+        std::clamp(config.simulation.signal_guided_initial_bright_fraction, 0.0f, 1.0f);
+    const float recursiveBrightFraction =
+        std::clamp(config.simulation.signal_guided_recursive_bright_fraction, 0.0f, 1.0f);
+    const int maxRecursiveDepth =
+        std::max(0, config.simulation.signal_guided_max_recursive_depth);
+    initialMembers = keepBrightestBoxFraction(boxes, std::move(initialMembers),
+                                              initialBrightFraction);
+
+    std::vector<std::vector<size_t>> initialComponents =
+        connectedSignalBoxComponents(boxes, initialMembers);
     float maxCenterBrightness = backgroundValue;
-    for (size_t seed = 0; seed < boxes.size(); ++seed) {
-        if (visited[seed]) continue;
-        std::queue<size_t> queue;
-        queue.push(seed);
-        visited[seed] = 1;
-        double weightSum = 0.0, xSum = 0.0, ySum = 0.0, zSum = 0.0, brightnessSum = 0.0;
-        int clusterBoxes = 0;
-        while (!queue.empty()) {
-            const size_t current = queue.front();
-            queue.pop();
-            const BrightBox &box = boxes[current];
-            const float weight = std::max(1e-6f, box.brightness - backgroundValue);
-            weightSum += weight;
-            xSum += weight * static_cast<double>(box.center.x);
-            ySum += weight * static_cast<double>(box.center.y);
-            zSum += weight * static_cast<double>(box.center.z);
-            brightnessSum += static_cast<double>(box.brightness);
-            ++clusterBoxes;
-            static constexpr std::array<std::array<int, 3>, 6> kFaceNeighbors{{
-                {{ 1,  0,  0}}, {{-1,  0,  0}},
-                {{ 0,  1,  0}}, {{ 0, -1,  0}},
-                {{ 0,  0,  1}}, {{ 0,  0, -1}}
-            }};
-            for (const auto &offset : kFaceNeighbors) {
-                auto it = boxIndex.find({
-                    box.ix + offset[0],
-                    box.iy + offset[1],
-                    box.iz + offset[2]});
-                if (it == boxIndex.end()) continue;
-                const size_t neighbor = it->second;
-                if (visited[neighbor]) continue;
-                visited[neighbor] = 1;
-                queue.push(neighbor);
-            }
-        }
-        if (clusterBoxes <= 0 || weightSum <= 0.0) continue;
-        Frame::SignalCenter center;
-        center.position = cv::Point3f(
-            static_cast<float>(xSum / weightSum),
-            static_cast<float>(ySum / weightSum),
-            static_cast<float>(zSum / weightSum));
-        center.brightness = static_cast<float>(brightnessSum / static_cast<double>(clusterBoxes));
-        center.boxes = clusterBoxes;
-        centers.push_back(center);
+    for (const auto &component : initialComponents) {
+        splitSignalClusterRecursive(boxes, component, backgroundValue,
+                                    recursiveBrightFraction, 0,
+                                    maxRecursiveDepth, centers);
+    }
+
+    for (const auto &center : centers) {
         maxCenterBrightness = std::max(maxCenterBrightness, center.brightness);
     }
 
@@ -1107,7 +1237,12 @@ static std::vector<Frame::SignalCenter> localizeSignalCentersForFrame(
               << " boxSize=(" << boxSizeX << "," << boxSizeY << "," << boxSizeZ << ")"
               << " grid=(" << gridX << "," << gridY << "," << gridZ << ")"
               << " background=" << backgroundValue
+              << " minDelta=" << minDelta
               << " keptBoxes=" << boxes.size()
+              << " initialBrightFraction=" << initialBrightFraction
+              << " initialBoxes=" << initialMembers.size()
+              << " recursiveBrightFraction=" << recursiveBrightFraction
+              << " maxRecursiveDepth=" << maxRecursiveDepth
               << " clusters=" << centers.size() << '\n';
     for (size_t i = 0; i < centers.size(); ++i) {
         const auto &c = centers[i];
@@ -1131,21 +1266,12 @@ static void exportSignalDebugStacks(const std::vector<cv::Mat> &realFrame,
     }
 
     std::vector<cv::Mat> centerCubes;
-    std::vector<cv::Mat> probabilityOverlay;
+    std::vector<cv::Mat> probabilityDebug;
     centerCubes.reserve(realFrame.size());
-    probabilityOverlay.reserve(realFrame.size());
+    probabilityDebug.reserve(realFrame.size());
     for (const auto &slice : realFrame) {
         centerCubes.emplace_back(cv::Mat::zeros(slice.size(), CV_32F));
-        cv::Mat base;
-        if (slice.type() == CV_32F) {
-            base = slice.clone();
-        } else {
-            slice.convertTo(base, CV_32F);
-        }
-        cv::patchNaNs(base, 0.0);
-        cv::min(base, 1.0f, base);
-        cv::max(base, 0.0f, base);
-        probabilityOverlay.push_back(std::move(base));
+        probabilityDebug.emplace_back(cv::Mat::zeros(slice.size(), CV_32F));
     }
 
     constexpr int kCubeHalfSize = 2;
@@ -1214,27 +1340,58 @@ static void exportSignalDebugStacks(const std::vector<cv::Mat> &realFrame,
 
         if (maxProb > 1e-6f) {
             #pragma omp parallel for schedule(static)
-            for (int z = 0; z < static_cast<int>(probabilityOverlay.size()); ++z) {
-                cv::Mat &overlay = probabilityOverlay[static_cast<size_t>(z)];
+            for (int z = 0; z < static_cast<int>(probabilityDebug.size()); ++z) {
+                cv::Mat &debugSlice = probabilityDebug[static_cast<size_t>(z)];
                 const cv::Mat &probSlice = probability[static_cast<size_t>(z)];
-                for (int y = 0; y < overlay.rows; ++y) {
-                    float *overlayRow = overlay.ptr<float>(y);
+                for (int y = 0; y < debugSlice.rows; ++y) {
+                    float *debugRow = debugSlice.ptr<float>(y);
                     const float *probRow = probSlice.ptr<float>(y);
-                    for (int x = 0; x < overlay.cols; ++x) {
-                        const float heat = probRow[x] / maxProb;
-                        overlayRow[x] = std::clamp(0.55f * overlayRow[x] + 0.45f * heat,
-                                                   0.0f, 1.0f);
+                    for (int x = 0; x < debugSlice.cols; ++x) {
+                        debugRow[x] = std::clamp(probRow[x] / maxProb, 0.0f, 1.0f);
                     }
                 }
             }
         }
     }
 
+    double probabilityMin = 0.0;
+    double probabilityMax = 0.0;
+    int nonzeroVoxels = 0;
+    bool statsInitialized = false;
+    for (const auto &slice : probabilityDebug) {
+        if (slice.empty()) continue;
+        double sliceMin = 0.0;
+        double sliceMax = 0.0;
+        cv::minMaxLoc(slice, &sliceMin, &sliceMax);
+        if (!statsInitialized) {
+            probabilityMin = sliceMin;
+            probabilityMax = sliceMax;
+            statsInitialized = true;
+        } else {
+            probabilityMin = std::min(probabilityMin, sliceMin);
+            probabilityMax = std::max(probabilityMax, sliceMax);
+        }
+        nonzeroVoxels += cv::countNonZero(slice > 0.0f);
+    }
+
+    std::cout << "[Signal Debug Export] frame=" << framePath.filename().string()
+              << " centers=" << centers.size()
+              << " probability_min=" << probabilityMin
+              << " probability_max=" << probabilityMax
+              << " probability_nonzero_voxels=" << nonzeroVoxels
+              << " sigma=(" << Ellipsoid::cellConfig.x.sigma
+              << "," << Ellipsoid::cellConfig.y.sigma
+              << "," << Ellipsoid::cellConfig.z.sigma << ")"
+              << " sigmaRangeMultiplier="
+              << config.simulation.signal_guided_sigma_range_multiplier
+              << " output_dir=" << (baseOutputDir / "signal_debug").string()
+              << '\n';
+
     exportStackToSubdir(centerCubes, baseOutputDir, "signal_debug/centers",
                         framePath,
                         config.simulation.export_frame_png,
                         config.simulation.export_frame_tiff);
-    exportStackToSubdir(probabilityOverlay, baseOutputDir, "signal_debug/perturb_probability",
+    exportStackToSubdir(probabilityDebug, baseOutputDir, "signal_debug/perturb_probability",
                         framePath,
                         config.simulation.export_frame_png,
                         config.simulation.export_frame_tiff);
@@ -1452,19 +1609,40 @@ void CellUniverse::prepareFrame(int frameIndex)
     // cost cache. The previous `if (config.cell) regenerateSynthFrame()` was
     // redundant work (2x render + 2x cost cache per frame).
     frames[frameIndex].loadImageStacks(real_frame);
+    prepareSignalCentersForFrame(frameIndex, real_frame, true);
+}
+
+void CellUniverse::prepareSignalCentersForFrame(int frameIndex,
+                                                const std::vector<cv::Mat> &realFrame,
+                                                bool keepLoaded)
+{
+    if (frameIndex < 0 || static_cast<size_t>(frameIndex) >= frames.size())
+    {
+        throw std::invalid_argument("prepareSignalCentersForFrame: invalid frame index");
+    }
+
+    Frame &frame = frames[static_cast<size_t>(frameIndex)];
+    if (!frame.hasImageStacks()) {
+        frame.loadImageStacks(realFrame);
+    }
+
     if (config.simulation.signal_guided_position_enabled ||
         config.simulation.export_signal_debug_images) {
         std::vector<Frame::SignalCenter> centers = localizeSignalCentersForFrame(
-            frames[frameIndex], config, firstFrame + frameIndex);
-        exportSignalDebugStacks(real_frame, centers, config, fs::path(outputPath),
+            frame, config, firstFrame + frameIndex);
+        exportSignalDebugStacks(realFrame, centers, config, fs::path(outputPath),
                                 imagePaths[static_cast<size_t>(frameIndex)]);
         if (config.simulation.signal_guided_position_enabled) {
-            frames[frameIndex].setSignalCenters(std::move(centers));
+            frame.setSignalCenters(std::move(centers));
         } else {
-            frames[frameIndex].setSignalCenters({});
+            frame.setSignalCenters({});
         }
     } else {
-        frames[frameIndex].setSignalCenters({});
+        frame.setSignalCenters({});
+    }
+
+    if (!keepLoaded) {
+        frame.releaseImageStacks();
     }
 }
 
@@ -1544,24 +1722,9 @@ void CellUniverse::preprocessAllFramesAlignedToMinimumBackground(bool loadIntoFr
 
             if (loadIntoFrames) {
                 frames[static_cast<size_t>(frameIndex)].loadImageStacks(realFrame);
-                if (config.simulation.signal_guided_position_enabled ||
-                    config.simulation.export_signal_debug_images) {
-                    std::vector<Frame::SignalCenter> centers =
-                        localizeSignalCentersForFrame(
-                            frames[static_cast<size_t>(frameIndex)],
-                            config,
-                            firstFrame + frameIndex);
-                    exportSignalDebugStacks(realFrame, centers, config,
-                                            fs::path(outputPath),
-                                            imagePaths[static_cast<size_t>(frameIndex)]);
-                    if (config.simulation.signal_guided_position_enabled) {
-                        frames[static_cast<size_t>(frameIndex)].setSignalCenters(std::move(centers));
-                    } else {
-                        frames[static_cast<size_t>(frameIndex)].setSignalCenters({});
-                    }
-                } else {
-                    frames[static_cast<size_t>(frameIndex)].setSignalCenters({});
-                }
+                prepareSignalCentersForFrame(frameIndex, realFrame, true);
+            } else if (config.simulation.export_signal_debug_images) {
+                prepareSignalCentersForFrame(frameIndex, realFrame, false);
             }
             continue;
         }
@@ -1634,24 +1797,9 @@ void CellUniverse::preprocessAllFramesAlignedToMinimumBackground(bool loadIntoFr
 
         if (loadIntoFrames) {
             frames[static_cast<size_t>(frameIndex)].loadImageStacks(item.stack);
-            if (config.simulation.signal_guided_position_enabled ||
-                config.simulation.export_signal_debug_images) {
-                std::vector<Frame::SignalCenter> centers =
-                    localizeSignalCentersForFrame(
-                        frames[static_cast<size_t>(frameIndex)],
-                        config,
-                        firstFrame + frameIndex);
-                exportSignalDebugStacks(item.stack, centers, config,
-                                        fs::path(outputPath),
-                                        imagePaths[static_cast<size_t>(frameIndex)]);
-                if (config.simulation.signal_guided_position_enabled) {
-                    frames[static_cast<size_t>(frameIndex)].setSignalCenters(std::move(centers));
-                } else {
-                    frames[static_cast<size_t>(frameIndex)].setSignalCenters({});
-                }
-            } else {
-                frames[static_cast<size_t>(frameIndex)].setSignalCenters({});
-            }
+            prepareSignalCentersForFrame(frameIndex, item.stack, true);
+        } else if (config.simulation.export_signal_debug_images) {
+            prepareSignalCentersForFrame(frameIndex, item.stack, false);
         }
     }
 }

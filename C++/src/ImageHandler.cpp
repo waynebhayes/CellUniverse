@@ -381,19 +381,12 @@ std::vector<Frame::SignalCenter> localizeSignalCentersInStack(const ImageStack &
         return centers;
     }
 
-    const float boxScale = std::max(0.1f, config.simulation.signal_guided_box_size_scale);
-    const float zShrink = std::max(1.0f, config.simulation.z_scaling);
-    const float maxDiamX = 2.0f * static_cast<float>(config.cell->maxARadius);
-    const float maxDiamY = 2.0f * static_cast<float>(
-        config.cell->maxBRadius > 0.0 ? config.cell->maxBRadius : config.cell->maxARadius);
-    const float maxDiamZ = 2.0f * static_cast<float>(config.cell->maxCRadius);
-    const float targetBoxX = std::max(1.0f, (maxDiamX / 3.0f) * boxScale);
-    const float targetBoxY = std::max(1.0f, (maxDiamY / 3.0f) * boxScale);
-    const float targetBoxZ = std::max(1.0f, (maxDiamZ / 3.0f) * (boxScale / zShrink));
+    const float targetBoxSize =
+        static_cast<float>(std::max(1, config.simulation.signal_guided_box_side_length));
 
-    const int boxSizeX = chooseNearestDivisorSize(sizeX, targetBoxX);
-    const int boxSizeY = chooseNearestDivisorSize(sizeY, targetBoxY);
-    const int boxSizeZ = chooseNearestDivisorSize(sizeZ, targetBoxZ);
+    const int boxSizeX = chooseNearestDivisorSize(sizeX, targetBoxSize);
+    const int boxSizeY = chooseNearestDivisorSize(sizeY, targetBoxSize);
+    const int boxSizeZ = chooseNearestDivisorSize(sizeZ, targetBoxSize);
     const int gridX = std::max(1, sizeX / boxSizeX);
     const int gridY = std::max(1, sizeY / boxSizeY);
     const int gridZ = std::max(1, sizeZ / boxSizeZ);
