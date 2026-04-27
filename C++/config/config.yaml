@@ -5,7 +5,7 @@ cellType: ellipsoid
 # radius perturbation params are not read here.
 cell:
   x:
-    increase_prob: 0.45
+    increase_prob: 0.45 # 0.45
     decrease_prob: 0.45
     mu: 0
     sigma: 5
@@ -15,23 +15,23 @@ cell:
     mu: 0
     sigma: 5
   z:
-    increase_prob: 0.35
+    increase_prob: 0.35 # 0.35
     decrease_prob: 0.35
     mu: 0
     sigma: 8
   thetaX:
-    increase_prob: 0.7
-    decrease_prob: 0.7
+    increase_prob: 0.75
+    decrease_prob: 0.75
     mu: 0
     sigma: 0.05
   thetaY:
-    increase_prob: 0.7
-    decrease_prob: 0.7
+    increase_prob: 0.75
+    decrease_prob: 0.75
     mu: 0
     sigma: 0.05
   thetaZ:
-    increase_prob: 0.7
-    decrease_prob: 0.7
+    increase_prob: 0.75
+    decrease_prob: 0.75
     mu: 0
     sigma: 0.05
 
