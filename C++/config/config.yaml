@@ -43,8 +43,8 @@ cell:
   maxCRadius: 70
 
   initialRadiusScale: 1.0
-  initialBrightness: 0.22
-  backgroundColor: 0.05
+  initialBrightness: 0.9
+  backgroundColor: 0.0
 
   minBrightness: 0.1
   maxBrightness: 0.98
@@ -325,7 +325,7 @@ simulation:
   post_alignment_chunk_max_percentile: 0.999
   # Thread cap for the chunk detector foreground-mask prepass. The exact
   # connected-component flood fill remains serial to avoid racy overcounts.
-  post_alignment_chunk_detector_threads: 4
+  post_alignment_chunk_detector_threads: 8
   # After adaptive chunk blackoff, remove isolated nonzero connected
   # components whose z/y/x bounding-box dimensions are all smaller than the
   # configured minimum cell diameters. Disabled by default.
@@ -340,11 +340,16 @@ simulation:
   post_process_final_direct_amplification: 0.6
   post_process_final_blurred_amplification: 2.0
 
-  export_preprocessed_images: true
+  export_preprocessed_images: false
   export_frame_png: false
   export_frame_tiff: true
   export_post_localization_images: true
-  quit_after_preprocessing: true
+  quit_after_preprocessing: false
+  # When true, skip the upfront "preprocess all frames into memory" pass and
+  # run prepareFrame(frame) immediately before optimize(frame). This reduces
+  # peak memory by keeping the pipeline frame-by-frame. Ignored when
+  # quit_after_preprocessing is true, because that mode exits before analysis.
+  prepare_analyze_one_frame: false
 
   # Checkpoint resume: moved to run_celluniverse.sh INI preset on 2026-04-22.
   # Set `resume_from` and `resume_source_dir` in user_input_configurations.ini

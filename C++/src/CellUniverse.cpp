@@ -1283,6 +1283,24 @@ void CellUniverse::prepareFrame(int frameIndex)
                                edgeBrightnessAlignmentTarget,
                                imagePaths[static_cast<size_t>(frameIndex)],
                                std::cout);
+    blackThresholdStackAfterAlignment(real_frame,
+                                      config.simulation,
+                                      imagePaths[static_cast<size_t>(frameIndex)],
+                                      std::cout);
+    const std::vector<cv::Mat> unblackoffedFrame = cloneMatStack(real_frame);
+    blackPercentileStackAfterAlignment(real_frame,
+                                       config.simulation,
+                                       imagePaths[static_cast<size_t>(frameIndex)],
+                                       std::cout);
+    adaptBlackPercentileToChunkCount(real_frame,
+                                     unblackoffedFrame,
+                                     config.simulation,
+                                     imagePaths[static_cast<size_t>(frameIndex)],
+                                     std::cout);
+    removeTinyIsolatedParticles(real_frame,
+                                config,
+                                imagePaths[static_cast<size_t>(frameIndex)],
+                                std::cout);
 
     if (config.simulation.export_preprocessed_images) {
         exportPreprocessedStack(real_frame, fs::path(outputPath),

@@ -147,7 +147,15 @@ int main(int argc, char *argv[])
                                                                         config.simulation.z_scaling, firstFrameFile);
     // create lineage
     CellUniverse lineage = CellUniverse(cells, imageFilePaths, config, args.output, args.firstFrame, args.continueFrom);
-    lineage.preprocessAllFramesAlignedToMinimumBackground(true);
+    const bool prepareAnalyzeOneFrame =
+        config.simulation.prepare_analyze_one_frame &&
+        !config.simulation.quit_after_preprocessing;
+    if (prepareAnalyzeOneFrame) {
+        std::cout << "[INFO] prepare_analyze_one_frame=true; each frame will be prepared immediately before optimize()."
+                  << std::endl;
+    } else {
+        lineage.preprocessAllFramesAlignedToMinimumBackground(true);
+    }
 
     // Checkpoint resume (Approach 2): if config.simulation.resume_from > 0
     // and resume_source_dir is set, load the checkpoint file from

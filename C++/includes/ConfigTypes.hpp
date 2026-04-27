@@ -77,6 +77,7 @@ public:
     bool export_frame_png = true;
     bool export_frame_tiff = false;
     bool quit_after_preprocessing = false;
+    bool prepare_analyze_one_frame = false;
 
     // Checkpoint resume (Approach 2): skip frames 0..resume_from-1 and
     // load state from {resume_source_dir}/checkpoints/frame_{resume_from-1:03d}.txt.
@@ -241,6 +242,7 @@ public:
         if (node["export_frame_png"]) export_frame_png = node["export_frame_png"].as<bool>();
         if (node["export_frame_tiff"]) export_frame_tiff = node["export_frame_tiff"].as<bool>();
         if (node["quit_after_preprocessing"]) quit_after_preprocessing = node["quit_after_preprocessing"].as<bool>();
+        if (node["prepare_analyze_one_frame"]) prepare_analyze_one_frame = node["prepare_analyze_one_frame"].as<bool>();
         if (node["resume_from"]) resume_from = node["resume_from"].as<int>();
         if (node["resume_source_dir"]) resume_source_dir = node["resume_source_dir"].as<std::string>();
         if (node["export_post_localization_images"]) export_post_localization_images = node["export_post_localization_images"].as<bool>();
@@ -329,6 +331,7 @@ public:
         std::cout << "export_frame_png: " << export_frame_png << '\n';
         std::cout << "export_frame_tiff: " << export_frame_tiff << '\n';
         std::cout << "quit_after_preprocessing: " << quit_after_preprocessing << '\n';
+        std::cout << "prepare_analyze_one_frame: " << prepare_analyze_one_frame << '\n';
         std::cout << "export_post_localization_images: " << export_post_localization_images << '\n';
         std::cout << "cube_pooling_enabled: " << cube_pooling_enabled << '\n';
         std::cout << "cube_pooling_cost_comparison_enabled: " << cube_pooling_cost_comparison_enabled << '\n';
