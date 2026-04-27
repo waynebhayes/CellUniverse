@@ -792,6 +792,26 @@ public:
     // cell radii are not modified. 0.5 means random steps behave as if the
     // cell radius were half its current fitted radius.
     float randomPerturbRadiusRatio{0.5f};
+    // Random perturb bright-core guidance. After the usual reduced random
+    // position step, the candidate is nudged toward the brightest weighted
+    // centroid inside the current ellipsoid. This is separate from global
+    // signal-center guidance and works on the local enclosed image content.
+    bool randomPerturbBrightCoreGuidanceEnabled{true};
+    // Keep pixels >= this fraction of the brightest pixel inside the cell
+    // when estimating the local bright core. Higher = tighter to peak.
+    float randomPerturbBrightCoreThresholdFraction{0.5f};
+    // Pixel weight exponent for bright-core centroid. 1=linear, 2=quadratic,
+    // larger values pull harder toward the brightest center.
+    float randomPerturbBrightCoreWeightExponent{2.0f};
+    // Minimum trust given to a detected bright core.
+    float randomPerturbBrightCoreBaseTrust{0.35f};
+    // Extra trust contributed by black-vs-bright imbalance inside the cell.
+    float randomPerturbBrightCoreBlackTrust{0.65f};
+    // Extra trust contributed by absolute brightness of the bright core.
+    float randomPerturbBrightCoreBrightnessTrust{0.65f};
+    // Multiplier on the capped push toward the bright core. 0 disables the
+    // added push but still allows damping movement away from the bright core.
+    float randomPerturbBrightCoreGuideStrength{0.75f};
     // Maximum valid z position (interpolated z-space). Used to clamp Ellipsoid
     // center z in the constructor, preventing cells from drifting off the z-stack.
     // Default 224 = (z_slices=225) - 1. Runtime-updated by CellUniverse::loadFrame
@@ -860,6 +880,13 @@ public:
         if (node["pcaShapeRadiusPercentile"]) pcaShapeRadiusPercentile = node["pcaShapeRadiusPercentile"].as<float>();
         if (node["perturbSigmaReferenceRadius"]) perturbSigmaReferenceRadius = node["perturbSigmaReferenceRadius"].as<float>();
         if (node["randomPerturbRadiusRatio"]) randomPerturbRadiusRatio = node["randomPerturbRadiusRatio"].as<float>();
+        if (node["randomPerturbBrightCoreGuidanceEnabled"]) randomPerturbBrightCoreGuidanceEnabled = node["randomPerturbBrightCoreGuidanceEnabled"].as<bool>();
+        if (node["randomPerturbBrightCoreThresholdFraction"]) randomPerturbBrightCoreThresholdFraction = node["randomPerturbBrightCoreThresholdFraction"].as<float>();
+        if (node["randomPerturbBrightCoreWeightExponent"]) randomPerturbBrightCoreWeightExponent = node["randomPerturbBrightCoreWeightExponent"].as<float>();
+        if (node["randomPerturbBrightCoreBaseTrust"]) randomPerturbBrightCoreBaseTrust = node["randomPerturbBrightCoreBaseTrust"].as<float>();
+        if (node["randomPerturbBrightCoreBlackTrust"]) randomPerturbBrightCoreBlackTrust = node["randomPerturbBrightCoreBlackTrust"].as<float>();
+        if (node["randomPerturbBrightCoreBrightnessTrust"]) randomPerturbBrightCoreBrightnessTrust = node["randomPerturbBrightCoreBrightnessTrust"].as<float>();
+        if (node["randomPerturbBrightCoreGuideStrength"]) randomPerturbBrightCoreGuideStrength = node["randomPerturbBrightCoreGuideStrength"].as<float>();
     }
 };
 

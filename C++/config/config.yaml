@@ -43,7 +43,7 @@ cell:
   maxCRadius: 70
 
   initialRadiusScale: 1.0
-  initialBrightness: 0.9
+  initialBrightness: 1.0
   backgroundColor: 0.0
 
   minBrightness: 0.1
@@ -233,7 +233,26 @@ cell:
   # max radius when scaling x/y/z perturbation sigma. This does not shrink
   # the fitted/output cell; it only makes random motion act like the cell
   # radius is smaller. 0.5 = half-radius random perturb steps.
-  randomPerturbRadiusRatio: 0.5
+  randomPerturbRadiusRatio: 0.9
+  # Local bright-core guidance for normal random perturbing. This does not
+  # use global signal centers; it looks only inside the current ellipsoid
+  # and nudges random proposals toward the brightest enclosed chunk.
+  randomPerturbBrightCoreGuidanceEnabled: true
+  # Keep pixels >= this fraction of the brightest enclosed pixel when finding
+  # the local bright core. Higher = tighter to the brightest center.
+  randomPerturbBrightCoreThresholdFraction: 0.5
+  # Centroid weighting exponent. 1.0 = linear brightness, 2.0 = quadratic,
+  # larger values concentrate faster onto the brightest part of the chunk.
+  randomPerturbBrightCoreWeightExponent: 2.0
+  # Trust controls. Base trust is always added after a bright core is found.
+  # Black trust increases guidance when part of the cell is black and part is
+  # bright. Brightness trust increases guidance for stronger bright cores.
+  randomPerturbBrightCoreBaseTrust: 0.35
+  randomPerturbBrightCoreBlackTrust: 0.65
+  randomPerturbBrightCoreBrightnessTrust: 0.65
+  # Main strength knob for the added push toward the bright core. 0 disables
+  # the push, while still damping random movement away from the bright core.
+  randomPerturbBrightCoreGuideStrength: 0.75
 
 # Image preprocessing pipeline — iterative contrast enhancer ported from
 # scripts/image_processor_clean.py. No sigmoid.
@@ -613,7 +632,13 @@ prob:
   # gate by placing daughters far apart in y, where the genuine empty space
   # between them dropped the valley ratio. Tighter ratio (0.75) requires
   # a deeper valley to accept a split.
-  bio_bridge_max_valley_ratio: 0.75
+  # 2026-04-27: 0.75 → 0.90 for the current preprocessing/perturb setup.
+  # Run output_ubuntu_1-6_20260427_094145 rejected all f3 candidates before
+  # final gates: expected e9077 candidates had valley≈0.81-0.84 and expected
+  # 12345 candidates had valley≈0.86-0.89, while obvious continuous blobs
+  # in that frame stayed near 0.96-1.03. This restores those real f3 splits
+  # without accepting the clear no-valley candidates.
+  bio_bridge_max_valley_ratio: 0.90
   # Absolute minimum edge brightness (real-image units above background).
   # Rejects splits where min(edge1Bright, edge2Bright) < threshold — one
   # daughter sits in near-background empty space. Typical cell cores

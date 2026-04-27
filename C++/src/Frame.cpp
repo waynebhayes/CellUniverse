@@ -117,6 +117,114 @@ static cv::Point3f signalProbabilityGradientAt(const std::vector<cv::Mat> &proba
                 sampleSignalProbability(probability, pos.x, pos.y, pos.z - 1.0f)));
 }
 
+static bool estimateBrightCoreCentroidInCell(const std::vector<cv::Mat> &realFrame,
+                                             const Ellipsoid &cell,
+                                             const EllipsoidConfig &cellConfig,
+                                             cv::Point3f &centroid,
+                                             float &trust)
+{
+    if (realFrame.empty() || realFrame[0].empty()) {
+        return false;
+    }
+
+    const int maxZIndex = static_cast<int>(realFrame.size()) - 1;
+    const float maxR = std::max({cell.getARadius(), cell.getBRadius(), cell.getCRadius()});
+    const int minX = std::max(0, static_cast<int>(std::floor(cell.getX() - maxR)));
+    const int maxX = std::min(realFrame[0].cols - 1, static_cast<int>(std::ceil(cell.getX() + maxR)));
+    const int minY = std::max(0, static_cast<int>(std::floor(cell.getY() - maxR)));
+    const int maxY = std::min(realFrame[0].rows - 1, static_cast<int>(std::ceil(cell.getY() + maxR)));
+    const int minZ = std::max(0, static_cast<int>(std::floor(cell.getZ() - maxR)));
+    const int maxZ = std::min(maxZIndex, static_cast<int>(std::ceil(cell.getZ() + maxR)));
+    if (minX > maxX || minY > maxY || minZ > maxZ) {
+        return false;
+    }
+
+    constexpr float kBlackEpsilon = 1e-6f;
+    int insideCount = 0;
+    int positiveCount = 0;
+    float maxPixel = 0.0f;
+    for (int z = minZ; z <= maxZ; ++z) {
+        if (realFrame[static_cast<size_t>(z)].type() != CV_32F) {
+            return false;
+        }
+        const cv::Mat &slice = realFrame[static_cast<size_t>(z)];
+        for (int y = minY; y <= maxY; ++y) {
+            const float *row = slice.ptr<float>(y);
+            for (int x = minX; x <= maxX; ++x) {
+                if (!cell.isPointInsideEllipsoid(cv::Point3f(
+                        static_cast<float>(x), static_cast<float>(y), static_cast<float>(z)))) {
+                    continue;
+                }
+                ++insideCount;
+                const float pixel = row[x];
+                if (pixel > kBlackEpsilon) {
+                    ++positiveCount;
+                    maxPixel = std::max(maxPixel, pixel);
+                }
+            }
+        }
+    }
+    if (insideCount == 0 || positiveCount == 0 || maxPixel <= kBlackEpsilon) {
+        return false;
+    }
+
+    const float thresholdFraction = std::clamp(
+        cellConfig.randomPerturbBrightCoreThresholdFraction, 0.0f, 1.0f);
+    const float weightExponent = std::max(
+        0.0f, cellConfig.randomPerturbBrightCoreWeightExponent);
+    const float brightCoreThreshold = std::max(kBlackEpsilon, thresholdFraction * maxPixel);
+    double weightSum = 0.0;
+    cv::Point3d weightedSum(0.0, 0.0, 0.0);
+    for (int z = minZ; z <= maxZ; ++z) {
+        const cv::Mat &slice = realFrame[static_cast<size_t>(z)];
+        for (int y = minY; y <= maxY; ++y) {
+            const float *row = slice.ptr<float>(y);
+            for (int x = minX; x <= maxX; ++x) {
+                const cv::Point3f point(static_cast<float>(x),
+                                        static_cast<float>(y),
+                                        static_cast<float>(z));
+                if (!cell.isPointInsideEllipsoid(point)) {
+                    continue;
+                }
+                const float pixel = row[x];
+                if (pixel < brightCoreThreshold) {
+                    continue;
+                }
+                double weight = 1.0;
+                if (std::abs(weightExponent - 1.0f) <= 1e-6f) {
+                    weight = static_cast<double>(pixel);
+                } else if (std::abs(weightExponent - 2.0f) <= 1e-6f) {
+                    weight = static_cast<double>(pixel) * static_cast<double>(pixel);
+                } else if (weightExponent > 0.0f) {
+                    weight = std::pow(static_cast<double>(pixel), static_cast<double>(weightExponent));
+                }
+                weightSum += weight;
+                weightedSum.x += weight * x;
+                weightedSum.y += weight * y;
+                weightedSum.z += weight * z;
+            }
+        }
+    }
+    if (weightSum <= 1e-12) {
+        return false;
+    }
+
+    centroid = cv::Point3f(static_cast<float>(weightedSum.x / weightSum),
+                           static_cast<float>(weightedSum.y / weightSum),
+                           static_cast<float>(weightedSum.z / weightSum));
+    const float brightFraction = static_cast<float>(positiveCount) /
+                                 static_cast<float>(std::max(1, insideCount));
+    const float blackAndBrightTrust = 1.0f - brightFraction;
+    const float baseTrust = std::max(0.0f, cellConfig.randomPerturbBrightCoreBaseTrust);
+    const float blackTrust = std::max(0.0f, cellConfig.randomPerturbBrightCoreBlackTrust);
+    const float brightnessTrust = std::max(0.0f, cellConfig.randomPerturbBrightCoreBrightnessTrust);
+    trust = std::clamp(baseTrust +
+                           blackTrust * blackAndBrightTrust +
+                           brightnessTrust * std::clamp(maxPixel, 0.0f, 1.0f),
+                       0.0f, 1.0f);
+    return true;
+}
+
 // Function to interpolate between two slices
 void interpolateSlices(const cv::Mat& slice1, const cv::Mat& slice2, 
                        std::vector<cv::Mat>& processedSlices, int numInterpolations) {
@@ -825,12 +933,51 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight,
         const float maxR = std::max({oldCell.getARadius(),
                                      oldCell.getBRadius(),
                                      oldCell.getCRadius()});
-        const float radiusRatio = useSignalGuidance
-            ? 1.0f
-            : std::max(0.0f, randomPerturbRadiusRatio);
+        const float radiusRatio = std::max(0.0f, randomPerturbRadiusRatio);
         posScale = (maxR * radiusRatio) / refR;
     }
     cells[index] = cells[index].getPerturbedCell(&perturbDirections, posScale);
+
+    if (!useSignalGuidance &&
+        Ellipsoid::cellConfig.randomPerturbBrightCoreGuidanceEnabled &&
+        !_realFrame.empty()) {
+        const cv::Point3f oldPos(oldCell.getX(), oldCell.getY(), oldCell.getZ());
+        cv::Point3f brightCore;
+        float brightCoreTrust = 0.0f;
+        if (estimateBrightCoreCentroidInCell(
+                _realFrame, oldCell, Ellipsoid::cellConfig, brightCore, brightCoreTrust)) {
+            cv::Point3f candidate(cells[index].getX(), cells[index].getY(), cells[index].getZ());
+            const cv::Point3f towardBrightCore = brightCore - oldPos;
+            const float brightCoreDistance = static_cast<float>(cv::norm(towardBrightCore));
+            if (brightCoreDistance > 1e-3f) {
+                const cv::Point3f uphill = towardBrightCore * (1.0f / brightCoreDistance);
+                const cv::Point3f randomDelta = candidate - oldPos;
+                const float uphillDot = randomDelta.x * uphill.x +
+                                        randomDelta.y * uphill.y +
+                                        randomDelta.z * uphill.z;
+                if (uphillDot < 0.0f) {
+                    candidate -= uphill * (uphillDot * brightCoreTrust);
+                }
+
+                const float maxSigma = std::max({std::abs(Ellipsoid::cellConfig.x.sigma),
+                                                 std::abs(Ellipsoid::cellConfig.y.sigma),
+                                                 std::abs(Ellipsoid::cellConfig.z.sigma)});
+                const float stepBudget = std::max(0.0f, maxSigma * posScale);
+                const float guideStrength = std::max(
+                    0.0f, Ellipsoid::cellConfig.randomPerturbBrightCoreGuideStrength);
+                candidate += uphill * std::min(brightCoreDistance,
+                                               guideStrength * stepBudget * brightCoreTrust);
+
+                const float maxX = static_cast<float>(_realFrame[0].cols - 1);
+                const float maxY = static_cast<float>(_realFrame[0].rows - 1);
+                const float maxZ = static_cast<float>(_realFrame.size() - 1);
+                cells[index].setPosition(
+                    std::clamp(candidate.x, 0.0f, maxX),
+                    std::clamp(candidate.y, 0.0f, maxY),
+                    std::clamp(candidate.z, 0.0f, maxZ));
+            }
+        }
+    }
 
     // Signal-guided perturbation: keep the random candidate rooted at the
     // original cell location, then locally bias it uphill in the precomputed
