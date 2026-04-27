@@ -675,6 +675,157 @@ static int countSeparatedChunksInSizeRange(const std::vector<cv::Mat> &stack,
     return matchingChunkCount;
 }
 
+static void removeTinyIsolatedParticles(std::vector<cv::Mat> &stack,
+                                        const BaseConfig &config,
+                                        const fs::path &framePath,
+                                        std::ostream &log)
+{
+    if (!config.simulation.post_alignment_tiny_particle_removal_enabled || stack.empty()) {
+        return;
+    }
+
+    const int depth = static_cast<int>(stack.size());
+    const int rows = stack.front().rows;
+    const int cols = stack.front().cols;
+    if (depth <= 0 || rows <= 0 || cols <= 0) {
+        return;
+    }
+    for (const auto &slice : stack) {
+        if (slice.empty() || slice.rows != rows || slice.cols != cols) {
+            return;
+        }
+        CV_Assert(slice.type() == CV_32F);
+    }
+
+    const double minARadius = config.cell ? config.cell->minARadius : 5.0;
+    const double minBRadius = config.cell
+        ? (config.cell->minBRadius > 0.0 ? config.cell->minBRadius : config.cell->minARadius)
+        : 5.0;
+    const double minCRadius = config.cell ? config.cell->minCRadius : 5.0;
+    const int minXSize = std::max(1, static_cast<int>(std::ceil(2.0 * minARadius)));
+    const int minYSize = std::max(1, static_cast<int>(std::ceil(2.0 * minBRadius)));
+    const int minZSize = std::max(1, static_cast<int>(std::ceil(2.0 * minCRadius)));
+
+    const std::size_t planeSize = static_cast<std::size_t>(rows) * static_cast<std::size_t>(cols);
+    const std::size_t voxelCount = static_cast<std::size_t>(depth) * planeSize;
+    std::vector<std::uint8_t> foreground(voxelCount, 0U);
+    std::vector<std::uint8_t> visited(voxelCount, 0U);
+    std::vector<std::size_t> pending;
+    std::vector<std::size_t> componentVoxels;
+
+    auto indexOf = [&](int z, int y, int x) {
+        return static_cast<std::size_t>(z) * planeSize +
+               static_cast<std::size_t>(y) * static_cast<std::size_t>(cols) +
+               static_cast<std::size_t>(x);
+    };
+
+    int detectorThreads = std::max(1, config.simulation.post_alignment_chunk_detector_threads);
+#ifdef _OPENMP
+    detectorThreads = std::min(detectorThreads, std::max(1, omp_get_max_threads()));
+    if (omp_in_parallel()) {
+        detectorThreads = 1;
+    }
+#endif
+
+    #pragma omp parallel for schedule(static) num_threads(detectorThreads)
+    for (int z = 0; z < depth; ++z) {
+        const cv::Mat &slice = stack[static_cast<std::size_t>(z)];
+        for (int y = 0; y < rows; ++y) {
+            const float *row = slice.ptr<float>(y);
+            for (int x = 0; x < cols; ++x) {
+                const float value = row[x];
+                foreground[indexOf(z, y, x)] =
+                    (std::isfinite(value) && value > 0.0f) ? 1U : 0U;
+            }
+        }
+    }
+
+    int removedComponentCount = 0;
+    std::size_t removedVoxelCount = 0;
+    for (int z = 0; z < depth; ++z) {
+        for (int y = 0; y < rows; ++y) {
+            for (int x = 0; x < cols; ++x) {
+                const std::size_t startIndex = indexOf(z, y, x);
+                if (visited[startIndex] || !foreground[startIndex]) {
+                    visited[startIndex] = 1U;
+                    continue;
+                }
+
+                int minZ = z;
+                int maxZ = z;
+                int minY = y;
+                int maxY = y;
+                int minX = x;
+                int maxX = x;
+                visited[startIndex] = 1U;
+                pending.clear();
+                componentVoxels.clear();
+                pending.push_back(startIndex);
+
+                while (!pending.empty()) {
+                    const std::size_t currentIndex = pending.back();
+                    pending.pop_back();
+                    componentVoxels.push_back(currentIndex);
+                    const int currentZ = static_cast<int>(currentIndex / planeSize);
+                    const std::size_t inPlane = currentIndex % planeSize;
+                    const int currentY = static_cast<int>(inPlane / static_cast<std::size_t>(cols));
+                    const int currentX = static_cast<int>(inPlane % static_cast<std::size_t>(cols));
+
+                    minZ = std::min(minZ, currentZ);
+                    maxZ = std::max(maxZ, currentZ);
+                    minY = std::min(minY, currentY);
+                    maxY = std::max(maxY, currentY);
+                    minX = std::min(minX, currentX);
+                    maxX = std::max(maxX, currentX);
+
+                    for (int dz = -1; dz <= 1; ++dz) {
+                        const int nz = currentZ + dz;
+                        if (nz < 0 || nz >= depth) continue;
+                        for (int dy = -1; dy <= 1; ++dy) {
+                            const int ny = currentY + dy;
+                            if (ny < 0 || ny >= rows) continue;
+                            for (int dx = -1; dx <= 1; ++dx) {
+                                if (dz == 0 && dy == 0 && dx == 0) continue;
+                                const int nx = currentX + dx;
+                                if (nx < 0 || nx >= cols) continue;
+
+                                const std::size_t neighborIndex = indexOf(nz, ny, nx);
+                                if (visited[neighborIndex]) continue;
+                                visited[neighborIndex] = 1U;
+                                if (foreground[neighborIndex]) {
+                                    pending.push_back(neighborIndex);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                const int zSize = maxZ - minZ + 1;
+                const int ySize = maxY - minY + 1;
+                const int xSize = maxX - minX + 1;
+                if (zSize < minZSize && ySize < minYSize && xSize < minXSize) {
+                    ++removedComponentCount;
+                    removedVoxelCount += componentVoxels.size();
+                    for (const std::size_t voxelIndex : componentVoxels) {
+                        const int voxelZ = static_cast<int>(voxelIndex / planeSize);
+                        const std::size_t inPlane = voxelIndex % planeSize;
+                        const int voxelY = static_cast<int>(inPlane / static_cast<std::size_t>(cols));
+                        const int voxelX = static_cast<int>(inPlane % static_cast<std::size_t>(cols));
+                        stack[static_cast<std::size_t>(voxelZ)].ptr<float>(voxelY)[voxelX] = 0.0f;
+                    }
+                }
+            }
+        }
+    }
+
+    log << "[PostAlignmentTinyParticleRemoval] frame=" << framePath.filename().string()
+        << " removed_components=" << removedComponentCount
+        << " removed_voxels=" << removedVoxelCount
+        << " min_bbox=(" << minZSize << "," << minYSize << "," << minXSize << ")"
+        << " detector_threads=" << detectorThreads
+        << std::endl;
+}
+
 static void adaptBlackPercentileToChunkCount(std::vector<cv::Mat> &stack,
                                              const std::vector<cv::Mat> &unblackoffedStack,
                                              const SimulationConfig &config,
@@ -1208,6 +1359,10 @@ void CellUniverse::preprocessAllFramesAlignedToMinimumBackground(bool loadIntoFr
                                              config.simulation,
                                              imagePaths[static_cast<size_t>(frameIndex)],
                                              std::cout);
+            removeTinyIsolatedParticles(realFrame,
+                                        config,
+                                        imagePaths[static_cast<size_t>(frameIndex)],
+                                        std::cout);
 
             if (config.simulation.export_preprocessed_images) {
                 exportPreprocessedStack(realFrame, fs::path(outputPath),
@@ -1276,6 +1431,10 @@ void CellUniverse::preprocessAllFramesAlignedToMinimumBackground(bool loadIntoFr
                                          config.simulation,
                                          imagePaths[static_cast<size_t>(frameIndex)],
                                          std::cout);
+        removeTinyIsolatedParticles(item.stack,
+                                    config,
+                                    imagePaths[static_cast<size_t>(frameIndex)],
+                                    std::cout);
 
         if (config.simulation.export_preprocessed_images) {
             exportPreprocessedStack(item.stack, fs::path(outputPath),

@@ -326,6 +326,10 @@ simulation:
   # Thread cap for the chunk detector foreground-mask prepass. The exact
   # connected-component flood fill remains serial to avoid racy overcounts.
   post_alignment_chunk_detector_threads: 4
+  # After adaptive chunk blackoff, remove isolated nonzero connected
+  # components whose z/y/x bounding-box dimensions are all smaller than the
+  # configured minimum cell diameters. Disabled by default.
+  post_alignment_tiny_particle_removal_enabled: true
   # Number of radius trials to run in parallel during each frame's contrast
   # preprocessing radius search.
   preprocess_radius_batch_size: 8
