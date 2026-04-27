@@ -74,6 +74,7 @@ public:
     float post_process_final_direct_amplification = 1.0f;
     float post_process_final_blurred_amplification = 1.0f;
     bool export_preprocessed_images = false;
+    bool export_signal_debug_images = false;
     bool export_frame_png = true;
     bool export_frame_tiff = false;
     bool quit_after_preprocessing = false;
@@ -239,6 +240,7 @@ public:
         if (node["post_process_final_direct_amplification"]) post_process_final_direct_amplification = node["post_process_final_direct_amplification"].as<float>();
         if (node["post_process_final_blurred_amplification"]) post_process_final_blurred_amplification = node["post_process_final_blurred_amplification"].as<float>();
         if (node["export_preprocessed_images"]) export_preprocessed_images = node["export_preprocessed_images"].as<bool>();
+        if (node["export_signal_debug_images"]) export_signal_debug_images = node["export_signal_debug_images"].as<bool>();
         if (node["export_frame_png"]) export_frame_png = node["export_frame_png"].as<bool>();
         if (node["export_frame_tiff"]) export_frame_tiff = node["export_frame_tiff"].as<bool>();
         if (node["quit_after_preprocessing"]) quit_after_preprocessing = node["quit_after_preprocessing"].as<bool>();
@@ -328,6 +330,7 @@ public:
         std::cout << "post_process_final_direct_amplification: " << post_process_final_direct_amplification << '\n';
         std::cout << "post_process_final_blurred_amplification: " << post_process_final_blurred_amplification << '\n';
         std::cout << "export_preprocessed_images: " << export_preprocessed_images << '\n';
+        std::cout << "export_signal_debug_images: " << export_signal_debug_images << '\n';
         std::cout << "export_frame_png: " << export_frame_png << '\n';
         std::cout << "export_frame_tiff: " << export_frame_tiff << '\n';
         std::cout << "quit_after_preprocessing: " << quit_after_preprocessing << '\n';
@@ -775,6 +778,11 @@ public:
     // Cells larger than refR take bigger steps; smaller cells take smaller
     // steps. Set to 0 to disable (all cells use base sigma unchanged).
     float perturbSigmaReferenceRadius{0.0f};
+    // Random perturbation radius multiplier. Only the random perturb path
+    // applies this to the radius used for position-sigma scaling; fitted
+    // cell radii are not modified. 0.5 means random steps behave as if the
+    // cell radius were half its current fitted radius.
+    float randomPerturbRadiusRatio{0.5f};
     // Maximum valid z position (interpolated z-space). Used to clamp Ellipsoid
     // center z in the constructor, preventing cells from drifting off the z-stack.
     // Default 224 = (z_slices=225) - 1. Runtime-updated by CellUniverse::loadFrame
@@ -842,6 +850,7 @@ public:
         if (node["pcaShapeRadiusInflationBright"]) pcaShapeRadiusInflationBright = node["pcaShapeRadiusInflationBright"].as<float>();
         if (node["pcaShapeRadiusPercentile"]) pcaShapeRadiusPercentile = node["pcaShapeRadiusPercentile"].as<float>();
         if (node["perturbSigmaReferenceRadius"]) perturbSigmaReferenceRadius = node["perturbSigmaReferenceRadius"].as<float>();
+        if (node["randomPerturbRadiusRatio"]) randomPerturbRadiusRatio = node["randomPerturbRadiusRatio"].as<float>();
     }
 };
 

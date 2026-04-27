@@ -3,12 +3,14 @@
 #include <set>
 #include <cmath>
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <limits>
 #include <numeric>
 #include <utility>
 #include <sstream>
 #include <cstdint>
+#include <queue>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -875,16 +877,17 @@ static void adaptBlackPercentileToChunkCount(std::vector<cv::Mat> &stack,
     }
 }
 
-static void exportPreprocessedStack(const std::vector<cv::Mat> &stack,
-                                    const fs::path &baseOutputDir,
-                                    const fs::path &framePath,
-                                    bool exportPng,
-                                    bool exportTiff)
+static void exportStackToSubdir(const std::vector<cv::Mat> &stack,
+                                const fs::path &baseOutputDir,
+                                const fs::path &subdir,
+                                const fs::path &framePath,
+                                bool exportPng,
+                                bool exportTiff)
 {
-    const fs::path preprocessedDir = baseOutputDir / "preprocessed";
+    const fs::path outputDir = baseOutputDir / subdir;
 
     if (exportPng) {
-        const fs::path frameOutputDir = preprocessedDir / framePath.stem();
+        const fs::path frameOutputDir = outputDir / framePath.stem();
         fs::create_directories(frameOutputDir);
 
         for (size_t i = 0; i < stack.size(); ++i) {
@@ -909,10 +912,20 @@ static void exportPreprocessedStack(const std::vector<cv::Mat> &stack,
     }
 
     if (exportTiff) {
-        fs::create_directories(preprocessedDir);
-        const fs::path outputFile = preprocessedDir / (framePath.stem().string() + ".tif");
+        fs::create_directories(outputDir);
+        const fs::path outputFile = outputDir / (framePath.stem().string() + ".tif");
         writeNapariFriendlyTiffStack(outputFile.string(), stack);
     }
+}
+
+static void exportPreprocessedStack(const std::vector<cv::Mat> &stack,
+                                    const fs::path &baseOutputDir,
+                                    const fs::path &framePath,
+                                    bool exportPng,
+                                    bool exportTiff)
+{
+    exportStackToSubdir(stack, baseOutputDir, "preprocessed", framePath,
+                        exportPng, exportTiff);
 }
 
 // === Signal-guided perturbation helpers (yp ffc1917) ===
@@ -1029,13 +1042,14 @@ static std::vector<Frame::SignalCenter> localizeSignalCentersForFrame(
     float maxCenterBrightness = backgroundValue;
     for (size_t seed = 0; seed < boxes.size(); ++seed) {
         if (visited[seed]) continue;
-        std::vector<size_t> stack{seed};
+        std::queue<size_t> queue;
+        queue.push(seed);
         visited[seed] = 1;
         double weightSum = 0.0, xSum = 0.0, ySum = 0.0, zSum = 0.0, brightnessSum = 0.0;
         int clusterBoxes = 0;
-        while (!stack.empty()) {
-            const size_t current = stack.back();
-            stack.pop_back();
+        while (!queue.empty()) {
+            const size_t current = queue.front();
+            queue.pop();
             const BrightBox &box = boxes[current];
             const float weight = std::max(1e-6f, box.brightness - backgroundValue);
             weightSum += weight;
@@ -1044,17 +1058,22 @@ static std::vector<Frame::SignalCenter> localizeSignalCentersForFrame(
             zSum += weight * static_cast<double>(box.center.z);
             brightnessSum += static_cast<double>(box.brightness);
             ++clusterBoxes;
-            for (int dz = -1; dz <= 1; ++dz)
-                for (int dy = -1; dy <= 1; ++dy)
-                    for (int dx = -1; dx <= 1; ++dx) {
-                        if (dx == 0 && dy == 0 && dz == 0) continue;
-                        auto it = boxIndex.find({box.ix + dx, box.iy + dy, box.iz + dz});
-                        if (it == boxIndex.end()) continue;
-                        const size_t neighbor = it->second;
-                        if (visited[neighbor]) continue;
-                        visited[neighbor] = 1;
-                        stack.push_back(neighbor);
-                    }
+            static constexpr std::array<std::array<int, 3>, 6> kFaceNeighbors{{
+                {{ 1,  0,  0}}, {{-1,  0,  0}},
+                {{ 0,  1,  0}}, {{ 0, -1,  0}},
+                {{ 0,  0,  1}}, {{ 0,  0, -1}}
+            }};
+            for (const auto &offset : kFaceNeighbors) {
+                auto it = boxIndex.find({
+                    box.ix + offset[0],
+                    box.iy + offset[1],
+                    box.iz + offset[2]});
+                if (it == boxIndex.end()) continue;
+                const size_t neighbor = it->second;
+                if (visited[neighbor]) continue;
+                visited[neighbor] = 1;
+                queue.push(neighbor);
+            }
         }
         if (clusterBoxes <= 0 || weightSum <= 0.0) continue;
         Frame::SignalCenter center;
@@ -1099,6 +1118,126 @@ static std::vector<Frame::SignalCenter> localizeSignalCentersForFrame(
                   << " boxes=" << c.boxes << '\n';
     }
     return centers;
+}
+
+static void exportSignalDebugStacks(const std::vector<cv::Mat> &realFrame,
+                                    const std::vector<Frame::SignalCenter> &centers,
+                                    const BaseConfig &config,
+                                    const fs::path &baseOutputDir,
+                                    const fs::path &framePath)
+{
+    if (!config.simulation.export_signal_debug_images || realFrame.empty()) {
+        return;
+    }
+
+    std::vector<cv::Mat> centerCubes;
+    std::vector<cv::Mat> probabilityOverlay;
+    centerCubes.reserve(realFrame.size());
+    probabilityOverlay.reserve(realFrame.size());
+    for (const auto &slice : realFrame) {
+        centerCubes.emplace_back(cv::Mat::zeros(slice.size(), CV_32F));
+        cv::Mat base;
+        if (slice.type() == CV_32F) {
+            base = slice.clone();
+        } else {
+            slice.convertTo(base, CV_32F);
+        }
+        cv::patchNaNs(base, 0.0);
+        cv::min(base, 1.0f, base);
+        cv::max(base, 0.0f, base);
+        probabilityOverlay.push_back(std::move(base));
+    }
+
+    constexpr int kCubeHalfSize = 2;
+    const int zCount = static_cast<int>(realFrame.size());
+    for (const auto &center : centers) {
+        const int cx = static_cast<int>(std::round(center.position.x));
+        const int cy = static_cast<int>(std::round(center.position.y));
+        const int cz = static_cast<int>(std::round(center.position.z));
+        const int z0 = std::max(0, cz - kCubeHalfSize);
+        const int z1 = std::min(zCount - 1, cz + kCubeHalfSize);
+        for (int z = z0; z <= z1; ++z) {
+            cv::Mat &slice = centerCubes[static_cast<size_t>(z)];
+            const int x0 = std::max(0, cx - kCubeHalfSize);
+            const int x1 = std::min(slice.cols - 1, cx + kCubeHalfSize);
+            const int y0 = std::max(0, cy - kCubeHalfSize);
+            const int y1 = std::min(slice.rows - 1, cy + kCubeHalfSize);
+            for (int y = y0; y <= y1; ++y) {
+                float *row = slice.ptr<float>(y);
+                for (int x = x0; x <= x1; ++x) {
+                    row[x] = 1.0f;
+                }
+            }
+        }
+    }
+
+    if (!centers.empty()) {
+        std::vector<cv::Mat> probability;
+        probability.reserve(realFrame.size());
+        for (const auto &slice : realFrame) {
+            probability.emplace_back(cv::Mat::zeros(slice.size(), CV_32F));
+        }
+
+        const float minSigmaScale =
+            std::max(0.0f, config.simulation.signal_guided_min_sigma_scale);
+        const float sigmaRangeMultiplier =
+            std::max(1e-3f, config.simulation.signal_guided_sigma_range_multiplier);
+
+        float maxProb = 0.0f;
+        #pragma omp parallel for schedule(static) reduction(max:maxProb)
+        for (int z = 0; z < static_cast<int>(probability.size()); ++z) {
+            cv::Mat &probSlice = probability[static_cast<size_t>(z)];
+            for (int y = 0; y < probSlice.rows; ++y) {
+                float *probRow = probSlice.ptr<float>(y);
+                for (int x = 0; x < probSlice.cols; ++x) {
+                    float bestProb = 0.0f;
+                    for (const auto &center : centers) {
+                        const float sigmaScale =
+                            std::max(minSigmaScale, center.sigmaScale);
+                        const float sx = std::max(
+                            1e-3f, Ellipsoid::cellConfig.x.sigma * sigmaScale * sigmaRangeMultiplier);
+                        const float sy = std::max(
+                            1e-3f, Ellipsoid::cellConfig.y.sigma * sigmaScale * sigmaRangeMultiplier);
+                        const float sz = std::max(
+                            1e-3f, Ellipsoid::cellConfig.z.sigma * sigmaScale * sigmaRangeMultiplier);
+                        const float dx = (static_cast<float>(x) - center.position.x) / sx;
+                        const float dy = (static_cast<float>(y) - center.position.y) / sy;
+                        const float dz = (static_cast<float>(z) - center.position.z) / sz;
+                        const float p = std::exp(-0.5f * (dx * dx + dy * dy + dz * dz));
+                        bestProb = std::max(bestProb, p);
+                    }
+                    probRow[x] = bestProb;
+                    maxProb = std::max(maxProb, bestProb);
+                }
+            }
+        }
+
+        if (maxProb > 1e-6f) {
+            #pragma omp parallel for schedule(static)
+            for (int z = 0; z < static_cast<int>(probabilityOverlay.size()); ++z) {
+                cv::Mat &overlay = probabilityOverlay[static_cast<size_t>(z)];
+                const cv::Mat &probSlice = probability[static_cast<size_t>(z)];
+                for (int y = 0; y < overlay.rows; ++y) {
+                    float *overlayRow = overlay.ptr<float>(y);
+                    const float *probRow = probSlice.ptr<float>(y);
+                    for (int x = 0; x < overlay.cols; ++x) {
+                        const float heat = probRow[x] / maxProb;
+                        overlayRow[x] = std::clamp(0.55f * overlayRow[x] + 0.45f * heat,
+                                                   0.0f, 1.0f);
+                    }
+                }
+            }
+        }
+    }
+
+    exportStackToSubdir(centerCubes, baseOutputDir, "signal_debug/centers",
+                        framePath,
+                        config.simulation.export_frame_png,
+                        config.simulation.export_frame_tiff);
+    exportStackToSubdir(probabilityOverlay, baseOutputDir, "signal_debug/perturb_probability",
+                        framePath,
+                        config.simulation.export_frame_png,
+                        config.simulation.export_frame_tiff);
 }
 
 static float estimateAdaptiveBackgroundFromFrame(const Frame &frame,
@@ -1313,6 +1452,20 @@ void CellUniverse::prepareFrame(int frameIndex)
     // cost cache. The previous `if (config.cell) regenerateSynthFrame()` was
     // redundant work (2x render + 2x cost cache per frame).
     frames[frameIndex].loadImageStacks(real_frame);
+    if (config.simulation.signal_guided_position_enabled ||
+        config.simulation.export_signal_debug_images) {
+        std::vector<Frame::SignalCenter> centers = localizeSignalCentersForFrame(
+            frames[frameIndex], config, firstFrame + frameIndex);
+        exportSignalDebugStacks(real_frame, centers, config, fs::path(outputPath),
+                                imagePaths[static_cast<size_t>(frameIndex)]);
+        if (config.simulation.signal_guided_position_enabled) {
+            frames[frameIndex].setSignalCenters(std::move(centers));
+        } else {
+            frames[frameIndex].setSignalCenters({});
+        }
+    } else {
+        frames[frameIndex].setSignalCenters({});
+    }
 }
 
 void CellUniverse::preprocessAllFramesAlignedToMinimumBackground(bool loadIntoFrames)
@@ -1391,6 +1544,24 @@ void CellUniverse::preprocessAllFramesAlignedToMinimumBackground(bool loadIntoFr
 
             if (loadIntoFrames) {
                 frames[static_cast<size_t>(frameIndex)].loadImageStacks(realFrame);
+                if (config.simulation.signal_guided_position_enabled ||
+                    config.simulation.export_signal_debug_images) {
+                    std::vector<Frame::SignalCenter> centers =
+                        localizeSignalCentersForFrame(
+                            frames[static_cast<size_t>(frameIndex)],
+                            config,
+                            firstFrame + frameIndex);
+                    exportSignalDebugStacks(realFrame, centers, config,
+                                            fs::path(outputPath),
+                                            imagePaths[static_cast<size_t>(frameIndex)]);
+                    if (config.simulation.signal_guided_position_enabled) {
+                        frames[static_cast<size_t>(frameIndex)].setSignalCenters(std::move(centers));
+                    } else {
+                        frames[static_cast<size_t>(frameIndex)].setSignalCenters({});
+                    }
+                } else {
+                    frames[static_cast<size_t>(frameIndex)].setSignalCenters({});
+                }
             }
             continue;
         }
@@ -1463,6 +1634,24 @@ void CellUniverse::preprocessAllFramesAlignedToMinimumBackground(bool loadIntoFr
 
         if (loadIntoFrames) {
             frames[static_cast<size_t>(frameIndex)].loadImageStacks(item.stack);
+            if (config.simulation.signal_guided_position_enabled ||
+                config.simulation.export_signal_debug_images) {
+                std::vector<Frame::SignalCenter> centers =
+                    localizeSignalCentersForFrame(
+                        frames[static_cast<size_t>(frameIndex)],
+                        config,
+                        firstFrame + frameIndex);
+                exportSignalDebugStacks(item.stack, centers, config,
+                                        fs::path(outputPath),
+                                        imagePaths[static_cast<size_t>(frameIndex)]);
+                if (config.simulation.signal_guided_position_enabled) {
+                    frames[static_cast<size_t>(frameIndex)].setSignalCenters(std::move(centers));
+                } else {
+                    frames[static_cast<size_t>(frameIndex)].setSignalCenters({});
+                }
+            } else {
+                frames[static_cast<size_t>(frameIndex)].setSignalCenters({});
+            }
         }
     }
 }
@@ -1512,16 +1701,14 @@ void CellUniverse::optimize(int frameIndex)
 
     frame.regenerateSynthFrame();
 
-    // Signal-guided perturbation init (yp ffc1917 — full per-frame design).
+    // Signal-guided perturbation activation (yp ffc1917 — full per-frame design).
     // When enabled and enough signal centers are detected (>= previous frame
-    // cell count), the entire frame uses signal-guided perturbation with
+    // cell count), the prepared frame uses signal-guided perturbation with
     // signal_guided_iterations_per_cell. When disabled or not enough centers,
     // fall back to random perturbation with random_iterations_per_cell.
     bool useSignalGuidanceThisFrame = false;
     if (config.simulation.signal_guided_position_enabled) {
-        std::vector<Frame::SignalCenter> centers =
-            localizeSignalCentersForFrame(frame, config, firstFrame + frameIndex);
-        frame.setSignalCenters(centers);
+        const auto &centers = frame.getSignalCenters();
         useSignalGuidanceThisFrame = true;
         if (frameIndex > 0) {
             const size_t previousCellCount = frames[frameIndex - 1].cells.size();
@@ -1533,8 +1720,6 @@ void CellUniverse::optimize(int frameIndex)
                           << " mode=random\n";
             }
         }
-    } else {
-        frame.setSignalCenters({});
     }
 
     const int guidedPerCellIters =
@@ -1549,12 +1734,15 @@ void CellUniverse::optimize(int frameIndex)
         0, useSignalGuidanceThisFrame ? guidedPerCellIters : randomPerCellIters));
     size_t totalIterations = frame.length() * activePerCellIters;
     int displayFrame = firstFrame + frameIndex;
+    const float randomPerturbRadiusRatio =
+        config.cell ? config.cell->randomPerturbRadiusRatio : 0.5f;
 
     std::cout << "[Optimize] frame " << displayFrame
               << " (" << frame.cells.size() << " cells, " << totalIterations << " iterations)"
               << " perturbMode=" << (useSignalGuidanceThisFrame ? "signal_guided" : "random")
               << " guidedItersPerCell=" << guidedPerCellIters
               << " randomItersPerCell=" << randomPerCellIters
+              << " randomPerturbRadiusRatio=" << randomPerturbRadiusRatio
               << " useBboxCost=" << (bboxActiveThisFrame ? 1 : 0)
               << " bboxMarginScale=" << config.prob.bbox_margin_scale
               << (config.prob.use_bbox_cost && frameIndex == 0
@@ -2469,7 +2657,8 @@ void CellUniverse::optimize(int frameIndex)
                     // Compensation perturb. The revert left cells[cellIdx]
                     // as the parent (in place), so no find_if needed.
                     auto compResult = frame.perturbCell(
-                        cellIdx, overlapWeight, useSignalGuidanceThisFrame);
+                        cellIdx, overlapWeight, useSignalGuidanceThisFrame,
+                        randomPerturbRadiusRatio);
                     const bool compAccept = compResult.first < 0.0;
                     compResult.second(compAccept);
                     if (compAccept) {
@@ -2482,7 +2671,8 @@ void CellUniverse::optimize(int frameIndex)
             } else {
                 // --- Perturbation ---
                 auto result = frame.perturbCell(
-                    cellIdx, overlapWeight, useSignalGuidanceThisFrame);
+                    cellIdx, overlapWeight, useSignalGuidanceThisFrame,
+                    randomPerturbRadiusRatio);
                 double costDiff = result.first;
                 auto callback = result.second;
                 if (costDiff < 0) {

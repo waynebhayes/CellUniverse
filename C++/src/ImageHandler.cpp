@@ -1,12 +1,14 @@
 #include "../includes/ImageHandler.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <functional>
 #include <iostream>
 #include <limits>
+#include <queue>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -473,7 +475,8 @@ std::vector<Frame::SignalCenter> localizeSignalCentersInStack(const ImageStack &
             continue;
         }
 
-        std::vector<size_t> stackIndices{seed};
+        std::queue<size_t> queue;
+        queue.push(seed);
         visited[seed] = 1;
         double weightSum = 0.0;
         double xSum = 0.0;
@@ -482,10 +485,10 @@ std::vector<Frame::SignalCenter> localizeSignalCentersInStack(const ImageStack &
         double brightnessSum = 0.0;
         int clusterBoxes = 0;
 
-        while (!stackIndices.empty())
+        while (!queue.empty())
         {
-            const size_t current = stackIndices.back();
-            stackIndices.pop_back();
+            const size_t current = queue.front();
+            queue.pop();
             const BrightBox &box = boxes[current];
             const float weight = std::max(1e-6f, box.brightness - backgroundValue);
             weightSum += weight;
@@ -495,30 +498,28 @@ std::vector<Frame::SignalCenter> localizeSignalCentersInStack(const ImageStack &
             brightnessSum += static_cast<double>(box.brightness);
             ++clusterBoxes;
 
-            for (int dz = -1; dz <= 1; ++dz)
+            static constexpr std::array<std::array<int, 3>, 6> kFaceNeighbors{{
+                {{ 1,  0,  0}}, {{-1,  0,  0}},
+                {{ 0,  1,  0}}, {{ 0, -1,  0}},
+                {{ 0,  0,  1}}, {{ 0,  0, -1}}
+            }};
+            for (const auto &offset : kFaceNeighbors)
             {
-                for (int dy = -1; dy <= 1; ++dy)
+                auto it = boxIndex.find({
+                    box.ix + offset[0],
+                    box.iy + offset[1],
+                    box.iz + offset[2]});
+                if (it == boxIndex.end())
                 {
-                    for (int dx = -1; dx <= 1; ++dx)
-                    {
-                        if (dx == 0 && dy == 0 && dz == 0)
-                        {
-                            continue;
-                        }
-                        auto it = boxIndex.find({box.ix + dx, box.iy + dy, box.iz + dz});
-                        if (it == boxIndex.end())
-                        {
-                            continue;
-                        }
-                        const size_t neighbor = it->second;
-                        if (visited[neighbor])
-                        {
-                            continue;
-                        }
-                        visited[neighbor] = 1;
-                        stackIndices.push_back(neighbor);
-                    }
+                    continue;
                 }
+                const size_t neighbor = it->second;
+                if (visited[neighbor])
+                {
+                    continue;
+                }
+                visited[neighbor] = 1;
+                queue.push(neighbor);
             }
         }
 

@@ -229,6 +229,11 @@ cell:
   # 25.0 = average initial cell radius in this dataset; cells at R=25
   # use the base sigma unchanged.
   perturbSigmaReferenceRadius: 25.0
+  # Random perturbation only: use this fraction of each cell's fitted
+  # max radius when scaling x/y/z perturbation sigma. This does not shrink
+  # the fitted/output cell; it only makes random motion act like the cell
+  # radius is smaller. 0.5 = half-radius random perturb steps.
+  randomPerturbRadiusRatio: 0.5
 
 # Image preprocessing pipeline — iterative contrast enhancer ported from
 # scripts/image_processor_clean.py. No sigmoid.
@@ -341,6 +346,10 @@ simulation:
   post_process_final_blurred_amplification: 2.0
 
   export_preprocessed_images: false
+  # Debug signal-guidance localization. When true, exports two stacks per
+  # frame under signal_debug/: center cubes on black background and a
+  # grayscale perturb-probability overlay on the preprocessed image.
+  export_signal_debug_images: false
   export_frame_png: false
   export_frame_tiff: true
   export_post_localization_images: true

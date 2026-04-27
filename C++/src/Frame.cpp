@@ -722,7 +722,9 @@ size_t Frame::length() const
     return cells.size();
 }
 
-CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight, bool useSignalGuidance)
+CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight,
+                                    bool useSignalGuidance,
+                                    float randomPerturbRadiusRatio)
 {
     if (index >= cells.size()) {
         return {0.0, [](bool) {}};
@@ -754,7 +756,10 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight, bool useS
         const float maxR = std::max({oldCell.getARadius(),
                                      oldCell.getBRadius(),
                                      oldCell.getCRadius()});
-        posScale = maxR / refR;
+        const float radiusRatio = useSignalGuidance
+            ? 1.0f
+            : std::max(0.0f, randomPerturbRadiusRatio);
+        posScale = (maxR * radiusRatio) / refR;
     }
     cells[index] = cells[index].getPerturbedCell(&perturbDirections, posScale);
 

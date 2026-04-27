@@ -87,7 +87,8 @@ public:
     Cost calculateCost(const std::vector<cv::Mat> &synthFrame);
     size_t length() const;
     CostCallbackPair perturbCell(size_t index, float overlapWeight = 1000.0f,
-                                 bool useSignalGuidance = false);
+                                 bool useSignalGuidance = false,
+                                 float randomPerturbRadiusRatio = 1.0f);
     double computeOverlapPenalty(float weight) const;
     double computeOverlapForCell(size_t cellIdx, float weight) const;
 
@@ -273,7 +274,7 @@ public:
     void setBackgroundColor(float backgroundColor) { _backgroundValue = backgroundColor; }
     float getBackgroundValue() const { return _backgroundValue; }
     // Signal centers for signal-guided perturbation (yp ffc1917). Populated
-    // once per frame from CellUniverse::optimize via localizeSignalCentersForFrame.
+    // during frame preparation/preload after preprocessing is loaded.
     void setSignalCenters(std::vector<SignalCenter> centers) { _signalCenters = std::move(centers); }
     const std::vector<SignalCenter>& getSignalCenters() const { return _signalCenters; }
     void setMeanCellBrightness(float mean) { _meanCellBrightness = mean; }
