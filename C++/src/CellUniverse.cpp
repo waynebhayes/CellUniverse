@@ -120,12 +120,7 @@ static std::vector<cv::Mat> makeNapariFriendlyTiffStack(const std::vector<cv::Ma
 
     cv::Size expectedSize;
     for (const auto &slice : stack) {
-        cv::Mat converted = makeNapariFriendlyTiffSlice(slice)ost_alignment_chunk_blackoff_enabled: true
-  post_alignment_chunk_target_count: 5
-  post_alignment_chunk_min_size: 5
-  post_alignment_chunk_max_size: 10
-  post_alignment_chunk_percentile_step: 0.0001
-  post_alignment_chunk_max_percentile: 0.999;
+        cv::Mat converted = makeNapariFriendlyTiffSlice(slice);
         if (converted.empty()) {
             continue;
         }
