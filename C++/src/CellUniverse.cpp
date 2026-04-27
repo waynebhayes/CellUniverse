@@ -9,6 +9,9 @@
 #include <utility>
 #include <sstream>
 #include <cstdint>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 namespace utils
 {
@@ -117,7 +120,12 @@ static std::vector<cv::Mat> makeNapariFriendlyTiffStack(const std::vector<cv::Ma
 
     cv::Size expectedSize;
     for (const auto &slice : stack) {
-        cv::Mat converted = makeNapariFriendlyTiffSlice(slice);
+        cv::Mat converted = makeNapariFriendlyTiffSlice(slice)ost_alignment_chunk_blackoff_enabled: true
+  post_alignment_chunk_target_count: 5
+  post_alignment_chunk_min_size: 5
+  post_alignment_chunk_max_size: 10
+  post_alignment_chunk_percentile_step: 0.0001
+  post_alignment_chunk_max_percentile: 0.999;
         if (converted.empty()) {
             continue;
         }
@@ -566,14 +574,10 @@ static int countSeparatedChunksInSizeRange(const std::vector<cv::Mat> &stack,
     const int maxSize = std::max(minSize, config.post_alignment_chunk_max_size);
     const std::size_t planeSize = static_cast<std::size_t>(rows) * static_cast<std::size_t>(cols);
     const std::size_t voxelCount = static_cast<std::size_t>(depth) * planeSize;
+    std::vector<std::uint8_t> foreground(voxelCount, 0U);
     std::vector<std::uint8_t> visited(voxelCount, 0U);
     std::vector<std::size_t> pending;
     int matchingChunkCount = 0;
-
-    auto isForeground = [&](int z, int y, int x) {
-        const float value = stack[static_cast<std::size_t>(z)].ptr<float>(y)[x];
-        return std::isfinite(value) && value > 0.0f;
-    };
 
     auto indexOf = [&](int z, int y, int x) {
         return static_cast<std::size_t>(z) * planeSize +
@@ -581,11 +585,32 @@ static int countSeparatedChunksInSizeRange(const std::vector<cv::Mat> &stack,
                static_cast<std::size_t>(x);
     };
 
+    int detectorThreads = std::max(1, config.post_alignment_chunk_detector_threads);
+#ifdef _OPENMP
+    detectorThreads = std::min(detectorThreads, std::max(1, omp_get_max_threads()));
+    if (omp_in_parallel()) {
+        detectorThreads = 1;
+    }
+#endif
+
+    #pragma omp parallel for schedule(static) num_threads(detectorThreads)
+    for (int z = 0; z < depth; ++z) {
+        const cv::Mat &slice = stack[static_cast<std::size_t>(z)];
+        for (int y = 0; y < rows; ++y) {
+            const float *row = slice.ptr<float>(y);
+            for (int x = 0; x < cols; ++x) {
+                const float value = row[x];
+                foreground[indexOf(z, y, x)] =
+                    (std::isfinite(value) && value > 0.0f) ? 1U : 0U;
+            }
+        }
+    }
+
     for (int z = 0; z < depth; ++z) {
         for (int y = 0; y < rows; ++y) {
             for (int x = 0; x < cols; ++x) {
                 const std::size_t startIndex = indexOf(z, y, x);
-                if (visited[startIndex] || !isForeground(z, y, x)) {
+                if (visited[startIndex] || !foreground[startIndex]) {
                     visited[startIndex] = 1U;
                     continue;
                 }
@@ -629,7 +654,7 @@ static int countSeparatedChunksInSizeRange(const std::vector<cv::Mat> &stack,
                                 const std::size_t neighborIndex = indexOf(nz, ny, nx);
                                 if (visited[neighborIndex]) continue;
                                 visited[neighborIndex] = 1U;
-                                if (isForeground(nz, ny, nx)) {
+                                if (foreground[neighborIndex]) {
                                     pending.push_back(neighborIndex);
                                 }
                             }
@@ -680,6 +705,7 @@ static void adaptBlackPercentileToChunkCount(std::vector<cv::Mat> &stack,
         << " min_size=" << std::max(1, config.post_alignment_chunk_min_size)
         << " max_size=" << std::max(std::max(1, config.post_alignment_chunk_min_size),
                                     config.post_alignment_chunk_max_size)
+        << " detector_threads=" << std::max(1, config.post_alignment_chunk_detector_threads)
         << std::endl;
 
     while (chunkCount > targetCount &&

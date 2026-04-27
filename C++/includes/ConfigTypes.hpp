@@ -65,6 +65,7 @@ public:
     int post_alignment_chunk_max_size = 10;
     float post_alignment_chunk_percentile_step = 0.001f;
     float post_alignment_chunk_max_percentile = 0.999f;
+    int post_alignment_chunk_detector_threads = 4;
     int preprocess_radius_batch_size = 5;
     float post_process_blur_sigma = 2.5f;
     float post_process_final_blur_sigma = 0.0f;
@@ -227,6 +228,7 @@ public:
         if (node["post_alignment_chunk_max_size"]) post_alignment_chunk_max_size = node["post_alignment_chunk_max_size"].as<int>();
         if (node["post_alignment_chunk_percentile_step"]) post_alignment_chunk_percentile_step = node["post_alignment_chunk_percentile_step"].as<float>();
         if (node["post_alignment_chunk_max_percentile"]) post_alignment_chunk_max_percentile = node["post_alignment_chunk_max_percentile"].as<float>();
+        if (node["post_alignment_chunk_detector_threads"]) post_alignment_chunk_detector_threads = node["post_alignment_chunk_detector_threads"].as<int>();
         if (node["preprocess_radius_batch_size"]) preprocess_radius_batch_size = node["preprocess_radius_batch_size"].as<int>();
         if (node["post_process_blur_sigma"]) post_process_blur_sigma = node["post_process_blur_sigma"].as<float>();
         if (node["post_process_final_blur_sigma"]) post_process_final_blur_sigma = node["post_process_final_blur_sigma"].as<float>();
@@ -313,6 +315,7 @@ public:
         std::cout << "post_alignment_chunk_max_size: " << post_alignment_chunk_max_size << '\n';
         std::cout << "post_alignment_chunk_percentile_step: " << post_alignment_chunk_percentile_step << '\n';
         std::cout << "post_alignment_chunk_max_percentile: " << post_alignment_chunk_max_percentile << '\n';
+        std::cout << "post_alignment_chunk_detector_threads: " << post_alignment_chunk_detector_threads << '\n';
         std::cout << "preprocess_radius_batch_size: " << preprocess_radius_batch_size << '\n';
         std::cout << "post_process_blur_sigma: " << post_process_blur_sigma << '\n';
         std::cout << "post_process_final_blur_sigma: " << post_process_final_blur_sigma << '\n';
