@@ -1,6 +1,7 @@
 #include "../includes/Frame.hpp"
 
 #include <array>
+#include <cmath>
 #include <limits>
 #include <sstream>
 
@@ -46,6 +47,74 @@ static double asymmetricL2Slice(const cv::Mat &real, const cv::Mat &synth, float
 
     const double asymSumSq = sumSq + static_cast<double>(k - 1.0f) * posSumSq;
     return std::sqrt(std::max(0.0, asymSumSq));
+}
+
+static float sampleSignalProbability(const std::vector<cv::Mat> &probability,
+                                     float x,
+                                     float y,
+                                     float z)
+{
+    if (probability.empty()) {
+        return 0.0f;
+    }
+
+    const int maxZ = static_cast<int>(probability.size()) - 1;
+    const int maxY = probability[0].rows - 1;
+    const int maxX = probability[0].cols - 1;
+    if (maxX < 0 || maxY < 0 || maxZ < 0) {
+        return 0.0f;
+    }
+
+    x = std::clamp(x, 0.0f, static_cast<float>(maxX));
+    y = std::clamp(y, 0.0f, static_cast<float>(maxY));
+    z = std::clamp(z, 0.0f, static_cast<float>(maxZ));
+
+    const int x0 = static_cast<int>(std::floor(x));
+    const int y0 = static_cast<int>(std::floor(y));
+    const int z0 = static_cast<int>(std::floor(z));
+    const int x1 = std::min(maxX, x0 + 1);
+    const int y1 = std::min(maxY, y0 + 1);
+    const int z1 = std::min(maxZ, z0 + 1);
+    const float tx = x - static_cast<float>(x0);
+    const float ty = y - static_cast<float>(y0);
+    const float tz = z - static_cast<float>(z0);
+
+    auto at = [&](int zz, int yy, int xx) -> float {
+        const cv::Mat &slice = probability[static_cast<size_t>(zz)];
+        if (slice.empty() || slice.type() != CV_32F) {
+            return 0.0f;
+        }
+        return slice.ptr<float>(yy)[xx];
+    };
+
+    const float c000 = at(z0, y0, x0);
+    const float c100 = at(z0, y0, x1);
+    const float c010 = at(z0, y1, x0);
+    const float c110 = at(z0, y1, x1);
+    const float c001 = at(z1, y0, x0);
+    const float c101 = at(z1, y0, x1);
+    const float c011 = at(z1, y1, x0);
+    const float c111 = at(z1, y1, x1);
+
+    const float c00 = c000 * (1.0f - tx) + c100 * tx;
+    const float c10 = c010 * (1.0f - tx) + c110 * tx;
+    const float c01 = c001 * (1.0f - tx) + c101 * tx;
+    const float c11 = c011 * (1.0f - tx) + c111 * tx;
+    const float c0 = c00 * (1.0f - ty) + c10 * ty;
+    const float c1 = c01 * (1.0f - ty) + c11 * ty;
+    return std::clamp(c0 * (1.0f - tz) + c1 * tz, 0.0f, 1.0f);
+}
+
+static cv::Point3f signalProbabilityGradientAt(const std::vector<cv::Mat> &probability,
+                                               const cv::Point3f &pos)
+{
+    return cv::Point3f(
+        0.5f * (sampleSignalProbability(probability, pos.x + 1.0f, pos.y, pos.z) -
+                sampleSignalProbability(probability, pos.x - 1.0f, pos.y, pos.z)),
+        0.5f * (sampleSignalProbability(probability, pos.x, pos.y + 1.0f, pos.z) -
+                sampleSignalProbability(probability, pos.x, pos.y - 1.0f, pos.z)),
+        0.5f * (sampleSignalProbability(probability, pos.x, pos.y, pos.z + 1.0f) -
+                sampleSignalProbability(probability, pos.x, pos.y, pos.z - 1.0f)));
 }
 
 // Function to interpolate between two slices
@@ -763,47 +832,39 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight,
     }
     cells[index] = cells[index].getPerturbedCell(&perturbDirections, posScale);
 
-    // Signal-guided perturbation (yp ffc1917): when enabled, override the
-    // standard random perturbation with a teleport toward the nearest
-    // bright signal center in the real image. Used to escape local optima
-    // where the cell is stuck on a wrong location (cells that should be on
-    // bright cluster A but settled on dimmer cluster B). Sigma scales with
-    // the center's brightness via signal_guided_min_sigma_scale +
-    // signal_guided_sigma_range_multiplier.
-    if (useSignalGuidance && !_signalCenters.empty() && !_realFrame.empty()) {
+    // Signal-guided perturbation: keep the random candidate rooted at the
+    // original cell location, then locally bias it uphill in the precomputed
+    // probability field. The field already encodes brightness and distance,
+    // so nearby signal has more influence than a far bright center.
+    if (useSignalGuidance && !_signalProbability.empty() && !_realFrame.empty()) {
         const cv::Point3f oldPos(oldCell.getX(), oldCell.getY(), oldCell.getZ());
-        const SignalCenter *nearestCenter = nullptr;
-        float bestDist = std::numeric_limits<float>::max();
-        for (const auto &center : _signalCenters) {
-            const float dist = static_cast<float>(cv::norm(center.position - oldPos));
-            if (dist < bestDist) {
-                bestDist = dist;
-                nearestCenter = &center;
+        cv::Point3f candidate(cells[index].getX(), cells[index].getY(), cells[index].getZ());
+        const cv::Point3f gradient = signalProbabilityGradientAt(_signalProbability, oldPos);
+        const float gradientNorm = static_cast<float>(cv::norm(gradient));
+        if (gradientNorm > 1e-6f) {
+            const cv::Point3f uphill = gradient * (1.0f / gradientNorm);
+            const float localTrust = sampleSignalProbability(
+                _signalProbability, oldPos.x, oldPos.y, oldPos.z);
+            const cv::Point3f randomDelta = candidate - oldPos;
+            const float uphillDot = randomDelta.x * uphill.x +
+                                    randomDelta.y * uphill.y +
+                                    randomDelta.z * uphill.z;
+            if (uphillDot < 0.0f) {
+                candidate -= uphill * (uphillDot * localTrust);
             }
-        }
-        if (nearestCenter != nullptr) {
-            thread_local std::mt19937 gen{std::random_device{}()};
-            const float sigmaScale = std::max(
-                simulationConfig.signal_guided_min_sigma_scale,
-                nearestCenter->sigmaScale);
-            const float sigmaRangeMultiplier = std::max(
-                1e-3f, simulationConfig.signal_guided_sigma_range_multiplier);
-            std::normal_distribution<float> dx(
-                nearestCenter->position.x,
-                std::max(1e-3f, Ellipsoid::cellConfig.x.sigma * sigmaScale * sigmaRangeMultiplier));
-            std::normal_distribution<float> dy(
-                nearestCenter->position.y,
-                std::max(1e-3f, Ellipsoid::cellConfig.y.sigma * sigmaScale * sigmaRangeMultiplier));
-            std::normal_distribution<float> dz(
-                nearestCenter->position.z,
-                std::max(1e-3f, Ellipsoid::cellConfig.z.sigma * sigmaScale * sigmaRangeMultiplier));
+
+            const float maxSigma = std::max({Ellipsoid::cellConfig.x.sigma,
+                                             Ellipsoid::cellConfig.y.sigma,
+                                             Ellipsoid::cellConfig.z.sigma});
+            candidate += uphill * (0.5f * std::max(0.0f, maxSigma) * localTrust);
+
             const float maxX = static_cast<float>(_realFrame[0].cols - 1);
             const float maxY = static_cast<float>(_realFrame[0].rows - 1);
             const float maxZ = static_cast<float>(_realFrame.size() - 1);
             cells[index].setPosition(
-                std::clamp(dx(gen), 0.0f, maxX),
-                std::clamp(dy(gen), 0.0f, maxY),
-                std::clamp(dz(gen), 0.0f, maxZ));
+                std::clamp(candidate.x, 0.0f, maxX),
+                std::clamp(candidate.y, 0.0f, maxY),
+                std::clamp(candidate.z, 0.0f, maxZ));
         }
     }
 

@@ -345,15 +345,15 @@ simulation:
   post_process_final_direct_amplification: 0.6
   post_process_final_blurred_amplification: 2.0
 
-  export_preprocessed_images: true
+  export_preprocessed_images: false
   # Debug signal-guidance localization. When true, exports two stacks per
   # frame under signal_debug/: center cubes on black background and a
   # grayscale perturb-probability field on black background.
-  export_signal_debug_images: true
+  export_signal_debug_images: false
   export_frame_png: false
   export_frame_tiff: true
   export_post_localization_images: true
-  quit_after_preprocessing: true
+  quit_after_preprocessing: false
   # When true, skip the upfront "preprocess all frames into memory" pass and
   # run prepareFrame(frame) immediately before optimize(frame). This reduces
   # peak memory by keeping the pipeline frame-by-frame. Ignored when

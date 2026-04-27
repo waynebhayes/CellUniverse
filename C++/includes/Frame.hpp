@@ -268,6 +268,8 @@ public:
         _realFrame.shrink_to_fit();
         _synthFrame.clear();
         _synthFrame.shrink_to_fit();
+        _signalProbability.clear();
+        _signalProbability.shrink_to_fit();
         _currentCostPerSlice.clear();
         _currentCostPerSlice.shrink_to_fit();
     }
@@ -277,6 +279,8 @@ public:
     // during frame preparation/preload after preprocessing is loaded.
     void setSignalCenters(std::vector<SignalCenter> centers) { _signalCenters = std::move(centers); }
     const std::vector<SignalCenter>& getSignalCenters() const { return _signalCenters; }
+    void setSignalProbability(std::vector<cv::Mat> probability) { _signalProbability = std::move(probability); }
+    const std::vector<cv::Mat>& getSignalProbability() const { return _signalProbability; }
     void setMeanCellBrightness(float mean) { _meanCellBrightness = mean; }
     // Bbox-cost mode: perturb/split use a per-cell bbox with Voronoi
     // neighbor exclusion instead of full-image L2. Set at frame start
@@ -352,6 +356,9 @@ private:
     // Signal centers (yp ffc1917) — bright clusters in the real image that
     // signal-guided perturbation snaps cells onto.
     std::vector<SignalCenter> _signalCenters;
+    // Normalized center-guided perturbation probability stack, computed
+    // during frame preparation/preload and reused by debug export/future use.
+    std::vector<cv::Mat> _signalProbability;
     double _currentCost = -1.0; // cached L2 image cost of _synthFrame
     // Per-slice L2 contribution of _synthFrame to the total image cost. Kept
     // in sync with _synthFrame / _currentCost so that a perturbation touching

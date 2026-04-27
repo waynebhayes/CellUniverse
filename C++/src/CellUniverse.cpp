@@ -1255,8 +1255,82 @@ static std::vector<Frame::SignalCenter> localizeSignalCentersForFrame(
     return centers;
 }
 
+static std::vector<cv::Mat> buildSignalProbabilityStack(
+    const std::vector<cv::Mat> &realFrame,
+    const std::vector<Frame::SignalCenter> &centers,
+    const BaseConfig &config)
+{
+    std::vector<cv::Mat> probabilityDebug;
+    probabilityDebug.reserve(realFrame.size());
+    for (const auto &slice : realFrame) {
+        probabilityDebug.emplace_back(cv::Mat::zeros(slice.size(), CV_32F));
+    }
+
+    if (realFrame.empty() || centers.empty()) {
+        return probabilityDebug;
+    }
+
+    std::vector<cv::Mat> probability;
+    probability.reserve(realFrame.size());
+    for (const auto &slice : realFrame) {
+        probability.emplace_back(cv::Mat::zeros(slice.size(), CV_32F));
+    }
+
+    const float minSigmaScale =
+        std::max(0.0f, config.simulation.signal_guided_min_sigma_scale);
+    const float sigmaRangeMultiplier =
+        std::max(1e-3f, config.simulation.signal_guided_sigma_range_multiplier);
+
+    float maxProb = 0.0f;
+    #pragma omp parallel for schedule(static) reduction(max:maxProb)
+    for (int z = 0; z < static_cast<int>(probability.size()); ++z) {
+        cv::Mat &probSlice = probability[static_cast<size_t>(z)];
+        for (int y = 0; y < probSlice.rows; ++y) {
+            float *probRow = probSlice.ptr<float>(y);
+            for (int x = 0; x < probSlice.cols; ++x) {
+                float bestProb = 0.0f;
+                for (const auto &center : centers) {
+                    const float sigmaScale =
+                        std::max(minSigmaScale, center.sigmaScale);
+                    const float sx = std::max(
+                        1e-3f, Ellipsoid::cellConfig.x.sigma * sigmaScale * sigmaRangeMultiplier);
+                    const float sy = std::max(
+                        1e-3f, Ellipsoid::cellConfig.y.sigma * sigmaScale * sigmaRangeMultiplier);
+                    const float sz = std::max(
+                        1e-3f, Ellipsoid::cellConfig.z.sigma * sigmaScale * sigmaRangeMultiplier);
+                    const float dx = (static_cast<float>(x) - center.position.x) / sx;
+                    const float dy = (static_cast<float>(y) - center.position.y) / sy;
+                    const float dz = (static_cast<float>(z) - center.position.z) / sz;
+                    const float p = std::exp(-0.5f * (dx * dx + dy * dy + dz * dz));
+                    bestProb = std::max(bestProb, p);
+                }
+                probRow[x] = bestProb;
+                maxProb = std::max(maxProb, bestProb);
+            }
+        }
+    }
+
+    if (maxProb > 1e-6f) {
+        #pragma omp parallel for schedule(static)
+        for (int z = 0; z < static_cast<int>(probabilityDebug.size()); ++z) {
+            cv::Mat &debugSlice = probabilityDebug[static_cast<size_t>(z)];
+            const cv::Mat &probSlice = probability[static_cast<size_t>(z)];
+            for (int y = 0; y < debugSlice.rows; ++y) {
+                float *debugRow = debugSlice.ptr<float>(y);
+                const float *probRow = probSlice.ptr<float>(y);
+                for (int x = 0; x < debugSlice.cols; ++x) {
+                    debugRow[x] = std::clamp(probRow[x] / maxProb, 0.0f, 1.0f);
+                }
+            }
+        }
+    }
+
+    return probabilityDebug;
+}
+
 static void exportSignalDebugStacks(const std::vector<cv::Mat> &realFrame,
                                     const std::vector<Frame::SignalCenter> &centers,
+                                    const std::vector<cv::Mat> &probabilityDebug,
                                     const BaseConfig &config,
                                     const fs::path &baseOutputDir,
                                     const fs::path &framePath)
@@ -1266,12 +1340,9 @@ static void exportSignalDebugStacks(const std::vector<cv::Mat> &realFrame,
     }
 
     std::vector<cv::Mat> centerCubes;
-    std::vector<cv::Mat> probabilityDebug;
     centerCubes.reserve(realFrame.size());
-    probabilityDebug.reserve(realFrame.size());
     for (const auto &slice : realFrame) {
         centerCubes.emplace_back(cv::Mat::zeros(slice.size(), CV_32F));
-        probabilityDebug.emplace_back(cv::Mat::zeros(slice.size(), CV_32F));
     }
 
     constexpr int kCubeHalfSize = 2;
@@ -1292,63 +1363,6 @@ static void exportSignalDebugStacks(const std::vector<cv::Mat> &realFrame,
                 float *row = slice.ptr<float>(y);
                 for (int x = x0; x <= x1; ++x) {
                     row[x] = 1.0f;
-                }
-            }
-        }
-    }
-
-    if (!centers.empty()) {
-        std::vector<cv::Mat> probability;
-        probability.reserve(realFrame.size());
-        for (const auto &slice : realFrame) {
-            probability.emplace_back(cv::Mat::zeros(slice.size(), CV_32F));
-        }
-
-        const float minSigmaScale =
-            std::max(0.0f, config.simulation.signal_guided_min_sigma_scale);
-        const float sigmaRangeMultiplier =
-            std::max(1e-3f, config.simulation.signal_guided_sigma_range_multiplier);
-
-        float maxProb = 0.0f;
-        #pragma omp parallel for schedule(static) reduction(max:maxProb)
-        for (int z = 0; z < static_cast<int>(probability.size()); ++z) {
-            cv::Mat &probSlice = probability[static_cast<size_t>(z)];
-            for (int y = 0; y < probSlice.rows; ++y) {
-                float *probRow = probSlice.ptr<float>(y);
-                for (int x = 0; x < probSlice.cols; ++x) {
-                    float bestProb = 0.0f;
-                    for (const auto &center : centers) {
-                        const float sigmaScale =
-                            std::max(minSigmaScale, center.sigmaScale);
-                        const float sx = std::max(
-                            1e-3f, Ellipsoid::cellConfig.x.sigma * sigmaScale * sigmaRangeMultiplier);
-                        const float sy = std::max(
-                            1e-3f, Ellipsoid::cellConfig.y.sigma * sigmaScale * sigmaRangeMultiplier);
-                        const float sz = std::max(
-                            1e-3f, Ellipsoid::cellConfig.z.sigma * sigmaScale * sigmaRangeMultiplier);
-                        const float dx = (static_cast<float>(x) - center.position.x) / sx;
-                        const float dy = (static_cast<float>(y) - center.position.y) / sy;
-                        const float dz = (static_cast<float>(z) - center.position.z) / sz;
-                        const float p = std::exp(-0.5f * (dx * dx + dy * dy + dz * dz));
-                        bestProb = std::max(bestProb, p);
-                    }
-                    probRow[x] = bestProb;
-                    maxProb = std::max(maxProb, bestProb);
-                }
-            }
-        }
-
-        if (maxProb > 1e-6f) {
-            #pragma omp parallel for schedule(static)
-            for (int z = 0; z < static_cast<int>(probabilityDebug.size()); ++z) {
-                cv::Mat &debugSlice = probabilityDebug[static_cast<size_t>(z)];
-                const cv::Mat &probSlice = probability[static_cast<size_t>(z)];
-                for (int y = 0; y < debugSlice.rows; ++y) {
-                    float *debugRow = debugSlice.ptr<float>(y);
-                    const float *probRow = probSlice.ptr<float>(y);
-                    for (int x = 0; x < debugSlice.cols; ++x) {
-                        debugRow[x] = std::clamp(probRow[x] / maxProb, 0.0f, 1.0f);
-                    }
                 }
             }
         }
@@ -1630,15 +1644,20 @@ void CellUniverse::prepareSignalCentersForFrame(int frameIndex,
         config.simulation.export_signal_debug_images) {
         std::vector<Frame::SignalCenter> centers = localizeSignalCentersForFrame(
             frame, config, firstFrame + frameIndex);
-        exportSignalDebugStacks(realFrame, centers, config, fs::path(outputPath),
+        std::vector<cv::Mat> probability =
+            buildSignalProbabilityStack(realFrame, centers, config);
+        exportSignalDebugStacks(realFrame, centers, probability, config, fs::path(outputPath),
                                 imagePaths[static_cast<size_t>(frameIndex)]);
         if (config.simulation.signal_guided_position_enabled) {
             frame.setSignalCenters(std::move(centers));
+            frame.setSignalProbability(std::move(probability));
         } else {
             frame.setSignalCenters({});
+            frame.setSignalProbability({});
         }
     } else {
         frame.setSignalCenters({});
+        frame.setSignalProbability({});
     }
 
     if (!keepLoaded) {
