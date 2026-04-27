@@ -1,4 +1,4 @@
-file,name,x,y,z,aRadius,bRadius,cRadius,theta_x,theta_y,theta_z
+file,name,x,y,z,majorRadius,bRadius,minorRadius,theta_x,theta_y,theta_z
 t040.tif,Cell type 1_400,279.906,334.645,20.4402857143,26.833,20.4508,26.7325,8.11273,6.58782,10.3989
 t040.tif,Cell type 1_401,375.411,250.528,22.0718571429,27.5711,21.1062,25.2643,8.19621,6.56751,8.99018
 t040.tif,Cell type 1_410,396.355,387.345,19.2452857143,28.1141,21.3145,28.0593,8.32022,6.42069,7.25888
