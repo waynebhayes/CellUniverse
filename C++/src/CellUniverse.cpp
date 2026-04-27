@@ -8,6 +8,7 @@
 #include <numeric>
 #include <utility>
 #include <sstream>
+#include <cstdint>
 
 namespace utils
 {
@@ -432,14 +433,39 @@ static void blackThresholdStackAfterAlignment(std::vector<cv::Mat> &stack,
         << std::endl;
 }
 
-static void blackPercentileStackAfterAlignment(std::vector<cv::Mat> &stack,
-                                               const SimulationConfig &config,
-                                               const fs::path &framePath,
-                                               std::ostream &log)
+static std::vector<cv::Mat> cloneMatStack(const std::vector<cv::Mat> &stack)
 {
-    const float percentile = std::clamp(config.post_alignment_black_percentile, 0.0f, 1.0f);
+    std::vector<cv::Mat> cloned(stack.size());
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < static_cast<int>(stack.size()); ++i) {
+        cloned[static_cast<std::size_t>(i)] = stack[static_cast<std::size_t>(i)].clone();
+    }
+    return cloned;
+}
+
+struct BlackPercentileResult
+{
+    bool applied = false;
+    float percentile = 0.0f;
+    float cutoff = 0.0f;
+    std::size_t nonzeroSampleCount = 0;
+    double changedFraction = 0.0;
+};
+
+static BlackPercentileResult blackPercentileStackAfterAlignment(std::vector<cv::Mat> &stack,
+                                                                const SimulationConfig &config,
+                                                                const fs::path &framePath,
+                                                                std::ostream &log,
+                                                                float percentileOverride = -1.0f)
+{
+    BlackPercentileResult result;
+    const float requestedPercentile = percentileOverride >= 0.0f
+        ? percentileOverride
+        : config.post_alignment_black_percentile;
+    const float percentile = std::clamp(requestedPercentile, 0.0f, 1.0f);
+    result.percentile = percentile;
     if (percentile <= 0.0f || stack.empty()) {
-        return;
+        return result;
     }
 
     std::vector<float> values;
@@ -465,7 +491,7 @@ static void blackPercentileStackAfterAlignment(std::vector<cv::Mat> &stack,
     }
 
     if (values.empty()) {
-        return;
+        return result;
     }
 
     const std::size_t cutoffIndex = static_cast<std::size_t>(
@@ -474,6 +500,8 @@ static void blackPercentileStackAfterAlignment(std::vector<cv::Mat> &stack,
                      values.begin() + static_cast<std::ptrdiff_t>(cutoffIndex),
                      values.end());
     const float cutoff = values[cutoffIndex];
+    result.cutoff = cutoff;
+    result.nonzeroSampleCount = values.size();
 
     std::size_t changedCount = 0;
     std::size_t finiteCount = 0;
@@ -502,12 +530,177 @@ static void blackPercentileStackAfterAlignment(std::vector<cv::Mat> &stack,
     const double changedFraction = finiteCount > 0
         ? static_cast<double>(changedCount) / static_cast<double>(finiteCount)
         : 0.0;
+    result.applied = true;
+    result.changedFraction = changedFraction;
     log << "[PostAlignmentBlackPercentile] frame=" << framePath.filename().string()
         << " percentile=" << percentile
         << " cutoff=" << cutoff
         << " nonzero_sample_count=" << values.size()
         << " changed_fraction=" << changedFraction
         << std::endl;
+    return result;
+}
+
+static int countSeparatedChunksInSizeRange(const std::vector<cv::Mat> &stack,
+                                           const SimulationConfig &config,
+                                           int stopAfterCount = -1)
+{
+    if (stack.empty()) {
+        return 0;
+    }
+
+    const int depth = static_cast<int>(stack.size());
+    const int rows = stack.front().rows;
+    const int cols = stack.front().cols;
+    if (depth <= 0 || rows <= 0 || cols <= 0) {
+        return 0;
+    }
+    for (const auto &slice : stack) {
+        if (slice.empty() || slice.rows != rows || slice.cols != cols) {
+            return 0;
+        }
+        CV_Assert(slice.type() == CV_32F);
+    }
+
+    const int minSize = std::max(1, config.post_alignment_chunk_min_size);
+    const int maxSize = std::max(minSize, config.post_alignment_chunk_max_size);
+    const std::size_t planeSize = static_cast<std::size_t>(rows) * static_cast<std::size_t>(cols);
+    const std::size_t voxelCount = static_cast<std::size_t>(depth) * planeSize;
+    std::vector<std::uint8_t> visited(voxelCount, 0U);
+    std::vector<std::size_t> pending;
+    int matchingChunkCount = 0;
+
+    auto isForeground = [&](int z, int y, int x) {
+        const float value = stack[static_cast<std::size_t>(z)].ptr<float>(y)[x];
+        return std::isfinite(value) && value > 0.0f;
+    };
+
+    auto indexOf = [&](int z, int y, int x) {
+        return static_cast<std::size_t>(z) * planeSize +
+               static_cast<std::size_t>(y) * static_cast<std::size_t>(cols) +
+               static_cast<std::size_t>(x);
+    };
+
+    for (int z = 0; z < depth; ++z) {
+        for (int y = 0; y < rows; ++y) {
+            for (int x = 0; x < cols; ++x) {
+                const std::size_t startIndex = indexOf(z, y, x);
+                if (visited[startIndex] || !isForeground(z, y, x)) {
+                    visited[startIndex] = 1U;
+                    continue;
+                }
+
+                int minZ = z;
+                int maxZ = z;
+                int minY = y;
+                int maxY = y;
+                int minX = x;
+                int maxX = x;
+                visited[startIndex] = 1U;
+                pending.clear();
+                pending.push_back(startIndex);
+
+                while (!pending.empty()) {
+                    const std::size_t currentIndex = pending.back();
+                    pending.pop_back();
+                    const int currentZ = static_cast<int>(currentIndex / planeSize);
+                    const std::size_t inPlane = currentIndex % planeSize;
+                    const int currentY = static_cast<int>(inPlane / static_cast<std::size_t>(cols));
+                    const int currentX = static_cast<int>(inPlane % static_cast<std::size_t>(cols));
+
+                    minZ = std::min(minZ, currentZ);
+                    maxZ = std::max(maxZ, currentZ);
+                    minY = std::min(minY, currentY);
+                    maxY = std::max(maxY, currentY);
+                    minX = std::min(minX, currentX);
+                    maxX = std::max(maxX, currentX);
+
+                    for (int dz = -1; dz <= 1; ++dz) {
+                        const int nz = currentZ + dz;
+                        if (nz < 0 || nz >= depth) continue;
+                        for (int dy = -1; dy <= 1; ++dy) {
+                            const int ny = currentY + dy;
+                            if (ny < 0 || ny >= rows) continue;
+                            for (int dx = -1; dx <= 1; ++dx) {
+                                if (dz == 0 && dy == 0 && dx == 0) continue;
+                                const int nx = currentX + dx;
+                                if (nx < 0 || nx >= cols) continue;
+
+                                const std::size_t neighborIndex = indexOf(nz, ny, nx);
+                                if (visited[neighborIndex]) continue;
+                                visited[neighborIndex] = 1U;
+                                if (isForeground(nz, ny, nx)) {
+                                    pending.push_back(neighborIndex);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                const int zSize = maxZ - minZ + 1;
+                const int ySize = maxY - minY + 1;
+                const int xSize = maxX - minX + 1;
+                if (zSize >= minSize && zSize <= maxSize &&
+                    ySize >= minSize && ySize <= maxSize &&
+                    xSize >= minSize && xSize <= maxSize) {
+                    ++matchingChunkCount;
+                    if (stopAfterCount > 0 && matchingChunkCount >= stopAfterCount) {
+                        return matchingChunkCount;
+                    }
+                }
+            }
+        }
+    }
+
+    return matchingChunkCount;
+}
+
+static void adaptBlackPercentileToChunkCount(std::vector<cv::Mat> &stack,
+                                             const std::vector<cv::Mat> &unblackoffedStack,
+                                             const SimulationConfig &config,
+                                             const fs::path &framePath,
+                                             std::ostream &log)
+{
+    if (!config.post_alignment_chunk_blackoff_enabled || stack.empty()) {
+        return;
+    }
+
+    const int targetCount = std::max(0, config.post_alignment_chunk_target_count);
+    const float percentileStep = std::max(0.0f, config.post_alignment_chunk_percentile_step);
+    const float maxPercentile = std::clamp(config.post_alignment_chunk_max_percentile, 0.0f, 1.0f);
+    float currentPercentile = std::clamp(config.post_alignment_black_percentile, 0.0f, maxPercentile);
+    int chunkCount = countSeparatedChunksInSizeRange(stack, config);
+    int iteration = 0;
+
+    log << "[PostAlignmentChunkBlackoff] frame=" << framePath.filename().string()
+        << " iteration=" << iteration
+        << " percentile=" << currentPercentile
+        << " chunk_count=" << chunkCount
+        << " target_count=" << targetCount
+        << " min_size=" << std::max(1, config.post_alignment_chunk_min_size)
+        << " max_size=" << std::max(std::max(1, config.post_alignment_chunk_min_size),
+                                    config.post_alignment_chunk_max_size)
+        << std::endl;
+
+    while (chunkCount > targetCount &&
+           percentileStep > 0.0f &&
+           currentPercentile + 1e-6f < maxPercentile) {
+        currentPercentile = std::min(maxPercentile, currentPercentile + percentileStep);
+        ++iteration;
+        stack = cloneMatStack(unblackoffedStack);
+        const BlackPercentileResult result =
+            blackPercentileStackAfterAlignment(stack, config, framePath, log, currentPercentile);
+        if (!result.applied) {
+            break;
+        }
+        chunkCount = countSeparatedChunksInSizeRange(stack, config, targetCount + 1);
+        log << "[PostAlignmentChunkBlackoff] frame=" << framePath.filename().string()
+            << " iteration=" << iteration
+            << " percentile=" << currentPercentile
+            << " chunk_count=" << chunkCount
+            << " target_count=" << targetCount
+            << std::endl;
+    }
 }
 
 static void exportPreprocessedStack(const std::vector<cv::Mat> &stack,
@@ -984,10 +1177,16 @@ void CellUniverse::preprocessAllFramesAlignedToMinimumBackground(bool loadIntoFr
                                               config.simulation,
                                               imagePaths[static_cast<size_t>(frameIndex)],
                                               std::cout);
+            const std::vector<cv::Mat> unblackoffedFrame = cloneMatStack(realFrame);
             blackPercentileStackAfterAlignment(realFrame,
                                                config.simulation,
                                                imagePaths[static_cast<size_t>(frameIndex)],
                                                std::cout);
+            adaptBlackPercentileToChunkCount(realFrame,
+                                             unblackoffedFrame,
+                                             config.simulation,
+                                             imagePaths[static_cast<size_t>(frameIndex)],
+                                             std::cout);
 
             if (config.simulation.export_preprocessed_images) {
                 exportPreprocessedStack(realFrame, fs::path(outputPath),
@@ -1046,10 +1245,16 @@ void CellUniverse::preprocessAllFramesAlignedToMinimumBackground(bool loadIntoFr
                                           config.simulation,
                                           imagePaths[static_cast<size_t>(frameIndex)],
                                           std::cout);
+        const std::vector<cv::Mat> unblackoffedFrame = cloneMatStack(item.stack);
         blackPercentileStackAfterAlignment(item.stack,
                                            config.simulation,
                                            imagePaths[static_cast<size_t>(frameIndex)],
                                            std::cout);
+        adaptBlackPercentileToChunkCount(item.stack,
+                                         unblackoffedFrame,
+                                         config.simulation,
+                                         imagePaths[static_cast<size_t>(frameIndex)],
+                                         std::cout);
 
         if (config.simulation.export_preprocessed_images) {
             exportPreprocessedStack(item.stack, fs::path(outputPath),

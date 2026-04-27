@@ -164,12 +164,16 @@ ImageStack applyCubePooling(const ImageStack &stack,
     std::string poolingMode = config.simulation.cube_pooling_mode;
     std::transform(poolingMode.begin(), poolingMode.end(), poolingMode.begin(),
                    [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    if (poolingMode != "mean" && poolingMode != "max" && poolingMode != "min")
+    if (poolingMode != "mean" && poolingMode != "max" &&
+        poolingMode != "min" && poolingMode != "median" &&
+        poolingMode != "top_percentile" && poolingMode != "low_percentile")
     {
         log << "[CubePooling] unsupported mode=" << config.simulation.cube_pooling_mode
             << "; using mean" << std::endl;
         poolingMode = "mean";
     }
+    const float topFraction = std::clamp(config.simulation.cube_pooling_top_fraction, 0.0f, 1.0f);
+    const float lowFraction = std::clamp(config.simulation.cube_pooling_low_fraction, 0.0f, 1.0f);
     const int gridZ = (depth + cubeSize - 1) / cubeSize;
     const int gridY = (rows + cubeSize - 1) / cubeSize;
     const int gridX = (cols + cubeSize - 1) / cubeSize;
@@ -199,6 +203,14 @@ ImageStack applyCubePooling(const ImageStack &stack,
                     ? std::numeric_limits<float>::infinity()
                     : -std::numeric_limits<float>::infinity();
                 int voxelCount = 0;
+                std::vector<float> pooledValues;
+                if (poolingMode == "median" ||
+                    poolingMode == "top_percentile" ||
+                    poolingMode == "low_percentile")
+                {
+                    pooledValues.reserve(
+                        static_cast<std::size_t>((z1 - z0) * (y1 - y0) * (x1 - x0)));
+                }
                 for (int z = z0; z < z1; ++z)
                 {
                     const cv::Mat &slice = stack[static_cast<size_t>(z)];
@@ -209,7 +221,13 @@ ImageStack applyCubePooling(const ImageStack &stack,
                         {
                             const float value = row[x];
                             sum += value;
-                            if (poolingMode == "min")
+                            if (poolingMode == "median" ||
+                                poolingMode == "top_percentile" ||
+                                poolingMode == "low_percentile")
+                            {
+                                pooledValues.push_back(value);
+                            }
+                            else if (poolingMode == "min")
                             {
                                 extrema = std::min(extrema, value);
                             }
@@ -224,9 +242,60 @@ ImageStack applyCubePooling(const ImageStack &stack,
                 float pooledValue = 0.0f;
                 if (voxelCount > 0)
                 {
-                    pooledValue = poolingMode == "mean"
-                        ? static_cast<float>(sum / static_cast<double>(voxelCount))
-                        : extrema;
+                    if (poolingMode == "mean")
+                    {
+                        pooledValue = static_cast<float>(sum / static_cast<double>(voxelCount));
+                    }
+                    else if (poolingMode == "median")
+                    {
+                        const std::size_t medianIndex = pooledValues.size() / 2U;
+                        std::nth_element(pooledValues.begin(),
+                                         pooledValues.begin() + static_cast<std::ptrdiff_t>(medianIndex),
+                                         pooledValues.end());
+                        pooledValue = pooledValues[medianIndex];
+                    }
+                    else if (poolingMode == "top_percentile")
+                    {
+                        const std::size_t selectedCount = std::max<std::size_t>(
+                            1U,
+                            static_cast<std::size_t>(
+                                std::ceil(std::max(topFraction, 1e-6f) *
+                                          static_cast<float>(pooledValues.size()))));
+                        const std::size_t thresholdIndex = pooledValues.size() - selectedCount;
+                        std::nth_element(pooledValues.begin(),
+                                         pooledValues.begin() + static_cast<std::ptrdiff_t>(thresholdIndex),
+                                         pooledValues.end());
+                        double topSum = 0.0;
+                        for (std::size_t i = thresholdIndex; i < pooledValues.size(); ++i)
+                        {
+                            topSum += pooledValues[i];
+                        }
+                        pooledValue = static_cast<float>(
+                            topSum / static_cast<double>(selectedCount));
+                    }
+                    else if (poolingMode == "low_percentile")
+                    {
+                        const std::size_t selectedCount = std::max<std::size_t>(
+                            1U,
+                            static_cast<std::size_t>(
+                                std::ceil(std::max(lowFraction, 1e-6f) *
+                                          static_cast<float>(pooledValues.size()))));
+                        const std::size_t lastSelectedIndex = selectedCount - 1U;
+                        std::nth_element(pooledValues.begin(),
+                                         pooledValues.begin() + static_cast<std::ptrdiff_t>(lastSelectedIndex),
+                                         pooledValues.end());
+                        double lowSum = 0.0;
+                        for (std::size_t i = 0; i < selectedCount; ++i)
+                        {
+                            lowSum += pooledValues[i];
+                        }
+                        pooledValue = static_cast<float>(
+                            lowSum / static_cast<double>(selectedCount));
+                    }
+                    else
+                    {
+                        pooledValue = extrema;
+                    }
                 }
 
                 for (int z = z0; z < z1; ++z)
@@ -249,6 +318,8 @@ ImageStack applyCubePooling(const ImageStack &stack,
         << " cubeSize=" << cubeSize
         << " grid=" << gridX << "x" << gridY << "x" << gridZ
         << " mode=" << poolingMode
+        << " top_fraction=" << topFraction
+        << " low_fraction=" << lowFraction
         << std::endl;
 
     return pooled;
@@ -756,7 +827,7 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
     const int maxIterations = std::max(1, config.simulation.iterative_max_count);
     const float gateStart = config.simulation.iterative_reward_gate;
     const float gateMin = std::min(gateStart, config.simulation.iterative_reward_gate_min);
-    const float gateStep = config.simulation.iterative_reward_gate_decrement;
+    const float gateStep = config.simulation.iterative_reward_gate_step;
 
     std::vector<float> rewardGates;
     if (gateStep <= 1e-6f || gateStart <= gateMin + 1e-6f) {
@@ -902,7 +973,7 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
 
         float currentScore = scoreForRadiusWithPenalty(current);
         float bestScore = currentScore;
-        float currentPenalty = config.simulation.iterative_penalty;
+        const float penaltyAmount = std::max(0.0f, config.simulation.iterative_penalty);
         const float candidateMaxMean = std::max(0.0f, config.simulation.iterative_candidate_max_mean);
         const float candidateMaxSaturatedFraction = std::clamp(
             config.simulation.iterative_candidate_max_saturated_fraction, 0.0f, 1.0f);
@@ -992,7 +1063,7 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
                                         : 1.0f;
                                 const float penaltyStrength =
                                     std::clamp(normalizedDistanceToKeep, 0.0f, 1.0f);
-                                row[x] -= currentPenalty * penaltyStrength;
+                                row[x] -= penaltyAmount * penaltyStrength;
                                 if (row[x] < 0.0f)
                                 {
                                     row[x] = 0.0f;
@@ -1034,9 +1105,6 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
             if (!candidateMeanOk || !candidateSaturationOk || candidateStats.nonFiniteCount > 0)
             {
                 updateStepProbability(static_cast<std::size_t>(selectedStepIndex), false);
-                currentPenalty = std::max(
-                    config.simulation.iterative_min_penalty,
-                    currentPenalty * config.simulation.iterative_collapse_backoff);
                 ++noImprovementCount;
 
                 if (count % 50 == 0)
@@ -1083,13 +1151,8 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
             updateStepProbability(static_cast<std::size_t>(selectedStepIndex), improvedCurrent);
 
             if (improvedCurrent) {
-                currentPenalty = config.simulation.iterative_penalty;
                 currentScore = score;
                 current = std::move(candidate);
-            } else {
-                currentPenalty = std::max(
-                    config.simulation.iterative_min_penalty,
-                    currentPenalty * config.simulation.iterative_collapse_backoff);
             }
 
             const bool improvedBest = isBetterScoreForSelection(currentScore, bestScore);

@@ -256,25 +256,23 @@ simulation:
   # - Post-process intensity stretch fields below = YP values (per user
   #   direction): yp pushes contrast harder, which is the win we want.
   iterative_penalty: 0.1
-  iterative_min_penalty: 0.005
-  iterative_collapse_backoff: 0.99
   iterative_penalty_range: 1.0
   iterative_reward_gate: 0.5
-  iterative_reward_gate_decrement: 0.005
-  iterative_reward_gate_min: 0.025
-  iterative_reward: 0.1
-  iterative_reward_gate_learning_rate: 0.0025
+  iterative_reward_gate_step: 0.05
+  iterative_reward_gate_min: 0.1
+  iterative_reward: 0.2
+  iterative_reward_gate_learning_rate: 0.1
   iterative_reward_gate_min_probability: 0.001
   iterative_no_improvement_patience: 200
   iterative_score_explosion_threshold: 5.0
   iterative_candidate_max_mean: 0.40
-  iterative_candidate_max_saturated_fraction: 0.02
+  iterative_candidate_max_saturated_fraction: 0.3
   iterative_reward_gate_seed: 12345
   iterative_score_max: 0.6
   iterative_score_target_tolerance: 0.05
   iterative_max_count: 400
-  iterative_improvement_tolerance: 0.01
-  iterative_score_percentile: 0.05
+  iterative_improvement_tolerance: 0.001
+  iterative_score_percentile: 1.0
 
   contrast_structure_threshold: 0.02
   contrast_background_floor: 0.02
@@ -307,12 +305,24 @@ simulation:
   edge_brightness_alignment_top_offset: 16
   edge_brightness_alignment_bottom_offset: 0
   edge_brightness_alignment_max_shift: 0.20
+
   # After all-frame brightness alignment, pixels below this normalized
   # brightness are forced to black. Set <=0 to disable.
   post_alignment_black_threshold: 0.045
+
   # After the fixed threshold above, each frame independently forces its
   # lowest brightness percentile to black. Set <=0 to disable.
-  post_alignment_black_percentile: 0.98 # frame 6 0.987 frame 2 0.99
+  post_alignment_black_percentile: 0.975
+  # After the initial percentile blackoff, detect isolated nonzero 3D chunks
+  # using 26-neighbor connectivity. A chunk is counted when each z/y/x
+  # bounding-box dimension is in [min_size, max_size]. If too many chunks
+  # remain, raise the percentile and reapply blackoff until count <= target.
+  post_alignment_chunk_blackoff_enabled: true
+  post_alignment_chunk_target_count: 5
+  post_alignment_chunk_min_size: 5
+  post_alignment_chunk_max_size: 10
+  post_alignment_chunk_percentile_step: 0.0001
+  post_alignment_chunk_max_percentile: 0.999
   # Number of radius trials to run in parallel during each frame's contrast
   # preprocessing radius search.
   preprocess_radius_batch_size: 8
@@ -336,11 +346,17 @@ simulation:
   # truth so resume decisions stay alongside frame-range and I/O config.
 
   # Cube pooling: fixed-size pooling over 3D cubes.
-  # cube_pooling_mode can be mean, max, or min.
+  # cube_pooling_mode can be mean, max, min, median, top_percentile, or low_percentile.
   cube_pooling_enabled: false
   cube_pooling_cost_comparison_enabled: false
-  cube_pooling_cube_size: 5
-  cube_pooling_mode: max
+  cube_pooling_cube_size: 4
+  cube_pooling_mode: low_percentile
+  # For top_percentile mode, each cube is filled with the mean of its
+  # brightest fraction of voxels. 0.10 means top 10%.
+  cube_pooling_top_fraction: 0.10
+  # For low_percentile mode, each cube is filled with the mean of its
+  # dimmest fraction of voxels. 0.10 means lowest 10%.
+  cube_pooling_low_fraction: 0.5
 
   adaptive_background_expand_factor: 1.1
   # 2026-04-19 audit: 0.4 → 0.2. Yp preprocessing brightens halos, so top 40%
