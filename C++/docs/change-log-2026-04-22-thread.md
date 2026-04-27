@@ -325,3 +325,277 @@ cmake --build build -j20
 ```
 
 The build completed successfully.
+
+## Branch-Only Preprocessing, Pooling, And Cleanup Updates
+
+This section documents the accepted changes that exist on this branch after the preprocessing/debugging work that followed the original 2026-04-22 thread. These notes are branch-local and should not be read as historical behavior for older branches.
+
+### Iterative Preprocessing Random Step Policy
+
+The iterative contrast preprocessing was changed from a one-pass directional gate loop into a randomized reward/penalty step search.
+
+Current behavior:
+
+- reward gates are generated from `iterative_reward_gate` down to `iterative_reward_gate_min` using `iterative_reward_gate_step`
+- each gate contributes two possible random operations:
+  - `Penalty`
+  - `Reward`
+- all step probabilities start uniform
+- after each trial, the selected step probability is updated by `iterative_reward_gate_learning_rate`
+- probabilities are normalized after every update and clamped by `iterative_reward_gate_min_probability`
+- accepted image edits are cumulative inside a radius trial
+- each radius trial returns its historical best accepted stack, not necessarily the final current stack
+
+The old name `iterative_reward_gate_decrement` was removed because the value now means gate spacing, not a directional decrement. The active name is:
+
+```yaml
+iterative_reward_gate_step
+```
+
+The old penalty shrink/backoff logic was removed. Penalty operations now use fixed:
+
+```yaml
+iterative_penalty
+```
+
+The removed knobs are:
+
+```yaml
+iterative_min_penalty
+iterative_collapse_backoff
+```
+
+### Contrast Score And Radius Search
+
+Contrast scoring now evaluates candidate preprocessing results across multiple radius windows. Radius trials are processed in bounded batches rather than averaging the result of a batch.
+
+Relevant controls:
+
+```yaml
+contrast_window_radius_step
+contrast_penalty_min_radius_scale
+contrast_reward_weight
+contrast_penalty_weight
+preprocess_radius_batch_size
+iterative_score_max
+iterative_score_target_tolerance
+iterative_score_percentile
+```
+
+The final radius trial is selected by target-score quality rather than blindly choosing the largest score. Scores inside the configured target window are preferred. This prevents overly aggressive contrast amplification from winning simply because its score is numerically larger.
+
+### Frame Intensity Normalization
+
+The old shared/global intensity normalization was removed. Normalization is now per-frame only.
+
+Current controls:
+
+```yaml
+frame_intensity_normalization_enabled
+frame_intensity_percentile_exclude_zeros
+frame_intensity_scale_low_percentile
+frame_intensity_scale_high_percentile
+frame_intensity_hard_max
+```
+
+When enabled, each frame computes its own low/high percentile references. The previous cross-frame reference mode and the old `global_intensity_*` naming were removed.
+
+### Removed Post-Process Intensity Adjustment
+
+The old post-process hard black threshold and middle-band amplification controlled by these parameters was removed:
+
+```yaml
+post_process_intensity_adjustment_enabled
+post_process_amplification
+post_process_black_percentile
+post_process_white_percentile
+```
+
+The corresponding C++ loop in `ImageHandler::processPreparedSequence` and the old helper-script copy in `scripts/image_processor_clean.py` were removed. Remaining post-process blur/blend controls are still active:
+
+```yaml
+post_process_blur_sigma
+post_process_final_blur_sigma
+post_process_final_direct_weight
+post_process_final_direct_amplification
+post_process_final_blurred_amplification
+```
+
+These happen before post-alignment blackoff.
+
+### Post-Alignment Blackoff
+
+After preprocessing, the post-alignment cleanup sequence is:
+
+```text
+post_alignment_black_threshold
+post_alignment_black_percentile
+adaptive chunk blackoff
+tiny isolated particle removal
+export/load final preprocessed frame
+```
+
+`post_alignment_black_threshold` is an absolute cutoff: pixels below the normalized threshold are set to zero.
+
+`post_alignment_black_percentile` is a per-frame relative cutoff. It samples only finite nonzero pixels, computes the configured percentile cutoff, and zeros pixels at or below that cutoff.
+
+When brightness alignment is disabled, this cleanup happens immediately after each frame is preprocessed. When brightness alignment is enabled, all frames are preprocessed first, aligned to the minimum sampled edge-background value, and then cleaned/exported.
+
+### Edge Brightness Alignment
+
+Edge brightness alignment remains optional:
+
+```yaml
+edge_brightness_alignment_enabled
+edge_brightness_alignment_xy_margin
+edge_brightness_alignment_left_offset
+edge_brightness_alignment_right_offset
+edge_brightness_alignment_top_offset
+edge_brightness_alignment_bottom_offset
+edge_brightness_alignment_max_shift
+```
+
+The edge sample region uses a shared XY margin with configurable offsets from the real image edges. The top/bottom/left/right definitions are relative to image coordinates:
+
+- left/right: x-axis image columns
+- top/bottom: y-axis image rows
+
+When enabled, alignment happens after all frame preprocessing is complete and before final cleanup/export.
+
+### Adaptive Chunk Blackoff
+
+A 3D chunk detector was added after the initial percentile blackoff.
+
+Definition:
+
+- foreground: voxel value `> 0`
+- background: voxel value `== 0`
+- connectivity: 26-neighbor 3D connectivity
+- counted chunk: connected component whose z/y/x bounding-box dimensions are each within the configured size range
+
+Controls:
+
+```yaml
+post_alignment_chunk_blackoff_enabled
+post_alignment_chunk_target_count
+post_alignment_chunk_min_size
+post_alignment_chunk_max_size
+post_alignment_chunk_percentile_step
+post_alignment_chunk_max_percentile
+post_alignment_chunk_detector_threads
+```
+
+Behavior:
+
+```text
+copy post-threshold, pre-percentile stack as baseline
+apply initial post_alignment_black_percentile
+count chunks
+if count > target:
+    restore baseline
+    raise percentile by post_alignment_chunk_percentile_step
+    reapply blackoff
+    count again
+    repeat until count <= target or max percentile is reached
+```
+
+The adaptive retries now restore the unblackoffed baseline before each raised-percentile attempt. This avoids cumulative blackoff from repeatedly computing percentiles on an already-zeroed stack.
+
+The detector has a bounded parallel foreground-mask prepass controlled by:
+
+```yaml
+post_alignment_chunk_detector_threads
+```
+
+The exact 26-neighbor connected-component flood fill remains serial to avoid racy overcounts. If the detector is called inside an existing OpenMP region, the prepass falls back to one thread to avoid nested oversubscription.
+
+### Tiny Isolated Particle Removal
+
+A post-blackoff cleanup step was added to remove isolated nonzero connected components that are smaller than the configured minimum cell size.
+
+Control:
+
+```yaml
+post_alignment_tiny_particle_removal_enabled
+```
+
+Default:
+
+```yaml
+post_alignment_tiny_particle_removal_enabled: false
+```
+
+When enabled, it runs after adaptive chunk blackoff. It uses the same 26-neighbor component traversal and removes a component if its bounding-box dimensions are all smaller than the configured minimum cell diameters:
+
+```text
+x dimension < 2 * minARadius
+y dimension < 2 * minBRadius, or 2 * minARadius if B is not configured
+z dimension < 2 * minCRadius
+```
+
+The step logs removed component and voxel counts under:
+
+```text
+[PostAlignmentTinyParticleRemoval]
+```
+
+### Cube Pooling
+
+The previous adaptive cube pooling naming was simplified to fixed cube pooling:
+
+```yaml
+cube_pooling_enabled
+cube_pooling_cost_comparison_enabled
+cube_pooling_cube_size
+cube_pooling_mode
+```
+
+Supported modes are now:
+
+```yaml
+mean
+max
+min
+median
+top_percentile
+low_percentile
+```
+
+Additional controls:
+
+```yaml
+cube_pooling_top_fraction
+cube_pooling_low_fraction
+```
+
+Mode behavior:
+
+- `mean`: fill each cube with the arithmetic mean
+- `max`: fill each cube with the maximum voxel value
+- `min`: fill each cube with the minimum voxel value
+- `median`: fill each cube with the median voxel value
+- `top_percentile`: fill each cube with the mean of the brightest configured fraction
+- `low_percentile`: fill each cube with the mean of the dimmest configured fraction
+
+The earlier `lower_percentile` wording was renamed to `low_percentile`, and `cube_pooling_lower_fraction` was renamed to `cube_pooling_low_fraction`.
+
+### Export Behavior
+
+Preprocessed debug export now writes only completed, final-ready preprocessed images after all enabled post-preprocessing cleanup has run.
+
+Old unconditional duplicate exports were removed. Runtime image export is controlled by the same format switches:
+
+```yaml
+export_frame_png
+export_frame_tiff
+export_preprocessed_images
+export_post_localization_images
+```
+
+When preprocessing debug export is enabled, final preprocessed stacks are written under:
+
+```text
+output/preprocessed/<frame>.tif
+```
+
+The old duplicate `real_tiff`/`synth_tiff` style unconditional export path was removed.
