@@ -345,7 +345,7 @@ simulation:
   post_alignment_chunk_target_count: 5
   post_alignment_chunk_min_size: 5
   post_alignment_chunk_max_size: 10
-  post_alignment_chunk_percentile_step: 0.0005
+  post_alignment_chunk_percentile_step: 0.0001
   post_alignment_chunk_max_percentile: 0.999
   # Thread cap for the chunk detector foreground-mask prepass. The exact
   # connected-component flood fill remains serial to avoid racy overcounts.
