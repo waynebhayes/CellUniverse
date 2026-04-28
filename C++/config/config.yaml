@@ -270,7 +270,7 @@ simulation:
   signal_guided_iterations_per_cell: 100
   random_iterations_per_cell: 150
   z_scaling: 7
-  blur_sigma: 0.0
+  blur_sigma: 1.5 # 0.0
 
   # Preprocessing pipeline tuning. Hybrid strategy (2026-04-19, post-FP at f4):
   # - Iterative loop fields = OUR snap-only values (run 095555). yp's values
@@ -292,7 +292,7 @@ simulation:
   iterative_candidate_max_mean: 0.40
   iterative_candidate_max_saturated_fraction: 0.3
   iterative_reward_gate_seed: 12345
-  iterative_score_max: 0.6
+  iterative_score_max: 0.3 # 0.6
   iterative_score_target_tolerance: 0.05
   iterative_max_count: 400
   iterative_improvement_tolerance: 0.001
@@ -341,11 +341,11 @@ simulation:
   # using 26-neighbor connectivity. A chunk is counted when each z/y/x
   # bounding-box dimension is in [min_size, max_size]. If too many chunks
   # remain, raise the percentile and reapply blackoff until count <= target.
-  post_alignment_chunk_blackoff_enabled: true
-  post_alignment_chunk_target_count: 5
+  post_alignment_chunk_blackoff_enabled: true # no need for good data
+  post_alignment_chunk_target_count: 5 # 15 
   post_alignment_chunk_min_size: 5
   post_alignment_chunk_max_size: 10
-  post_alignment_chunk_percentile_step: 0.0001
+  post_alignment_chunk_percentile_step: 0.0005
   post_alignment_chunk_max_percentile: 0.999
   # Thread cap for the chunk detector foreground-mask prepass. The exact
   # connected-component flood fill remains serial to avoid racy overcounts.
@@ -360,11 +360,11 @@ simulation:
 
   post_process_blur_sigma: 1.1
   post_process_final_blur_sigma: 2.5
-  post_process_final_direct_weight: 0.6
-  post_process_final_direct_amplification: 0.6
-  post_process_final_blurred_amplification: 2.0
+  post_process_final_direct_weight: 0.7
+  post_process_final_direct_amplification: 0.8
+  post_process_final_blurred_amplification: 1.5
 
-  export_preprocessed_images: false
+  export_preprocessed_images: true
   # Debug signal-guidance localization. When true, exports two stacks per
   # frame under signal_debug/: center cubes on black background and a
   # grayscale perturb-probability field on black background.
@@ -372,7 +372,7 @@ simulation:
   export_frame_png: false
   export_frame_tiff: true
   export_post_localization_images: true
-  quit_after_preprocessing: false
+  quit_after_preprocessing: true
   # When true, skip the upfront "preprocess all frames into memory" pass and
   # run prepareFrame(frame) immediately before optimize(frame). This reduces
   # peak memory by keeping the pipeline frame-by-frame. Ignored when
