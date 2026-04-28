@@ -47,10 +47,17 @@ while (std::getline(file, line)) {
     // Case A: Original 7-column format:
     // filePath, cellName, x, y, z, majorRadius, minorRadius
     //
-    // Triaxial extension (2026-04-11): optional 8-column format adds bRadius
+    // Triaxial extension: optional 8-column format adds bRadius
     // between majorRadius and minorRadius:
     // filePath, cellName, x, y, z, majorRadius, bRadius, minorRadius
-    // If absent, bRadius defaults to majorRadius (oblate-compatible fallback).
+    //
+    // State resume extension: optional 11-column format appends
+    // theta_x, theta_y, theta_z after the radii:
+    // filePath, cellName, x, y, z, majorRadius, bRadius, minorRadius,
+    // theta_x, theta_y, theta_z
+    //
+    // If bRadius is absent, it defaults to majorRadius.
+    // If thetas are absent, they default to 0.
     // ----------------------------
     if (tokens.size() >= 7) {
         std::string filePath = tokens[0];
@@ -62,6 +69,9 @@ while (std::getline(file, line)) {
         float majorRadius = std::stof(tokens[5]) * initialRadiusScale;
         float bRadius;
         float minorRadius;
+        float theta_x = 0.0f;
+        float theta_y = 0.0f;
+        float theta_z = 0.0f;
         if (tokens.size() >= 8) {
             bRadius     = std::stof(tokens[6]) * initialRadiusScale;
             minorRadius = std::stof(tokens[7]) * initialRadiusScale;
@@ -69,13 +79,18 @@ while (std::getline(file, line)) {
             bRadius     = majorRadius; // oblate fallback
             minorRadius = std::stof(tokens[6]) * initialRadiusScale;
         }
+        if (tokens.size() >= 11) {
+            theta_x = std::stof(tokens[8]);
+            theta_y = std::stof(tokens[9]);
+            theta_z = std::stof(tokens[10]);
+        }
 
         float brightness = initialBrightness;
 
         z *= z_scaling;
 
         SpheroidParams params(cellName, x, y, z, majorRadius, minorRadius,
-                              0.0f, 0.0f, 0.0f, brightness);
+                              theta_x, theta_y, theta_z, brightness);
         params.bRadius = bRadius;
         initialCells[filePath].push_back(Spheroid(params));
 

@@ -232,14 +232,13 @@ void CellUniverse::ensureFrameLoaded(size_t frameIndex)
 
     std::vector<cv::Mat> realFrame = ImageHandler::loadFrame(imagePaths[frameIndex].string(), config);
     const float currentMeanBrightness = computeStackMean(realFrame);
-    if (!referenceMeanBrightnessInitialized)
-    {
-        referenceMeanBrightness = currentMeanBrightness;
-        referenceMeanBrightnessInitialized = true;
-    }
+    const double runningReferenceMean =
+        (loadedFrameMeanCount > 0)
+            ? (accumulatedFrameMeanBrightness / static_cast<double>(loadedFrameMeanCount))
+            : static_cast<double>(currentMeanBrightness);
     const float brightnessScale =
-        (currentMeanBrightness > 1e-6f && referenceMeanBrightness > 1e-6f)
-            ? (referenceMeanBrightness / currentMeanBrightness)
+        (currentMeanBrightness > 1e-6f && runningReferenceMean > 1e-6)
+            ? static_cast<float>(runningReferenceMean / static_cast<double>(currentMeanBrightness))
             : 1.0f;
     scaleStackBrightness(realFrame, brightnessScale);
 
@@ -250,7 +249,7 @@ void CellUniverse::ensureFrameLoaded(size_t frameIndex)
 
     std::cout << "[Brightness Align] frame=" << imagePaths[frameIndex].filename().string()
               << " frame_mean=" << currentMeanBrightness
-              << " reference_mean=" << referenceMeanBrightness
+              << " running_mean=" << runningReferenceMean
               << " scale=" << brightnessScale << '\n';
 
     config.simulation.z_slices = static_cast<int>(realFrame.size());
@@ -266,6 +265,9 @@ void CellUniverse::ensureFrameLoaded(size_t frameIndex)
         frames[frameIndex]->setBackgroundColor(config.cell->backgroundColor);
         frames[frameIndex]->regenerateSynthFrame();
     }
+
+    accumulatedFrameMeanBrightness += static_cast<double>(currentMeanBrightness);
+    ++loadedFrameMeanCount;
 }
 void CellUniverse::optimize(int frameIndex)
 {

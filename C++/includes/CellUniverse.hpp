@@ -48,8 +48,8 @@ private:
    int continueFrom;
    std::map<std::string, std::vector<Spheroid>> initialCells;
    std::map<size_t, std::vector<Spheroid>> carriedCells;
-   float referenceMeanBrightness = 0.0f;
-   bool referenceMeanBrightnessInitialized = false;
+   double accumulatedFrameMeanBrightness = 0.0;
+   size_t loadedFrameMeanCount = 0;
    std::map<std::string, PreviousFrameSnapshot> previousSnapshots;
 
    void ensureFrameLoaded(size_t frameIndex);

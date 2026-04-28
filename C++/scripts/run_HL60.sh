@@ -31,6 +31,79 @@ LAST_FRAME_AUTO=$(
 )
 [ -n "$LAST_FRAME_AUTO" ] || { echo "[FATAL] no t*.tif files found in: $INPUT_DIR"; exit 1; }
 
+MODE="track"
+if [ "${1:-}" = "extract" ] || [ "${1:-}" = "groundtruth" ] || [ "${1:-}" = "gt" ]; then
+  MODE="extract"
+fi
+
+if [ "$MODE" = "extract" ]; then
+  FRAME_INDEX="${2:-0}"
+  [[ "$FRAME_INDEX" =~ ^[0-9]+$ ]] || { echo "[FATAL] extract mode requires a non-negative integer frame index"; exit 1; }
+  FRAME_FILE="$INPUT_DIR/t$(printf '%03d' "$FRAME_INDEX").tif"
+  [ -f "$FRAME_FILE" ] || { echo "[FATAL] input frame not found: $FRAME_FILE"; exit 1; }
+
+  CSV_FILE="$CPP_ROOT/config/initial_HL60_${FRAME_INDEX}.csv"
+  OUT_DIR="$OUTPUT_ROOT/output_HL60_ground_truth_${FRAME_INDEX}_$(date +%Y%m%d_%H%M%S)"
+  LOG_FILE="$OUT_DIR/run_HL60_ground_truth_${FRAME_INDEX}_$(date +%Y%m%d_%H%M%S).txt"
+
+  mkdir -p "$OUT_DIR"
+  exec > >(tee -a "$LOG_FILE") 2>&1
+
+  echo "======================================================================================================="
+  echo "Cell Universe HL60 Ground Truth Builder"
+  echo "======================================================================================================="
+  echo "CPP Root        : $CPP_ROOT"
+  echo "Input Frame     : $FRAME_FILE"
+  echo "Config YAML     : $CONFIG_FILE"
+  echo "CSV Output      : $CSV_FILE"
+  echo "Output Dir      : $OUT_DIR"
+  echo "Run Log         : $LOG_FILE"
+  echo "Skip Clean      : $SKIP_CLEAN"
+  echo "======================================================================================================="
+
+  echo "[STEP] Cleaning previous build artifacts..."
+  if [ "$SKIP_CLEAN" = "1" ]; then
+    echo "  - Skipping clean build removal (CELLUNIVERSE_SKIP_CLEAN=1)"
+    mkdir -p "$BUILD_DIR"
+  else
+    if [ -d "$BUILD_DIR" ]; then
+      echo "  - Removing: $BUILD_DIR"
+      rm -rf "$BUILD_DIR"
+    fi
+    if [ -d "$FALLBACK_BUILD_DIR" ]; then
+      echo "  - Removing: $FALLBACK_BUILD_DIR"
+      rm -rf "$FALLBACK_BUILD_DIR"
+    fi
+    mkdir -p "$BUILD_DIR"
+  fi
+
+  echo "[STEP] Reconfiguring CMake..."
+  cmake -S "$CPP_ROOT" -B "$BUILD_DIR"
+
+  echo "[STEP] Building..."
+  cmake --build "$BUILD_DIR" -- -j"$(sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+
+  BIN="$BUILD_DIR/celluniverse"
+  [ -x "$BIN" ] || { echo "[FATAL] build succeeded but binary not found/executable: $BIN"; exit 1; }
+
+  echo "[STEP] Building initial CSV from frame $FRAME_INDEX..."
+  "$BIN" \
+    --build-ground-truth \
+    "$FRAME_FILE" \
+    "$OUT_DIR" \
+    "$CONFIG_FILE" \
+    "$CSV_FILE" 2> >(grep -Ev "TIFF_Warning TIFFReadDirectory: Unknown field with tag 6500(0|1)?" >&2)
+
+  echo "======================================================================================================="
+  echo "Ground-truth build finished (exit=0)."
+  echo "CSV saved to:"
+  echo "$CSV_FILE"
+  echo "Outputs saved to:"
+  echo "$OUT_DIR"
+  echo "======================================================================================================="
+  exit 0
+fi
+
 FIRST_FRAME=0
 LAST_FRAME="149"
 
