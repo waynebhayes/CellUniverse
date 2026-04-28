@@ -841,8 +841,12 @@ static void adaptBlackPercentileToChunkCount(std::vector<cv::Mat> &stack,
     const int targetCount = std::max(0, config.post_alignment_chunk_target_count);
     const float percentileStep = std::max(0.0f, config.post_alignment_chunk_percentile_step);
     const float maxPercentile = std::clamp(config.post_alignment_chunk_max_percentile, 0.0f, 1.0f);
+    const int nonImprovementPatience = std::max(0, config.post_alignment_chunk_non_improvement_patience);
+    const int disableBelowCount = std::max(0, config.post_alignment_chunk_disable_below_count);
     float currentPercentile = std::clamp(config.post_alignment_black_percentile, 0.0f, maxPercentile);
     int chunkCount = countSeparatedChunksInSizeRange(stack, config);
+    int bestChunkCount = chunkCount;
+    int nonImprovementCount = 0;
     int iteration = 0;
 
     log << "[PostAlignmentChunkBlackoff] frame=" << framePath.filename().string()
@@ -853,12 +857,24 @@ static void adaptBlackPercentileToChunkCount(std::vector<cv::Mat> &stack,
         << " min_size=" << std::max(1, config.post_alignment_chunk_min_size)
         << " max_size=" << std::max(std::max(1, config.post_alignment_chunk_min_size),
                                     config.post_alignment_chunk_max_size)
+        << " non_improvement_patience=" << nonImprovementPatience
+        << " disable_below_count=" << disableBelowCount
         << " detector_threads=" << std::max(1, config.post_alignment_chunk_detector_threads)
         << std::endl;
 
+    if (chunkCount < disableBelowCount) {
+        log << "[PostAlignmentChunkBlackoff] frame=" << framePath.filename().string()
+            << " disabled_reason=chunk_count_below_configured_threshold"
+            << " chunk_count=" << chunkCount
+            << " disable_below_count=" << disableBelowCount
+            << std::endl;
+        return;
+    }
+
     while (chunkCount > targetCount &&
            percentileStep > 0.0f &&
-           currentPercentile + 1e-6f < maxPercentile) {
+           currentPercentile + 1e-6f < maxPercentile &&
+           nonImprovementCount < nonImprovementPatience) {
         currentPercentile = std::min(maxPercentile, currentPercentile + percentileStep);
         ++iteration;
         stack = cloneMatStack(unblackoffedStack);
@@ -867,14 +883,52 @@ static void adaptBlackPercentileToChunkCount(std::vector<cv::Mat> &stack,
         if (!result.applied) {
             break;
         }
-        chunkCount = countSeparatedChunksInSizeRange(stack, config, targetCount + 1);
+        chunkCount = countSeparatedChunksInSizeRange(stack, config);
+        if (chunkCount < bestChunkCount) {
+            bestChunkCount = chunkCount;
+            nonImprovementCount = 0;
+        } else {
+            ++nonImprovementCount;
+        }
         log << "[PostAlignmentChunkBlackoff] frame=" << framePath.filename().string()
             << " iteration=" << iteration
             << " percentile=" << currentPercentile
             << " chunk_count=" << chunkCount
             << " target_count=" << targetCount
+            << " best_chunk_count=" << bestChunkCount
+            << " non_improvement_count=" << nonImprovementCount
+            << " non_improvement_patience=" << nonImprovementPatience
             << std::endl;
     }
+}
+
+static void applyFinalPreprocessingBlur(std::vector<cv::Mat> &stack,
+                                        const SimulationConfig &config,
+                                        const fs::path &framePath,
+                                        std::ostream &log)
+{
+    const float sigma = std::max(0.0f, config.post_alignment_final_blur_sigma);
+    if (sigma <= 0.0f || stack.empty()) {
+        return;
+    }
+
+    #pragma omp parallel for schedule(static)
+    for (int sliceIndex = 0; sliceIndex < static_cast<int>(stack.size()); ++sliceIndex) {
+        auto &slice = stack[static_cast<size_t>(sliceIndex)];
+        if (slice.empty()) {
+            continue;
+        }
+
+        cv::GaussianBlur(slice, slice, cv::Size(0, 0), sigma, sigma);
+        cv::patchNaNs(slice, 0.0);
+        cv::min(slice, 1.0f, slice);
+        cv::max(slice, 0.0f, slice);
+    }
+
+    log << "[PostAlignmentFinalBlur] frame=" << framePath.filename().string()
+        << " sigma=" << sigma
+        << " slices=" << stack.size()
+        << std::endl;
 }
 
 static void exportStackToSubdir(const std::vector<cv::Mat> &stack,
@@ -1611,6 +1665,10 @@ void CellUniverse::prepareFrame(int frameIndex)
                                 config,
                                 imagePaths[static_cast<size_t>(frameIndex)],
                                 std::cout);
+    applyFinalPreprocessingBlur(real_frame,
+                                config.simulation,
+                                imagePaths[static_cast<size_t>(frameIndex)],
+                                std::cout);
 
     if (config.simulation.export_preprocessed_images) {
         exportPreprocessedStack(real_frame, fs::path(outputPath),
@@ -1731,6 +1789,10 @@ void CellUniverse::preprocessAllFramesAlignedToMinimumBackground(bool loadIntoFr
                                         config,
                                         imagePaths[static_cast<size_t>(frameIndex)],
                                         std::cout);
+            applyFinalPreprocessingBlur(realFrame,
+                                        config.simulation,
+                                        imagePaths[static_cast<size_t>(frameIndex)],
+                                        std::cout);
 
             if (config.simulation.export_preprocessed_images) {
                 exportPreprocessedStack(realFrame, fs::path(outputPath),
@@ -1804,6 +1866,10 @@ void CellUniverse::preprocessAllFramesAlignedToMinimumBackground(bool loadIntoFr
                                          std::cout);
         removeTinyIsolatedParticles(item.stack,
                                     config,
+                                    imagePaths[static_cast<size_t>(frameIndex)],
+                                    std::cout);
+        applyFinalPreprocessingBlur(item.stack,
+                                    config.simulation,
                                     imagePaths[static_cast<size_t>(frameIndex)],
                                     std::cout);
 

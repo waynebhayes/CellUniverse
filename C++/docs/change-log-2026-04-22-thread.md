@@ -419,9 +419,15 @@ post_process_final_blur_sigma
 post_process_final_direct_weight
 post_process_final_direct_amplification
 post_process_final_blurred_amplification
+post_alignment_final_blur_sigma
 ```
 
 These happen before post-alignment blackoff.
+
+`post_alignment_final_blur_sigma` is separate from the earlier post-process
+blend blur. When set above `0`, it applies a final per-slice Gaussian blur
+after post-alignment thresholding, adaptive chunk blackoff, and tiny isolated
+particle removal, immediately before export/load/debug-signal preparation.
 
 ### Post-Alignment Blackoff
 
@@ -482,6 +488,8 @@ post_alignment_chunk_min_size
 post_alignment_chunk_max_size
 post_alignment_chunk_percentile_step
 post_alignment_chunk_max_percentile
+post_alignment_chunk_non_improvement_patience
+post_alignment_chunk_disable_below_count
 post_alignment_chunk_detector_threads
 ```
 
@@ -491,15 +499,22 @@ Behavior:
 copy post-threshold, pre-percentile stack as baseline
 apply initial post_alignment_black_percentile
 count chunks
+if count < post_alignment_chunk_disable_below_count:
+    skip adaptive retries
 if count > target:
     restore baseline
     raise percentile by post_alignment_chunk_percentile_step
     reapply blackoff
     count again
-    repeat until count <= target or max percentile is reached
+    repeat until count <= target, max percentile is reached, or the
+    non-improvement patience is exhausted
 ```
 
 The adaptive retries now restore the unblackoffed baseline before each raised-percentile attempt. This avoids cumulative blackoff from repeatedly computing percentiles on an already-zeroed stack.
+
+`post_alignment_chunk_non_improvement_patience` stops the adaptive retries after that many consecutive percentile increases do not reduce the chunk count. The default is `10`.
+
+`post_alignment_chunk_disable_below_count` disables adaptive retries for a frame when its initial chunk count is below the configured value. The default is `0`, which preserves the previous behavior.
 
 The detector has a bounded parallel foreground-mask prepass controlled by:
 
