@@ -362,7 +362,7 @@ simulation:
   post_process_final_blur_sigma: 2.5
   post_process_final_direct_weight: 0.7
   post_process_final_direct_amplification: 0.8
-  post_process_final_blurred_amplification: 1.5
+  post_process_final_blurred_amplification: 1.2
 
   export_preprocessed_images: true
   # Debug signal-guidance localization. When true, exports two stacks per
@@ -638,7 +638,7 @@ prob:
   # 12345 candidates had valley≈0.86-0.89, while obvious continuous blobs
   # in that frame stayed near 0.96-1.03. This restores those real f3 splits
   # without accepting the clear no-valley candidates.
-  bio_bridge_max_valley_ratio: 0.90
+  bio_bridge_max_valley_ratio: 0.75
   # Absolute minimum edge brightness (real-image units above background).
   # Rejects splits where min(edge1Bright, edge2Bright) < threshold — one
   # daughter sits in near-background empty space. Typical cell cores
