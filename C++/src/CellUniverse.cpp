@@ -1900,9 +1900,9 @@ void CellUniverse::optimize(int frameIndex)
 
     if (frameIndex > 0) {
         // Prev-frame summaries cached at end of optimize(frameIndex-1) so we
-        // don't need frames[frameIndex-1]'s image stacks (already released by
-        // M1 releaseFrameImages). Falls back to 0 if not cached (shouldn't
-        // happen if prepareFrame + optimize sequence is respected).
+        // don't need frames[frameIndex-1]'s image stacks. Falls back to 0 if
+        // not cached (shouldn't happen if prepareFrame + optimize sequence is
+        // respected).
         const float previousBackground = perFrameAdaptiveBackground[frameIndex - 1];
         const float previousMeanBrightness = perFrameMeanBrightness[frameIndex - 1];
         const float currentMeanBrightness = computeStackMean(frame.getRealFrame());
@@ -3026,7 +3026,7 @@ void CellUniverse::optimize(int frameIndex)
               << " final_cells=" << frame.cells.size() << std::endl;
 
     // M1/M2 cache per-frame summaries so optimize(frameIndex+1) doesn't need
-    // frames[frameIndex]'s image stacks (which will be released in main.cpp).
+    // frames[frameIndex]'s image stacks.
     perFrameAdaptiveBackground[frameIndex] =
         estimateAdaptiveBackgroundFromFrame(frame, config.simulation);
     perFrameMeanBrightness[frameIndex] = computeStackMean(frame.getRealFrame());

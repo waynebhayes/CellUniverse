@@ -367,7 +367,7 @@ simulation:
   post_process_final_blurred_amplification: 0.5
   post_alignment_final_blur_sigma: 1.25
 
-  export_preprocessed_images: true
+  export_preprocessed_images: false
   # Debug signal-guidance localization. When true, exports two stacks per
   # frame under signal_debug/: center cubes on black background and a
   # grayscale perturb-probability field on black background.
@@ -375,12 +375,16 @@ simulation:
   export_frame_png: false
   export_frame_tiff: true
   export_post_localization_images: true
-  quit_after_preprocessing: true
+  quit_after_preprocessing: false
   # When true, skip the upfront "preprocess all frames into memory" pass and
   # run prepareFrame(frame) immediately before optimize(frame). This reduces
   # peak memory by keeping the pipeline frame-by-frame. Ignored when
   # quit_after_preprocessing is true, because that mode exits before analysis.
-  prepare_analyze_one_frame: false
+  prepare_analyze_one_frame: true
+  # When true, after a frame has been optimized and exported, release its
+  # image-heavy stacks from memory while keeping cells, cached summaries,
+  # checkpoints, and other state needed by later frames.
+  release_analyzed_exported_frames: true
 
   # Checkpoint resume: moved to run_celluniverse.sh INI preset on 2026-04-22.
   # Set `resume_from` and `resume_source_dir` in user_input_configurations.ini

@@ -92,7 +92,7 @@ private:
 
    // Per-frame cached summaries for adaptive background (computed at end of
    // optimize(N); consumed by optimize(N+1) without needing frames[N]'s
-   // image data, which has been released by M1 by then).
+   // image data.
    std::vector<float> perFrameAdaptiveBackground;
    std::vector<float> perFrameMeanBrightness;
 

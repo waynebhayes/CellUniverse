@@ -198,10 +198,11 @@ int main(int argc, char *argv[])
 
         lineage.saveCells(frame);
 
-        // M1 memory optimization: release this frame's image stacks now that
-        // we've captured its snapshot, saved its outputs, and copied cells
-        // forward. Downstream only needs snapshot metadata + per-cell state.
-        lineage.releaseFrameImages(frame);
+        if (config.simulation.release_analyzed_exported_frames) {
+            // Release image-heavy stacks after exported outputs and saved cells.
+            // Later frames use copied cells, checkpoints, and cached summaries.
+            lineage.releaseFrameImages(frame);
+        }
 
         // Checkpoint for potential future resume.
         lineage.saveCheckpoint(frame);
