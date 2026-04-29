@@ -49,6 +49,12 @@ static double asymmetricL2Slice(const cv::Mat &real, const cv::Mat &synth, float
     return std::sqrt(std::max(0.0, asymSumSq));
 }
 
+struct BrightPixel
+{
+    cv::Point3f pos;   // world coordinates (x, y, z in interpolated-z space)
+    float weight;      // pixel intensity above background
+};
+
 static float sampleSignalProbability(const std::vector<cv::Mat> &probability,
                                      float x,
                                      float y,
@@ -1505,12 +1511,6 @@ double Frame::computeOverlapForCell(size_t cellIdx, float weight) const
 
 namespace {
 
-struct BrightPixel
-{
-    cv::Point3f pos;   // world coordinates (x, y, z in interpolated-z space)
-    float weight;      // pixel intensity above background
-};
-
 // Diagnostic counts for the voxel filter pipeline.
 struct GatherStats
 {
@@ -2687,6 +2687,292 @@ bool Frame::calibrateCellShapeViaPca(
     }
 
     return anyUpdate;
+}
+
+bool Frame::tryPcaBridgeSplit(size_t cellIndex,
+                              const ProbabilityConfig &probConfig,
+                              std::ostream *logSink)
+{
+    if (!probConfig.pca_bridge_split_enabled) return false;
+    if (cellIndex >= cells.size() || _realFrame.empty()) return false;
+
+    std::ostream &log = logSink ? *logSink : std::cout;
+    const Ellipsoid parent = cells[cellIndex];
+    if (parent.isTrash()) return false;
+
+    const float radii[3] = {
+        parent.getARadius(), parent.getBRadius(), parent.getCRadius()
+    };
+    int longIdx = 0;
+    int shortIdx = 0;
+    for (int i = 1; i < 3; ++i) {
+        if (radii[i] > radii[longIdx]) longIdx = i;
+        if (radii[i] < radii[shortIdx]) shortIdx = i;
+    }
+    const float longR = radii[longIdx];
+    const float shortR = std::max(1e-3f, radii[shortIdx]);
+    const float elong = longR / shortR;
+    if (elong < probConfig.pca_bridge_elongation_ratio) return false;
+
+    std::array<double, 9> R_T;
+    parent.generateInverseRotationMatrix(R_T);
+    const int base = 3 * longIdx;
+    const cv::Point3f longAxis(
+        static_cast<float>(R_T[base]),
+        static_cast<float>(R_T[base + 1]),
+        static_cast<float>(R_T[base + 2]));
+
+    const int bins = std::max(5, probConfig.pca_bridge_profile_bins);
+    std::vector<int> binCount(bins, 0);
+    std::vector<int> binBlack(bins, 0);
+    std::vector<BrightPixel> leftPixels;
+    std::vector<BrightPixel> rightPixels;
+    std::vector<std::pair<BrightPixel, float>> nonblackWithProj;
+
+    const float blackThreshold = std::max(0.0f, probConfig.pca_bridge_black_threshold);
+    const int xMin = std::max(0, static_cast<int>(std::floor(parent.getX() - longR)));
+    const int xMax = std::min(_realFrame[0].cols - 1, static_cast<int>(std::ceil(parent.getX() + longR)));
+    const int yMin = std::max(0, static_cast<int>(std::floor(parent.getY() - longR)));
+    const int yMax = std::min(_realFrame[0].rows - 1, static_cast<int>(std::ceil(parent.getY() + longR)));
+    const int zMin = std::max(0, static_cast<int>(std::floor(parent.getZ() - longR)));
+    const int zMax = std::min(static_cast<int>(_realFrame.size()) - 1,
+                              static_cast<int>(std::ceil(parent.getZ() + longR)));
+    const double invA2 = 1.0 / std::max(1e-6f, radii[0] * radii[0]);
+    const double invB2 = 1.0 / std::max(1e-6f, radii[1] * radii[1]);
+    const double invC2 = 1.0 / std::max(1e-6f, radii[2] * radii[2]);
+
+    for (int z = zMin; z <= zMax; ++z) {
+        const cv::Mat &slice = _realFrame[z];
+        for (int y = yMin; y <= yMax; ++y) {
+            const float *row = slice.ptr<float>(y);
+            for (int x = xMin; x <= xMax; ++x) {
+                const float dx = static_cast<float>(x) - parent.getX();
+                const float dy = static_cast<float>(y) - parent.getY();
+                const float dz = static_cast<float>(z) - parent.getZ();
+                const double lx = R_T[0] * dx + R_T[1] * dy + R_T[2] * dz;
+                const double ly = R_T[3] * dx + R_T[4] * dy + R_T[5] * dz;
+                const double lz = R_T[6] * dx + R_T[7] * dy + R_T[8] * dz;
+                const double ell = lx * lx * invA2 + ly * ly * invB2 + lz * lz * invC2;
+                if (ell > 1.0) continue;
+
+                const float brightness = row[x];
+                const float proj = dx * longAxis.x + dy * longAxis.y + dz * longAxis.z;
+                const float t = std::clamp((proj / longR + 1.0f) * 0.5f, 0.0f, 0.999999f);
+                const int bin = std::clamp(static_cast<int>(t * bins), 0, bins - 1);
+                ++binCount[bin];
+                if (brightness <= blackThreshold) {
+                    ++binBlack[bin];
+                } else {
+                    nonblackWithProj.push_back({
+                        BrightPixel{cv::Point3f(static_cast<float>(x),
+                                                static_cast<float>(y),
+                                                static_cast<float>(z)),
+                                    std::max(1e-6f, brightness - blackThreshold)},
+                        proj});
+                }
+            }
+        }
+    }
+
+    if (nonblackWithProj.empty()) return false;
+
+    const float centerFrac = std::clamp(probConfig.pca_bridge_gap_center_fraction, 0.05f, 1.0f);
+    const float minBlackFrac = std::clamp(probConfig.pca_bridge_min_black_fraction, 0.0f, 1.0f);
+    const int minGapBins = std::max(1, probConfig.pca_bridge_min_gap_bins);
+    int bestStart = -1;
+    int bestEnd = -1;
+    int runStart = -1;
+    for (int bi = 0; bi < bins; ++bi) {
+        const float centerT = ((static_cast<float>(bi) + 0.5f) / static_cast<float>(bins)) * 2.0f - 1.0f;
+        const bool inCenter = std::abs(centerT) <= centerFrac;
+        const float blackFrac = (binCount[bi] > 0)
+            ? static_cast<float>(binBlack[bi]) / static_cast<float>(binCount[bi])
+            : 1.0f;
+        const bool darkBin = inCenter && blackFrac >= minBlackFrac;
+        if (darkBin) {
+            if (runStart < 0) runStart = bi;
+        } else if (runStart >= 0) {
+            if (bi - runStart >= minGapBins &&
+                (bestStart < 0 || bi - runStart > bestEnd - bestStart + 1)) {
+                bestStart = runStart;
+                bestEnd = bi - 1;
+            }
+            runStart = -1;
+        }
+    }
+    if (runStart >= 0 && bins - runStart >= minGapBins &&
+        (bestStart < 0 || bins - runStart > bestEnd - bestStart + 1)) {
+        bestStart = runStart;
+        bestEnd = bins - 1;
+    }
+    if (bestStart < 0) {
+        log << "  [PCA Bridge Split] cell=" << parent.getName()
+            << " elong=" << elong
+            << " rejected=no_dark_bridge" << std::endl;
+        return false;
+    }
+
+    const float splitBinCenter = 0.5f * (static_cast<float>(bestStart + bestEnd + 1));
+    const float splitProj = ((splitBinCenter / static_cast<float>(bins)) * 2.0f - 1.0f) * longR;
+    for (const auto &item : nonblackWithProj) {
+        if (item.second < splitProj) {
+            leftPixels.push_back(item.first);
+        } else {
+            rightPixels.push_back(item.first);
+        }
+    }
+
+    const int minSide = std::max(1, probConfig.pca_bridge_min_side_voxels);
+    if (static_cast<int>(leftPixels.size()) < minSide ||
+        static_cast<int>(rightPixels.size()) < minSide) {
+        log << "  [PCA Bridge Split] cell=" << parent.getName()
+            << " elong=" << elong
+            << " rejected=too_few_side_voxels"
+            << " left=" << leftPixels.size()
+            << " right=" << rightPixels.size()
+            << " min=" << minSide << std::endl;
+        return false;
+    }
+
+    auto fitDaughter = [&](const std::string &name,
+                           const std::vector<BrightPixel> &pixels) -> Ellipsoid {
+        double sx = 0.0, sy = 0.0, sz = 0.0, sw = 0.0;
+        for (const auto &bp : pixels) {
+            const double w = std::max(1e-6f, bp.weight);
+            sx += bp.pos.x * w;
+            sy += bp.pos.y * w;
+            sz += bp.pos.z * w;
+            sw += w;
+        }
+        const cv::Point3f center(
+            static_cast<float>(sx / sw),
+            static_cast<float>(sy / sw),
+            static_cast<float>(sz / sw));
+
+        double cxx = 0.0, cxy = 0.0, cxz = 0.0, cyy = 0.0, cyz = 0.0, czz = 0.0;
+        for (const auto &bp : pixels) {
+            const double w = std::max(1e-6f, bp.weight);
+            const double dx = bp.pos.x - center.x;
+            const double dy = bp.pos.y - center.y;
+            const double dz = bp.pos.z - center.z;
+            cxx += w * dx * dx; cxy += w * dx * dy; cxz += w * dx * dz;
+            cyy += w * dy * dy; cyz += w * dy * dz; czz += w * dz * dz;
+        }
+        cxx /= sw; cxy /= sw; cxz /= sw;
+        cyy /= sw; cyz /= sw; czz /= sw;
+
+        cv::Matx33d cov(cxx, cxy, cxz, cxy, cyy, cyz, cxz, cyz, czz);
+        cv::Matx33d eigvecs;
+        cv::Vec3d eigvals;
+        cv::eigen(cov, eigvals, eigvecs);
+
+        cv::Point3f axis[3];
+        float childR[3];
+        const float scale = std::max(0.1f, probConfig.pca_bridge_daughter_radius_scale);
+        const float minFrac = std::max(0.0f, probConfig.pca_bridge_min_radius_fraction);
+        const float maxFrac = std::max(minFrac, probConfig.pca_bridge_max_radius_fraction);
+        for (int i = 0; i < 3; ++i) {
+            axis[i] = cv::Point3f(static_cast<float>(eigvecs(i, 0)),
+                                  static_cast<float>(eigvecs(i, 1)),
+                                  static_cast<float>(eigvecs(i, 2)));
+            const float rawR = scale * std::sqrt(std::max(0.0f, static_cast<float>(eigvals[i])));
+            childR[i] = std::clamp(rawR,
+                                   minFrac * radii[i],
+                                   maxFrac * radii[i]);
+        }
+
+        cv::Matx33d R(axis[0].x, axis[1].x, axis[2].x,
+                      axis[0].y, axis[1].y, axis[2].y,
+                      axis[0].z, axis[1].z, axis[2].z);
+        if (cv::determinant(R) < 0.0) {
+            R(0, 2) = -R(0, 2); R(1, 2) = -R(1, 2); R(2, 2) = -R(2, 2);
+        }
+        double tx = parent.getThetaX();
+        double ty = parent.getThetaY();
+        double tz = parent.getThetaZ();
+        rotationMatrixToEulerZYX(R, tx, ty, tz);
+
+        EllipsoidParams params = parent.getCellParams();
+        params.name = name;
+        params.x = center.x;
+        params.y = center.y;
+        params.z = center.z;
+        params.aRadius = childR[0];
+        params.bRadius = childR[1];
+        params.cRadius = childR[2];
+        params.theta_x = static_cast<float>(tx);
+        params.theta_y = static_cast<float>(ty);
+        params.theta_z = static_cast<float>(tz);
+        params.isTrash = false;
+        return Ellipsoid(params);
+    };
+
+    Ellipsoid child1 = fitDaughter(parent.getName() + "0", leftPixels);
+    Ellipsoid child2 = fitDaughter(parent.getName() + "1", rightPixels);
+
+    std::vector<Ellipsoid> savedCells = cells;
+    std::vector<cv::Mat> savedSynth = _synthFrame;
+    std::vector<double> savedPerSlice = _currentCostPerSlice;
+    const double savedCost = _currentCost;
+
+    BoundingBox3D splitBbox;
+    if (_useBboxCost) {
+        const float pointR = _bboxMarginScale * longR;
+        splitBbox = computeUnionBboxWithPoints(
+            {cellIndex}, _bboxMarginScale,
+            {child1.get_center(), child2.get_center()}, pointR);
+    }
+    const std::vector<uint8_t> noMask;
+    const double oldImageCost = _useBboxCost
+        ? calculateBboxCost(splitBbox, _synthFrame, noMask)
+        : _currentCost;
+    const float overlapWeight = (probConfig.pca_bridge_overlap_weight >= 0.0f)
+        ? probConfig.pca_bridge_overlap_weight
+        : probConfig.overlap_penalty_weight;
+    const double oldOverlap = computeOverlapPenalty(overlapWeight);
+
+    cells.erase(cells.begin() + static_cast<std::ptrdiff_t>(cellIndex));
+    cells.push_back(child1);
+    cells.push_back(child2);
+    _synthFrame = generateSynthFrame();
+    if (!_useBboxCost) refreshFullCostCache();
+
+    const double newImageCost = _useBboxCost
+        ? calculateBboxCost(splitBbox, _synthFrame, noMask)
+        : _currentCost;
+    const double newOverlap = computeOverlapPenalty(overlapWeight);
+    const double costDiff = (newImageCost + newOverlap) - (oldImageCost + oldOverlap);
+    const double required = -static_cast<double>(std::max(0.0f, probConfig.pca_bridge_min_cost_improvement));
+
+    if (costDiff < required) {
+        log << "  [PCA Bridge Split Accept] cell=" << parent.getName()
+            << " elong=" << elong
+            << " gapBins=" << bestStart << "-" << bestEnd
+            << " splitProj=" << splitProj
+            << " left=" << leftPixels.size()
+            << " right=" << rightPixels.size()
+            << " costDiff=" << costDiff
+            << " oldImage=" << oldImageCost
+            << " newImage=" << newImageCost
+            << " oldOverlap=" << oldOverlap
+            << " newOverlap=" << newOverlap
+            << std::endl;
+        return true;
+    }
+
+    cells = std::move(savedCells);
+    _synthFrame = std::move(savedSynth);
+    _currentCostPerSlice = std::move(savedPerSlice);
+    _currentCost = savedCost;
+    log << "  [PCA Bridge Split Reject] cell=" << parent.getName()
+        << " elong=" << elong
+        << " gapBins=" << bestStart << "-" << bestEnd
+        << " left=" << leftPixels.size()
+        << " right=" << rightPixels.size()
+        << " costDiff=" << costDiff
+        << " requiredLessThan=" << required
+        << std::endl;
+    return false;
 }
 
 // Triaxial split attempt with candidate refinement + bio/cost gates.
@@ -3976,25 +4262,24 @@ CostCallbackPair Frame::trySplitCellPhased(
         }
     }
 
-    if (probConfig.split_parent_overlap_gate_enabled) {
-        const float maxParentOverlap = std::clamp(
-            probConfig.split_max_parent_overlap_fraction, 0.0f, 1.0f);
-        const float parentOverlapScale = std::max(
-            1e-3f, probConfig.split_parent_overlap_parent_scale);
+    if (probConfig.split_daughter_overlap_gate_enabled) {
+        const float maxDaughterOverlap = std::clamp(
+            probConfig.split_max_daughter_overlap_fraction, 0.0f, 1.0f);
         const float daughterOverlapScale = std::max(
-            1e-3f, probConfig.split_parent_overlap_daughter_scale);
-        const float d1ParentOverlap = ellipsoidOverlapFractionOfFirst(
-            _realFrame, bestD1, parent, daughterOverlapScale, parentOverlapScale);
-        const float d2ParentOverlap = ellipsoidOverlapFractionOfFirst(
-            _realFrame, bestD2, parent, daughterOverlapScale, parentOverlapScale);
+            1e-3f, probConfig.split_daughter_overlap_scale);
+        const float d1InD2Overlap = ellipsoidOverlapFractionOfFirst(
+            _realFrame, bestD1, bestD2, daughterOverlapScale, daughterOverlapScale);
+        const float d2InD1Overlap = ellipsoidOverlapFractionOfFirst(
+            _realFrame, bestD2, bestD1, daughterOverlapScale, daughterOverlapScale);
+        const float daughterOverlap = std::max(d1InD2Overlap, d2InD1Overlap);
 
-        if (d1ParentOverlap > maxParentOverlap || d2ParentOverlap > maxParentOverlap) {
+        if (daughterOverlap > maxDaughterOverlap) {
             std::cout << "[Split Reject bio] " << parentName
-                      << " reason=daughter_parent_overlap"
-                      << " d1ParentOverlap=" << d1ParentOverlap
-                      << " d2ParentOverlap=" << d2ParentOverlap
-                      << " maxAllowed=" << maxParentOverlap
-                      << " parentScale=" << parentOverlapScale
+                      << " reason=daughter_daughter_overlap"
+                      << " d1InD2Overlap=" << d1InD2Overlap
+                      << " d2InD1Overlap=" << d2InD1Overlap
+                      << " daughterOverlap=" << daughterOverlap
+                      << " maxAllowed=" << maxDaughterOverlap
                       << " daughterScale=" << daughterOverlapScale
                       << " bestIdx=" << bestIdx
                       << " bestLabel=" << bestLabel

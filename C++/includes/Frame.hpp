@@ -181,6 +181,14 @@ public:
         bool useSnapshotDirection,
         const ProbabilityConfig &probConfig);
 
+    // Post-PCA long-axis rescue. If a fitted cell is extremely elongated and
+    // has a dark bridge across its long axis, build two daughters from the
+    // nonblack voxels on either side and commit the replacement only when it
+    // improves the configured cost.
+    bool tryPcaBridgeSplit(size_t cellIndex,
+                           const ProbabilityConfig &probConfig,
+                           std::ostream *logSink = nullptr);
+
     // Frame-start pre-pass helper. For a pre-classified cell, gathers
     // bright pixels in a snapshot-centered bounding box, Voronoi-filters
     // them using the caller-supplied claim sets, and returns the two PCA

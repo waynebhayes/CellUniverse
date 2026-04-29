@@ -93,6 +93,8 @@ public:
     float perturb_oscillation_boost_ratio = 1.50f;
     float perturb_oscillation_max_multiplier = 4.0f;
     bool perturb_oscillation_reset_on_accept = true;
+    float perturb_oscillation_small_step_probability = 0.20f;
+    float perturb_oscillation_small_step_multiplier = 1.0f;
     float perturb_debug_cell_brightness = 0.30f;
 
     // Checkpoint resume (Approach 2): skip frames 0..resume_from-1 and
@@ -276,6 +278,8 @@ public:
         if (node["perturb_oscillation_boost_ratio"]) perturb_oscillation_boost_ratio = node["perturb_oscillation_boost_ratio"].as<float>();
         if (node["perturb_oscillation_max_multiplier"]) perturb_oscillation_max_multiplier = node["perturb_oscillation_max_multiplier"].as<float>();
         if (node["perturb_oscillation_reset_on_accept"]) perturb_oscillation_reset_on_accept = node["perturb_oscillation_reset_on_accept"].as<bool>();
+        if (node["perturb_oscillation_small_step_probability"]) perturb_oscillation_small_step_probability = node["perturb_oscillation_small_step_probability"].as<float>();
+        if (node["perturb_oscillation_small_step_multiplier"]) perturb_oscillation_small_step_multiplier = node["perturb_oscillation_small_step_multiplier"].as<float>();
         if (node["perturb_debug_cell_brightness"]) perturb_debug_cell_brightness = node["perturb_debug_cell_brightness"].as<float>();
         if (node["resume_from"]) resume_from = node["resume_from"].as<int>();
         if (node["resume_source_dir"]) resume_source_dir = node["resume_source_dir"].as<std::string>();
@@ -383,6 +387,8 @@ public:
         std::cout << "perturb_oscillation_boost_ratio: " << perturb_oscillation_boost_ratio << '\n';
         std::cout << "perturb_oscillation_max_multiplier: " << perturb_oscillation_max_multiplier << '\n';
         std::cout << "perturb_oscillation_reset_on_accept: " << perturb_oscillation_reset_on_accept << '\n';
+        std::cout << "perturb_oscillation_small_step_probability: " << perturb_oscillation_small_step_probability << '\n';
+        std::cout << "perturb_oscillation_small_step_multiplier: " << perturb_oscillation_small_step_multiplier << '\n';
         std::cout << "perturb_debug_cell_brightness: " << perturb_debug_cell_brightness << '\n';
         std::cout << "cube_pooling_enabled: " << cube_pooling_enabled << '\n';
         std::cout << "cube_pooling_cost_comparison_enabled: " << cube_pooling_cost_comparison_enabled << '\n';
@@ -505,10 +511,9 @@ public:
     float split_axis_alignment_sphere_angle_degrees = 120.0f;
     float split_axis_alignment_elongation_shrink = 0.75f;
     float split_axis_alignment_min_angle_degrees = 20.0f;
-    bool split_parent_overlap_gate_enabled = true;
-    float split_max_parent_overlap_fraction = 0.30f;
-    float split_parent_overlap_parent_scale = 1.0f;
-    float split_parent_overlap_daughter_scale = 1.0f;
+    bool split_daughter_overlap_gate_enabled = true;
+    float split_max_daughter_overlap_fraction = 0.20f;
+    float split_daughter_overlap_scale = 1.0f;
 
     float bio_daughter_size_ratio_max = 1.5f;
     float bio_combined_volume_min_fraction = 0.6f;
@@ -608,6 +613,23 @@ public:
     // before the per-daughter PCA refit re-shapes them.
     float split_daughter_volume_scale = 0.7937f;
 
+    // Post-PCA rescue for false fits where one ellipsoid stretches across
+    // two bright blobs with a dark bridge between them. Runs after the
+    // per-frame PCA shape fit, before growth caps/reference updates.
+    bool pca_bridge_split_enabled = false;
+    float pca_bridge_elongation_ratio = 3.0f;
+    float pca_bridge_black_threshold = 0.05f;
+    float pca_bridge_min_black_fraction = 0.75f;
+    float pca_bridge_gap_center_fraction = 0.35f;
+    int pca_bridge_profile_bins = 21;
+    int pca_bridge_min_gap_bins = 2;
+    int pca_bridge_min_side_voxels = 40;
+    float pca_bridge_daughter_radius_scale = 2.236f;
+    float pca_bridge_min_radius_fraction = 0.35f;
+    float pca_bridge_max_radius_fraction = 0.90f;
+    float pca_bridge_min_cost_improvement = 0.0f;
+    float pca_bridge_overlap_weight = -1.0f;
+
     ProbabilityConfig() = default;
 
     void explodeConfig(const YAML::Node& node) {
@@ -636,10 +658,12 @@ public:
         if (node["split_axis_alignment_sphere_angle_degrees"]) split_axis_alignment_sphere_angle_degrees = node["split_axis_alignment_sphere_angle_degrees"].as<float>();
         if (node["split_axis_alignment_elongation_shrink"]) split_axis_alignment_elongation_shrink = node["split_axis_alignment_elongation_shrink"].as<float>();
         if (node["split_axis_alignment_min_angle_degrees"]) split_axis_alignment_min_angle_degrees = node["split_axis_alignment_min_angle_degrees"].as<float>();
-        if (node["split_parent_overlap_gate_enabled"]) split_parent_overlap_gate_enabled = node["split_parent_overlap_gate_enabled"].as<bool>();
-        if (node["split_max_parent_overlap_fraction"]) split_max_parent_overlap_fraction = node["split_max_parent_overlap_fraction"].as<float>();
-        if (node["split_parent_overlap_parent_scale"]) split_parent_overlap_parent_scale = node["split_parent_overlap_parent_scale"].as<float>();
-        if (node["split_parent_overlap_daughter_scale"]) split_parent_overlap_daughter_scale = node["split_parent_overlap_daughter_scale"].as<float>();
+        if (node["split_daughter_overlap_gate_enabled"]) split_daughter_overlap_gate_enabled = node["split_daughter_overlap_gate_enabled"].as<bool>();
+        if (node["split_max_daughter_overlap_fraction"]) split_max_daughter_overlap_fraction = node["split_max_daughter_overlap_fraction"].as<float>();
+        if (node["split_daughter_overlap_scale"]) split_daughter_overlap_scale = node["split_daughter_overlap_scale"].as<float>();
+        if (node["split_parent_overlap_gate_enabled"]) split_daughter_overlap_gate_enabled = node["split_parent_overlap_gate_enabled"].as<bool>();
+        if (node["split_max_parent_overlap_fraction"]) split_max_daughter_overlap_fraction = node["split_max_parent_overlap_fraction"].as<float>();
+        if (node["split_parent_overlap_daughter_scale"]) split_daughter_overlap_scale = node["split_parent_overlap_daughter_scale"].as<float>();
         if (node["bio_daughter_size_ratio_max"]) bio_daughter_size_ratio_max = node["bio_daughter_size_ratio_max"].as<float>();
         if (node["bio_combined_volume_min_fraction"]) bio_combined_volume_min_fraction = node["bio_combined_volume_min_fraction"].as<float>();
         if (node["bio_combined_volume_max_fraction"]) bio_combined_volume_max_fraction = node["bio_combined_volume_max_fraction"].as<float>();
@@ -655,6 +679,19 @@ public:
         if (node["split_daughter_refit_min_radius_fraction"]) split_daughter_refit_min_radius_fraction = node["split_daughter_refit_min_radius_fraction"].as<float>();
         if (node["split_daughter_refit_max_radius_fraction"]) split_daughter_refit_max_radius_fraction = node["split_daughter_refit_max_radius_fraction"].as<float>();
         if (node["split_daughter_volume_scale"]) split_daughter_volume_scale = node["split_daughter_volume_scale"].as<float>();
+        if (node["pca_bridge_split_enabled"]) pca_bridge_split_enabled = node["pca_bridge_split_enabled"].as<bool>();
+        if (node["pca_bridge_elongation_ratio"]) pca_bridge_elongation_ratio = node["pca_bridge_elongation_ratio"].as<float>();
+        if (node["pca_bridge_black_threshold"]) pca_bridge_black_threshold = node["pca_bridge_black_threshold"].as<float>();
+        if (node["pca_bridge_min_black_fraction"]) pca_bridge_min_black_fraction = node["pca_bridge_min_black_fraction"].as<float>();
+        if (node["pca_bridge_gap_center_fraction"]) pca_bridge_gap_center_fraction = node["pca_bridge_gap_center_fraction"].as<float>();
+        if (node["pca_bridge_profile_bins"]) pca_bridge_profile_bins = node["pca_bridge_profile_bins"].as<int>();
+        if (node["pca_bridge_min_gap_bins"]) pca_bridge_min_gap_bins = node["pca_bridge_min_gap_bins"].as<int>();
+        if (node["pca_bridge_min_side_voxels"]) pca_bridge_min_side_voxels = node["pca_bridge_min_side_voxels"].as<int>();
+        if (node["pca_bridge_daughter_radius_scale"]) pca_bridge_daughter_radius_scale = node["pca_bridge_daughter_radius_scale"].as<float>();
+        if (node["pca_bridge_min_radius_fraction"]) pca_bridge_min_radius_fraction = node["pca_bridge_min_radius_fraction"].as<float>();
+        if (node["pca_bridge_max_radius_fraction"]) pca_bridge_max_radius_fraction = node["pca_bridge_max_radius_fraction"].as<float>();
+        if (node["pca_bridge_min_cost_improvement"]) pca_bridge_min_cost_improvement = node["pca_bridge_min_cost_improvement"].as<float>();
+        if (node["pca_bridge_overlap_weight"]) pca_bridge_overlap_weight = node["pca_bridge_overlap_weight"].as<float>();
 
         // Legacy YAML aliases — silently map to the new names.
         if (node["split"]) P_split_base = node["split"].as<float>();
@@ -676,11 +713,12 @@ public:
         std::cout << "split_axis_alignment_sphere_angle_degrees: " << split_axis_alignment_sphere_angle_degrees << '\n';
         std::cout << "split_axis_alignment_elongation_shrink: " << split_axis_alignment_elongation_shrink << '\n';
         std::cout << "split_axis_alignment_min_angle_degrees: " << split_axis_alignment_min_angle_degrees << '\n';
-        std::cout << "split_parent_overlap_gate_enabled: " << split_parent_overlap_gate_enabled << '\n';
-        std::cout << "split_max_parent_overlap_fraction: " << split_max_parent_overlap_fraction << '\n';
-        std::cout << "split_parent_overlap_parent_scale: " << split_parent_overlap_parent_scale << '\n';
-        std::cout << "split_parent_overlap_daughter_scale: " << split_parent_overlap_daughter_scale << '\n';
+        std::cout << "split_daughter_overlap_gate_enabled: " << split_daughter_overlap_gate_enabled << '\n';
+        std::cout << "split_max_daughter_overlap_fraction: " << split_max_daughter_overlap_fraction << '\n';
+        std::cout << "split_daughter_overlap_scale: " << split_daughter_overlap_scale << '\n';
         std::cout << "bio_daughter_size_ratio_max: " << bio_daughter_size_ratio_max << std::endl;
+        std::cout << "pca_bridge_split_enabled: " << pca_bridge_split_enabled << '\n';
+        std::cout << "pca_bridge_elongation_ratio: " << pca_bridge_elongation_ratio << '\n';
     }
 };
 

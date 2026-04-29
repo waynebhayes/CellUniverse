@@ -2390,6 +2390,50 @@ void CellUniverse::optimize(int frameIndex)
             const std::string buf = shapeLogs[ci].str();
             if (!buf.empty()) std::cout << buf;
         }
+
+        if (config.prob.pca_bridge_split_enabled) {
+            // PCA has just changed cell shapes; refresh the synth so the
+            // bridge split compares daughters against the actual long fitted
+            // parent, not the pre-PCA render.
+            frame.regenerateSynthFrame();
+
+            std::vector<std::string> bridgeCheckNames;
+            bridgeCheckNames.reserve(frame.cells.size());
+            float maxBridgeElong = 0.0f;
+            int bridgeEligible = 0;
+            for (const auto &cell : frame.cells) {
+                if (cell.isTrash()) continue;
+                bridgeCheckNames.push_back(cell.getName());
+                const float elong = cell.shapeElongation();
+                maxBridgeElong = std::max(maxBridgeElong, elong);
+                if (elong >= config.prob.pca_bridge_elongation_ratio) {
+                    ++bridgeEligible;
+                }
+            }
+
+            int bridgeSplitsAccepted = 0;
+            for (const std::string &parentName : bridgeCheckNames) {
+                auto it = std::find_if(
+                    frame.cells.begin(), frame.cells.end(),
+                    [&](const Ellipsoid &cell) { return cell.getName() == parentName; });
+                if (it == frame.cells.end()) continue;
+                const size_t ci = static_cast<size_t>(std::distance(frame.cells.begin(), it));
+                if (frame.tryPcaBridgeSplit(ci, config.prob)) {
+                    cellShapeReference.erase(parentName);
+                    cellShapeBirth.erase(parentName);
+                    ++bridgeSplitsAccepted;
+                }
+            }
+            std::cout << "[PCA Bridge Split] frame " << displayFrame
+                      << " scanned=" << bridgeCheckNames.size()
+                      << " eligible=" << bridgeEligible
+                      << " accepted=" << bridgeSplitsAccepted
+                      << " maxElong=" << maxBridgeElong
+                      << " threshold=" << config.prob.pca_bridge_elongation_ratio
+                      << " cellsNow=" << frame.cells.size()
+                      << std::endl;
+        }
+
         // ---- Fit-side growth cap (anti-bloat within mask) ----
         //
         // Bounded-growth on the REFERENCE (below) caps ref at ±5%/frame,
@@ -2894,6 +2938,10 @@ void CellUniverse::optimize(int frameIndex)
             1.0f, config.simulation.perturb_oscillation_boost_ratio);
         const float oscillationMaxMultiplier = std::max(
             1.0f, config.simulation.perturb_oscillation_max_multiplier);
+        const float oscillationSmallStepProbability = std::clamp(
+            config.simulation.perturb_oscillation_small_step_probability, 0.0f, 1.0f);
+        const float oscillationSmallStepMultiplier = std::clamp(
+            config.simulation.perturb_oscillation_small_step_multiplier, 0.0f, 1.0f);
 
         auto oscillationEnabledFor = [&](const Ellipsoid &cell) {
             return cell.isTrash()
@@ -2904,6 +2952,12 @@ void CellUniverse::optimize(int frameIndex)
         auto perturbRatioFor = [&](const std::string &name) {
             auto it = perturbOscillation.find(name);
             const float mult = (it != perturbOscillation.end()) ? it->second.multiplier : 1.0f;
+            if (mult > 1.0f && oscillationSmallStepProbability > 0.0f) {
+                std::bernoulli_distribution smallStepDist(oscillationSmallStepProbability);
+                if (smallStepDist(gen)) {
+                    return randomPerturbRadiusRatio * oscillationSmallStepMultiplier;
+                }
+            }
             return randomPerturbRadiusRatio * mult;
         };
 
@@ -2920,13 +2974,16 @@ void CellUniverse::optimize(int frameIndex)
             ++state.attempts;
             if (accepted && config.simulation.perturb_oscillation_reset_on_accept) {
                 if (state.multiplier > 1.0f) {
-                    std::cout << "[Perturb Oscillation Boost Reset] frame " << displayFrame
+                    const float oldMultiplier = state.multiplier;
+                    state.multiplier = std::max(1.0f, state.multiplier / oscillationBoostRatio);
+                    std::cout << "[Perturb Oscillation Boost Step Down] frame " << displayFrame
                               << " cell=" << name
                               << " attempts=" << state.attempts
-                              << " multiplier=" << state.multiplier
+                              << " multiplier=" << oldMultiplier << "->" << state.multiplier
                               << std::endl;
+                } else {
+                    state.multiplier = 1.0f;
                 }
-                state.multiplier = 1.0f;
                 state.trendSigns.clear();
                 state.hasLastCost = false;
                 return;
