@@ -1435,6 +1435,7 @@ CostCallbackPair Frame::trySplitCellPhased(
     std::vector<cv::Mat> bestSynth;
     std::vector<double> bestPerSlice;
     double bestImageCost = 0.0;
+    double bestOverlap = 0.0;
     cv::Point3f bestSeedD1{0, 0, 0};
     cv::Point3f bestSeedD2{0, 0, 0};
     std::string bestLabel;
@@ -1541,6 +1542,7 @@ CostCallbackPair Frame::trySplitCellPhased(
             bestSynth = _synthFrame;
             bestPerSlice = _currentCostPerSlice;
             bestImageCost = candImageCost;
+            bestOverlap = candOverlap;
             bestSeedD1 = cand.d1Pos;
             bestSeedD2 = cand.d2Pos;
             bestLabel = cand.label;
@@ -1607,7 +1609,8 @@ CostCallbackPair Frame::trySplitCellPhased(
         bestSynth = _synthFrame;
         bestPerSlice = _currentCostPerSlice;
         bestImageCost = _currentCost;
-        bestTotal = _currentCost + computeOverlapPenalty(probConfig.overlap_penalty_weight);
+        bestOverlap = computeOverlapPenalty(probConfig.overlap_penalty_weight);
+        bestTotal = _currentCost + bestOverlap;
 
         const cv::Point3f postRefineD1(cells[d1IdxRefine].getX(),
                                          cells[d1IdxRefine].getY(),
@@ -1705,6 +1708,9 @@ CostCallbackPair Frame::trySplitCellPhased(
         0.5f * (bestD1.getX() + bestD2.getX()),
         0.5f * (bestD1.getY() + bestD2.getY()),
         0.5f * (bestD1.getZ() + bestD2.getZ()));
+    bool bridgeStatsValid = false;
+    float bridgeGapDensity = 1.0f;
+    float bridgeValleyRatio = 1.0f;
 
     // 5a''. Bridge brightness gate — project the Voronoi-filtered bright
     // pixels (the same set PCA used) onto the daughter split axis. Real
@@ -1785,6 +1791,9 @@ CostCallbackPair Frame::trySplitCellPhased(
             const float valleyRatio = (edgeBright > 1e-6f)
                 ? (gapBright / edgeBright)
                 : 0.0f;
+            bridgeStatsValid = edgeCount > 0;
+            bridgeGapDensity = gapDensity;
+            bridgeValleyRatio = valleyRatio;
 
             std::cout << "  [Split Bridge] " << parentName
                       << " totalInRange=" << totalInRange
@@ -1830,10 +1839,47 @@ CostCallbackPair Frame::trySplitCellPhased(
 
     // --- 6. Cost check ---
     const double costDiff = bestTotal - baselineTotal;
-    if (costDiff >= -probConfig.split_cost) {
+    const double standardSplitThreshold = -static_cast<double>(probConfig.split_cost);
+    const double rescueSplitThreshold =
+        -static_cast<double>(probConfig.split_cost) *
+        static_cast<double>(probConfig.split_cost_rescue_min_fraction);
+    const float rescueDriftLimit =
+        driftLimit * std::max(0.0f, probConfig.split_cost_rescue_max_drift_fraction);
+
+    const bool rescueNearMissCost =
+        costDiff < 0.0 &&
+        costDiff >= standardSplitThreshold &&
+        costDiff < rescueSplitThreshold;
+    const bool rescueStrongBridge =
+        bridgeStatsValid &&
+        bridgeGapDensity < probConfig.split_cost_rescue_max_gap_density &&
+        bridgeValleyRatio < probConfig.split_cost_rescue_max_valley_ratio;
+    const bool rescueStableDaughters =
+        drift1 <= rescueDriftLimit &&
+        drift2 <= rescueDriftLimit;
+    const bool rescueLowOverlap =
+        bestOverlap <= probConfig.split_cost_rescue_max_overlap_penalty;
+    const bool rescueAccept =
+        probConfig.split_cost_rescue_enabled &&
+        rescueNearMissCost &&
+        rescueStrongBridge &&
+        rescueStableDaughters &&
+        rescueLowOverlap;
+
+    if (costDiff >= standardSplitThreshold && !rescueAccept) {
         std::cout << "[Split Reject cost] " << parentName
                   << " diff=" << costDiff
-                  << " threshold=" << -probConfig.split_cost
+                  << " threshold=" << standardSplitThreshold
+                  << " rescueThreshold=" << rescueSplitThreshold
+                  << " rescueNearMissCost=" << rescueNearMissCost
+                  << " bridgeStatsValid=" << bridgeStatsValid
+                  << " gapDensity=" << bridgeGapDensity
+                  << " valleyRatio=" << bridgeValleyRatio
+                  << " rescueStrongBridge=" << rescueStrongBridge
+                  << " overlap=" << bestOverlap
+                  << " rescueLowOverlap=" << rescueLowOverlap
+                  << " rescueDriftLimit=" << rescueDriftLimit
+                  << " rescueStableDaughters=" << rescueStableDaughters
                   << " bestIdx=" << bestIdx
                   << " bestLabel=" << bestLabel
                   << " d1=(" << bestD1.getX() << "," << bestD1.getY() << "," << bestD1.getZ() << ")"
@@ -1845,6 +1891,21 @@ CostCallbackPair Frame::trySplitCellPhased(
                   << std::endl;
         restoreLiveParent();
         return {0.0, noop};
+    }
+    if (rescueAccept) {
+        std::cout << "[Split Cost Rescue Accepted] " << parentName
+                  << " diff=" << costDiff
+                  << " standardThreshold=" << standardSplitThreshold
+                  << " rescueThreshold=" << rescueSplitThreshold
+                  << " gapDensity=" << bridgeGapDensity
+                  << " valleyRatio=" << bridgeValleyRatio
+                  << " overlap=" << bestOverlap
+                  << " drift1=" << drift1
+                  << " drift2=" << drift2
+                  << " rescueDriftLimit=" << rescueDriftLimit
+                  << " bestIdx=" << bestIdx
+                  << " bestLabel=" << bestLabel
+                  << std::endl;
     }
 
     // Accept: install the best candidate state. The callback applies on

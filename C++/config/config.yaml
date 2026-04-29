@@ -158,6 +158,15 @@ prob:
   shape_elongation_classify_threshold: 1.20
 
   split_cost: 15
+  # Narrow rescue for true divisions that barely miss split_cost. This keeps
+  # the normal split_cost gate unchanged and only accepts near misses with
+  # very strong bridge, drift, and overlap evidence.
+  split_cost_rescue_enabled: true
+  split_cost_rescue_min_fraction: 0.85
+  split_cost_rescue_max_gap_density: 0.05
+  split_cost_rescue_max_valley_ratio: 0.35
+  split_cost_rescue_max_drift_fraction: 0.25
+  split_cost_rescue_max_overlap_penalty: 1.0
   overlap_penalty_weight: 500.0
   size_reduction_penalty_weight: 30
 
