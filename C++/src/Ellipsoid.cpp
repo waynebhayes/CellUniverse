@@ -185,6 +185,44 @@ bool Ellipsoid::computeSliceBounds(const cv::Mat &image, float z,
 
 // ---- SIMPLIFIED CONSTRUCTOR ----
 // No voxel matrix construction needed — drawing is done analytically.
+namespace
+{
+void enforceMinAnyRadius(double &aRadius, double &bRadius, double &cRadius)
+{
+    if (!Ellipsoid::cellConfig.minAnyRadiusEnabled) {
+        return;
+    }
+    const double minAny = Ellipsoid::cellConfig.minAnyRadius;
+    if (minAny <= 0.0 || std::max({aRadius, bRadius, cRadius}) >= minAny) {
+        return;
+    }
+
+    const double minBR = (Ellipsoid::cellConfig.maxBRadius > 0.0)
+        ? Ellipsoid::cellConfig.minBRadius : Ellipsoid::cellConfig.minARadius;
+    const double maxBR = (Ellipsoid::cellConfig.maxBRadius > 0.0)
+        ? Ellipsoid::cellConfig.maxBRadius : Ellipsoid::cellConfig.maxARadius;
+
+    struct AxisCandidate {
+        double *value;
+        double maxValue;
+    };
+    std::array<AxisCandidate, 3> candidates{{
+        {&aRadius, Ellipsoid::cellConfig.maxARadius},
+        {&bRadius, maxBR},
+        {&cRadius, Ellipsoid::cellConfig.maxCRadius},
+    }};
+
+    auto best = std::max_element(
+        candidates.begin(), candidates.end(),
+        [](const AxisCandidate &lhs, const AxisCandidate &rhs) {
+            return *lhs.value < *rhs.value;
+        });
+    if (best != candidates.end() && best->maxValue >= minAny) {
+        *best->value = std::max(*best->value, minAny);
+    }
+}
+}
+
 Ellipsoid::Ellipsoid(const EllipsoidParams &init_props)
 : _name(init_props.name), _position{init_props.x, init_props.y, init_props.z},
           _major_radius(init_props.aRadius),
@@ -192,6 +230,7 @@ Ellipsoid::Ellipsoid(const EllipsoidParams &init_props)
           _minor_radius(init_props.cRadius),
           _theta_x(init_props.theta_x), _theta_y(init_props.theta_y), _theta_z(init_props.theta_z),
           _brightness(init_props.brightness),
+          _isTrash(init_props.isTrash),
           _aRadiusPerturbParams(cellConfig.aRadius),
           _cRadiusPerturbParams(cellConfig.cRadius),
           _bRadiusPerturbParams(cellConfig.bRadius),
@@ -210,6 +249,7 @@ Ellipsoid::Ellipsoid(const EllipsoidParams &init_props)
         ? cellConfig.maxBRadius : cellConfig.maxARadius;
     _b_radius = std::fmax(_b_radius, minBR);
     _b_radius = std::fmin(_b_radius, maxBR);
+    enforceMinAnyRadius(_major_radius, _b_radius, _minor_radius);
 
     // Clamp z to the valid interpolated-z range. Without this, perturbation can
     // push cells off the z-stack (where they contribute zero pixels and reduce
@@ -261,6 +301,7 @@ void Ellipsoid::setRadii(float newA, float newB, float newC)
     _major_radius = std::clamp(static_cast<double>(newA), cellConfig.minARadius, cellConfig.maxARadius);
     _b_radius     = std::clamp(static_cast<double>(newB), minBR, maxBR);
     _minor_radius = std::clamp(static_cast<double>(newC), cellConfig.minCRadius, cellConfig.maxCRadius);
+    enforceMinAnyRadius(_major_radius, _b_radius, _minor_radius);
     a = _major_radius;
     b = _b_radius;
     c = _minor_radius;
@@ -563,22 +604,23 @@ void Ellipsoid::drawOutline(cv::Mat &image, float color, float z) const {
     const PerturbParams::Sample brightnessSample = _brightnessPerturbParams.samplePerturb();
     if (directions != nullptr) {
         directions->brightness = brightnessSample.direction;
-        directions->aRadius = aRadiusSample.direction;
-        directions->bRadius = bRadiusSample.direction;
-        directions->cRadius = cRadiusSample.direction;
+        directions->aRadius = _isTrash ? 0 : aRadiusSample.direction;
+        directions->bRadius = _isTrash ? 0 : bRadiusSample.direction;
+        directions->cRadius = _isTrash ? 0 : cRadiusSample.direction;
     }
     EllipsoidParams spheroidParams(
         _name,
         _position.x + positionScale * cellConfig.x.getPerturbOffset(),
         _position.y + positionScale * cellConfig.y.getPerturbOffset(),
         _position.z + positionScale * cellConfig.z.getPerturbOffset(),
-        _major_radius + aRadiusSample.offset,
-        _minor_radius + cRadiusSample.offset,
+        _major_radius + (_isTrash ? 0.0f : aRadiusSample.offset),
+        _minor_radius + (_isTrash ? 0.0f : cRadiusSample.offset),
         static_cast<float>(_theta_x) + cellConfig.thetaX.getPerturbOffset(),
         static_cast<float>(_theta_y) + cellConfig.thetaY.getPerturbOffset(),
         static_cast<float>(_theta_z) + cellConfig.thetaZ.getPerturbOffset(),
         _brightness + brightnessSample.offset);
-    spheroidParams.bRadius = static_cast<float>(_b_radius) + bRadiusSample.offset;
+    spheroidParams.bRadius = static_cast<float>(_b_radius) + (_isTrash ? 0.0f : bRadiusSample.offset);
+    spheroidParams.isTrash = _isTrash;
     Ellipsoid perturbedCell(spheroidParams);
     perturbedCell._aRadiusPerturbParams = _aRadiusPerturbParams;
     perturbedCell._bRadiusPerturbParams = _bRadiusPerturbParams;
@@ -631,6 +673,7 @@ EllipsoidParams Ellipsoid::getCellParams() const {
                           static_cast<float>(_theta_x), static_cast<float>(_theta_y), static_cast<float>(_theta_z),
                           _brightness);
     params.bRadius = static_cast<float>(_b_radius);
+    params.isTrash = _isTrash;
     return params;
 }
 

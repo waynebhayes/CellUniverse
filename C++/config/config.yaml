@@ -41,6 +41,8 @@ cell:
   maxBRadius: 70
   minCRadius: 5
   maxCRadius: 70
+  minAnyRadiusEnabled: false
+  minAnyRadius: 5
 
   initialRadiusScale: 1.0
   initialBrightness: 1.0
@@ -56,7 +58,7 @@ cell:
   brightnessMeanAmplification: 1.1
   brightnessMeasurementTopPercentile: 0.3
 
-  # Iterative PCA shape fit (per frame, before perturbation loop).
+  # Iterative PCA shape fit (per frame, after perturbation loop).
   # Converges rotation + radii (+ centroid) to the Voronoi-filtered
   # bright cloud inside maskScale * current ellipsoid. See
   # Frame::calibrateCellShapeViaPca.
@@ -121,10 +123,8 @@ cell:
   pcaShapeMaskScale: 2.2
   pcaShapeConvergeRadius: 0.3
   pcaShapeConvergeAngleDeg: 2.0
-  pcaShapeUpdatePosition: false   # snap is authoritative; calibration handles
-                                  # position; PCA fits only radii + rotation.
-                                  # Prevents centroid-drift toward one daughter
-                                  # for cells with multi-modal bright clouds.
+  pcaShapeUpdatePosition: true   # When true, post-perturb PCA can also shift
+                                  # the cell center toward the fitted centroid.
   pcaShapeMaxPosShiftFraction: 0.5
   # Per-pixel intensity exponent in the PCA weighted moments.
   # Higher  → stronger core emphasis, smaller fitted radii (tight fit).
@@ -220,6 +220,10 @@ cell:
   # Change 50 (variance-based radii reinstated). Active lever is
   # pcaShapeRadiusScale above. Kept at 0.90 for consistency only.
   pcaShapeRadiusPercentile: 0.90
+  pcaShapeFitGrowthCapEnabled: true
+  pcaShapeFitGrowthCap: 0.90
+  trashPcaShapeFitEnabled: true
+  trashPcaShapeMaxOriginalRadiusFactor: 2.0
 
   # Radius-proportional perturbation sigma. Position perturbation offsets
   # are scaled by (maxRadius / referenceRadius). Large cells (R=50) take
@@ -374,7 +378,6 @@ simulation:
   export_signal_debug_images: false
   export_frame_png: false
   export_frame_tiff: true
-  export_post_localization_images: true
   quit_after_preprocessing: false
   # When true, skip the upfront "preprocess all frames into memory" pass and
   # run prepareFrame(frame) immediately before optimize(frame). This reduces
@@ -645,7 +648,7 @@ prob:
   # 12345 candidates had valley≈0.86-0.89, while obvious continuous blobs
   # in that frame stayed near 0.96-1.03. This restores those real f3 splits
   # without accepting the clear no-valley candidates.
-  bio_bridge_max_valley_ratio: 0.75
+  bio_bridge_max_valley_ratio: 0.8
   # Absolute minimum edge brightness (real-image units above background).
   # Rejects splits where min(edge1Bright, edge2Bright) < threshold — one
   # daughter sits in near-background empty space. Typical cell cores

@@ -16,6 +16,7 @@ struct InitialCellRecord
     float aRadius = 0.0f;
     float bRadius = 0.0f;
     float cRadius = 0.0f;
+    bool isTrash = false;
 };
 
 class CsvHandler

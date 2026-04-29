@@ -225,6 +225,74 @@ static bool estimateBrightCoreCentroidInCell(const std::vector<cv::Mat> &realFra
     return true;
 }
 
+static float positiveVoxelFractionInsideCell(const std::vector<cv::Mat> &realFrame,
+                                             const Ellipsoid &cell)
+{
+    if (realFrame.empty() || realFrame[0].empty()) {
+        return 0.0f;
+    }
+
+    const int maxZIndex = static_cast<int>(realFrame.size()) - 1;
+    const float maxR = std::max({cell.getARadius(), cell.getBRadius(), cell.getCRadius()});
+    const int minX = std::max(0, static_cast<int>(std::floor(cell.getX() - maxR)));
+    const int maxX = std::min(realFrame[0].cols - 1, static_cast<int>(std::ceil(cell.getX() + maxR)));
+    const int minY = std::max(0, static_cast<int>(std::floor(cell.getY() - maxR)));
+    const int maxY = std::min(realFrame[0].rows - 1, static_cast<int>(std::ceil(cell.getY() + maxR)));
+    const int minZ = std::max(0, static_cast<int>(std::floor(cell.getZ() - maxR)));
+    const int maxZ = std::min(maxZIndex, static_cast<int>(std::ceil(cell.getZ() + maxR)));
+    if (minX > maxX || minY > maxY || minZ > maxZ) {
+        return 0.0f;
+    }
+
+    std::array<double, 9> R_T;
+    cell.generateInverseRotationMatrix(R_T);
+    const double invA2 = 1.0 / std::max(1e-12, static_cast<double>(cell.getARadius()) * cell.getARadius());
+    const double invB2 = 1.0 / std::max(1e-12, static_cast<double>(cell.getBRadius()) * cell.getBRadius());
+    const double invC2 = 1.0 / std::max(1e-12, static_cast<double>(cell.getCRadius()) * cell.getCRadius());
+
+    int insideCount = 0;
+    int positiveCount = 0;
+    for (int z = minZ; z <= maxZ; ++z) {
+        const cv::Mat &slice = realFrame[static_cast<size_t>(z)];
+        if (slice.empty()) {
+            continue;
+        }
+        for (int y = minY; y <= maxY; ++y) {
+            for (int x = minX; x <= maxX; ++x) {
+                const double dx = static_cast<double>(x) - cell.getX();
+                const double dy = static_cast<double>(y) - cell.getY();
+                const double dz = static_cast<double>(z) - cell.getZ();
+                const double lx = R_T[0] * dx + R_T[1] * dy + R_T[2] * dz;
+                const double ly = R_T[3] * dx + R_T[4] * dy + R_T[5] * dz;
+                const double lz = R_T[6] * dx + R_T[7] * dy + R_T[8] * dz;
+                if (lx * lx * invA2 + ly * ly * invB2 + lz * lz * invC2 > 1.0) {
+                    continue;
+                }
+
+                ++insideCount;
+                double voxel = 0.0;
+                switch (slice.depth()) {
+                case CV_8U:  voxel = slice.ptr<uint8_t>(y)[x]; break;
+                case CV_16U: voxel = slice.ptr<uint16_t>(y)[x]; break;
+                case CV_16S: voxel = slice.ptr<int16_t>(y)[x]; break;
+                case CV_32S: voxel = slice.ptr<int32_t>(y)[x]; break;
+                case CV_32F: voxel = slice.ptr<float>(y)[x]; break;
+                case CV_64F: voxel = slice.ptr<double>(y)[x]; break;
+                default: break;
+                }
+                if (voxel > 0.0) {
+                    ++positiveCount;
+                }
+            }
+        }
+    }
+
+    if (insideCount == 0) {
+        return 0.0f;
+    }
+    return static_cast<float>(positiveCount) / static_cast<float>(insideCount);
+}
+
 // Function to interpolate between two slices
 void interpolateSlices(const cv::Mat& slice1, const cv::Mat& slice2, 
                        std::vector<cv::Mat>& processedSlices, int numInterpolations) {
@@ -901,7 +969,8 @@ size_t Frame::length() const
 
 CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight,
                                     bool useSignalGuidance,
-                                    float randomPerturbRadiusRatio)
+                                    float randomPerturbRadiusRatio,
+                                    bool pcaRefitWellFilledMove)
 {
     if (index >= cells.size()) {
         return {0.0, [](bool) {}};
@@ -1012,6 +1081,42 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight,
                 std::clamp(candidate.x, 0.0f, maxX),
                 std::clamp(candidate.y, 0.0f, maxY),
                 std::clamp(candidate.z, 0.0f, maxZ));
+        }
+    }
+
+    if (pcaRefitWellFilledMove &&
+        !cells[index].isTrash() &&
+        !_realFrame.empty() &&
+        Ellipsoid::cellConfig.pcaShapeMaxIters > 0) {
+        constexpr float kPcaRefitFillFraction = 0.30f;
+        const float fillFraction = positiveVoxelFractionInsideCell(_realFrame, cells[index]);
+        if (fillFraction >= kPcaRefitFillFraction) {
+            ClaimSet otherClaims;
+            for (size_t otherIdx = 0; otherIdx < cells.size(); ++otherIdx) {
+                if (otherIdx == index) {
+                    continue;
+                }
+                const Ellipsoid &other = cells[otherIdx];
+                otherClaims[other.getName()].push_back(cv::Point3f(
+                    other.getX(), other.getY(), other.getZ()));
+            }
+
+            std::ostringstream pcaLogSink;
+            calibrateCellShapeViaPca(
+                index,
+                otherClaims,
+                Ellipsoid::cellConfig.pcaShapeMaxIters,
+                Ellipsoid::cellConfig.pcaShapeRadiusScale,
+                Ellipsoid::cellConfig.pcaShapeMinPixels,
+                Ellipsoid::cellConfig.pcaShapeMaskScale,
+                Ellipsoid::cellConfig.pcaShapeConvergeRadius,
+                Ellipsoid::cellConfig.pcaShapeConvergeAngleDeg,
+                Ellipsoid::cellConfig.pcaShapeUpdatePosition,
+                Ellipsoid::cellConfig.pcaShapeMaxPosShiftFraction,
+                cells[index].getARadius(),
+                cells[index].getBRadius(),
+                cells[index].getCRadius(),
+                &pcaLogSink);
         }
     }
 

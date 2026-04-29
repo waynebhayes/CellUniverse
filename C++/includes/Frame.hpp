@@ -88,7 +88,8 @@ public:
     size_t length() const;
     CostCallbackPair perturbCell(size_t index, float overlapWeight = 1000.0f,
                                  bool useSignalGuidance = false,
-                                 float randomPerturbRadiusRatio = 1.0f);
+                                 float randomPerturbRadiusRatio = 1.0f,
+                                 bool pcaRefitWellFilledMove = false);
     double computeOverlapPenalty(float weight) const;
     double computeOverlapForCell(size_t cellIdx, float weight) const;
 

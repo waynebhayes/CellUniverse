@@ -90,7 +90,6 @@ public:
     // folder of the run being resumed FROM.
     int resume_from = 0;
     std::string resume_source_dir = "";
-    bool export_post_localization_images = false;
     bool cube_pooling_enabled = false;
     bool cube_pooling_cost_comparison_enabled = true;
     int cube_pooling_cube_size = 5;
@@ -258,7 +257,6 @@ public:
         if (node["release_analyzed_exported_frames"]) release_analyzed_exported_frames = node["release_analyzed_exported_frames"].as<bool>();
         if (node["resume_from"]) resume_from = node["resume_from"].as<int>();
         if (node["resume_source_dir"]) resume_source_dir = node["resume_source_dir"].as<std::string>();
-        if (node["export_post_localization_images"]) export_post_localization_images = node["export_post_localization_images"].as<bool>();
         if (node["cube_pooling_enabled"]) cube_pooling_enabled = node["cube_pooling_enabled"].as<bool>();
         if (node["cube_pooling_cost_comparison_enabled"]) cube_pooling_cost_comparison_enabled = node["cube_pooling_cost_comparison_enabled"].as<bool>();
         if (node["cube_pooling_cube_size"]) cube_pooling_cube_size = node["cube_pooling_cube_size"].as<int>();
@@ -353,7 +351,6 @@ public:
         std::cout << "quit_after_preprocessing: " << quit_after_preprocessing << '\n';
         std::cout << "prepare_analyze_one_frame: " << prepare_analyze_one_frame << '\n';
         std::cout << "release_analyzed_exported_frames: " << release_analyzed_exported_frames << '\n';
-        std::cout << "export_post_localization_images: " << export_post_localization_images << '\n';
         std::cout << "cube_pooling_enabled: " << cube_pooling_enabled << '\n';
         std::cout << "cube_pooling_cost_comparison_enabled: " << cube_pooling_cost_comparison_enabled << '\n';
         std::cout << "cube_pooling_cube_size: " << cube_pooling_cube_size << '\n';
@@ -714,6 +711,8 @@ public:
     double maxBRadius{};
     double minCRadius{};
     double maxCRadius{};
+    bool minAnyRadiusEnabled{false};
+    double minAnyRadius{0.0};
     float initialBrightness{0.2f};
     float initialRadiusScale{1.0f};
     float backgroundColor{0.0f};
@@ -794,6 +793,10 @@ public:
     // bright pixels onto that axis|. Higher = larger radii (captures more
     // halo). Lower = tighter to core. Default 0.90.
     float pcaShapeRadiusPercentile{0.90f};
+    bool pcaShapeFitGrowthCapEnabled{true};
+    float pcaShapeFitGrowthCap{0.10f};
+    bool trashPcaShapeFitEnabled{true};
+    float trashPcaShapeMaxOriginalRadiusFactor{2.0f};
     // Reference radius for proportional perturbation sigma scaling.
     // positionScale = max(cell.a, cell.b, cell.c) / perturbSigmaReferenceRadius.
     // Cells larger than refR take bigger steps; smaller cells take smaller
@@ -852,6 +855,8 @@ public:
         if (node["maxBRadius"]) maxBRadius = node["maxBRadius"].as<double>();
         minCRadius = node["minCRadius"].as<double>();
         maxCRadius = node["maxCRadius"].as<double>();
+        if (node["minAnyRadiusEnabled"]) minAnyRadiusEnabled = node["minAnyRadiusEnabled"].as<bool>();
+        if (node["minAnyRadius"]) minAnyRadius = node["minAnyRadius"].as<double>();
         if (node["initialBrightness"]) initialBrightness = node["initialBrightness"].as<float>();
         if (node["initialRadiusScale"]) initialRadiusScale = node["initialRadiusScale"].as<float>();
         if (node["backgroundColor"]) backgroundColor = node["backgroundColor"].as<float>();
@@ -890,6 +895,10 @@ public:
         if (node["pcaShapeCoreFractionHigh"]) pcaShapeCoreFractionHigh = node["pcaShapeCoreFractionHigh"].as<float>();
         if (node["pcaShapeRadiusInflationBright"]) pcaShapeRadiusInflationBright = node["pcaShapeRadiusInflationBright"].as<float>();
         if (node["pcaShapeRadiusPercentile"]) pcaShapeRadiusPercentile = node["pcaShapeRadiusPercentile"].as<float>();
+        if (node["pcaShapeFitGrowthCapEnabled"]) pcaShapeFitGrowthCapEnabled = node["pcaShapeFitGrowthCapEnabled"].as<bool>();
+        if (node["pcaShapeFitGrowthCap"]) pcaShapeFitGrowthCap = node["pcaShapeFitGrowthCap"].as<float>();
+        if (node["trashPcaShapeFitEnabled"]) trashPcaShapeFitEnabled = node["trashPcaShapeFitEnabled"].as<bool>();
+        if (node["trashPcaShapeMaxOriginalRadiusFactor"]) trashPcaShapeMaxOriginalRadiusFactor = node["trashPcaShapeMaxOriginalRadiusFactor"].as<float>();
         if (node["perturbSigmaReferenceRadius"]) perturbSigmaReferenceRadius = node["perturbSigmaReferenceRadius"].as<float>();
         if (node["randomPerturbRadiusRatio"]) randomPerturbRadiusRatio = node["randomPerturbRadiusRatio"].as<float>();
         if (node["randomPerturbBrightCoreGuidanceEnabled"]) randomPerturbBrightCoreGuidanceEnabled = node["randomPerturbBrightCoreGuidanceEnabled"].as<bool>();

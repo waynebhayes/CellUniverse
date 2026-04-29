@@ -35,6 +35,7 @@ std::map<Path, std::vector<Ellipsoid>> CellFactory::createCells(const Path &init
                               0.0f,
                               initialBrightness);
         params.bRadius = record.bRadius;
+        params.isTrash = record.isTrash;
         initialCells[record.filePath].push_back(Ellipsoid(params));
     }
 

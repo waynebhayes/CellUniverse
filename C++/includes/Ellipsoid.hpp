@@ -36,12 +36,13 @@ public:
     float theta_y; // rotation about y-axis (radians)
     float theta_z; // rotation about z-axis (radians)
     float brightness; // per-cell rendering brightness [0,1]
+    bool isTrash; // fixed-size non-splitting seed/object marker
 
-    EllipsoidParams() : CellParams(""), x(0), y(0), z(0), aRadius(0), bRadius(0), cRadius(0), theta_x(0), theta_y(0), theta_z(0), brightness(0.5f) {}
+    EllipsoidParams() : CellParams(""), x(0), y(0), z(0), aRadius(0), bRadius(0), cRadius(0), theta_x(0), theta_y(0), theta_z(0), brightness(0.5f), isTrash(false) {}
     EllipsoidParams(const std::string &name, float x, float y, float z, float aRadius, float cRadius)
-        : CellParams(name), x(x), y(y), z(z), aRadius(aRadius), bRadius(0), cRadius(cRadius), theta_x(0), theta_y(0), theta_z(0), brightness(0.5f) {}
+        : CellParams(name), x(x), y(y), z(z), aRadius(aRadius), bRadius(0), cRadius(cRadius), theta_x(0), theta_y(0), theta_z(0), brightness(0.5f), isTrash(false) {}
     EllipsoidParams(const std::string &name, float x, float y, float z, float aRadius, float cRadius, float theta_x, float theta_y, float theta_z, float brightness = 0.5f)
-        : CellParams(name), x(x), y(y), z(z), aRadius(aRadius), bRadius(0), cRadius(cRadius), theta_x(theta_x), theta_y(theta_y), theta_z(theta_z), brightness(brightness) {}
+        : CellParams(name), x(x), y(y), z(z), aRadius(aRadius), bRadius(0), cRadius(cRadius), theta_x(theta_x), theta_y(theta_y), theta_z(theta_z), brightness(brightness), isTrash(false) {}
 };
 
 // Per-cell snapshot captured at end of each frame. Authoritative source for
@@ -85,6 +86,7 @@ class Ellipsoid
         double _theta_y;  // rotation angle about y-axis (radians)
         double _theta_z;  // rotation angle about z-axis (radians)
         float _brightness; // per-cell rendering brightness [0,1]
+        bool _isTrash = false;
         PerturbParams _aRadiusPerturbParams;
         PerturbParams _bRadiusPerturbParams;
         PerturbParams _cRadiusPerturbParams;
@@ -103,7 +105,7 @@ class Ellipsoid
         
         Ellipsoid(const EllipsoidParams &init_props);
         
-        Ellipsoid() : _major_radius(0), _b_radius(0), _minor_radius(0), _theta_x(0), _theta_y(0), _theta_z(0), _brightness(0.5f) {}
+        Ellipsoid() : _major_radius(0), _b_radius(0), _minor_radius(0), _theta_x(0), _theta_y(0), _theta_z(0), _brightness(0.5f), _isTrash(false) {}
 
         // Lightweight accessors — avoid getCellParams() copy in tight loops
         const std::string& getName() const { return _name; }
@@ -113,6 +115,7 @@ class Ellipsoid
         float getARadius() const { return static_cast<float>(_major_radius); }
         float getBRadius() const { return static_cast<float>(_b_radius); }
         float getCRadius() const { return static_cast<float>(_minor_radius); }
+        bool isTrash() const { return _isTrash; }
         float getMinorRadius() const { return std::min({getARadius(), getBRadius(), getCRadius()}); }
         float getMajorRadius() const { return getARadius(); }
         // Max/min of the three fitted semi-axes. Used by the triaxial plan as
@@ -172,7 +175,7 @@ class Ellipsoid
         std::pair<float, float> measureBrightnessStats(const std::vector<cv::Mat> &image) const;
 
         void printCellInfo() const {
-            std::cout << "Ellipsoid name: " << _name << " x: " << _position.x << " y: " << _position.y << " z: " << _position.z << " aRadius: " << _major_radius << " bRadius: " << _b_radius << " cRadius: " << _minor_radius << " theta_x: " << _theta_x << " theta_y: " << _theta_y << " theta_z: " << _theta_z << " brightness: " << _brightness << '\n';
+            std::cout << "Ellipsoid name: " << _name << " x: " << _position.x << " y: " << _position.y << " z: " << _position.z << " aRadius: " << _major_radius << " bRadius: " << _b_radius << " cRadius: " << _minor_radius << " theta_x: " << _theta_x << " theta_y: " << _theta_y << " theta_z: " << _theta_z << " brightness: " << _brightness << " isTrash: " << _isTrash << '\n';
         }
 
         void draw(cv::Mat &image, const SimulationConfig &simulationConfig, float z = 0) const;

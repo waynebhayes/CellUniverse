@@ -85,6 +85,30 @@ bool getToken(const std::vector<std::string> &tokens, size_t column, std::string
     return !value.empty() && normalized != "none" && normalized != "null" && normalized != "nan";
 }
 
+bool parseBoolText(const std::string &value)
+{
+    const std::string normalized = normalizeHeaderName(value);
+    return normalized == "1" ||
+           normalized == "true" ||
+           normalized == "yes" ||
+           normalized == "y" ||
+           normalized == "trash";
+}
+
+void parseOptionalTrashColumn(const std::vector<std::string> &tokens,
+                              const std::unordered_map<std::string, size_t> &headerIndex,
+                              InitialCellRecord &record)
+{
+    size_t trashCol = 0;
+    if (!findColumn(headerIndex, {"isTrash", "trash", "is_trash"}, trashCol)) {
+        record.isTrash = false;
+        return;
+    }
+
+    std::string trashText;
+    record.isTrash = getToken(tokens, trashCol, trashText) && parseBoolText(trashText);
+}
+
 float parseScaledFloat(const std::string &value, float scale)
 {
     return std::stof(value) * scale;
@@ -145,6 +169,7 @@ bool parseNamedInitialCell(const std::vector<std::string> &tokens,
         }
     }
     record.cRadius = parseScaledFloat(cRadiusText, initialRadiusScale);
+    parseOptionalTrashColumn(tokens, headerIndex, record);
     return true;
 }
 
@@ -189,6 +214,7 @@ bool parseNamedNapariCell(const std::vector<std::string> &tokens,
     record.aRadius = 10.0f * initialRadiusScale;
     record.bRadius = record.aRadius;
     record.cRadius = 10.0f * initialRadiusScale;
+    parseOptionalTrashColumn(tokens, headerIndex, record);
     return true;
 }
 
@@ -277,11 +303,13 @@ std::vector<InitialCellRecord> CsvHandler::loadInitialCells(const Path &initPara
                 continue;
             }
 
-            std::cerr << "[WARN] Skipping invalid initial CSV row (expected named, 7/8-column, or Napari format): "
-                      << line << '\n';
+            throw std::runtime_error(
+                "Invalid initial CSV row at data line " + std::to_string(lineCount + 1) +
+                " (expected named, 7/8-column, or Napari format): " + line);
         } catch (const std::exception &e) {
-            std::cerr << "[WARN] Skipping invalid initial CSV row (" << e.what() << "): "
-                      << line << '\n';
+            throw std::runtime_error(
+                "Invalid initial CSV row at data line " + std::to_string(lineCount + 1) +
+                " (" + e.what() + "): " + line);
         }
     }
 

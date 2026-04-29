@@ -2048,7 +2048,7 @@ void CellUniverse::optimize(int frameIndex)
             snapElong = snapIt->second.shapeElongation;
         }
         float ps = 0.0f;
-        if (allowSplits) {
+        if (allowSplits && !cell.isTrash()) {
             const float t = std::clamp(
                 (snapElong - kElongRefLow) / (kElongRefHigh - kElongRefLow),
                 0.0f, 1.0f);
@@ -2069,17 +2069,17 @@ void CellUniverse::optimize(int frameIndex)
     // ===============================================================
     // Unified pipeline (2026-04-14 — classification removed):
     //   1. Per-cell position calibration.
-    //   2. PCA shape fit with snap-mask.
-    //   3. Pre-pass for every cell: image-grounded D1/D2 centroids of
+    //   2. Pre-pass for every cell: image-grounded D1/D2 centroids of
     //      bright pixels. Pre-pass direction + midpoint become candidates
     //      for the split attempt, alongside parent-rotation axes and the
     //      true snap center. Cost + bio + bridge gates decide acceptance.
-    //   4. Unified perturb + split loop over all cells. Split attempts
+    //   3. Unified perturb + split loop over all cells. Split attempts
     //      are gated only by P(split) which scales linearly with elong.
     //      Cells that aren't really splitting get filtered by:
     //        - bridge gate (valleyRatio ≥ 0.95 → no valley, reject)
     //        - bio gates (volume fraction, daughter size ratio, buried)
     //        - cost gate (must improve by ≥ split_cost)
+    //   4. PCA shape fit with snap-mask at the final post-perturb positions.
     // ===============================================================
 
     // ---- Per-cell position calibration pass (frame 1 only) ----
@@ -2198,19 +2198,12 @@ void CellUniverse::optimize(int frameIndex)
         Ellipsoid::cellConfig.z = savedCalZ;
     }
 
-    if (config.simulation.export_post_localization_images) {
-        std::cout << "[Post Localization Export] frame " << displayFrame
-                  << " stage=post_localization" << std::endl;
-        saveImages(frameIndex, "post_localization");
-    }
-
+    auto runPcaShapeFit = [&]() {
     // ---- Per-cell iterative PCA shape fit ----
-    // Runs AFTER position calibration so Voronoi neighbor exclusion uses
-    // refined positions. PCA on the Voronoi-filtered bright pixels inside
-    // (maskScale * current ellipsoid) drives rotation, all 3 radii, and
-    // centroid. Iterates until shape converges (or maxIters reached).
-    const int pcaMaxIters = config.cell ? config.cell->pcaShapeMaxIters : 0;
-    if (pcaMaxIters > 0 && !frame.cells.empty()) {
+    // Runs after the current-frame perturb/split loop so the final frame
+    // shape is fitted at the post-perturb positions before snapshot/export.
+        const int pcaMaxIters = config.cell ? config.cell->pcaShapeMaxIters : 0;
+        if (pcaMaxIters > 0 && !frame.cells.empty()) {
         const float pcaScale    = config.cell->pcaShapeRadiusScale;
         const int   pcaMin      = config.cell->pcaShapeMinPixels;
         const float maskScale   = config.cell->pcaShapeMaskScale;
@@ -2263,11 +2256,32 @@ void CellUniverse::optimize(int frameIndex)
         // ostringstreams via the optional logSink parameter, then emitted
         // in cell-index order during the serial merge below — log
         // ordering is deterministic regardless of thread count.
+        const bool trashPcaShapeFitEnabled =
+            config.cell && config.cell->trashPcaShapeFitEnabled;
+        const float trashMaxOriginalRadiusFactor = std::max(
+            1.0f,
+            config.cell ? config.cell->trashPcaShapeMaxOriginalRadiusFactor : 2.0f);
+        if (trashPcaShapeFitEnabled) {
+            for (const auto &cell : frame.cells) {
+                if (!cell.isTrash()) continue;
+                const std::string &name = cell.getName();
+                if (cellShapeBirth.find(name) == cellShapeBirth.end()) {
+                    cellShapeBirth[name] = {
+                        cell.getARadius(), cell.getBRadius(), cell.getCRadius()};
+                }
+            }
+        }
         const int nCells = static_cast<int>(frame.cells.size());
         std::vector<std::ostringstream> shapeLogs(nCells);
         #pragma omp parallel for schedule(dynamic)
         for (int ci = 0; ci < nCells; ++ci) {
             const std::string sname = frame.cells[ci].getName();
+            const bool isTrashCell = frame.cells[ci].isTrash();
+            if (isTrashCell && !trashPcaShapeFitEnabled) {
+                shapeLogs[ci] << "  [PCA Shape] cell=" << sname
+                              << " skipped=trash_fixed_size" << std::endl;
+                continue;
+            }
             Frame::ClaimSet others = buildShapeClaimSet(sname);
 
             // Mask radii: prefer the FROZEN per-cell reference (set at cell
@@ -2310,6 +2324,30 @@ void CellUniverse::optimize(int frameIndex)
                                            updatePos, posShiftCap,
                                            maskA, maskB, maskC,
                                            &shapeLogs[ci]);
+            if (isTrashCell) {
+                auto originalIt = cellShapeBirth.find(sname);
+                if (originalIt != cellShapeBirth.end()) {
+                    const auto &original = originalIt->second;
+                    const float preA = frame.cells[ci].getARadius();
+                    const float preB = frame.cells[ci].getBRadius();
+                    const float preC = frame.cells[ci].getCRadius();
+                    const float capA = original[0] * trashMaxOriginalRadiusFactor;
+                    const float capB = original[1] * trashMaxOriginalRadiusFactor;
+                    const float capC = original[2] * trashMaxOriginalRadiusFactor;
+                    const float newA = std::min(preA, capA);
+                    const float newB = std::min(preB, capB);
+                    const float newC = std::min(preC, capC);
+                    if (newA != preA || newB != preB || newC != preC) {
+                        frame.cells[ci].setRadii(newA, newB, newC);
+                        shapeLogs[ci] << "  [Trash PCA Radius Cap] cell=" << sname
+                                      << " factor=" << trashMaxOriginalRadiusFactor
+                                      << " original=(" << original[0] << "," << original[1] << "," << original[2] << ")"
+                                      << " pre=(" << preA << "," << preB << "," << preC << ")"
+                                      << " post=(" << newA << "," << newB << "," << newC << ")"
+                                      << std::endl;
+                    }
+                }
+            }
         }
         // Serial merge: emit per-cell log blocks in cell-index order.
         for (int ci = 0; ci < nCells; ++ci) {
@@ -2335,30 +2373,37 @@ void CellUniverse::optimize(int frameIndex)
         //         frame of run 082209, then compounding through splits
         //         to hit the 10-px floor). 10% downward still allows
         //         biological pre-split pinching over several frames.
-        constexpr float fitGrowthCap = 0.10f;
+        const bool fitGrowthCapEnabled =
+            config.cell && config.cell->pcaShapeFitGrowthCapEnabled;
+        const float fitGrowthCap = std::clamp(
+            config.cell ? config.cell->pcaShapeFitGrowthCap : 0.10f,
+            0.0f, 1.0f);
         const float fitUpFactor = 1.0f + fitGrowthCap;
         const float fitDownFactor = 1.0f - fitGrowthCap;
         int fitsClamped = 0;
-        for (size_t ci = 0; ci < frame.cells.size(); ++ci) {
-            const std::string &name = frame.cells[ci].getName();
-            auto it = cellShapeReference.find(name);
-            if (it == cellShapeReference.end()) continue;
-            const auto &ref = it->second;
-            const float fA = frame.cells[ci].getARadius();
-            const float fB = frame.cells[ci].getBRadius();
-            const float fC = frame.cells[ci].getCRadius();
-            const float capUpA   = ref[0] * fitUpFactor;
-            const float capUpB   = ref[1] * fitUpFactor;
-            const float capUpC   = ref[2] * fitUpFactor;
-            const float capDownA = ref[0] * fitDownFactor;
-            const float capDownB = ref[1] * fitDownFactor;
-            const float capDownC = ref[2] * fitDownFactor;
-            const float newA = std::clamp(fA, capDownA, capUpA);
-            const float newB = std::clamp(fB, capDownB, capUpB);
-            const float newC = std::clamp(fC, capDownC, capUpC);
-            if (newA != fA || newB != fB || newC != fC) {
-                frame.cells[ci].setRadii(newA, newB, newC);
-                ++fitsClamped;
+        if (fitGrowthCapEnabled) {
+            for (size_t ci = 0; ci < frame.cells.size(); ++ci) {
+                const std::string &name = frame.cells[ci].getName();
+                if (frame.cells[ci].isTrash()) continue;
+                auto it = cellShapeReference.find(name);
+                if (it == cellShapeReference.end()) continue;
+                const auto &ref = it->second;
+                const float fA = frame.cells[ci].getARadius();
+                const float fB = frame.cells[ci].getBRadius();
+                const float fC = frame.cells[ci].getCRadius();
+                const float capUpA   = ref[0] * fitUpFactor;
+                const float capUpB   = ref[1] * fitUpFactor;
+                const float capUpC   = ref[2] * fitUpFactor;
+                const float capDownA = ref[0] * fitDownFactor;
+                const float capDownB = ref[1] * fitDownFactor;
+                const float capDownC = ref[2] * fitDownFactor;
+                const float newA = std::clamp(fA, capDownA, capUpA);
+                const float newB = std::clamp(fB, capDownB, capUpB);
+                const float newC = std::clamp(fC, capDownC, capUpC);
+                if (newA != fA || newB != fB || newC != fC) {
+                    frame.cells[ci].setRadii(newA, newB, newC);
+                    ++fitsClamped;
+                }
             }
         }
         if (fitsClamped > 0) {
@@ -2390,6 +2435,7 @@ void CellUniverse::optimize(int frameIndex)
             int birthCapped = 0;
             for (size_t ci = 0; ci < frame.cells.size(); ++ci) {
                 const std::string &name = frame.cells[ci].getName();
+                if (frame.cells[ci].isTrash()) continue;
                 auto birthIt = cellShapeBirth.find(name);
                 if (birthIt == cellShapeBirth.end()) continue;  // not yet captured
                 const auto &birth = birthIt->second;
@@ -2472,7 +2518,8 @@ void CellUniverse::optimize(int frameIndex)
                       << " totalBirth=" << cellShapeBirth.size()
                       << " growthCap=" << refGrowthCap << std::endl;
         }
-    }
+        }
+    };
 
     // ---- Install snap-anchored per-cell bboxes (Option A) ----
     // Each cell with a valid PreviousFrameSnapshot gets a bbox fixed at
@@ -2905,7 +2952,8 @@ void CellUniverse::optimize(int frameIndex)
                 // --- Perturbation ---
                 auto result = frame.perturbCell(
                     cellIdx, overlapWeight, useSignalGuidanceThisFrame,
-                    randomPerturbRadiusRatio);
+                    randomPerturbRadiusRatio,
+                    /*pcaRefitWellFilledMove=*/true);
                 double costDiff = result.first;
                 auto callback = result.second;
                 if (costDiff < 0) {
@@ -2940,6 +2988,8 @@ void CellUniverse::optimize(int frameIndex)
     std::set<std::string> splitAcceptedInLoop;
     std::set<std::string> splitRejectedInLoop;
     runPhase(allNames, /* phaseB */ true, splitAcceptedInLoop, splitRejectedInLoop);
+
+    runPcaShapeFit();
 
     // End of frame: build PreviousFrameSnapshot for each cell, combining the
     // in-frame running max (from the periodic sampling above) with the
@@ -3118,7 +3168,7 @@ void CellUniverse::saveCells(int frameIndex)
             file.close();
             file.open(cellsPath, std::ios::trunc);
         }
-        file << "file,name,x,y,z,aRadius,bRadius,cRadius,theta_x,theta_y,theta_z" << '\n';
+        file << "file,name,x,y,z,aRadius,bRadius,cRadius,theta_x,theta_y,theta_z,isTrash" << '\n';
     }
 
     Frame &frame = frames[frameIndex];
@@ -3137,7 +3187,8 @@ void CellUniverse::saveCells(int frameIndex)
              << params.cRadius << ","
              << params.theta_x << ","
              << params.theta_y << ","
-             << params.theta_z
+             << params.theta_z << ","
+             << (params.isTrash ? 1 : 0)
              << '\n';
     }
 
@@ -3199,7 +3250,8 @@ void CellUniverse::saveCheckpoint(int frameIndex)
             << " " << p.x << " " << p.y << " " << p.z
             << " " << p.aRadius << " " << p.bRadius << " " << p.cRadius
             << " " << p.theta_x << " " << p.theta_y << " " << p.theta_z
-            << " " << p.brightness << '\n';
+            << " " << p.brightness
+            << " " << (p.isTrash ? 1 : 0) << '\n';
     }
 
     // Previous-frame snapshots (per-cell PCA fit state for split detection).
@@ -3294,6 +3346,10 @@ bool CellUniverse::loadCheckpoint(int frameIndex, const std::string &checkpointP
                >> p.aRadius >> p.bRadius >> p.cRadius
                >> p.theta_x >> p.theta_y >> p.theta_z
                >> p.brightness;
+            int isTrashInt = 0;
+            if (ss >> isTrashInt) {
+                p.isTrash = (isTrashInt != 0);
+            }
             if (cellsFrameIdx < frames.size()) {
                 frames[cellsFrameIdx].cells.emplace_back(p);
                 ++loadedCells;
