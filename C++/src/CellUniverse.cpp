@@ -196,6 +196,50 @@ CellUniverse::CellUniverse(std::map<std::string, std::vector<Spheroid>> initialC
     }
 }
 
+PreviousFrameSnapshot CellUniverse::buildSnapshotFromCell(const Spheroid &cell)
+{
+    auto p = cell.getCellParams();
+
+    PreviousFrameSnapshot snap;
+    snap.valid = true;
+    snap.shapeElongation = cell.shapeElongation();
+    cell.worldLongAxis(snap.longAxisDir, snap.longAxisLength);
+    snap.position = cv::Point3f(p.x, p.y, p.z);
+    snap.majorRadius = p.majorRadius;
+    snap.bRadius = p.bRadius;
+    snap.minorRadius = p.minorRadius;
+    snap.thetaX = p.theta_x;
+    snap.thetaY = p.theta_y;
+    snap.thetaZ = p.theta_z;
+    snap.brightness = p.brightness;
+    return snap;
+}
+
+void CellUniverse::seedPreviousSnapshotsFromCells(const std::vector<Spheroid> &cells,
+                                                  int displayFrame,
+                                                  const std::string &reason)
+{
+    previousSnapshots.clear();
+
+    std::cout << "[Resume Snapshot Seed] frame " << displayFrame
+              << " reason=" << reason
+              << " cells=" << cells.size()
+              << std::endl;
+    for (const auto &cell : cells) {
+        const auto p = cell.getCellParams();
+        const PreviousFrameSnapshot snap = buildSnapshotFromCell(cell);
+        previousSnapshots[p.name] = snap;
+
+        std::cout << "  " << p.name
+                  << " shapeElong=" << snap.shapeElongation
+                  << " longAxisLen=" << snap.longAxisLength
+                  << " pos=(" << snap.position.x
+                  << "," << snap.position.y
+                  << "," << snap.position.z << ")"
+                  << std::endl;
+    }
+}
+
 std::vector<Spheroid> CellUniverse::seedCellsForFrame(size_t frameIndex) const
 {
     if (frameIndex >= imagePaths.size())
@@ -304,6 +348,11 @@ void CellUniverse::optimize(int frameIndex)
     std::cout << "[Optimize] frame " << displayFrame
               << " (" << frame.cells.size() << " cells, " << totalIterations << " iterations)" << std::endl;
 
+    const bool isResumeStartFrame = (frameIndex == 0 && firstFrame > 1);
+    if (isResumeStartFrame && previousSnapshots.empty() && !frame.cells.empty()) {
+        seedPreviousSnapshotsFromCells(frame.cells, displayFrame, "resume_first_frame");
+    }
+
     if (frame.cells.size() <= 24)
     {
         std::cout << "[FrameState Before] frame " << displayFrame << std::endl;
@@ -327,8 +376,11 @@ void CellUniverse::optimize(int frameIndex)
     const float sizeReductionWeight = config.prob.size_reduction_penalty_weight;
     const float baseSplitProb = config.prob.P_split_base;
 
-    // No splits on the first frame — cells can't divide before any time has passed
-    bool allowSplits = (frameIndex > 0);
+    // No splits on a true cold-start frame 0/1. Resume runs start with a
+    // CSV that already encodes the previous frame's fitted state, so seed
+    // previousSnapshots and allow snapshot-driven splits immediately.
+    const bool allowSplits =
+        (frameIndex > 0) || (isResumeStartFrame && !previousSnapshots.empty());
 
     // Cells that already failed a burn-in this frame — skip all further split attempts.
     std::set<std::string> splitBlacklist;
@@ -907,30 +959,7 @@ void CellUniverse::optimize(int frameIndex)
     std::cout << "[Snapshot] frame " << displayFrame << std::endl;
     for (size_t ci = 0; ci < frame.cells.size(); ++ci) {
         auto p = frame.cells[ci].getCellParams();
-
-        // Triaxial fitted-shape elongation is the classification signal.
-        // max(a,b,c)/min(a,b,c) from the fit, plus the world-space direction
-        // and length of the longest axis. No image-PCA anymore.
-        const float fitShapeElong = frame.cells[ci].shapeElongation();
-        cv::Point3f fitLongAxisDir;
-        float fitLongAxisLength = 0.0f;
-        frame.cells[ci].worldLongAxis(fitLongAxisDir, fitLongAxisLength);
-
-        PreviousFrameSnapshot snap;
-        snap.valid = true;
-        snap.shapeElongation = fitShapeElong;
-        snap.longAxisDir = fitLongAxisDir;
-        snap.longAxisLength = fitLongAxisLength;
-
-        snap.position = cv::Point3f(p.x, p.y, p.z);
-        snap.majorRadius = p.majorRadius;
-        snap.bRadius     = p.bRadius;
-        snap.minorRadius = p.minorRadius;
-        snap.thetaX = p.theta_x;
-        snap.thetaY = p.theta_y;
-        snap.thetaZ = p.theta_z;
-        snap.brightness = p.brightness;
-
+        PreviousFrameSnapshot snap = buildSnapshotFromCell(frame.cells[ci]);
         previousSnapshots[p.name] = snap;
 
         std::cout << "  " << p.name

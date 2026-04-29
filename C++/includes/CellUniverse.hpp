@@ -54,6 +54,9 @@ private:
 
    void ensureFrameLoaded(size_t frameIndex);
    std::vector<Spheroid> seedCellsForFrame(size_t frameIndex) const;
+   static PreviousFrameSnapshot buildSnapshotFromCell(const Spheroid &cell);
+   void seedPreviousSnapshotsFromCells(const std::vector<Spheroid> &cells, int displayFrame,
+                                       const std::string &reason);
 };
 
 #endif
