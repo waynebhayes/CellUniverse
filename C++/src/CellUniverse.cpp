@@ -11,6 +11,8 @@
 #include <sstream>
 #include <cstdint>
 #include <queue>
+#include <deque>
+#include <unordered_map>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -980,6 +982,40 @@ static void exportPreprocessedStack(const std::vector<cv::Mat> &stack,
 {
     exportStackToSubdir(stack, baseOutputDir, "preprocessed", framePath,
                         exportPng, exportTiff);
+}
+
+static std::vector<cv::Mat> makeEmptyDebugStackLike(const std::vector<cv::Mat> &realFrame)
+{
+    std::vector<cv::Mat> stack;
+    stack.reserve(realFrame.size());
+    for (const auto &slice : realFrame) {
+        stack.emplace_back(cv::Mat::zeros(slice.size(), CV_32F));
+    }
+    return stack;
+}
+
+static void accumulateDebugCellPlacement(std::vector<cv::Mat> &stack,
+                                         const Ellipsoid &cell,
+                                         const SimulationConfig &simulationConfig,
+                                         float brightness)
+{
+    if (stack.empty()) {
+        return;
+    }
+
+    Ellipsoid debugCell = cell;
+    debugCell.setBrightness(std::max(0.0f, brightness));
+    const float maxR = std::max({debugCell.getARadius(),
+                                 debugCell.getBRadius(),
+                                 debugCell.getCRadius()});
+    const int zMin = std::max(0, static_cast<int>(std::floor(debugCell.getZ() - maxR)));
+    const int zMax = std::min(static_cast<int>(stack.size()) - 1,
+                              static_cast<int>(std::ceil(debugCell.getZ() + maxR)));
+    for (int z = zMin; z <= zMax; ++z) {
+        cv::Mat temp = cv::Mat::zeros(stack[static_cast<size_t>(z)].size(), CV_32F);
+        debugCell.draw(temp, simulationConfig, static_cast<float>(z));
+        stack[static_cast<size_t>(z)] += temp;
+    }
 }
 
 // === Signal-guided perturbation helpers (yp ffc1917) ===
@@ -2797,6 +2833,16 @@ void CellUniverse::optimize(int frameIndex)
         return others;
     };
 
+    std::vector<cv::Mat> perturbDebugPlacements;
+    int perturbDebugPlacementCount = 0;
+    const bool exportPerturbDebug =
+        config.simulation.export_perturb_debug_images &&
+        !frame.getRealFrame().empty() &&
+        (config.simulation.export_frame_png || config.simulation.export_frame_tiff);
+    if (exportPerturbDebug) {
+        perturbDebugPlacements = makeEmptyDebugStackLike(frame.getRealFrame());
+    }
+
     // ---- Single-phase iteration helper ----
     auto runPhase = [&](std::set<std::string> &phaseNames,
                         bool phaseB,
@@ -2824,6 +2870,119 @@ void CellUniverse::optimize(int frameIndex)
             }
         };
         rebuildEligible();
+
+        struct PerturbOscillationState {
+            size_t attempts = 0;
+            bool hasLastCost = false;
+            double lastCost = 0.0;
+            std::deque<int> trendSigns;
+            float multiplier = 1.0f;
+        };
+
+        std::unordered_map<std::string, PerturbOscillationState> perturbOscillation;
+        const float oscillationWarmupFraction = std::clamp(
+            config.simulation.perturb_oscillation_warmup_fraction, 0.0f, 1.0f);
+        const size_t oscillationWarmupAttempts = static_cast<size_t>(std::ceil(
+            static_cast<double>(perCellIters) * oscillationWarmupFraction));
+        const size_t oscillationWindow = static_cast<size_t>(std::max(
+            2, config.simulation.perturb_oscillation_window));
+        const size_t oscillationMinSamples = static_cast<size_t>(std::max(
+            2, config.simulation.perturb_oscillation_min_samples));
+        const float oscillationSignChangeRatio = std::clamp(
+            config.simulation.perturb_oscillation_sign_change_ratio, 0.0f, 1.0f);
+        const float oscillationBoostRatio = std::max(
+            1.0f, config.simulation.perturb_oscillation_boost_ratio);
+        const float oscillationMaxMultiplier = std::max(
+            1.0f, config.simulation.perturb_oscillation_max_multiplier);
+
+        auto oscillationEnabledFor = [&](const Ellipsoid &cell) {
+            return cell.isTrash()
+                ? config.simulation.perturb_oscillation_boost_trash_enabled
+                : config.simulation.perturb_oscillation_boost_cells_enabled;
+        };
+
+        auto perturbRatioFor = [&](const std::string &name) {
+            auto it = perturbOscillation.find(name);
+            const float mult = (it != perturbOscillation.end()) ? it->second.multiplier : 1.0f;
+            return randomPerturbRadiusRatio * mult;
+        };
+
+        auto recordPerturbLoss = [&](const std::string &name,
+                                     const Ellipsoid &cell,
+                                     double costDiff,
+                                     bool accepted) {
+            if (!oscillationEnabledFor(cell) || perCellIters == 0 ||
+                oscillationWarmupAttempts == 0) {
+                return;
+            }
+
+            auto &state = perturbOscillation[name];
+            ++state.attempts;
+            if (accepted && config.simulation.perturb_oscillation_reset_on_accept) {
+                if (state.multiplier > 1.0f) {
+                    std::cout << "[Perturb Oscillation Boost Reset] frame " << displayFrame
+                              << " cell=" << name
+                              << " attempts=" << state.attempts
+                              << " multiplier=" << state.multiplier
+                              << std::endl;
+                }
+                state.multiplier = 1.0f;
+                state.trendSigns.clear();
+                state.hasLastCost = false;
+                return;
+            }
+
+            if (state.attempts > oscillationWarmupAttempts) {
+                state.hasLastCost = true;
+                state.lastCost = costDiff;
+                return;
+            }
+
+            if (state.hasLastCost) {
+                constexpr double kLossEpsilon = 1e-9;
+                const double delta = costDiff - state.lastCost;
+                int sign = 0;
+                if (delta > kLossEpsilon) sign = 1;
+                if (delta < -kLossEpsilon) sign = -1;
+                if (sign != 0) {
+                    state.trendSigns.push_back(sign);
+                    while (state.trendSigns.size() > oscillationWindow) {
+                        state.trendSigns.pop_front();
+                    }
+                }
+            }
+            state.hasLastCost = true;
+            state.lastCost = costDiff;
+
+            if (state.trendSigns.size() < oscillationMinSamples ||
+                state.multiplier >= oscillationMaxMultiplier) {
+                return;
+            }
+
+            int signChanges = 0;
+            for (size_t si = 1; si < state.trendSigns.size(); ++si) {
+                if (state.trendSigns[si] != state.trendSigns[si - 1]) {
+                    ++signChanges;
+                }
+            }
+            const float ratio = static_cast<float>(signChanges) /
+                                static_cast<float>(std::max<size_t>(1, state.trendSigns.size() - 1));
+            if (ratio < oscillationSignChangeRatio) {
+                return;
+            }
+
+            const float oldMultiplier = state.multiplier;
+            state.multiplier = std::min(oscillationMaxMultiplier,
+                                        state.multiplier * oscillationBoostRatio);
+            state.trendSigns.clear();
+            std::cout << "[Perturb Oscillation Boost] frame " << displayFrame
+                      << " cell=" << name
+                      << " attempts=" << state.attempts
+                      << " sign_change_ratio=" << ratio
+                      << " multiplier=" << oldMultiplier << "->" << state.multiplier
+                      << " base_radius_ratio=" << randomPerturbRadiusRatio
+                      << std::endl;
+        };
 
         for (size_t i = 0; i < totalPhaseIters; ++i) {
             if (eligible.empty()) break;
@@ -2950,13 +3109,24 @@ void CellUniverse::optimize(int frameIndex)
                 }
             } else {
                 // --- Perturbation ---
+                const float effectivePerturbRadiusRatio = perturbRatioFor(cellName);
                 auto result = frame.perturbCell(
                     cellIdx, overlapWeight, useSignalGuidanceThisFrame,
-                    randomPerturbRadiusRatio,
+                    effectivePerturbRadiusRatio,
                     /*pcaRefitWellFilledMove=*/true);
                 double costDiff = result.first;
                 auto callback = result.second;
-                if (costDiff < 0) {
+                const bool perturbAccept = costDiff < 0;
+                if (exportPerturbDebug) {
+                    accumulateDebugCellPlacement(
+                        perturbDebugPlacements,
+                        frame.cells[cellIdx],
+                        config.simulation,
+                        config.simulation.perturb_debug_cell_brightness);
+                    ++perturbDebugPlacementCount;
+                }
+                recordPerturbLoss(cellName, frame.cells[cellIdx], costDiff, perturbAccept);
+                if (perturbAccept) {
                     callback(true);
                     perturbAccepted++;
                     residSum += costDiff;
@@ -2987,7 +3157,25 @@ void CellUniverse::optimize(int frameIndex)
     }
     std::set<std::string> splitAcceptedInLoop;
     std::set<std::string> splitRejectedInLoop;
+
     runPhase(allNames, /* phaseB */ true, splitAcceptedInLoop, splitRejectedInLoop);
+
+    if (exportPerturbDebug) {
+        const fs::path framePath = (frameIndex >= 0 && static_cast<size_t>(frameIndex) < imagePaths.size())
+            ? imagePaths[static_cast<size_t>(frameIndex)]
+            : fs::path(frame.getImageName());
+        std::cout << "[Perturb Debug Export] frame " << displayFrame
+                  << " placements=" << perturbDebugPlacementCount
+                  << " brightness=" << config.simulation.perturb_debug_cell_brightness
+                  << " output_dir=" << (fs::path(outputPath) / "perturb_debug" / "placements").string()
+                  << std::endl;
+        exportStackToSubdir(perturbDebugPlacements,
+                            fs::path(outputPath),
+                            "perturb_debug/placements",
+                            framePath,
+                            config.simulation.export_frame_png,
+                            config.simulation.export_frame_tiff);
+    }
 
     runPcaShapeFit();
 

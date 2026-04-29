@@ -78,11 +78,22 @@ public:
     float post_alignment_final_blur_sigma = 0.0f;
     bool export_preprocessed_images = false;
     bool export_signal_debug_images = false;
+    bool export_perturb_debug_images = false;
     bool export_frame_png = true;
     bool export_frame_tiff = false;
     bool quit_after_preprocessing = false;
     bool prepare_analyze_one_frame = false;
     bool release_analyzed_exported_frames = true;
+    bool perturb_oscillation_boost_cells_enabled = false;
+    bool perturb_oscillation_boost_trash_enabled = false;
+    float perturb_oscillation_warmup_fraction = 0.30f;
+    int perturb_oscillation_window = 12;
+    int perturb_oscillation_min_samples = 8;
+    float perturb_oscillation_sign_change_ratio = 0.60f;
+    float perturb_oscillation_boost_ratio = 1.50f;
+    float perturb_oscillation_max_multiplier = 4.0f;
+    bool perturb_oscillation_reset_on_accept = true;
+    float perturb_debug_cell_brightness = 0.30f;
 
     // Checkpoint resume (Approach 2): skip frames 0..resume_from-1 and
     // load state from {resume_source_dir}/checkpoints/frame_{resume_from-1:03d}.txt.
@@ -250,11 +261,22 @@ public:
         if (node["post_alignment_final_blur_sigma"]) post_alignment_final_blur_sigma = node["post_alignment_final_blur_sigma"].as<float>();
         if (node["export_preprocessed_images"]) export_preprocessed_images = node["export_preprocessed_images"].as<bool>();
         if (node["export_signal_debug_images"]) export_signal_debug_images = node["export_signal_debug_images"].as<bool>();
+        if (node["export_perturb_debug_images"]) export_perturb_debug_images = node["export_perturb_debug_images"].as<bool>();
         if (node["export_frame_png"]) export_frame_png = node["export_frame_png"].as<bool>();
         if (node["export_frame_tiff"]) export_frame_tiff = node["export_frame_tiff"].as<bool>();
         if (node["quit_after_preprocessing"]) quit_after_preprocessing = node["quit_after_preprocessing"].as<bool>();
         if (node["prepare_analyze_one_frame"]) prepare_analyze_one_frame = node["prepare_analyze_one_frame"].as<bool>();
         if (node["release_analyzed_exported_frames"]) release_analyzed_exported_frames = node["release_analyzed_exported_frames"].as<bool>();
+        if (node["perturb_oscillation_boost_cells_enabled"]) perturb_oscillation_boost_cells_enabled = node["perturb_oscillation_boost_cells_enabled"].as<bool>();
+        if (node["perturb_oscillation_boost_trash_enabled"]) perturb_oscillation_boost_trash_enabled = node["perturb_oscillation_boost_trash_enabled"].as<bool>();
+        if (node["perturb_oscillation_warmup_fraction"]) perturb_oscillation_warmup_fraction = node["perturb_oscillation_warmup_fraction"].as<float>();
+        if (node["perturb_oscillation_window"]) perturb_oscillation_window = node["perturb_oscillation_window"].as<int>();
+        if (node["perturb_oscillation_min_samples"]) perturb_oscillation_min_samples = node["perturb_oscillation_min_samples"].as<int>();
+        if (node["perturb_oscillation_sign_change_ratio"]) perturb_oscillation_sign_change_ratio = node["perturb_oscillation_sign_change_ratio"].as<float>();
+        if (node["perturb_oscillation_boost_ratio"]) perturb_oscillation_boost_ratio = node["perturb_oscillation_boost_ratio"].as<float>();
+        if (node["perturb_oscillation_max_multiplier"]) perturb_oscillation_max_multiplier = node["perturb_oscillation_max_multiplier"].as<float>();
+        if (node["perturb_oscillation_reset_on_accept"]) perturb_oscillation_reset_on_accept = node["perturb_oscillation_reset_on_accept"].as<bool>();
+        if (node["perturb_debug_cell_brightness"]) perturb_debug_cell_brightness = node["perturb_debug_cell_brightness"].as<float>();
         if (node["resume_from"]) resume_from = node["resume_from"].as<int>();
         if (node["resume_source_dir"]) resume_source_dir = node["resume_source_dir"].as<std::string>();
         if (node["cube_pooling_enabled"]) cube_pooling_enabled = node["cube_pooling_enabled"].as<bool>();
@@ -346,11 +368,22 @@ public:
         std::cout << "post_alignment_final_blur_sigma: " << post_alignment_final_blur_sigma << '\n';
         std::cout << "export_preprocessed_images: " << export_preprocessed_images << '\n';
         std::cout << "export_signal_debug_images: " << export_signal_debug_images << '\n';
+        std::cout << "export_perturb_debug_images: " << export_perturb_debug_images << '\n';
         std::cout << "export_frame_png: " << export_frame_png << '\n';
         std::cout << "export_frame_tiff: " << export_frame_tiff << '\n';
         std::cout << "quit_after_preprocessing: " << quit_after_preprocessing << '\n';
         std::cout << "prepare_analyze_one_frame: " << prepare_analyze_one_frame << '\n';
         std::cout << "release_analyzed_exported_frames: " << release_analyzed_exported_frames << '\n';
+        std::cout << "perturb_oscillation_boost_cells_enabled: " << perturb_oscillation_boost_cells_enabled << '\n';
+        std::cout << "perturb_oscillation_boost_trash_enabled: " << perturb_oscillation_boost_trash_enabled << '\n';
+        std::cout << "perturb_oscillation_warmup_fraction: " << perturb_oscillation_warmup_fraction << '\n';
+        std::cout << "perturb_oscillation_window: " << perturb_oscillation_window << '\n';
+        std::cout << "perturb_oscillation_min_samples: " << perturb_oscillation_min_samples << '\n';
+        std::cout << "perturb_oscillation_sign_change_ratio: " << perturb_oscillation_sign_change_ratio << '\n';
+        std::cout << "perturb_oscillation_boost_ratio: " << perturb_oscillation_boost_ratio << '\n';
+        std::cout << "perturb_oscillation_max_multiplier: " << perturb_oscillation_max_multiplier << '\n';
+        std::cout << "perturb_oscillation_reset_on_accept: " << perturb_oscillation_reset_on_accept << '\n';
+        std::cout << "perturb_debug_cell_brightness: " << perturb_debug_cell_brightness << '\n';
         std::cout << "cube_pooling_enabled: " << cube_pooling_enabled << '\n';
         std::cout << "cube_pooling_cost_comparison_enabled: " << cube_pooling_cost_comparison_enabled << '\n';
         std::cout << "cube_pooling_cube_size: " << cube_pooling_cube_size << '\n';
@@ -460,6 +493,22 @@ public:
     int split_calibration_iterations_per_cell = 50;
     float split_candidate_rotation_delta_degrees = 8.0f;
     float split_candidate_translation_delta_fraction = 0.2f;
+
+    // Geometry gate for accepted split candidates. This rejects cases where
+    // the optimizer makes a low-cost "split" by letting daughters walk far
+    // away from the proposed division geometry. The limits are evaluated
+    // after daughter refine and before bridge/cost gates.
+    bool split_geometry_gate_enabled = true;
+    float split_max_daughter_seed_drift_fraction = 1.25f;
+    float split_max_daughter_axis_expansion = 1.8f;
+    bool split_axis_alignment_gate_enabled = true;
+    float split_axis_alignment_sphere_angle_degrees = 120.0f;
+    float split_axis_alignment_elongation_shrink = 0.75f;
+    float split_axis_alignment_min_angle_degrees = 20.0f;
+    bool split_parent_overlap_gate_enabled = true;
+    float split_max_parent_overlap_fraction = 0.30f;
+    float split_parent_overlap_parent_scale = 1.0f;
+    float split_parent_overlap_daughter_scale = 1.0f;
 
     float bio_daughter_size_ratio_max = 1.5f;
     float bio_combined_volume_min_fraction = 0.6f;
@@ -580,6 +629,17 @@ public:
         if (node["split_calibration_iterations_per_cell"]) split_calibration_iterations_per_cell = node["split_calibration_iterations_per_cell"].as<int>();
         if (node["split_candidate_rotation_delta_degrees"]) split_candidate_rotation_delta_degrees = node["split_candidate_rotation_delta_degrees"].as<float>();
         if (node["split_candidate_translation_delta_fraction"]) split_candidate_translation_delta_fraction = node["split_candidate_translation_delta_fraction"].as<float>();
+        if (node["split_geometry_gate_enabled"]) split_geometry_gate_enabled = node["split_geometry_gate_enabled"].as<bool>();
+        if (node["split_max_daughter_seed_drift_fraction"]) split_max_daughter_seed_drift_fraction = node["split_max_daughter_seed_drift_fraction"].as<float>();
+        if (node["split_max_daughter_axis_expansion"]) split_max_daughter_axis_expansion = node["split_max_daughter_axis_expansion"].as<float>();
+        if (node["split_axis_alignment_gate_enabled"]) split_axis_alignment_gate_enabled = node["split_axis_alignment_gate_enabled"].as<bool>();
+        if (node["split_axis_alignment_sphere_angle_degrees"]) split_axis_alignment_sphere_angle_degrees = node["split_axis_alignment_sphere_angle_degrees"].as<float>();
+        if (node["split_axis_alignment_elongation_shrink"]) split_axis_alignment_elongation_shrink = node["split_axis_alignment_elongation_shrink"].as<float>();
+        if (node["split_axis_alignment_min_angle_degrees"]) split_axis_alignment_min_angle_degrees = node["split_axis_alignment_min_angle_degrees"].as<float>();
+        if (node["split_parent_overlap_gate_enabled"]) split_parent_overlap_gate_enabled = node["split_parent_overlap_gate_enabled"].as<bool>();
+        if (node["split_max_parent_overlap_fraction"]) split_max_parent_overlap_fraction = node["split_max_parent_overlap_fraction"].as<float>();
+        if (node["split_parent_overlap_parent_scale"]) split_parent_overlap_parent_scale = node["split_parent_overlap_parent_scale"].as<float>();
+        if (node["split_parent_overlap_daughter_scale"]) split_parent_overlap_daughter_scale = node["split_parent_overlap_daughter_scale"].as<float>();
         if (node["bio_daughter_size_ratio_max"]) bio_daughter_size_ratio_max = node["bio_daughter_size_ratio_max"].as<float>();
         if (node["bio_combined_volume_min_fraction"]) bio_combined_volume_min_fraction = node["bio_combined_volume_min_fraction"].as<float>();
         if (node["bio_combined_volume_max_fraction"]) bio_combined_volume_max_fraction = node["bio_combined_volume_max_fraction"].as<float>();
@@ -609,6 +669,17 @@ public:
         std::cout << "overlap_penalty_weight: " << overlap_penalty_weight << '\n';
         std::cout << "split_candidates_per_attempt: " << split_candidates_per_attempt << '\n';
         std::cout << "split_candidate_burn_in_iterations: " << split_candidate_burn_in_iterations << '\n';
+        std::cout << "split_geometry_gate_enabled: " << split_geometry_gate_enabled << '\n';
+        std::cout << "split_max_daughter_seed_drift_fraction: " << split_max_daughter_seed_drift_fraction << '\n';
+        std::cout << "split_max_daughter_axis_expansion: " << split_max_daughter_axis_expansion << '\n';
+        std::cout << "split_axis_alignment_gate_enabled: " << split_axis_alignment_gate_enabled << '\n';
+        std::cout << "split_axis_alignment_sphere_angle_degrees: " << split_axis_alignment_sphere_angle_degrees << '\n';
+        std::cout << "split_axis_alignment_elongation_shrink: " << split_axis_alignment_elongation_shrink << '\n';
+        std::cout << "split_axis_alignment_min_angle_degrees: " << split_axis_alignment_min_angle_degrees << '\n';
+        std::cout << "split_parent_overlap_gate_enabled: " << split_parent_overlap_gate_enabled << '\n';
+        std::cout << "split_max_parent_overlap_fraction: " << split_max_parent_overlap_fraction << '\n';
+        std::cout << "split_parent_overlap_parent_scale: " << split_parent_overlap_parent_scale << '\n';
+        std::cout << "split_parent_overlap_daughter_scale: " << split_parent_overlap_daughter_scale << '\n';
         std::cout << "bio_daughter_size_ratio_max: " << bio_daughter_size_ratio_max << std::endl;
     }
 };

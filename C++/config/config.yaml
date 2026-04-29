@@ -352,7 +352,7 @@ simulation:
   post_alignment_chunk_percentile_step: 0.0005
   post_alignment_chunk_max_percentile: 0.999
   post_alignment_chunk_non_improvement_patience: 10
-  post_alignment_chunk_disable_below_count: 30
+  post_alignment_chunk_disable_below_count: 15
   # Thread cap for the chunk detector foreground-mask prepass. The exact
   # connected-component flood fill remains serial to avoid racy overcounts.
   post_alignment_chunk_detector_threads: 8
@@ -376,6 +376,9 @@ simulation:
   # frame under signal_debug/: center cubes on black background and a
   # grayscale perturb-probability field on black background.
   export_signal_debug_images: false
+  # Debug normal perturb proposals. Draws every proposed cell placement during
+  # normal perturbation onto black; overlaps accumulate brightness.
+  export_perturb_debug_images: true
   export_frame_png: false
   export_frame_tiff: true
   quit_after_preprocessing: false
@@ -388,6 +391,21 @@ simulation:
   # image-heavy stacks from memory while keeping cells, cached summaries,
   # checkpoints, and other state needed by later frames.
   release_analyzed_exported_frames: true
+
+  # Early normal-perturb escape: if a cell's proposal loss oscillates during
+  # the first fraction of its perturb attempts, multiply position-step scale
+  # until an accepted move resets it. Split attempts and split compensation are
+  # not affected.
+  perturb_oscillation_boost_cells_enabled: false
+  perturb_oscillation_boost_trash_enabled: true
+  perturb_oscillation_warmup_fraction: 0.30
+  perturb_oscillation_window: 12
+  perturb_oscillation_min_samples: 8
+  perturb_oscillation_sign_change_ratio: 0.60
+  perturb_oscillation_boost_ratio: 2.2
+  perturb_oscillation_max_multiplier: 6.0
+  perturb_oscillation_reset_on_accept: true
+  perturb_debug_cell_brightness: 0.30
 
   # Checkpoint resume: moved to run_celluniverse.sh INI preset on 2026-04-22.
   # Set `resume_from` and `resume_source_dir` in user_input_configurations.ini
@@ -623,6 +641,35 @@ prob:
   split_calibration_iterations_per_cell: 50
   split_candidate_rotation_delta_degrees: 8
   split_candidate_translation_delta_fraction: 0.2
+
+  # Reject split candidates whose daughters only fit by walking far away from
+  # the proposed split geometry. This catches false splits where an elongated
+  # parent shape is plausible, but the final daughters are no longer a local
+  # division of that parent.
+  split_geometry_gate_enabled: true
+  # Max daughter drift from its split seed, measured as this fraction of the
+  # parent max radius. Set <= 0 to disable this sub-check.
+  split_max_daughter_seed_drift_fraction: 1.25
+  # Max final daughter-to-daughter span as a multiple of the initial split
+  # seed span. Set <= 0 to disable this sub-check.
+  split_max_daughter_axis_expansion: 1.8
+  # After daughter PCA refit, require each daughter's shortest axis to stay
+  # aligned with the parent shortest axis. The axis is unoriented, so measured
+  # angles are folded to 0-90 degrees. The sphere-like angle starts permissive
+  # and shrinks as parent elongation increases.
+  split_axis_alignment_gate_enabled: true
+  split_axis_alignment_sphere_angle_degrees: 120.0
+  # allowed = max(min_angle, sphere_angle / (1 + shrink * max(0, elongation - 1)))
+  split_axis_alignment_elongation_shrink: 0.75
+  split_axis_alignment_min_angle_degrees: 20.0
+  # Reject if either generated daughter has more than this fraction of its
+  # own voxel body inside the pre-split parent body. Parent/daughter scale
+  # factors let the boundary be tightened or loosened without changing the
+  # rendered radii.
+  split_parent_overlap_gate_enabled: true
+  split_max_parent_overlap_fraction: 0.10
+  split_parent_overlap_parent_scale: 1.0
+  split_parent_overlap_daughter_scale: 1.0
 
   bio_daughter_size_ratio_max: 1.5
   bio_combined_volume_min_fraction: 0.6

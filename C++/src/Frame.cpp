@@ -293,6 +293,54 @@ static float positiveVoxelFractionInsideCell(const std::vector<cv::Mat> &realFra
     return static_cast<float>(positiveCount) / static_cast<float>(insideCount);
 }
 
+static float ellipsoidOverlapFractionOfFirst(const std::vector<cv::Mat> &frameShape,
+                                             const Ellipsoid &body,
+                                             const Ellipsoid &other,
+                                             float bodyScale,
+                                             float otherScale)
+{
+    if (frameShape.empty() || frameShape[0].empty()) {
+        return 0.0f;
+    }
+
+    const float maxR = std::max({body.getARadius(), body.getBRadius(), body.getCRadius()}) *
+                       std::max(1e-3f, bodyScale);
+    const int maxZIndex = static_cast<int>(frameShape.size()) - 1;
+    const int minX = std::max(0, static_cast<int>(std::floor(body.getX() - maxR)));
+    const int maxX = std::min(frameShape[0].cols - 1, static_cast<int>(std::ceil(body.getX() + maxR)));
+    const int minY = std::max(0, static_cast<int>(std::floor(body.getY() - maxR)));
+    const int maxY = std::min(frameShape[0].rows - 1, static_cast<int>(std::ceil(body.getY() + maxR)));
+    const int minZ = std::max(0, static_cast<int>(std::floor(body.getZ() - maxR)));
+    const int maxZ = std::min(maxZIndex, static_cast<int>(std::ceil(body.getZ() + maxR)));
+    if (minX > maxX || minY > maxY || minZ > maxZ) {
+        return 0.0f;
+    }
+
+    int bodyCount = 0;
+    int overlapCount = 0;
+    for (int z = minZ; z <= maxZ; ++z) {
+        for (int y = minY; y <= maxY; ++y) {
+            for (int x = minX; x <= maxX; ++x) {
+                const cv::Point3f p(static_cast<float>(x),
+                                    static_cast<float>(y),
+                                    static_cast<float>(z));
+                if (!body.isPointInsideEllipsoid(p, bodyScale)) {
+                    continue;
+                }
+                ++bodyCount;
+                if (other.isPointInsideEllipsoid(p, otherScale)) {
+                    ++overlapCount;
+                }
+            }
+        }
+    }
+
+    if (bodyCount == 0) {
+        return 0.0f;
+    }
+    return static_cast<float>(overlapCount) / static_cast<float>(bodyCount);
+}
+
 // Function to interpolate between two slices
 void interpolateSlices(const cv::Mat& slice1, const cv::Mat& slice2, 
                        std::vector<cv::Mat>& processedSlices, int numInterpolations) {
@@ -3817,11 +3865,144 @@ CostCallbackPair Frame::trySplitCellPhased(
     const Ellipsoid &bestD1 = bestCells[d1IdxBest];
     const Ellipsoid &bestD2 = bestCells[d2IdxBest];
 
-    // Drift from seed (diagnostic only, no rejection gate).
+    const cv::Point3f bestD1Pos(bestD1.getX(), bestD1.getY(), bestD1.getZ());
+    const cv::Point3f bestD2Pos(bestD2.getX(), bestD2.getY(), bestD2.getZ());
+
+    // Drift from seed. A valid split is allowed to locally refine, but the
+    // daughters should not explain the frame by walking far away from the
+    // proposed division geometry.
     const float drift1 = static_cast<float>(cv::norm(
-        cv::Point3f(bestD1.getX(), bestD1.getY(), bestD1.getZ()) - bestSeedD1));
+        bestD1Pos - bestSeedD1));
     const float drift2 = static_cast<float>(cv::norm(
-        cv::Point3f(bestD2.getX(), bestD2.getY(), bestD2.getZ()) - bestSeedD2));
+        bestD2Pos - bestSeedD2));
+    const float seedAxisLen = static_cast<float>(cv::norm(bestSeedD2 - bestSeedD1));
+    const float finalAxisLen = static_cast<float>(cv::norm(bestD2Pos - bestD1Pos));
+
+    if (probConfig.split_geometry_gate_enabled) {
+        const float parentMaxRadius = std::max({srcMajor, srcB, srcMinor});
+        const float driftFraction = probConfig.split_max_daughter_seed_drift_fraction;
+        const float axisExpansionLimit = probConfig.split_max_daughter_axis_expansion;
+        const float maxAllowedDrift = (driftFraction > 0.0f)
+            ? parentMaxRadius * driftFraction
+            : std::numeric_limits<float>::infinity();
+        const bool driftTooLarge =
+            driftFraction > 0.0f && std::max(drift1, drift2) > maxAllowedDrift;
+        const bool axisExpandedTooMuch =
+            axisExpansionLimit > 0.0f &&
+            seedAxisLen > 1e-3f &&
+            finalAxisLen > seedAxisLen * axisExpansionLimit;
+
+        if (driftTooLarge || axisExpandedTooMuch) {
+            std::cout << "[Split Reject bio] " << parentName
+                      << " reason=daughter_geometry_drift"
+                      << " drift1=" << drift1
+                      << " drift2=" << drift2
+                      << " maxAllowedDrift=" << maxAllowedDrift
+                      << " parentMaxRadius=" << parentMaxRadius
+                      << " driftFraction=" << driftFraction
+                      << " seedAxisLen=" << seedAxisLen
+                      << " finalAxisLen=" << finalAxisLen
+                      << " axisExpansion=" << (seedAxisLen > 1e-3f ? finalAxisLen / seedAxisLen : 0.0f)
+                      << " axisExpansionLimit=" << axisExpansionLimit
+                      << " bestIdx=" << bestIdx
+                      << " bestLabel=" << bestLabel
+                      << std::endl;
+            restoreLiveParent();
+            return {0.0, noop};
+        }
+    }
+
+    if (probConfig.split_axis_alignment_gate_enabled) {
+        cv::Point3f parentShortAxis;
+        float parentShortRadius = 0.0f;
+        parent.worldSplitAxis(parentShortAxis, parentShortRadius);
+
+        auto foldedAxisAngleDeg = [](const cv::Point3f &a,
+                                     const cv::Point3f &b) -> float {
+            const double an = cv::norm(a);
+            const double bn = cv::norm(b);
+            if (an <= 1e-9 || bn <= 1e-9) {
+                return 0.0f;
+            }
+            const double dot = std::abs(
+                (static_cast<double>(a.x) * b.x +
+                 static_cast<double>(a.y) * b.y +
+                 static_cast<double>(a.z) * b.z) / (an * bn));
+            return static_cast<float>(
+                std::acos(std::clamp(dot, 0.0, 1.0)) * 180.0 / M_PI);
+        };
+
+        cv::Point3f d1ShortAxis, d2ShortAxis;
+        float d1ShortRadius = 0.0f;
+        float d2ShortRadius = 0.0f;
+        bestD1.worldSplitAxis(d1ShortAxis, d1ShortRadius);
+        bestD2.worldSplitAxis(d2ShortAxis, d2ShortRadius);
+
+        const float parentElongation = std::max(
+            1.0f,
+            (snapshotValid && snapshot.shapeElongation > 0.0f)
+                ? snapshot.shapeElongation
+                : parent.shapeElongation());
+        const float sphereAngle =
+            std::max(0.0f, probConfig.split_axis_alignment_sphere_angle_degrees);
+        const float shrink =
+            std::max(0.0f, probConfig.split_axis_alignment_elongation_shrink);
+        const float minAngle =
+            std::max(0.0f, probConfig.split_axis_alignment_min_angle_degrees);
+        const float allowedAngle = std::max(
+            minAngle,
+            sphereAngle / (1.0f + shrink * std::max(0.0f, parentElongation - 1.0f)));
+        const float d1AxisAngle = foldedAxisAngleDeg(parentShortAxis, d1ShortAxis);
+        const float d2AxisAngle = foldedAxisAngleDeg(parentShortAxis, d2ShortAxis);
+
+        if (d1AxisAngle > allowedAngle || d2AxisAngle > allowedAngle) {
+            std::cout << "[Split Reject bio] " << parentName
+                      << " reason=daughter_short_axis_misaligned"
+                      << " parentElongation=" << parentElongation
+                      << " allowedAngleDeg=" << allowedAngle
+                      << " sphereAngleDeg=" << sphereAngle
+                      << " shrink=" << shrink
+                      << " minAngleDeg=" << minAngle
+                      << " parentShortAxis=(" << parentShortAxis.x << "," << parentShortAxis.y << "," << parentShortAxis.z << ")"
+                      << " d1ShortAxis=(" << d1ShortAxis.x << "," << d1ShortAxis.y << "," << d1ShortAxis.z << ")"
+                      << " d1AngleDeg=" << d1AxisAngle
+                      << " d2ShortAxis=(" << d2ShortAxis.x << "," << d2ShortAxis.y << "," << d2ShortAxis.z << ")"
+                      << " d2AngleDeg=" << d2AxisAngle
+                      << " bestIdx=" << bestIdx
+                      << " bestLabel=" << bestLabel
+                      << std::endl;
+            restoreLiveParent();
+            return {0.0, noop};
+        }
+    }
+
+    if (probConfig.split_parent_overlap_gate_enabled) {
+        const float maxParentOverlap = std::clamp(
+            probConfig.split_max_parent_overlap_fraction, 0.0f, 1.0f);
+        const float parentOverlapScale = std::max(
+            1e-3f, probConfig.split_parent_overlap_parent_scale);
+        const float daughterOverlapScale = std::max(
+            1e-3f, probConfig.split_parent_overlap_daughter_scale);
+        const float d1ParentOverlap = ellipsoidOverlapFractionOfFirst(
+            _realFrame, bestD1, parent, daughterOverlapScale, parentOverlapScale);
+        const float d2ParentOverlap = ellipsoidOverlapFractionOfFirst(
+            _realFrame, bestD2, parent, daughterOverlapScale, parentOverlapScale);
+
+        if (d1ParentOverlap > maxParentOverlap || d2ParentOverlap > maxParentOverlap) {
+            std::cout << "[Split Reject bio] " << parentName
+                      << " reason=daughter_parent_overlap"
+                      << " d1ParentOverlap=" << d1ParentOverlap
+                      << " d2ParentOverlap=" << d2ParentOverlap
+                      << " maxAllowed=" << maxParentOverlap
+                      << " parentScale=" << parentOverlapScale
+                      << " daughterScale=" << daughterOverlapScale
+                      << " bestIdx=" << bestIdx
+                      << " bestLabel=" << bestLabel
+                      << std::endl;
+            restoreLiveParent();
+            return {0.0, noop};
+        }
+    }
 
     // Daughter midpoint (shared by the bridge gate below for axis
     // projection and diagnostic logging). Previously also used by a
@@ -3864,8 +4045,6 @@ CostCallbackPair Frame::trySplitCellPhased(
     // the region between those two surfaces. Edge zones are the regions
     // inside each daughter, away from the gap.
     {
-        const cv::Point3f bestD1Pos(bestD1.getX(), bestD1.getY(), bestD1.getZ());
-        const cv::Point3f bestD2Pos(bestD2.getX(), bestD2.getY(), bestD2.getZ());
         const cv::Point3f axisVec = bestD2Pos - bestD1Pos;
         const float axisLen = static_cast<float>(cv::norm(axisVec));
         const int totalBridgeCandidates = static_cast<int>(pixels.size());
