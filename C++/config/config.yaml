@@ -646,7 +646,7 @@ prob:
   # the proposed split geometry. This catches false splits where an elongated
   # parent shape is plausible, but the final daughters are no longer a local
   # division of that parent.
-  split_geometry_gate_enabled: true
+  split_geometry_gate_enabled: false
   # Max daughter drift from its split seed, measured as this fraction of the
   # parent max radius. Set <= 0 to disable this sub-check.
   split_max_daughter_seed_drift_fraction: 1.25
