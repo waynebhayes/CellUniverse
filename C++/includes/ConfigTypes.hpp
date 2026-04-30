@@ -95,6 +95,8 @@ public:
     bool perturb_oscillation_reset_on_accept = true;
     float perturb_oscillation_small_step_probability = 0.20f;
     float perturb_oscillation_small_step_multiplier = 1.0f;
+    bool perturb_oscillation_black_pixel_boost_enabled = false;
+    float perturb_oscillation_black_pixel_boost_weight = 1.0f;
     float perturb_debug_cell_brightness = 0.30f;
 
     // Checkpoint resume (Approach 2): skip frames 0..resume_from-1 and
@@ -280,6 +282,8 @@ public:
         if (node["perturb_oscillation_reset_on_accept"]) perturb_oscillation_reset_on_accept = node["perturb_oscillation_reset_on_accept"].as<bool>();
         if (node["perturb_oscillation_small_step_probability"]) perturb_oscillation_small_step_probability = node["perturb_oscillation_small_step_probability"].as<float>();
         if (node["perturb_oscillation_small_step_multiplier"]) perturb_oscillation_small_step_multiplier = node["perturb_oscillation_small_step_multiplier"].as<float>();
+        if (node["perturb_oscillation_black_pixel_boost_enabled"]) perturb_oscillation_black_pixel_boost_enabled = node["perturb_oscillation_black_pixel_boost_enabled"].as<bool>();
+        if (node["perturb_oscillation_black_pixel_boost_weight"]) perturb_oscillation_black_pixel_boost_weight = node["perturb_oscillation_black_pixel_boost_weight"].as<float>();
         if (node["perturb_debug_cell_brightness"]) perturb_debug_cell_brightness = node["perturb_debug_cell_brightness"].as<float>();
         if (node["resume_from"]) resume_from = node["resume_from"].as<int>();
         if (node["resume_source_dir"]) resume_source_dir = node["resume_source_dir"].as<std::string>();
@@ -389,6 +393,8 @@ public:
         std::cout << "perturb_oscillation_reset_on_accept: " << perturb_oscillation_reset_on_accept << '\n';
         std::cout << "perturb_oscillation_small_step_probability: " << perturb_oscillation_small_step_probability << '\n';
         std::cout << "perturb_oscillation_small_step_multiplier: " << perturb_oscillation_small_step_multiplier << '\n';
+        std::cout << "perturb_oscillation_black_pixel_boost_enabled: " << perturb_oscillation_black_pixel_boost_enabled << '\n';
+        std::cout << "perturb_oscillation_black_pixel_boost_weight: " << perturb_oscillation_black_pixel_boost_weight << '\n';
         std::cout << "perturb_debug_cell_brightness: " << perturb_debug_cell_brightness << '\n';
         std::cout << "cube_pooling_enabled: " << cube_pooling_enabled << '\n';
         std::cout << "cube_pooling_cost_comparison_enabled: " << cube_pooling_cost_comparison_enabled << '\n';
@@ -906,6 +912,8 @@ public:
     float pcaShapeFitGrowthCap{0.10f};
     bool trashPcaShapeFitEnabled{true};
     float trashPcaShapeMaxOriginalRadiusFactor{2.0f};
+    bool trashRemovalEnabled{false};
+    float trashRemovalBrightnessThreshold{0.05f};
     // Reference radius for proportional perturbation sigma scaling.
     // positionScale = max(cell.a, cell.b, cell.c) / perturbSigmaReferenceRadius.
     // Cells larger than refR take bigger steps; smaller cells take smaller
@@ -1008,6 +1016,8 @@ public:
         if (node["pcaShapeFitGrowthCap"]) pcaShapeFitGrowthCap = node["pcaShapeFitGrowthCap"].as<float>();
         if (node["trashPcaShapeFitEnabled"]) trashPcaShapeFitEnabled = node["trashPcaShapeFitEnabled"].as<bool>();
         if (node["trashPcaShapeMaxOriginalRadiusFactor"]) trashPcaShapeMaxOriginalRadiusFactor = node["trashPcaShapeMaxOriginalRadiusFactor"].as<float>();
+        if (node["trashRemovalEnabled"]) trashRemovalEnabled = node["trashRemovalEnabled"].as<bool>();
+        if (node["trashRemovalBrightnessThreshold"]) trashRemovalBrightnessThreshold = node["trashRemovalBrightnessThreshold"].as<float>();
         if (node["perturbSigmaReferenceRadius"]) perturbSigmaReferenceRadius = node["perturbSigmaReferenceRadius"].as<float>();
         if (node["randomPerturbRadiusRatio"]) randomPerturbRadiusRatio = node["randomPerturbRadiusRatio"].as<float>();
         if (node["randomPerturbBrightCoreGuidanceEnabled"]) randomPerturbBrightCoreGuidanceEnabled = node["randomPerturbBrightCoreGuidanceEnabled"].as<bool>();

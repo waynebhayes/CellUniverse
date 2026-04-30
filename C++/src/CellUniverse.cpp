@@ -1549,6 +1549,78 @@ static float estimateAdaptiveBackgroundFromFrame(const Frame &frame,
     return computeMeanOfTopFraction(backgroundCandidates, simulationConfig.adaptive_background_top_fraction);
 }
 
+static std::size_t countBackgroundVoxelsAfterCells(const Frame &frame,
+                                                   const SimulationConfig &simulationConfig)
+{
+    const auto &realFrame = frame.getRealFrame();
+    if (realFrame.empty()) {
+        return 0;
+    }
+
+    std::size_t backgroundVoxels = 0;
+    for (size_t z = 0; z < realFrame.size(); ++z) {
+        cv::Mat mask = cv::Mat::zeros(realFrame[z].size(), CV_32F);
+        for (const auto &cell : frame.cells) {
+            EllipsoidParams params = cell.getCellParams();
+            params.brightness = 1.0f;
+            Ellipsoid maskCell(params);
+            maskCell.draw(mask, simulationConfig, static_cast<float>(z));
+        }
+
+        for (int y = 0; y < mask.rows; ++y) {
+            const float *row = mask.ptr<float>(y);
+            for (int x = 0; x < mask.cols; ++x) {
+                if (row[x] <= 0.0f) {
+                    ++backgroundVoxels;
+                }
+            }
+        }
+    }
+
+    return backgroundVoxels;
+}
+
+static float blackVoxelFractionInsideCell(const Frame &frame,
+                                          const Ellipsoid &cell,
+                                          const SimulationConfig &simulationConfig)
+{
+    const auto &realFrame = frame.getRealFrame();
+    if (realFrame.empty()) {
+        return 0.0f;
+    }
+
+    EllipsoidParams params = cell.getCellParams();
+    params.brightness = 1.0f;
+    Ellipsoid maskCell(params);
+
+    std::size_t inside = 0;
+    std::size_t black = 0;
+    const float blackThreshold = std::max(0.0f, simulationConfig.post_alignment_black_threshold);
+    for (size_t z = 0; z < realFrame.size(); ++z) {
+        cv::Mat mask = cv::Mat::zeros(realFrame[z].size(), CV_32F);
+        maskCell.draw(mask, simulationConfig, static_cast<float>(z));
+
+        for (int y = 0; y < mask.rows; ++y) {
+            const float *maskRow = mask.ptr<float>(y);
+            const float *realRow = realFrame[z].ptr<float>(y);
+            for (int x = 0; x < mask.cols; ++x) {
+                if (maskRow[x] <= 0.0f) {
+                    continue;
+                }
+                ++inside;
+                if (realRow[x] <= blackThreshold) {
+                    ++black;
+                }
+            }
+        }
+    }
+
+    if (inside == 0) {
+        return 0.0f;
+    }
+    return static_cast<float>(black) / static_cast<float>(inside);
+}
+
 // Preprocessing moved to ImageHandler. Single preprocessed stack via
 // ImageHandler::loadFrame.
 CellUniverse::CellUniverse(std::map<std::string, std::vector<Ellipsoid>> initialCells,
@@ -2942,6 +3014,10 @@ void CellUniverse::optimize(int frameIndex)
             config.simulation.perturb_oscillation_small_step_probability, 0.0f, 1.0f);
         const float oscillationSmallStepMultiplier = std::clamp(
             config.simulation.perturb_oscillation_small_step_multiplier, 0.0f, 1.0f);
+        const bool oscillationBlackPixelBoostEnabled =
+            config.simulation.perturb_oscillation_black_pixel_boost_enabled;
+        const float oscillationBlackPixelBoostWeight = std::max(
+            0.0f, config.simulation.perturb_oscillation_black_pixel_boost_weight);
 
         auto oscillationEnabledFor = [&](const Ellipsoid &cell) {
             return cell.isTrash()
@@ -3028,14 +3104,25 @@ void CellUniverse::optimize(int frameIndex)
                 return;
             }
 
+            float blackFraction = 0.0f;
+            float blackBoostFactor = 1.0f;
+            if (oscillationBlackPixelBoostEnabled && oscillationBlackPixelBoostWeight > 0.0f) {
+                blackFraction = blackVoxelFractionInsideCell(frame, cell, config.simulation);
+                blackBoostFactor += blackFraction * oscillationBlackPixelBoostWeight;
+            }
+
             const float oldMultiplier = state.multiplier;
+            const float effectiveBoostRatio = oscillationBoostRatio * blackBoostFactor;
             state.multiplier = std::min(oscillationMaxMultiplier,
-                                        state.multiplier * oscillationBoostRatio);
+                                        state.multiplier * effectiveBoostRatio);
             state.trendSigns.clear();
             std::cout << "[Perturb Oscillation Boost] frame " << displayFrame
                       << " cell=" << name
                       << " attempts=" << state.attempts
                       << " sign_change_ratio=" << ratio
+                      << " black_fraction=" << blackFraction
+                      << " black_boost_factor=" << blackBoostFactor
+                      << " effective_boost_ratio=" << effectiveBoostRatio
                       << " multiplier=" << oldMultiplier << "->" << state.multiplier
                       << " base_radius_ratio=" << randomPerturbRadiusRatio
                       << std::endl;
@@ -3314,6 +3401,58 @@ void CellUniverse::optimize(int frameIndex)
         frame.regenerateSynthFrame();
     }
 
+    bool trashRemovalUpdatedBackground = false;
+    if (config.cell && config.cell->trashRemovalEnabled) {
+        const float threshold = config.cell->trashRemovalBrightnessThreshold;
+        float removedBrightnessSum = 0.0f;
+        std::vector<std::string> removedNames;
+
+        auto &cells = frame.cells;
+        for (auto it = cells.begin(); it != cells.end();) {
+            if (it->isTrash() && it->getBrightness() < threshold) {
+                removedBrightnessSum += it->getBrightness();
+                removedNames.push_back(it->getName());
+                it = cells.erase(it);
+            } else {
+                ++it;
+            }
+        }
+
+        if (!removedNames.empty()) {
+            for (const std::string &name : removedNames) {
+                previousSnapshots.erase(name);
+                cellShapeReference.erase(name);
+                cellShapeBirth.erase(name);
+            }
+
+            std::size_t backgroundVoxels =
+                countBackgroundVoxelsAfterCells(frame, config.simulation);
+            if (backgroundVoxels == 0 && !frame.getRealFrame().empty()) {
+                const auto &realFrame = frame.getRealFrame();
+                backgroundVoxels = static_cast<std::size_t>(realFrame.front().rows) *
+                                   static_cast<std::size_t>(realFrame.front().cols) *
+                                   realFrame.size();
+            }
+            backgroundVoxels = std::max<std::size_t>(backgroundVoxels, 1);
+
+            const float backgroundDelta =
+                removedBrightnessSum / static_cast<float>(backgroundVoxels);
+            const float updatedBackground = std::clamp(
+                frame.getBackgroundValue() + backgroundDelta, 0.0f, 1.0f);
+            frame.setBackgroundColor(updatedBackground);
+            frame.regenerateSynthFrame();
+            trashRemovalUpdatedBackground = true;
+
+            std::cout << "[Trash Removal] frame " << displayFrame
+                      << " removed=" << removedNames.size()
+                      << " brightnessSum=" << removedBrightnessSum
+                      << " backgroundVoxels=" << backgroundVoxels
+                      << " backgroundDelta=" << backgroundDelta
+                      << " background=" << updatedBackground
+                      << std::endl;
+        }
+    }
+
     std::cout << "[Optimize Done] frame " << displayFrame
               << " perturb_accepted=" << perturbAccepted
               << " split_attempts=" << splitAttempted
@@ -3322,8 +3461,9 @@ void CellUniverse::optimize(int frameIndex)
 
     // M1/M2 cache per-frame summaries so optimize(frameIndex+1) doesn't need
     // frames[frameIndex]'s image stacks.
-    perFrameAdaptiveBackground[frameIndex] =
-        estimateAdaptiveBackgroundFromFrame(frame, config.simulation);
+    perFrameAdaptiveBackground[frameIndex] = trashRemovalUpdatedBackground
+        ? frame.getBackgroundValue()
+        : estimateAdaptiveBackgroundFromFrame(frame, config.simulation);
     perFrameMeanBrightness[frameIndex] = computeStackMean(frame.getRealFrame());
 }
 

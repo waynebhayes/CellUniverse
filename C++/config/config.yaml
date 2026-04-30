@@ -93,6 +93,12 @@ cell:
   pcaShapeFitGrowthCap: 0.90
   trashPcaShapeFitEnabled: true
   trashPcaShapeMaxOriginalRadiusFactor: 2.0
+  # Post-optimization cleanup: trash cells dimmer than this threshold are
+  # removed after the current frame is fully optimized. Their brightness is
+  # averaged into the remaining background before synth export and before the
+  # next frame inherits the environment.
+  trashRemovalEnabled: true
+  trashRemovalBrightnessThreshold: 0.2
 
   # Radius-proportional perturbation sigma. Position perturbation offsets
   # are scaled by (maxRadius / referenceRadius). Large cells (R=50) take
@@ -245,15 +251,20 @@ simulation:
   # not affected.
   perturb_oscillation_boost_cells_enabled: false
   perturb_oscillation_boost_trash_enabled: true
-  perturb_oscillation_warmup_fraction: 0.10
-  perturb_oscillation_window: 12
+  perturb_oscillation_warmup_fraction: 0.05
+  perturb_oscillation_window: 6
   perturb_oscillation_min_samples: 8
   perturb_oscillation_sign_change_ratio: 0.60
   perturb_oscillation_boost_ratio: 1.5
-  perturb_oscillation_max_multiplier: 6.0
+  perturb_oscillation_max_multiplier: 10.0
   perturb_oscillation_reset_on_accept: true
   perturb_oscillation_small_step_probability: 0.20
   perturb_oscillation_small_step_multiplier: 1.0
+  # When oscillation boosting triggers, multiply the boost by
+  # 1 + black_fraction_inside_cell * weight. Cells enclosing mostly black
+  # pixels get a larger escape step than cells already covering signal.
+  perturb_oscillation_black_pixel_boost_enabled: true
+  perturb_oscillation_black_pixel_boost_weight: 1.7
   perturb_debug_cell_brightness: 0.30
 
   # Cube pooling: fixed-size pooling over 3D cubes.
