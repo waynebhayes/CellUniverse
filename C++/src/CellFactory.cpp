@@ -22,6 +22,10 @@ std::map<Path, std::vector<Spheroid>> CellFactory::createCells(const Path &init_
     std::string line;
     std::string firstLine;
     std::getline(file, firstLine); // remove the header
+    const bool resumeStateCsv =
+        firstLine.find("theta_x") != std::string::npos &&
+        firstLine.find("theta_y") != std::string::npos &&
+        firstLine.find("theta_z") != std::string::npos;
     std::map<Path, std::vector<Spheroid>> initialCells;
     int line_cnt = 0;
 
@@ -87,7 +91,12 @@ while (std::getline(file, line)) {
 
         float brightness = initialBrightness;
 
-        z *= z_scaling;
+        // Tracker resume CSVs already store z in the interpolated/scaled
+        // coordinate system used by the optimizer. Re-scaling them here pushes
+        // cells to the volume ceiling and corrupts mid-sequence resume runs.
+        if (!resumeStateCsv) {
+            z *= z_scaling;
+        }
 
         SpheroidParams params(cellName, x, y, z, majorRadius, minorRadius,
                               theta_x, theta_y, theta_z, brightness);

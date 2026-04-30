@@ -1843,6 +1843,9 @@ CostCallbackPair Frame::trySplitCellPhased(
     const double rescueSplitThreshold =
         -static_cast<double>(probConfig.split_cost) *
         static_cast<double>(probConfig.split_cost_rescue_min_fraction);
+    const double perfectBridgeRescueSplitThreshold =
+        -static_cast<double>(probConfig.split_cost) *
+        static_cast<double>(probConfig.split_cost_perfect_bridge_rescue_min_fraction);
     const float rescueDriftLimit =
         driftLimit * std::max(0.0f, probConfig.split_cost_rescue_max_drift_fraction);
 
@@ -1850,34 +1853,54 @@ CostCallbackPair Frame::trySplitCellPhased(
         costDiff < 0.0 &&
         costDiff >= standardSplitThreshold &&
         costDiff < rescueSplitThreshold;
+    const bool perfectBridgeRescueNearMissCost =
+        costDiff < 0.0 &&
+        costDiff >= standardSplitThreshold &&
+        costDiff < perfectBridgeRescueSplitThreshold;
     const bool rescueStrongBridge =
         bridgeStatsValid &&
         bridgeGapDensity < probConfig.split_cost_rescue_max_gap_density &&
         bridgeValleyRatio < probConfig.split_cost_rescue_max_valley_ratio;
+    const bool perfectBridgeRescueStrongBridge =
+        bridgeStatsValid &&
+        bridgeGapDensity < probConfig.split_cost_perfect_bridge_rescue_max_gap_density &&
+        bridgeValleyRatio < probConfig.split_cost_perfect_bridge_rescue_max_valley_ratio;
     const bool rescueStableDaughters =
         drift1 <= rescueDriftLimit &&
         drift2 <= rescueDriftLimit;
     const bool rescueLowOverlap =
         bestOverlap <= probConfig.split_cost_rescue_max_overlap_penalty;
+    const bool perfectBridgeRescueLowOverlap =
+        bestOverlap <= probConfig.split_cost_perfect_bridge_rescue_max_overlap_penalty;
     const bool rescueAccept =
         probConfig.split_cost_rescue_enabled &&
         rescueNearMissCost &&
         rescueStrongBridge &&
         rescueStableDaughters &&
         rescueLowOverlap;
+    const bool perfectBridgeRescueAccept =
+        probConfig.split_cost_perfect_bridge_rescue_enabled &&
+        perfectBridgeRescueNearMissCost &&
+        perfectBridgeRescueStrongBridge &&
+        rescueStableDaughters &&
+        perfectBridgeRescueLowOverlap;
 
-    if (costDiff >= standardSplitThreshold && !rescueAccept) {
+    if (costDiff >= standardSplitThreshold && !rescueAccept && !perfectBridgeRescueAccept) {
         std::cout << "[Split Reject cost] " << parentName
                   << " diff=" << costDiff
                   << " threshold=" << standardSplitThreshold
                   << " rescueThreshold=" << rescueSplitThreshold
+                  << " perfectBridgeRescueThreshold=" << perfectBridgeRescueSplitThreshold
                   << " rescueNearMissCost=" << rescueNearMissCost
+                  << " perfectBridgeRescueNearMissCost=" << perfectBridgeRescueNearMissCost
                   << " bridgeStatsValid=" << bridgeStatsValid
                   << " gapDensity=" << bridgeGapDensity
                   << " valleyRatio=" << bridgeValleyRatio
                   << " rescueStrongBridge=" << rescueStrongBridge
+                  << " perfectBridgeRescueStrongBridge=" << perfectBridgeRescueStrongBridge
                   << " overlap=" << bestOverlap
                   << " rescueLowOverlap=" << rescueLowOverlap
+                  << " perfectBridgeRescueLowOverlap=" << perfectBridgeRescueLowOverlap
                   << " rescueDriftLimit=" << rescueDriftLimit
                   << " rescueStableDaughters=" << rescueStableDaughters
                   << " bestIdx=" << bestIdx
@@ -1897,6 +1920,21 @@ CostCallbackPair Frame::trySplitCellPhased(
                   << " diff=" << costDiff
                   << " standardThreshold=" << standardSplitThreshold
                   << " rescueThreshold=" << rescueSplitThreshold
+                  << " gapDensity=" << bridgeGapDensity
+                  << " valleyRatio=" << bridgeValleyRatio
+                  << " overlap=" << bestOverlap
+                  << " drift1=" << drift1
+                  << " drift2=" << drift2
+                  << " rescueDriftLimit=" << rescueDriftLimit
+                  << " bestIdx=" << bestIdx
+                  << " bestLabel=" << bestLabel
+                  << std::endl;
+    } else if (perfectBridgeRescueAccept) {
+        std::cout << "[Split Perfect Bridge Rescue Accepted] " << parentName
+                  << " diff=" << costDiff
+                  << " standardThreshold=" << standardSplitThreshold
+                  << " rescueThreshold=" << rescueSplitThreshold
+                  << " perfectBridgeRescueThreshold=" << perfectBridgeRescueSplitThreshold
                   << " gapDensity=" << bridgeGapDensity
                   << " valleyRatio=" << bridgeValleyRatio
                   << " overlap=" << bestOverlap

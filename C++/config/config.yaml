@@ -167,6 +167,14 @@ prob:
   split_cost_rescue_max_valley_ratio: 0.35
   split_cost_rescue_max_drift_fraction: 0.25
   split_cost_rescue_max_overlap_penalty: 1.0
+  # Even narrower rescue for frame-80-style true divisions where the bridge is
+  # essentially empty, daughters stay glued to the GT seed line, and the split
+  # still only misses split_cost on residual by a small margin.
+  split_cost_perfect_bridge_rescue_enabled: true
+  split_cost_perfect_bridge_rescue_min_fraction: 0.72
+  split_cost_perfect_bridge_rescue_max_gap_density: 0.01
+  split_cost_perfect_bridge_rescue_max_valley_ratio: 0.10
+  split_cost_perfect_bridge_rescue_max_overlap_penalty: 0.25
   overlap_penalty_weight: 500.0
   size_reduction_penalty_weight: 30
 

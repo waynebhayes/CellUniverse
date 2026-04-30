@@ -154,6 +154,11 @@ public:
     float split_cost_rescue_max_valley_ratio = 0.35f;
     float split_cost_rescue_max_drift_fraction = 0.25f;
     float split_cost_rescue_max_overlap_penalty = 1.0f;
+    bool split_cost_perfect_bridge_rescue_enabled = true;
+    float split_cost_perfect_bridge_rescue_min_fraction = 0.72f;
+    float split_cost_perfect_bridge_rescue_max_gap_density = 0.01f;
+    float split_cost_perfect_bridge_rescue_max_valley_ratio = 0.10f;
+    float split_cost_perfect_bridge_rescue_max_overlap_penalty = 0.25f;
 
     float split_direction_agreement_degrees = 20.0f;
     int expected_daughter_pre_pass_iterations = 1;
@@ -268,6 +273,11 @@ public:
         if (node["split_cost_rescue_max_valley_ratio"]) split_cost_rescue_max_valley_ratio = node["split_cost_rescue_max_valley_ratio"].as<float>();
         if (node["split_cost_rescue_max_drift_fraction"]) split_cost_rescue_max_drift_fraction = node["split_cost_rescue_max_drift_fraction"].as<float>();
         if (node["split_cost_rescue_max_overlap_penalty"]) split_cost_rescue_max_overlap_penalty = node["split_cost_rescue_max_overlap_penalty"].as<float>();
+        if (node["split_cost_perfect_bridge_rescue_enabled"]) split_cost_perfect_bridge_rescue_enabled = node["split_cost_perfect_bridge_rescue_enabled"].as<bool>();
+        if (node["split_cost_perfect_bridge_rescue_min_fraction"]) split_cost_perfect_bridge_rescue_min_fraction = node["split_cost_perfect_bridge_rescue_min_fraction"].as<float>();
+        if (node["split_cost_perfect_bridge_rescue_max_gap_density"]) split_cost_perfect_bridge_rescue_max_gap_density = node["split_cost_perfect_bridge_rescue_max_gap_density"].as<float>();
+        if (node["split_cost_perfect_bridge_rescue_max_valley_ratio"]) split_cost_perfect_bridge_rescue_max_valley_ratio = node["split_cost_perfect_bridge_rescue_max_valley_ratio"].as<float>();
+        if (node["split_cost_perfect_bridge_rescue_max_overlap_penalty"]) split_cost_perfect_bridge_rescue_max_overlap_penalty = node["split_cost_perfect_bridge_rescue_max_overlap_penalty"].as<float>();
         if (node["split_direction_agreement_degrees"]) split_direction_agreement_degrees = node["split_direction_agreement_degrees"].as<float>();
         if (node["expected_daughter_pre_pass_iterations"]) expected_daughter_pre_pass_iterations = node["expected_daughter_pre_pass_iterations"].as<int>();
         if (node["split_candidates_per_attempt"]) split_candidates_per_attempt = node["split_candidates_per_attempt"].as<int>();
@@ -305,6 +315,11 @@ public:
         std::cout << "split_cost_rescue_max_valley_ratio: " << split_cost_rescue_max_valley_ratio << '\n';
         std::cout << "split_cost_rescue_max_drift_fraction: " << split_cost_rescue_max_drift_fraction << '\n';
         std::cout << "split_cost_rescue_max_overlap_penalty: " << split_cost_rescue_max_overlap_penalty << '\n';
+        std::cout << "split_cost_perfect_bridge_rescue_enabled: " << split_cost_perfect_bridge_rescue_enabled << '\n';
+        std::cout << "split_cost_perfect_bridge_rescue_min_fraction: " << split_cost_perfect_bridge_rescue_min_fraction << '\n';
+        std::cout << "split_cost_perfect_bridge_rescue_max_gap_density: " << split_cost_perfect_bridge_rescue_max_gap_density << '\n';
+        std::cout << "split_cost_perfect_bridge_rescue_max_valley_ratio: " << split_cost_perfect_bridge_rescue_max_valley_ratio << '\n';
+        std::cout << "split_cost_perfect_bridge_rescue_max_overlap_penalty: " << split_cost_perfect_bridge_rescue_max_overlap_penalty << '\n';
         std::cout << "overlap_penalty_weight: " << overlap_penalty_weight << '\n';
         std::cout << "size_reduction_penalty_weight: " << size_reduction_penalty_weight << '\n';
         std::cout << "split_candidates_per_attempt: " << split_candidates_per_attempt << '\n';
