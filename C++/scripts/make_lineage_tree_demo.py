@@ -29,6 +29,13 @@ ROOT_COLORS_BGR = [
     (255, 245, 0),   # cyan,          RGB #00F5FF
 ]
 
+ROOT_LABELS = [
+    ("Purple", "P"),
+    ("Green", "G"),
+    ("Gold", "Y"),
+    ("Cyan", "C"),
+]
+
 
 @dataclass
 class Node:
@@ -57,19 +64,31 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mp4", default="lineage_tree_demo.mp4")
     parser.add_argument("--first-frame", type=int, default=1)
     parser.add_argument("--last-frame", type=int, default=84)
-    parser.add_argument("--fps", type=float, default=12.0)
+    parser.add_argument("--fps", type=float, default=8.0)
     parser.add_argument("--size", type=int, default=1400)
     parser.add_argument(
         "--transition-frames",
         type=int,
-        default=3,
+        default=5,
         help="Subframes used to grow newly appearing branches.",
     )
     parser.add_argument(
         "--hold-frames",
         type=int,
-        default=3,
+        default=4,
         help="Subframes rendered for biological frames with no new lineage nodes.",
+    )
+    parser.add_argument(
+        "--label-style",
+        choices=("compact", "full", "none"),
+        default="compact",
+        help="Tip label format. compact uses P1/G1/Y1/C1; full uses Purple 1, etc.",
+    )
+    parser.add_argument(
+        "--max-labels",
+        type=int,
+        default=120,
+        help="Maximum current-cell labels drawn to preserve tree clarity.",
     )
     parser.add_argument("--keep-frames", action="store_true")
     return parser.parse_args()
@@ -165,6 +184,35 @@ def build_birth_frames(frame_names: dict[int, set[str]]) -> dict[str, int]:
                 if lineage_name not in birth_frames:
                     birth_frames[lineage_name] = frame
     return birth_frames
+
+
+def build_label_map(
+    birth_frames: dict[str, int],
+    label_style: str,
+) -> dict[str, str]:
+    if label_style == "none":
+        return {}
+
+    roots = sorted({root_name(name) for name in birth_frames}, key=lambda n: natural_key(lineage_code(n)))
+    root_index = {root: idx for idx, root in enumerate(roots)}
+    names_by_root: dict[str, list[str]] = defaultdict(list)
+    for name in birth_frames:
+        names_by_root[root_name(name)].append(name)
+
+    labels: dict[str, str] = {}
+    for root in roots:
+        idx = root_index[root]
+        full_name, compact_name = ROOT_LABELS[idx % len(ROOT_LABELS)]
+        ordered_names = sorted(
+            names_by_root[root],
+            key=lambda n: (birth_frames[n], natural_key(lineage_code(n)), n),
+        )
+        for order, name in enumerate(ordered_names, start=1):
+            if label_style == "full":
+                labels[name] = f"{full_name} {order}"
+            else:
+                labels[name] = f"{compact_name}{order}"
+    return labels
 
 
 def ensure_node(nodes: dict[str, Node], name: str) -> Node:
@@ -391,13 +439,124 @@ def draw_edge(
         cv2.circle(canvas, lead, dot_radius, color, -1, cv2.LINE_AA)
 
 
+def draw_text_panel(
+    canvas: np.ndarray,
+    lines: list[str],
+    origin: tuple[int, int],
+    align_right: bool = False,
+    font_scale: float = 0.58,
+    color: tuple[int, int, int] = (220, 220, 220),
+) -> None:
+    if not lines:
+        return
+
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    thickness = 1
+    sizes = [cv2.getTextSize(line, font, font_scale, thickness)[0] for line in lines]
+    panel_w = max(w for w, _ in sizes) + 28
+    panel_h = sum(h for _, h in sizes) + 16 + 10 * (len(lines) - 1)
+    x, y = origin
+    if align_right:
+        x -= panel_w
+
+    cv2.rectangle(canvas, (x, y), (x + panel_w, y + panel_h), (10, 10, 10), -1, cv2.LINE_AA)
+    cv2.rectangle(canvas, (x, y), (x + panel_w, y + panel_h), (58, 58, 58), 1, cv2.LINE_AA)
+
+    cursor_y = y + 10
+    for line, (_, h) in zip(lines, sizes):
+        cursor_y += h
+        cv2.putText(canvas, line, (x + 14, cursor_y), font, font_scale, color, thickness, cv2.LINE_AA)
+        cursor_y += 10
+
+
+def draw_tip_labels(
+    canvas: np.ndarray,
+    nodes: dict[str, Node],
+    active_names: set[str],
+    label_by_name: dict[str, str],
+    root_order: dict[str, int],
+    size: int,
+    max_labels: int,
+) -> None:
+    if not active_names or not label_by_name or max_labels <= 0:
+        return
+
+    center = (size // 2, size // 2)
+    candidates = [name for name in active_names if name in nodes and name in label_by_name]
+    candidates.sort(key=lambda n: (nodes[n].angle, nodes[n].radius, label_by_name[n]))
+    if len(candidates) > max_labels:
+        step = math.ceil(len(candidates) / max_labels)
+        candidates = candidates[::step]
+
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.42
+    thickness = 1
+    occupied: list[tuple[int, int, int, int]] = []
+    min_gap = 3
+
+    for name in candidates:
+        node = nodes[name]
+        label = label_by_name[name]
+        ux = math.cos(node.angle)
+        uy = math.sin(node.angle)
+        anchor = point(center, node.radius + 18, node.angle)
+        text_size, baseline = cv2.getTextSize(label, font, font_scale, thickness)
+        text_w, text_h = text_size
+        pad_x = 5
+        pad_y = 3
+
+        if ux >= 0:
+            x0 = anchor[0]
+        else:
+            x0 = anchor[0] - text_w - 2 * pad_x
+        y0 = anchor[1] - text_h // 2 - pad_y
+
+        # Nudge very top/bottom labels outward vertically so they do not sit on the line.
+        if abs(ux) < 0.18:
+            y0 += int(8 * (1 if uy >= 0 else -1))
+
+        x0 = max(8, min(size - text_w - 2 * pad_x - 8, x0))
+        y0 = max(78, min(size - text_h - 2 * pad_y - 8, y0))
+        rect = (x0, y0, x0 + text_w + 2 * pad_x, y0 + text_h + 2 * pad_y + baseline)
+
+        overlaps = any(
+            not (
+                rect[2] + min_gap < other[0]
+                or rect[0] - min_gap > other[2]
+                or rect[3] + min_gap < other[1]
+                or rect[1] - min_gap > other[3]
+            )
+            for other in occupied
+        )
+        if overlaps:
+            continue
+
+        color = root_color(nodes, root_order, name)
+        cv2.rectangle(canvas, (rect[0], rect[1]), (rect[2], rect[3]), (6, 6, 6), -1, cv2.LINE_AA)
+        cv2.rectangle(canvas, (rect[0], rect[1]), (rect[2], rect[3]), color, 1, cv2.LINE_AA)
+        cv2.putText(
+            canvas,
+            label,
+            (x0 + pad_x, y0 + pad_y + text_h),
+            font,
+            font_scale,
+            (232, 232, 232),
+            thickness,
+            cv2.LINE_AA,
+        )
+        occupied.append(rect)
+
+
 def render_tree(
     nodes: dict[str, Node],
     birth_frames: dict[str, int],
+    active_names: set[str],
+    label_by_name: dict[str, str],
     frame: int,
     size: int,
     total_frames: int,
     growth_progress: float = 1.0,
+    max_labels: int = 120,
 ) -> np.ndarray:
     canvas = np.zeros((size, size, 3), dtype=np.uint8)
     center = (size // 2, size // 2)
@@ -416,7 +575,7 @@ def render_tree(
         radius = max(2, int(round(5 * (0.35 + 0.65 * progress))))
         cv2.circle(canvas, point(center, nodes[root].radius, nodes[root].angle), radius, color, -1, cv2.LINE_AA)
 
-    title = f"Lineage Tree  frame {frame:03d} / {total_frames:03d}   nodes {len(nodes)}"
+    title = f"Lineage Tree   frame {frame:03d} / {total_frames:03d}"
     cv2.putText(
         canvas,
         title,
@@ -428,16 +587,27 @@ def render_tree(
         cv2.LINE_AA,
     )
 
+    draw_text_panel(
+        canvas,
+        [f"Current cells  {len(active_names)}", f"Tree nodes     {len(nodes)}"],
+        (size - 36, 28),
+        align_right=True,
+        font_scale=0.58,
+    )
+
+    draw_tip_labels(canvas, nodes, active_names, label_by_name, root_order, size, max_labels)
+
     legend_x = 38
-    legend_y = size - 118
+    legend_y = size - 146
     for root in roots[:4]:
         idx = root_order[root]
         color = ROOT_COLORS_BGR[idx % len(ROOT_COLORS_BGR)]
+        full_name, compact_name = ROOT_LABELS[idx % len(ROOT_LABELS)]
         y = legend_y + idx * 28
         cv2.line(canvas, (legend_x, y), (legend_x + 42, y), color, 4, cv2.LINE_AA)
         cv2.putText(
             canvas,
-            lineage_code(root),
+            f"{compact_name} = {full_name}",
             (legend_x + 56, y + 8),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.62,
@@ -512,6 +682,7 @@ def main() -> int:
     if not frame_names:
         raise ValueError("No cell rows were loaded from the CSV files")
     birth_frames = build_birth_frames(frame_names)
+    label_by_name = build_label_map(birth_frames, args.label_style)
 
     first_frame = args.first_frame if args.first_frame is not None else min(frame_names)
     last_frame = args.last_frame if args.last_frame is not None else max(frame_names)
@@ -531,8 +702,12 @@ def main() -> int:
 
     previous_visible_names: set[str] = set()
     previous_layout: dict[str, Node] | None = None
+    previous_active_names: set[str] = set()
     rendered_frame_count = 0
-    for index, frame in enumerate(range(first_frame, last_frame + 1)):
+    for frame in range(first_frame, last_frame + 1):
+        if frame in frame_names:
+            previous_active_names = set(frame_names[frame])
+        active_names = set(previous_active_names)
         target_visible_names = set(previous_visible_names)
         target_visible_names.update(frame_names.get(frame, set()))
         current_layout = layout_nodes(target_visible_names, args.size)
@@ -542,7 +717,17 @@ def main() -> int:
         for subframe in range(subframe_count):
             progress = (subframe + 1) / subframe_count
             nodes = interpolate_nodes(previous_layout, current_layout, progress)
-            canvas = render_tree(nodes, birth_frames, frame, args.size, last_frame, progress)
+            canvas = render_tree(
+                nodes,
+                birth_frames,
+                active_names,
+                label_by_name,
+                frame,
+                args.size,
+                last_frame,
+                progress,
+                args.max_labels,
+            )
             frame_path = frame_dir / f"frame_{rendered_frame_count:04d}.png"
             ok = cv2.imwrite(str(frame_path), canvas)
             if not ok:
