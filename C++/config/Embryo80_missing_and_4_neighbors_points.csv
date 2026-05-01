@@ -1,0 +1,6 @@
+point_type,display_name,x,y,z_scaled_for_celluniverse,z_raw_slice_for_napari_if_needed,color_name,rgba,distance_to_missing_gt,majorRadius,bRadius,minorRadius
+missing_gt,GT_label_680_parent_672,481.0,215.0,77.0,11.0,red,"1,0,0,1",0,,,
+neighbor_1,Cell type 1_3010,461.972,164.73,67.3575,9.6225,cyan,"0,1,1,1",54.60874920971915,11.6925,24.4979,11.6925
+neighbor_2,Cell type 1_4111,459.635,242.613,119.567,17.081,yellow,"1,1,0,1",55.05352380184215,22.8757,19.4582,22.8757
+neighbor_3,Cell type 1_21011,496.117,169.229,120.951,17.278714285714283,magenta,"1,0,1,1",65.23188277981863,21.4914,21.9665,21.0028
+neighbor_4,Cell type 1_30001,408.045,242.274,69.8101,9.972871428571429,lime,"0,1,0,1",78.21763076832484,10.0673,18.577,10.0673

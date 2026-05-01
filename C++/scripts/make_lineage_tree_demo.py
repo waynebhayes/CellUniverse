@@ -19,7 +19,7 @@ import cv2
 import numpy as np
 
 
-DEFAULT_CSV_GLOB = "C++/output/*embryo1~84*/*/cells.csv"
+DEFAULT_CSV_GLOB = "C++/output/*embryo1~84*/*/*.csv"
 
 
 ROOT_COLORS_BGR = [
@@ -87,8 +87,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max-labels",
         type=int,
-        default=120,
-        help="Maximum current-cell labels drawn to preserve tree clarity.",
+        default=220,
+        help="Maximum labels drawn to preserve tree clarity.",
     )
     parser.add_argument("--keep-frames", action="store_true")
     return parser.parse_args()
@@ -99,7 +99,12 @@ def natural_key(text: str) -> list[object]:
 
 
 def discover_default_csvs(repo_root: Path) -> list[Path]:
-    return sorted(repo_root.glob(DEFAULT_CSV_GLOB), key=lambda p: natural_key(str(p)))
+    csvs = [
+        path
+        for path in repo_root.glob(DEFAULT_CSV_GLOB)
+        if "cell" in path.name.lower()
+    ]
+    return sorted(csvs, key=lambda p: natural_key(str(p)))
 
 
 def lineage_parts(name: str) -> tuple[str, str] | None:
@@ -153,6 +158,7 @@ def frame_number(frame_file: str) -> int | None:
 def read_frame_names(csv_paths: Iterable[Path]) -> dict[int, set[str]]:
     frame_names: dict[int, set[str]] = defaultdict(set)
     for csv_path in csv_paths:
+        csv_frame_names: dict[int, set[str]] = defaultdict(set)
         with csv_path.open(newline="") as handle:
             reader = csv.DictReader(handle)
             for row in reader:
@@ -160,8 +166,22 @@ def read_frame_names(csv_paths: Iterable[Path]) -> dict[int, set[str]]:
                 name = row.get("name", "").strip()
                 if frame is None or not name:
                     continue
-                frame_names[frame].add(name)
+                csv_frame_names[frame].add(name)
+        for frame, names in csv_frame_names.items():
+            frame_names[frame] = names
     return dict(frame_names)
+
+
+def filter_frame_names(
+    frame_names: dict[int, set[str]],
+    first_frame: int,
+    last_frame: int,
+) -> dict[int, set[str]]:
+    return {
+        frame: names
+        for frame, names in frame_names.items()
+        if first_frame <= frame <= last_frame
+    }
 
 
 def lineage_chain(name: str) -> list[str]:
@@ -469,7 +489,7 @@ def draw_text_panel(
         cursor_y += 10
 
 
-def draw_tip_labels(
+def draw_node_labels(
     canvas: np.ndarray,
     nodes: dict[str, Node],
     active_names: set[str],
@@ -478,62 +498,124 @@ def draw_tip_labels(
     size: int,
     max_labels: int,
 ) -> None:
-    if not active_names or not label_by_name or max_labels <= 0:
+    if not nodes or not label_by_name or max_labels <= 0:
         return
 
     center = (size // 2, size // 2)
-    candidates = [name for name in active_names if name in nodes and name in label_by_name]
-    candidates.sort(key=lambda n: (nodes[n].angle, nodes[n].radius, label_by_name[n]))
-    if len(candidates) > max_labels:
-        step = math.ceil(len(candidates) / max_labels)
-        candidates = candidates[::step]
+    required_names = {
+        name
+        for name, node in nodes.items()
+        if name in label_by_name and (node.parent is None or bool(node.children))
+    }
+    live_names = {name for name in active_names if name in nodes and name in label_by_name}
+    optional_names = [name for name in nodes if name in label_by_name and name not in required_names and name not in live_names]
+
+    def label_sort_key(name: str) -> tuple[float, float, str]:
+        return (nodes[name].angle, nodes[name].radius, label_by_name[name])
+
+    required = sorted(required_names, key=label_sort_key)
+    live = sorted(live_names - required_names, key=label_sort_key)
+    optional = sorted(optional_names, key=label_sort_key)
+
+    remaining_slots = max(0, max_labels - len(required))
+    leaf_candidates = live + optional
+    if len(leaf_candidates) > remaining_slots and remaining_slots > 0:
+        step = math.ceil(len(leaf_candidates) / remaining_slots)
+        leaf_candidates = leaf_candidates[::step]
+    elif remaining_slots == 0:
+        leaf_candidates = []
+
+    candidates = [(name, True) for name in required] + [(name, False) for name in leaf_candidates]
 
     font = cv2.FONT_HERSHEY_SIMPLEX
-    font_scale = 0.42
+    font_scale = 0.36
     thickness = 1
     occupied: list[tuple[int, int, int, int]] = []
     min_gap = 3
 
-    for name in candidates:
+    for name, must_draw in candidates:
         node = nodes[name]
         label = label_by_name[name]
         ux = math.cos(node.angle)
         uy = math.sin(node.angle)
-        anchor = point(center, node.radius + 18, node.angle)
         text_size, baseline = cv2.getTextSize(label, font, font_scale, thickness)
         text_w, text_h = text_size
-        pad_x = 5
-        pad_y = 3
+        pad_x = 4
+        pad_y = 2
 
-        if ux >= 0:
-            x0 = anchor[0]
-        else:
-            x0 = anchor[0] - text_w - 2 * pad_x
-        y0 = anchor[1] - text_h // 2 - pad_y
+        best_rect: tuple[int, int, int, int] | None = None
+        best_origin: tuple[int, int] | None = None
+        radial_offsets = [18, 30, 42, 54, 8, -16]
+        tangent_offsets = [0, 12, -12, 24, -24, 36, -36]
 
-        # Nudge very top/bottom labels outward vertically so they do not sit on the line.
-        if abs(ux) < 0.18:
-            y0 += int(8 * (1 if uy >= 0 else -1))
+        for radial_offset in radial_offsets:
+            for tangent_offset in tangent_offsets:
+                base_x = center[0] + (node.radius + radial_offset) * ux + tangent_offset * -uy
+                base_y = center[1] + (node.radius + radial_offset) * uy + tangent_offset * ux
 
-        x0 = max(8, min(size - text_w - 2 * pad_x - 8, x0))
-        y0 = max(78, min(size - text_h - 2 * pad_y - 8, y0))
-        rect = (x0, y0, x0 + text_w + 2 * pad_x, y0 + text_h + 2 * pad_y + baseline)
+                if ux >= 0:
+                    x0 = int(round(base_x))
+                else:
+                    x0 = int(round(base_x - text_w - 2 * pad_x))
+                y0 = int(round(base_y - text_h // 2 - pad_y))
 
-        overlaps = any(
-            not (
-                rect[2] + min_gap < other[0]
-                or rect[0] - min_gap > other[2]
-                or rect[3] + min_gap < other[1]
-                or rect[1] - min_gap > other[3]
-            )
-            for other in occupied
-        )
-        if overlaps:
-            continue
+                if abs(ux) < 0.18:
+                    y0 += int(7 * (1 if uy >= 0 else -1))
 
+                x0 = max(8, min(size - text_w - 2 * pad_x - 8, x0))
+                y0 = max(78, min(size - text_h - 2 * pad_y - 8, y0))
+                rect = (x0, y0, x0 + text_w + 2 * pad_x, y0 + text_h + 2 * pad_y + baseline)
+
+                overlaps = any(
+                    not (
+                        rect[2] + min_gap < other[0]
+                        or rect[0] - min_gap > other[2]
+                        or rect[3] + min_gap < other[1]
+                        or rect[1] - min_gap > other[3]
+                    )
+                    for other in occupied
+                )
+                if not overlaps:
+                    best_rect = rect
+                    best_origin = (x0, y0)
+                    break
+            if best_rect is not None:
+                break
+
+        if best_rect is None or best_origin is None:
+            if not must_draw:
+                continue
+            base_x = center[0] + (node.radius + 18) * ux
+            base_y = center[1] + (node.radius + 18) * uy
+            if ux >= 0:
+                x0 = int(round(base_x))
+            else:
+                x0 = int(round(base_x - text_w - 2 * pad_x))
+            y0 = int(round(base_y - text_h // 2 - pad_y))
+            x0 = max(8, min(size - text_w - 2 * pad_x - 8, x0))
+            y0 = max(78, min(size - text_h - 2 * pad_y - 8, y0))
+            best_rect = (x0, y0, x0 + text_w + 2 * pad_x, y0 + text_h + 2 * pad_y + baseline)
+            best_origin = (x0, y0)
+
+        x0, y0 = best_origin
+        rect = best_rect
         color = root_color(nodes, root_order, name)
-        cv2.rectangle(canvas, (rect[0], rect[1]), (rect[2], rect[3]), (6, 6, 6), -1, cv2.LINE_AA)
+        fill = (6, 6, 6) if must_draw else (4, 4, 4)
+        cv2.rectangle(canvas, (rect[0], rect[1]), (rect[2], rect[3]), fill, -1, cv2.LINE_AA)
         cv2.rectangle(canvas, (rect[0], rect[1]), (rect[2], rect[3]), color, 1, cv2.LINE_AA)
+
+        if must_draw:
+            node_point = point(center, node.radius, node.angle)
+            label_mid = (x0 + text_w // 2 + pad_x, y0 + text_h // 2 + pad_y)
+            cv2.line(
+                canvas,
+                node_point,
+                label_mid,
+                tuple(int(v * 0.55) for v in color),
+                1,
+                cv2.LINE_AA,
+            )
+
         cv2.putText(
             canvas,
             label,
@@ -589,13 +671,13 @@ def render_tree(
 
     draw_text_panel(
         canvas,
-        [f"Current cells  {len(active_names)}", f"Tree nodes     {len(nodes)}"],
+        [f"Live cells  {len(active_names)}", f"All cells   {len(nodes)}"],
         (size - 36, 28),
         align_right=True,
         font_scale=0.58,
     )
 
-    draw_tip_labels(canvas, nodes, active_names, label_by_name, root_order, size, max_labels)
+    draw_node_labels(canvas, nodes, active_names, label_by_name, root_order, size, max_labels)
 
     legend_x = 38
     legend_y = size - 146
@@ -678,16 +760,27 @@ def main() -> int:
     if not csv_paths:
         raise FileNotFoundError(f"No cells.csv files found with default glob {DEFAULT_CSV_GLOB!r}")
 
-    frame_names = read_frame_names(csv_paths)
-    if not frame_names:
+    all_frame_names = read_frame_names(csv_paths)
+    if not all_frame_names:
         raise ValueError("No cell rows were loaded from the CSV files")
-    birth_frames = build_birth_frames(frame_names)
-    label_by_name = build_label_map(birth_frames, args.label_style)
 
-    first_frame = args.first_frame if args.first_frame is not None else min(frame_names)
-    last_frame = args.last_frame if args.last_frame is not None else max(frame_names)
+    first_frame = args.first_frame if args.first_frame is not None else min(all_frame_names)
+    last_frame = args.last_frame if args.last_frame is not None else max(all_frame_names)
     if last_frame < first_frame:
         raise ValueError("--last-frame must be >= --first-frame")
+
+    frame_names = filter_frame_names(all_frame_names, first_frame, last_frame)
+    if not frame_names:
+        raise ValueError(f"No cell rows found between frames {first_frame} and {last_frame}")
+    missing_frames = [frame for frame in range(first_frame, last_frame + 1) if frame not in frame_names]
+    if missing_frames:
+        preview = ", ".join(str(frame) for frame in missing_frames[:12])
+        if len(missing_frames) > 12:
+            preview += ", ..."
+        print(f"Warning: missing cell data for {len(missing_frames)} frame(s): {preview}")
+
+    birth_frames = build_birth_frames(frame_names)
+    label_by_name = build_label_map(birth_frames, args.label_style)
 
     output_dir = Path(args.output_dir)
     if not output_dir.is_absolute():
