@@ -36,7 +36,7 @@ add_executable(${PROJECT_NAME}
         ${cwd}/src/EmbryoBrightTracker.cpp
         ${cwd}/src/Frame.cpp
         ${cwd}/src/ImageHandler.cpp
-        ${cwd}/src/LineageViewer.cpp
+        ${cwd}/src/LineageTreeCreator.cpp
         ${cwd}/src/Spheroid.cpp
 )
 
@@ -53,7 +53,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE lib/yaml-cpp/include)
 add_executable(brightness_volume_analyzer
         ${cwd}/src/BrightnessVolumeAnalyzer.cpp
         ${cwd}/src/EmbryoBrightTracker.cpp
-        ${cwd}/src/LineageViewer.cpp
+        ${cwd}/src/LineageTreeCreator.cpp
 )
 
 target_include_directories(brightness_volume_analyzer PRIVATE

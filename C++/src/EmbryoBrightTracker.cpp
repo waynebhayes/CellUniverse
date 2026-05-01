@@ -1116,10 +1116,10 @@ void EmbryoBrightTracker::saveRealStretchedZ255(
 void EmbryoBrightTracker::updateViewer(
     int frameIdx,
     const std::vector<CellState> &cells) {
-    std::vector<LineageViewer::CellViz> viz;
+    std::vector<LineageTreeCreator::CellViz> viz;
     for (const auto &c: cells) {
         if (!c.alive) continue;
-        LineageViewer::CellViz v;
+        LineageTreeCreator::CellViz v;
         v.rawName = c.id;
         v.x = c.center.x;
         v.y = c.center.y;

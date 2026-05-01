@@ -143,6 +143,7 @@ simulation:
 
   export_preprocessed_images: false
   quit_after_preprocessing: false
+  enable_lineage_tree_window: false
 
   adaptive_background_expand_factor: 1.1
   adaptive_background_top_fraction: 0.4

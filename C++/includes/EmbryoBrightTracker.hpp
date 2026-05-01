@@ -12,7 +12,7 @@
 #include <cmath>
 
 #include "ConfigTypes.hpp"
-#include "LineageViewer.hpp"
+#include "LineageTreeCreator.hpp"
 
 namespace fs = std::filesystem;
 
@@ -189,7 +189,7 @@ private:
 
     bool dbgVerbose = true;   // set false to silence per-cell debug logs
 
-    LineageViewer viewer;
+    LineageTreeCreator viewer;
 
     bool debugEnabled = true;   // now default ON (same behavior as current)
     int  debugEveryNFrames = 1; // print every N frames

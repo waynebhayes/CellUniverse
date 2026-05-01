@@ -49,6 +49,7 @@ public:
     float weber_eps = 1e-6f;
     bool export_preprocessed_images = false;
     bool quit_after_preprocessing = false;
+    bool enable_lineage_tree_window = false;
     float adaptive_background_expand_factor = 1.1f;
     float adaptive_background_top_fraction = 0.4f;
 
@@ -93,6 +94,8 @@ public:
         if (node["weber_eps"]) weber_eps = node["weber_eps"].as<float>();
         if (node["export_preprocessed_images"]) export_preprocessed_images = node["export_preprocessed_images"].as<bool>();
         if (node["quit_after_preprocessing"]) quit_after_preprocessing = node["quit_after_preprocessing"].as<bool>();
+        if (node["enable_lineage_tree_window"]) enable_lineage_tree_window = node["enable_lineage_tree_window"].as<bool>();
+        if (node["lineage_tree_window"]) enable_lineage_tree_window = node["lineage_tree_window"].as<bool>();
         if (node["adaptive_background_expand_factor"]) adaptive_background_expand_factor = node["adaptive_background_expand_factor"].as<float>();
         if (node["adaptive_background_top_fraction"]) adaptive_background_top_fraction = node["adaptive_background_top_fraction"].as<float>();
     }
@@ -132,6 +135,7 @@ public:
         std::cout << "weber_background_floor: " << weber_background_floor << '\n';
         std::cout << "export_preprocessed_images: " << export_preprocessed_images << '\n';
         std::cout << "quit_after_preprocessing: " << quit_after_preprocessing << '\n';
+        std::cout << "enable_lineage_tree_window: " << enable_lineage_tree_window << '\n';
         std::cout << "adaptive_background_expand_factor: " << adaptive_background_expand_factor << '\n';
         std::cout << "adaptive_background_top_fraction: " << adaptive_background_top_fraction << '\n';
         std::cout << "z_slices: " << z_slices << std::endl;

@@ -12,6 +12,7 @@
 #include "CellUniverse.hpp"
 #include "CellGroundTruthBuilder.hpp"
 #include "ImageHandler.hpp"
+#include "LineageTreeCreator.hpp"
 #include <chrono>
 #include <algorithm>
 
@@ -96,6 +97,53 @@ int main(int argc, char *argv[])
     // Note: progress/status lines use std::endl for immediate visibility
     // through pipes (tee). Inner-loop diagnostics use '\n' for performance.
 
+    if (argc >= 2 && std::string(argv[1]) == "--lineage-tree")
+    {
+        LineageTreeCreator::RenderOptions options;
+        int argi = 2;
+        while (argi < argc)
+        {
+            const std::string opt = argv[argi];
+            if (opt == "--first-frame" && argi + 1 < argc)
+            {
+                options.firstFrame = std::stoi(argv[argi + 1]);
+                argi += 2;
+            }
+            else if (opt == "--last-frame" && argi + 1 < argc)
+            {
+                options.lastFrame = std::stoi(argv[argi + 1]);
+                argi += 2;
+            }
+            else if (opt == "--fps" && argi + 1 < argc)
+            {
+                options.fps = std::stod(argv[argi + 1]);
+                argi += 2;
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        if (argc - argi < 2)
+        {
+            std::cerr << "Usage: celluniverse --lineage-tree [--first-frame N] [--last-frame N] [--fps F] "
+                      << "<output.png|output.mp4> <cells.csv> [cells.csv ...]\n"
+                      << "GIF output is handled by C++/scripts/make_lineage_tree_demo.py.\n";
+            return 1;
+        }
+
+        std::vector<std::string> csvPaths;
+        const std::string lineageOutput = argv[argi++];
+        for (int i = argi; i < argc; ++i)
+        {
+            csvPaths.emplace_back(argv[i]);
+        }
+
+        const bool ok = LineageTreeCreator::renderCsvFiles(csvPaths, lineageOutput, options);
+        return ok ? 0 : 1;
+    }
+
     if (argc >= 2 && std::string(argv[1]) == "--build-ground-truth")
     {
         if (argc < 6)
@@ -157,6 +205,8 @@ int main(int argc, char *argv[])
                                                                         config.simulation.z_scaling, firstFrameFile);
     // create lineage
     CellUniverse lineage = CellUniverse(cells, imageFilePaths, config, args.output, args.firstFrame, args.continueFrom);
+    LineageTreeCreator lineageTree;
+    const bool showLineageTreeWindow = config.simulation.enable_lineage_tree_window;
 
     // Run
     auto start = std::chrono::steady_clock::now();
@@ -164,12 +214,19 @@ int main(int argc, char *argv[])
     {
         lineage.optimize(frame);
 
+        if (showLineageTreeWindow)
+        {
+            lineageTree.update(args.firstFrame + frame,
+                               LineageTreeCreator::makeCellViz(lineage.getCells(frame)));
+        }
+
         lineage.saveImages(frame);
 
         lineage.saveCells(frame);
 
         lineage.copyCellsForward(frame + 1);
     }
+    lineageTree.close();
     auto end = std::chrono::steady_clock::now(); // timer end
 
 
