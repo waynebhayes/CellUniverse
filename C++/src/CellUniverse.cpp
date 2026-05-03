@@ -2005,21 +2005,29 @@ void CellUniverse::optimize(int frameIndex)
     }
 
     Frame &frame = frames[frameIndex];
+    const int absoluteFrame = firstFrame + frameIndex;
 
-    if (frameIndex > 0) {
+    const bool hasPreviousFrameSummary =
+        frameIndex > 0 ||
+        (frameIndex == 0 && resumePreviousFrameSummaryValid);
+    if (hasPreviousFrameSummary) {
         // Prev-frame summaries cached at end of optimize(frameIndex-1) so we
         // don't need frames[frameIndex-1]'s image stacks. Falls back to 0 if
         // not cached (shouldn't happen if prepareFrame + optimize sequence is
         // respected).
-        const float previousBackground = perFrameAdaptiveBackground[frameIndex - 1];
-        const float previousMeanBrightness = perFrameMeanBrightness[frameIndex - 1];
+        const float previousBackground = (frameIndex > 0)
+            ? perFrameAdaptiveBackground[frameIndex - 1]
+            : resumePreviousAdaptiveBackground;
+        const float previousMeanBrightness = (frameIndex > 0)
+            ? perFrameMeanBrightness[frameIndex - 1]
+            : resumePreviousMeanBrightness;
         const float currentMeanBrightness = computeStackMean(frame.getRealFrame());
         const float brightnessScale =
             (previousMeanBrightness > 1e-6f) ? (currentMeanBrightness / previousMeanBrightness) : 1.0f;
         const float updatedBackground = previousBackground * brightnessScale;
 
         frame.setBackgroundColor(updatedBackground);
-        std::cout << "[Adaptive Background] frame " << (firstFrame + frameIndex)
+        std::cout << "[Adaptive Background] frame " << absoluteFrame
                   << " base=" << previousBackground
                   << " ratio=" << brightnessScale
                   << " background=" << updatedBackground << '\n';
@@ -2036,7 +2044,10 @@ void CellUniverse::optimize(int frameIndex)
     // the whole point of bbox cost). Use full-image L2 for frame 1 instead —
     // it's slower but gives the correct global anchoring while cells settle
     // into their initial fit. Frames 2+ use bbox with snap-anchoring.
-    const bool bboxActiveThisFrame = config.prob.use_bbox_cost && (frameIndex > 0);
+    const bool bboxActiveThisFrame =
+        config.prob.use_bbox_cost &&
+        absoluteFrame > 0 &&
+        (frameIndex > 0 || !previousSnapshots.empty());
     frame.setUseBboxCost(bboxActiveThisFrame,
                          config.prob.bbox_margin_scale);
 
@@ -2051,11 +2062,16 @@ void CellUniverse::optimize(int frameIndex)
     if (config.simulation.signal_guided_position_enabled) {
         const auto &centers = frame.getSignalCenters();
         useSignalGuidanceThisFrame = true;
-        if (frameIndex > 0) {
-            const size_t previousCellCount = frames[frameIndex - 1].cells.size();
+        const bool hasPreviousCellCount =
+            frameIndex > 0 ||
+            (frameIndex == 0 && resumePreviousFrameSummaryValid);
+        if (hasPreviousCellCount) {
+            const size_t previousCellCount = (frameIndex > 0)
+                ? frames[frameIndex - 1].cells.size()
+                : resumePreviousCellCount;
             if (centers.size() < previousCellCount) {
                 useSignalGuidanceThisFrame = false;
-                std::cout << "[Signal Guidance Fallback] frame " << (firstFrame + frameIndex)
+                std::cout << "[Signal Guidance Fallback] frame " << absoluteFrame
                           << " centers=" << centers.size()
                           << " previousCells=" << previousCellCount
                           << " mode=random\n";
@@ -3595,7 +3611,8 @@ void CellUniverse::saveCheckpoint(int frameIndex)
     const std::string dir = outputPath + "/checkpoints";
     fs::create_directories(dir);
     char buf[64];
-    std::snprintf(buf, sizeof(buf), "frame_%03d.txt", frameIndex);
+    const int absoluteFrame = firstFrame + frameIndex;
+    std::snprintf(buf, sizeof(buf), "frame_%03d.txt", absoluteFrame);
     const std::string path = dir + "/" + buf;
 
     std::ofstream out(path);
@@ -3605,7 +3622,7 @@ void CellUniverse::saveCheckpoint(int frameIndex)
     }
 
     // Scalar header
-    out << "frame " << frameIndex << '\n';
+    out << "frame " << absoluteFrame << '\n';
     out << "z_slices " << config.simulation.z_slices << '\n';
     out << "maxZ " << Ellipsoid::cellConfig.maxZ << '\n';
 
@@ -3666,10 +3683,17 @@ void CellUniverse::saveCheckpoint(int frameIndex)
     }
 
     out.close();
-    std::cout << "[Checkpoint] saved frame " << frameIndex << " → " << path << std::endl;
+    std::cout << "[Checkpoint] saved frame " << absoluteFrame << " → " << path << std::endl;
 }
 
 bool CellUniverse::loadCheckpoint(int frameIndex, const std::string &checkpointPath)
+{
+    return loadCheckpoint(frameIndex, frameIndex + 1, checkpointPath);
+}
+
+bool CellUniverse::loadCheckpoint(int checkpointFrameIndex,
+                                  int targetFrameIndex,
+                                  const std::string &checkpointPath)
 {
     std::ifstream in(checkpointPath);
     if (!in.is_open()) {
@@ -3681,11 +3705,26 @@ bool CellUniverse::loadCheckpoint(int frameIndex, const std::string &checkpointP
     previousSnapshots.clear();
     cellShapeReference.clear();
     cellShapeBirth.clear();
+    resumePreviousFrameSummaryValid = false;
+    resumePreviousAdaptiveBackground = 0.0f;
+    resumePreviousMeanBrightness = 0.0f;
+    resumePreviousCellCount = 0;
 
-    const size_t cellsFrameIdx = (static_cast<size_t>(frameIndex + 1) < frames.size())
-        ? static_cast<size_t>(frameIndex + 1) : static_cast<size_t>(frameIndex);
-    if (cellsFrameIdx < frames.size()) {
-        frames[cellsFrameIdx].cells.clear();
+    if (targetFrameIndex < 0 || static_cast<size_t>(targetFrameIndex) >= frames.size()) {
+        std::cerr << "[Checkpoint] target frame out of range: " << targetFrameIndex << '\n';
+        return false;
+    }
+    const size_t cellsFrameIdx = static_cast<size_t>(targetFrameIndex);
+    frames[cellsFrameIdx].cells.clear();
+
+    const int targetAbsoluteFrame = firstFrame + targetFrameIndex;
+    const bool checkpointMatchesLocal =
+        checkpointFrameIndex == (targetFrameIndex - 1);
+    const int expectedCheckpointFrame = targetAbsoluteFrame - 1;
+    if (checkpointFrameIndex != expectedCheckpointFrame && !checkpointMatchesLocal) {
+        std::cerr << "[Checkpoint] caller checkpoint frame " << checkpointFrameIndex
+                  << " does not match expected absolute " << expectedCheckpointFrame
+                  << " for target local frame " << targetFrameIndex << '\n';
     }
 
     std::string line;
@@ -3697,10 +3736,11 @@ bool CellUniverse::loadCheckpoint(int frameIndex, const std::string &checkpointP
         ss >> tag;
         if (tag == "frame") {
             int f; ss >> f;
-            // sanity check: file's frame should match caller's expectation
-            if (f != frameIndex) {
+            // Accept both the new absolute frame tag and legacy local tags
+            // from older first_frame=0 runs.
+            if (f != checkpointFrameIndex && f != targetFrameIndex - 1) {
                 std::cerr << "[Checkpoint] frame mismatch: file=" << f
-                          << " expected=" << frameIndex << '\n';
+                          << " expected=" << checkpointFrameIndex << '\n';
             }
         } else if (tag == "z_slices") {
             int v; ss >> v;
@@ -3710,21 +3750,21 @@ bool CellUniverse::loadCheckpoint(int frameIndex, const std::string &checkpointP
             Ellipsoid::cellConfig.maxZ = v;
         } else if (tag == "perFrameAdaptiveBackground") {
             float v; ss >> v;
-            if (perFrameAdaptiveBackground.size() < static_cast<size_t>(frameIndex + 1)) {
-                perFrameAdaptiveBackground.resize(frameIndex + 1, 0.0f);
+            resumePreviousAdaptiveBackground = v;
+            resumePreviousFrameSummaryValid = true;
+            if (targetFrameIndex > 0) {
+                perFrameAdaptiveBackground[targetFrameIndex - 1] = v;
             }
-            perFrameAdaptiveBackground[frameIndex] = v;
         } else if (tag == "perFrameMeanBrightness") {
             float v; ss >> v;
-            if (perFrameMeanBrightness.size() < static_cast<size_t>(frameIndex + 1)) {
-                perFrameMeanBrightness.resize(frameIndex + 1, 0.0f);
+            resumePreviousMeanBrightness = v;
+            resumePreviousFrameSummaryValid = true;
+            if (targetFrameIndex > 0) {
+                perFrameMeanBrightness[targetFrameIndex - 1] = v;
             }
-            perFrameMeanBrightness[frameIndex] = v;
         } else if (tag == "nextFrameBackgroundValue") {
             float v; ss >> v;
-            if (cellsFrameIdx < frames.size()) {
-                frames[cellsFrameIdx].setBackgroundColor(v);
-            }
+            frames[cellsFrameIdx].setBackgroundColor(v);
         } else if (tag == "cell") {
             EllipsoidParams p;
             ss >> p.name >> p.x >> p.y >> p.z
@@ -3735,10 +3775,8 @@ bool CellUniverse::loadCheckpoint(int frameIndex, const std::string &checkpointP
             if (ss >> isTrashInt) {
                 p.isTrash = (isTrashInt != 0);
             }
-            if (cellsFrameIdx < frames.size()) {
-                frames[cellsFrameIdx].cells.emplace_back(p);
-                ++loadedCells;
-            }
+            frames[cellsFrameIdx].cells.emplace_back(p);
+            ++loadedCells;
         } else if (tag == "snap") {
             PreviousFrameSnapshot s;
             std::string name;
@@ -3766,8 +3804,11 @@ bool CellUniverse::loadCheckpoint(int frameIndex, const std::string &checkpointP
         }
     }
     in.close();
+    resumePreviousCellCount = frames[cellsFrameIdx].cells.size();
 
-    std::cout << "[Checkpoint] loaded frame " << frameIndex
+    std::cout << "[Checkpoint] loaded frame " << checkpointFrameIndex
+              << " into local frame " << targetFrameIndex
+              << " (absolute " << targetAbsoluteFrame << ")"
               << " cells=" << loadedCells
               << " snaps=" << loadedSnaps
               << " refs=" << loadedRefs

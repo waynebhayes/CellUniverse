@@ -161,23 +161,34 @@ int main(int argc, char *argv[])
         lineage.preprocessAllFramesAlignedToMinimumBackground(true);
     }
 
-    // Checkpoint resume (Approach 2): if config.simulation.resume_from > 0
-    // and resume_source_dir is set, load the checkpoint file from
-    // `{resume_source_dir}/checkpoints/frame_{resume_from - 1:03d}.txt` and
-    // skip the main loop up to resume_from. Requires the source run's
-    // checkpoint to have been written with saveCheckpoint.
+    // Checkpoint resume (Approach 2): resume_from is the absolute dataset
+    // frame to analyze next. Load `{resume_source_dir}/checkpoints/
+    // frame_{resume_from - 1:03d}.txt`, install its copied-forward cells into
+    // the local frame corresponding to resume_from, then start the loop there.
     int loopStart = 0;
     if (config.simulation.resume_from > 0 && !config.simulation.resume_source_dir.empty()) {
-        char buf[64];
-        std::snprintf(buf, sizeof(buf), "frame_%03d.txt", config.simulation.resume_from - 1);
-        const std::string ckptPath =
-            config.simulation.resume_source_dir + "/checkpoints/" + buf;
-        if (lineage.loadCheckpoint(config.simulation.resume_from - 1, ckptPath)) {
-            loopStart = config.simulation.resume_from;
-            std::cout << "[Resume] skipping frames 0.." << (loopStart - 1)
-                      << " — loaded checkpoint from " << ckptPath << std::endl;
+        const int resumeFrame = config.simulation.resume_from;
+        const int checkpointFrame = resumeFrame - 1;
+        const int targetLocalFrame = resumeFrame - args.firstFrame;
+        if (targetLocalFrame < 0 ||
+            targetLocalFrame >= static_cast<int>(lineage.length())) {
+            std::cerr << "[Resume] invalid resume_from=" << resumeFrame
+                      << " for requested frame range [" << args.firstFrame
+                      << "," << args.lastFrame << "]; running from local frame 0\n";
         } else {
-            std::cerr << "[Resume] checkpoint load failed, running from frame 0\n";
+            char buf[64];
+            std::snprintf(buf, sizeof(buf), "frame_%03d.txt", checkpointFrame);
+            const std::string ckptPath =
+                config.simulation.resume_source_dir + "/checkpoints/" + buf;
+            if (lineage.loadCheckpoint(checkpointFrame, targetLocalFrame, ckptPath)) {
+                loopStart = targetLocalFrame;
+                std::cout << "[Resume] skipping absolute frames "
+                          << args.firstFrame << ".." << (resumeFrame - 1)
+                          << " (local 0.." << (loopStart - 1) << ")"
+                          << " — loaded checkpoint from " << ckptPath << std::endl;
+            } else {
+                std::cerr << "[Resume] checkpoint load failed, running from frame 0\n";
+            }
         }
     }
 

@@ -51,11 +51,13 @@ public:
     // cells of frame N+1 (already copied forward), previousSnapshots,
     // cellShapeReference, cellShapeBirth, perFrameAdaptiveBackground[N],
     // perFrameMeanBrightness[N], frame N+1 backgroundValue, z_slices/maxZ.
-    // loadCheckpoint(N) reads the file and populates state, returning true
-    // on success. Call BEFORE the main loop starts. After loading, set the
-    // loop start to N+1.
+    // loadCheckpoint(N, targetFrameIndex) reads checkpoint N and populates
+    // the local frame that should be optimized next. Call BEFORE the main
+    // loop starts. After loading, set the loop start to targetFrameIndex.
     void saveCheckpoint(int frameIndex);
     bool loadCheckpoint(int frameIndex, const std::string &checkpointPath);
+    bool loadCheckpoint(int checkpointFrameIndex, int targetFrameIndex,
+                        const std::string &checkpointPath);
 
     unsigned int length();
 
@@ -95,6 +97,10 @@ private:
    // image data.
    std::vector<float> perFrameAdaptiveBackground;
    std::vector<float> perFrameMeanBrightness;
+   bool resumePreviousFrameSummaryValid = false;
+   float resumePreviousAdaptiveBackground = 0.0f;
+   float resumePreviousMeanBrightness = 0.0f;
+   size_t resumePreviousCellCount = 0;
 
    void prepareSignalCentersForFrame(int frameIndex,
                                      const std::vector<cv::Mat> &realFrame,
