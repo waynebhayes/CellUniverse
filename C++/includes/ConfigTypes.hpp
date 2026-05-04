@@ -463,6 +463,12 @@ public:
     // 0.0 = disabled (use fixed split_cost only). Typical: 0.03 = split must
     // improve cost by at least 3% of the baseline to accept.
     float split_cost_fraction = 0.0f;
+    // Optional rescue for visually strong split bridges whose bbox image cost
+    // is worse than the live single-parent baseline.
+    bool split_bridge_cost_rescue_enabled = false;
+    float split_bridge_cost_rescue_max_positive_fraction = 0.20f;
+    float split_bridge_cost_rescue_max_valley_ratio = 0.40f;
+    float split_bridge_cost_rescue_max_gap_density = 0.05f;
     // Quadratic position prior weight for perturbCell.
     // penalty = weight × ||cell.pos - snap.pos||²
     // Temporal anchor independent of image evidence. Prevents drift
@@ -679,6 +685,10 @@ public:
         if (node["overlap_penalty_weight"]) overlap_penalty_weight = node["overlap_penalty_weight"].as<float>();
         if (node["split_cost"]) split_cost = node["split_cost"].as<float>();
         if (node["split_cost_fraction"]) split_cost_fraction = node["split_cost_fraction"].as<float>();
+        if (node["split_bridge_cost_rescue_enabled"]) split_bridge_cost_rescue_enabled = node["split_bridge_cost_rescue_enabled"].as<bool>();
+        if (node["split_bridge_cost_rescue_max_positive_fraction"]) split_bridge_cost_rescue_max_positive_fraction = node["split_bridge_cost_rescue_max_positive_fraction"].as<float>();
+        if (node["split_bridge_cost_rescue_max_valley_ratio"]) split_bridge_cost_rescue_max_valley_ratio = node["split_bridge_cost_rescue_max_valley_ratio"].as<float>();
+        if (node["split_bridge_cost_rescue_max_gap_density"]) split_bridge_cost_rescue_max_gap_density = node["split_bridge_cost_rescue_max_gap_density"].as<float>();
         if (node["position_prior_weight"]) position_prior_weight = node["position_prior_weight"].as<float>();
         if (node["position_prior_threshold"]) position_prior_threshold = node["position_prior_threshold"].as<float>();
         if (node["max_perturb_drift_xy"]) max_perturb_drift_xy = node["max_perturb_drift_xy"].as<float>();
@@ -744,6 +754,11 @@ public:
         std::cout << "P_split_base: " << P_split_base << '\n';
         std::cout << "P_split_max: " << P_split_max << '\n';
         std::cout << "split_cost: " << split_cost << '\n';
+        std::cout << "split_cost_fraction: " << split_cost_fraction << '\n';
+        std::cout << "split_bridge_cost_rescue_enabled: " << split_bridge_cost_rescue_enabled << '\n';
+        std::cout << "split_bridge_cost_rescue_max_positive_fraction: " << split_bridge_cost_rescue_max_positive_fraction << '\n';
+        std::cout << "split_bridge_cost_rescue_max_valley_ratio: " << split_bridge_cost_rescue_max_valley_ratio << '\n';
+        std::cout << "split_bridge_cost_rescue_max_gap_density: " << split_bridge_cost_rescue_max_gap_density << '\n';
         std::cout << "overlap_penalty_weight: " << overlap_penalty_weight << '\n';
         std::cout << "split_candidates_per_attempt: " << split_candidates_per_attempt << '\n';
         std::cout << "split_candidate_burn_in_iterations: " << split_candidate_burn_in_iterations << '\n';

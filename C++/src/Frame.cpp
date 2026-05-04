@@ -4507,6 +4507,10 @@ CostCallbackPair Frame::trySplitCellPhased(
     // (how far the surface extends toward the other daughter). The gap is
     // the region between those two surfaces. Edge zones are the regions
     // inside each daughter, away from the gap.
+    bool bridgeCostRescueEligible = false;
+    float bridgeCostRescueValleyFromBright = 1.0f;
+    float bridgeCostRescueGapDensity = 1.0f;
+    float bridgeCostRescueEdgeBright = 0.0f;
     {
         const cv::Point3f axisVec = bestD2Pos - bestD1Pos;
         const float axisLen = static_cast<float>(cv::norm(axisVec));
@@ -4792,6 +4796,18 @@ CostCallbackPair Frame::trySplitCellPhased(
                 restoreLiveParent();
                 return {0.0, noop};
             }
+
+            const float rescueValleyLimit = std::max(
+                0.0f, probConfig.split_bridge_cost_rescue_max_valley_ratio);
+            const float rescueGapDensityLimit = std::max(
+                0.0f, probConfig.split_bridge_cost_rescue_max_gap_density);
+            bridgeCostRescueEligible =
+                edgeCount > 0 &&
+                valleyFromBright <= rescueValleyLimit &&
+                gapDensity <= rescueGapDensityLimit;
+            bridgeCostRescueValleyFromBright = valleyFromBright;
+            bridgeCostRescueGapDensity = gapDensity;
+            bridgeCostRescueEdgeBright = edgeBright;
         }
     }
 
@@ -4829,7 +4845,34 @@ CostCallbackPair Frame::trySplitCellPhased(
         static_cast<double>(probConfig.split_cost),
         static_cast<double>(probConfig.split_cost_fraction) * baselineImageCost);
 
-    if (costDiff >= -adaptiveThreshold) {
+    const double bridgeRescueLimit =
+        static_cast<double>(std::max(
+            0.0f, probConfig.split_bridge_cost_rescue_max_positive_fraction)) *
+        baselineImageCost;
+    const bool bridgeCostRescued =
+        probConfig.split_bridge_cost_rescue_enabled &&
+        bridgeCostRescueEligible &&
+        costDiff >= -adaptiveThreshold &&
+        costDiff <= bridgeRescueLimit;
+    double acceptedCostDiff = costDiff;
+    if (bridgeCostRescued) {
+        acceptedCostDiff = -std::max(1.0, adaptiveThreshold);
+        std::cout << "[Split Cost Rescue] " << parentName
+                  << " rawDiff=" << costDiff
+                  << " reportedDiff=" << acceptedCostDiff
+                  << " maxPositive=" << bridgeRescueLimit
+                  << " baselineImageCost=" << baselineImageCost
+                  << " valleyFromBright=" << bridgeCostRescueValleyFromBright
+                  << " maxValley=" << probConfig.split_bridge_cost_rescue_max_valley_ratio
+                  << " gapDensity=" << bridgeCostRescueGapDensity
+                  << " maxGapDensity=" << probConfig.split_bridge_cost_rescue_max_gap_density
+                  << " edgeBright=" << bridgeCostRescueEdgeBright
+                  << " bestIdx=" << bestIdx
+                  << " bestLabel=" << bestLabel
+                  << std::endl;
+    }
+
+    if (!bridgeCostRescued && costDiff >= -adaptiveThreshold) {
         std::cout << "[Split Reject cost] " << parentName
                   << " diff=" << costDiff
                   << " mode=" << (_useBboxCost ? "bbox" : "full")
@@ -4887,7 +4930,8 @@ CostCallbackPair Frame::trySplitCellPhased(
                              savedSynthCopy = std::move(savedSynthCopy),
                              savedPerSliceCopy = std::move(savedPerSliceCopy),
                              savedCostCopy,
-                             parentName, costDiff, acceptedD1Pos, acceptedD2Pos,
+                             parentName, costDiff = acceptedCostDiff,
+                             acceptedD1Pos, acceptedD2Pos,
                              acceptedD1R, acceptedD2R, acceptedSeed1, acceptedSeed2,
                              acceptedDrift1, acceptedDrift2, acceptedLabel,
                              liveParentCopy, snapshotParentCopy, cellIndexCopy,
@@ -4978,7 +5022,7 @@ CostCallbackPair Frame::trySplitCellPhased(
         }
     };
 
-    return {costDiff, callback};
+    return {acceptedCostDiff, callback};
 }
 
 // Snapshot-driven daughter placement. Daughters built from previous frame's

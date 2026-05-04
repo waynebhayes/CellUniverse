@@ -348,6 +348,13 @@ prob:
 
   split_cost: 2000
   split_cost_fraction: 0.03
+  # Some visually correct divisions have a strong dark bridge but still lose
+  # bbox image cost against the current live parent. Let those pass when the
+  # bridge is strong and the positive cost delta is bounded.
+  split_bridge_cost_rescue_enabled: true
+  split_bridge_cost_rescue_max_positive_fraction: 0.20
+  split_bridge_cost_rescue_max_valley_ratio: 0.40
+  split_bridge_cost_rescue_max_gap_density: 0.05
 
   position_prior_weight: 75.0
   position_prior_threshold: 20.0
