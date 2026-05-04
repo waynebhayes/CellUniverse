@@ -38,6 +38,22 @@ struct BoundingBox3D
     }
 };
 
+// PCA-bridge daughter proposal. Produced by Frame::discoverPcaBridgeProposal
+// from the dark-bridge bin analysis (no cell mutation), then injected into
+// trySplitCellPhased as an extra "bridge" candidate so the full validation
+// stack (burn-in, bio gates, daughter overlap, bridge gate, cost gate)
+// decides acceptance — instead of the bridge having its own accepting path.
+struct BridgeSplitProposal
+{
+    cv::Point3f d1Pos{0.0f, 0.0f, 0.0f};   // weighted centroid of left  bright pixels
+    cv::Point3f d2Pos{0.0f, 0.0f, 0.0f};   // weighted centroid of right bright pixels
+    float elongation = 0.0f;
+    int gapStartBin = -1;
+    int gapEndBin = -1;
+    int leftPixelCount = 0;
+    int rightPixelCount = 0;
+};
+
 class Frame
 {
 public:
@@ -175,6 +191,12 @@ public:
     // Split-attempt result: callback pair that either commits the split
     // (daughters replace parent) or reverts (parent restored). Returns the
     // (costDiff, callback) in the same contract as perturbCell.
+    //
+    // bridgeProposal: optional PCA-bridge daughter centroids (left/right)
+    // injected as one extra candidate (label "bridge") at the front of the
+    // candidate list. When supplied, the bridge proposal competes against
+    // the standard data_/snap_ candidates under the same burn-in + bio +
+    // bridge + cost gates — replacing the old standalone bridge accept path.
     CostCallbackPair trySplitCellPhased(
         size_t cellIndex,
         const PreviousFrameSnapshot &snapshot,
@@ -183,15 +205,20 @@ public:
         const ProbabilityConfig &probConfig,
         std::vector<cv::Mat> *splitPerturbDebugPlacements = nullptr,
         int *splitPerturbDebugPlacementCount = nullptr,
-        float splitPerturbDebugBrightness = 0.0f);
+        float splitPerturbDebugBrightness = 0.0f,
+        const BridgeSplitProposal *bridgeProposal = nullptr);
 
-    // Post-PCA long-axis rescue. If a fitted cell is extremely elongated and
-    // has a dark bridge across its long axis, build two daughters from the
-    // nonblack voxels on either side and commit the replacement only when it
-    // improves the configured cost.
-    bool tryPcaBridgeSplit(size_t cellIndex,
-                           const ProbabilityConfig &probConfig,
-                           std::ostream *logSink = nullptr);
+    // PCA-bridge daughter discovery. Runs the long-axis dark-bridge bin
+    // analysis on the current cell and, if a valid bridge is found, returns
+    // the (left, right) weighted-centroid daughter positions WITHOUT
+    // mutating cells. Caller passes this proposal into trySplitCellPhased
+    // so the main split path's full gate stack (burn-in, bio, daughter
+    // overlap, bridge, cost) decides acceptance. No-op (returns false) when
+    // the cell is below the elongation threshold or no dark bridge fits.
+    bool discoverPcaBridgeProposal(size_t cellIndex,
+                                   const ProbabilityConfig &probConfig,
+                                   BridgeSplitProposal &outProposal,
+                                   std::ostream *logSink = nullptr) const;
 
     // Frame-start pre-pass helper. For a pre-classified cell, gathers
     // bright pixels in a snapshot-centered bounding box, Voronoi-filters

@@ -2708,48 +2708,12 @@ void CellUniverse::optimize(int frameIndex)
             if (!buf.empty()) std::cout << buf;
         }
 
-        if (config.prob.pca_bridge_split_enabled) {
-            // PCA has just changed cell shapes; refresh the synth so the
-            // bridge split compares daughters against the actual long fitted
-            // parent, not the pre-PCA render.
-            frame.regenerateSynthFrame();
-
-            std::vector<std::string> bridgeCheckNames;
-            bridgeCheckNames.reserve(frame.cells.size());
-            float maxBridgeElong = 0.0f;
-            int bridgeEligible = 0;
-            for (const auto &cell : frame.cells) {
-                if (cell.isTrash()) continue;
-                bridgeCheckNames.push_back(cell.getName());
-                const float elong = cell.shapeElongation();
-                maxBridgeElong = std::max(maxBridgeElong, elong);
-                if (elong >= config.prob.pca_bridge_elongation_ratio) {
-                    ++bridgeEligible;
-                }
-            }
-
-            int bridgeSplitsAccepted = 0;
-            for (const std::string &parentName : bridgeCheckNames) {
-                auto it = std::find_if(
-                    frame.cells.begin(), frame.cells.end(),
-                    [&](const Ellipsoid &cell) { return cell.getName() == parentName; });
-                if (it == frame.cells.end()) continue;
-                const size_t ci = static_cast<size_t>(std::distance(frame.cells.begin(), it));
-                if (frame.tryPcaBridgeSplit(ci, config.prob)) {
-                    cellShapeReference.erase(parentName);
-                    cellShapeBirth.erase(parentName);
-                    ++bridgeSplitsAccepted;
-                }
-            }
-            std::cout << "[PCA Bridge Split] frame " << displayFrame
-                      << " scanned=" << bridgeCheckNames.size()
-                      << " eligible=" << bridgeEligible
-                      << " accepted=" << bridgeSplitsAccepted
-                      << " maxElong=" << maxBridgeElong
-                      << " threshold=" << config.prob.pca_bridge_elongation_ratio
-                      << " cellsNow=" << frame.cells.size()
-                      << std::endl;
-        }
+        // PCA-bridge discovery moved out of this end-of-frame lambda — it
+        // now runs BEFORE the main split loop (see "PCA Bridge Propose"
+        // block earlier in optimize()), so its (left, right) daughter
+        // centroids can be injected as a "bridge_primary" candidate into
+        // trySplitCellPhased and validated by the main path's full gate
+        // stack instead of an independent accepting path.
 
         // ---- Fit-side growth cap (anti-bloat within mask) ----
         //
@@ -3211,6 +3175,50 @@ void CellUniverse::optimize(int frameIndex)
         splitPerturbDebugPlacements = makeEmptyDebugStackLike(frame.getRealFrame());
     }
 
+    // ---- PCA-bridge proposal pre-pass (split-gate-overlap-analysis.md) ----
+    //
+    // The PCA bridge no longer accepts splits on its own. For each elongated
+    // cell with a valid dark-bridge gap, we discover a (left, right)
+    // daughter-centroid proposal here and store it by cell name. The
+    // proposal is then injected as a "bridge_primary" candidate inside the
+    // main split loop's trySplitCellPhased call below — the standard
+    // burn-in + bio + daughter-overlap + bridge + asymmetric L2 + adaptive
+    // cost gates decide acceptance.
+    //
+    // Cells use the previous frame's PCA-fitted shape at this point (the
+    // current frame's PCA fit happens in runPcaShapeFit at end of frame),
+    // but the bright-pixel input is the current frame's image — same input
+    // the original end-of-frame bridge had access to via the next frame's
+    // start. Daughter centroids go through 50-iter burn-in inside
+    // trySplitCellPhased, so any seed-position drift is corrected.
+    std::unordered_map<std::string, BridgeSplitProposal> bridgeProposals;
+    if (config.prob.pca_bridge_split_enabled) {
+        float maxBridgeElong = 0.0f;
+        int bridgeEligible = 0;
+        for (const auto &cell : frame.cells) {
+            if (cell.isTrash()) continue;
+            const float elong = cell.shapeElongation();
+            maxBridgeElong = std::max(maxBridgeElong, elong);
+            if (elong >= config.prob.pca_bridge_elongation_ratio) {
+                ++bridgeEligible;
+            }
+        }
+        for (size_t ci = 0; ci < frame.cells.size(); ++ci) {
+            const std::string parentName = frame.cells[ci].getName();
+            BridgeSplitProposal proposal;
+            if (frame.discoverPcaBridgeProposal(ci, config.prob, proposal)) {
+                bridgeProposals[parentName] = proposal;
+            }
+        }
+        std::cout << "[PCA Bridge Propose] frame " << (firstFrame + frameIndex)
+                  << " scanned=" << frame.cells.size()
+                  << " eligible=" << bridgeEligible
+                  << " proposalsFound=" << bridgeProposals.size()
+                  << " maxElong=" << maxBridgeElong
+                  << " threshold=" << config.prob.pca_bridge_elongation_ratio
+                  << std::endl;
+    }
+
     // ---- Single-phase iteration helper ----
     auto runPhase = [&](std::set<std::string> &phaseNames,
                         bool phaseB,
@@ -3447,11 +3455,22 @@ void CellUniverse::optimize(int frameIndex)
                     }
                 }
 
+                // If the post-PCA pass produced a bridge proposal for this
+                // cell, hand it to trySplitCellPhased so it competes as
+                // "bridge_primary" alongside data_/snap_ candidates.
+                const BridgeSplitProposal *bridgeForCell = nullptr;
+                if (!bridgeProposals.empty()) {
+                    auto bIt = bridgeProposals.find(cellName);
+                    if (bIt != bridgeProposals.end()) {
+                        bridgeForCell = &bIt->second;
+                    }
+                }
                 auto result = frame.trySplitCellPhased(
                     cellIdx, splitSnapshot, others, useSnapDir, config.prob,
                     exportPerturbDebug ? &splitPerturbDebugPlacements : nullptr,
                     exportPerturbDebug ? &splitPerturbDebugPlacementCount : nullptr,
-                    config.simulation.perturb_debug_cell_brightness);
+                    config.simulation.perturb_debug_cell_brightness,
+                    bridgeForCell);
 
                 double costDiff = result.first;
                 auto callback = result.second;
