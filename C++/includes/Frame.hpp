@@ -89,7 +89,8 @@ public:
     CostCallbackPair perturbCell(size_t index, float overlapWeight = 1000.0f,
                                  bool useSignalGuidance = false,
                                  float randomPerturbRadiusRatio = 1.0f,
-                                 bool pcaRefitWellFilledMove = false);
+                                 bool pcaRefitWellFilledMove = false,
+                                 bool useSignalMapGuidance = true);
     double computeOverlapPenalty(float weight) const;
     double computeOverlapForCell(size_t cellIdx, float weight) const;
 
@@ -179,7 +180,10 @@ public:
         const PreviousFrameSnapshot &snapshot,
         const ClaimSet &otherCellsClaimSets,
         bool useSnapshotDirection,
-        const ProbabilityConfig &probConfig);
+        const ProbabilityConfig &probConfig,
+        std::vector<cv::Mat> *splitPerturbDebugPlacements = nullptr,
+        int *splitPerturbDebugPlacementCount = nullptr,
+        float splitPerturbDebugBrightness = 0.0f);
 
     // Post-PCA long-axis rescue. If a fitted cell is extremely elongated and
     // has a dark bridge across its long axis, build two daughters from the
@@ -279,6 +283,8 @@ public:
         _synthFrame.shrink_to_fit();
         _signalProbability.clear();
         _signalProbability.shrink_to_fit();
+        _signalMap.clear();
+        _signalMap.shrink_to_fit();
         _currentCostPerSlice.clear();
         _currentCostPerSlice.shrink_to_fit();
     }
@@ -290,6 +296,8 @@ public:
     const std::vector<SignalCenter>& getSignalCenters() const { return _signalCenters; }
     void setSignalProbability(std::vector<cv::Mat> probability) { _signalProbability = std::move(probability); }
     const std::vector<cv::Mat>& getSignalProbability() const { return _signalProbability; }
+    void setSignalMap(std::vector<cv::Mat> signalMap) { _signalMap = std::move(signalMap); }
+    const std::vector<cv::Mat>& getSignalMap() const { return _signalMap; }
     void setMeanCellBrightness(float mean) { _meanCellBrightness = mean; }
     // Bbox-cost mode: perturb/split use a per-cell bbox with Voronoi
     // neighbor exclusion instead of full-image L2. Set at frame start
@@ -368,6 +376,10 @@ private:
     // Normalized center-guided perturbation probability stack, computed
     // during frame preparation/preload and reused by debug export/future use.
     std::vector<cv::Mat> _signalProbability;
+    // Per-frame signal map: a copy of the fully preprocessed real frame after
+    // iterative blur + bright-center recovery, used only for normal movement
+    // perturbation guidance.
+    std::vector<cv::Mat> _signalMap;
     double _currentCost = -1.0; // cached L2 image cost of _synthFrame
     // Per-slice L2 contribution of _synthFrame to the total image cost. Kept
     // in sync with _synthFrame / _currentCost so that a perturbation touching

@@ -597,11 +597,22 @@ void Ellipsoid::drawOutline(cv::Mat &image, float color, float z) const {
 }
 
 [[nodiscard]] Ellipsoid Ellipsoid::getPerturbedCell(PerturbDirections *directions,
-                                                    float positionScale) const {
+                                                    float positionScale,
+                                                    const cv::Point3f &positionProbabilityBias,
+                                                    float positionProbabilityBoost) const {
     const PerturbParams::Sample aRadiusSample = _aRadiusPerturbParams.samplePerturb();
     const PerturbParams::Sample cRadiusSample = _cRadiusPerturbParams.samplePerturb();
     const PerturbParams::Sample bRadiusSample = _bRadiusPerturbParams.samplePerturb();
     const PerturbParams::Sample brightnessSample = _brightnessPerturbParams.samplePerturb();
+    const PerturbParams::Sample xSample =
+        cellConfig.x.samplePerturbWithSignedProbabilityBias(positionProbabilityBias.x,
+                                                            positionProbabilityBoost);
+    const PerturbParams::Sample ySample =
+        cellConfig.y.samplePerturbWithSignedProbabilityBias(positionProbabilityBias.y,
+                                                            positionProbabilityBoost);
+    const PerturbParams::Sample zSample =
+        cellConfig.z.samplePerturbWithSignedProbabilityBias(positionProbabilityBias.z,
+                                                            positionProbabilityBoost);
     if (directions != nullptr) {
         directions->brightness = brightnessSample.direction;
         directions->aRadius = _isTrash ? 0 : aRadiusSample.direction;
@@ -610,9 +621,9 @@ void Ellipsoid::drawOutline(cv::Mat &image, float color, float z) const {
     }
     EllipsoidParams spheroidParams(
         _name,
-        _position.x + positionScale * cellConfig.x.getPerturbOffset(),
-        _position.y + positionScale * cellConfig.y.getPerturbOffset(),
-        _position.z + positionScale * cellConfig.z.getPerturbOffset(),
+        _position.x + positionScale * xSample.offset,
+        _position.y + positionScale * ySample.offset,
+        _position.z + positionScale * zSample.offset,
         _major_radius + (_isTrash ? 0.0f : aRadiusSample.offset),
         _minor_radius + (_isTrash ? 0.0f : cRadiusSample.offset),
         static_cast<float>(_theta_x) + cellConfig.thetaX.getPerturbOffset(),

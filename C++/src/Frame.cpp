@@ -55,6 +55,30 @@ struct BrightPixel
     float weight;      // pixel intensity above background
 };
 
+static void accumulateDebugCellPlacement(std::vector<cv::Mat> &stack,
+                                         const Ellipsoid &cell,
+                                         const SimulationConfig &simulationConfig,
+                                         float brightness)
+{
+    if (stack.empty()) {
+        return;
+    }
+
+    Ellipsoid debugCell = cell;
+    debugCell.setBrightness(std::max(0.0f, brightness));
+    const float maxR = std::max({debugCell.getARadius(),
+                                 debugCell.getBRadius(),
+                                 debugCell.getCRadius()});
+    const int zMin = std::max(0, static_cast<int>(std::floor(debugCell.getZ() - maxR)));
+    const int zMax = std::min(static_cast<int>(stack.size()) - 1,
+                              static_cast<int>(std::ceil(debugCell.getZ() + maxR)));
+    for (int z = zMin; z <= zMax; ++z) {
+        cv::Mat temp = cv::Mat::zeros(stack[static_cast<size_t>(z)].size(), CV_32F);
+        debugCell.draw(temp, simulationConfig, static_cast<float>(z));
+        stack[static_cast<size_t>(z)] += temp;
+    }
+}
+
 static float sampleSignalProbability(const std::vector<cv::Mat> &probability,
                                      float x,
                                      float y,
@@ -121,6 +145,81 @@ static cv::Point3f signalProbabilityGradientAt(const std::vector<cv::Mat> &proba
                 sampleSignalProbability(probability, pos.x, pos.y - 1.0f, pos.z)),
         0.5f * (sampleSignalProbability(probability, pos.x, pos.y, pos.z + 1.0f) -
                 sampleSignalProbability(probability, pos.x, pos.y, pos.z - 1.0f)));
+}
+
+static bool findMaxSignalMapGradientInCell(const std::vector<cv::Mat> &signalMap,
+                                           const Ellipsoid &cell,
+                                           float radiusScale,
+                                           float minGradientNorm,
+                                           cv::Point3f &direction)
+{
+    if (signalMap.empty() || signalMap[0].empty() || radiusScale <= 0.0f) {
+        return false;
+    }
+
+    Ellipsoid analysisCell = cell;
+    analysisCell.setRadii(cell.getARadius() * radiusScale,
+                          cell.getBRadius() * radiusScale,
+                          cell.getCRadius() * radiusScale);
+
+    const float maxR = std::max({analysisCell.getARadius(),
+                                 analysisCell.getBRadius(),
+                                 analysisCell.getCRadius()});
+    const int maxZIndex = static_cast<int>(signalMap.size()) - 1;
+    const int minX = std::max(1, static_cast<int>(std::floor(analysisCell.getX() - maxR)));
+    const int maxX = std::min(signalMap[0].cols - 2,
+                              static_cast<int>(std::ceil(analysisCell.getX() + maxR)));
+    const int minY = std::max(1, static_cast<int>(std::floor(analysisCell.getY() - maxR)));
+    const int maxY = std::min(signalMap[0].rows - 2,
+                              static_cast<int>(std::ceil(analysisCell.getY() + maxR)));
+    const int minZ = std::max(1, static_cast<int>(std::floor(analysisCell.getZ() - maxR)));
+    const int maxZ = std::min(maxZIndex - 1,
+                              static_cast<int>(std::ceil(analysisCell.getZ() + maxR)));
+    if (minX > maxX || minY > maxY || minZ > maxZ) {
+        return false;
+    }
+
+    float bestNorm = 0.0f;
+    cv::Point3f bestGradient(0.0f, 0.0f, 0.0f);
+    for (int z = minZ; z <= maxZ; ++z) {
+        if (signalMap[static_cast<size_t>(z)].type() != CV_32F) {
+            return false;
+        }
+        const cv::Mat &prevSlice = signalMap[static_cast<size_t>(z - 1)];
+        const cv::Mat &slice = signalMap[static_cast<size_t>(z)];
+        const cv::Mat &nextSlice = signalMap[static_cast<size_t>(z + 1)];
+        for (int y = minY; y <= maxY; ++y) {
+            const float *row = slice.ptr<float>(y);
+            const float *rowYm = slice.ptr<float>(y - 1);
+            const float *rowYp = slice.ptr<float>(y + 1);
+            const float *prevRow = prevSlice.ptr<float>(y);
+            const float *nextRow = nextSlice.ptr<float>(y);
+            for (int x = minX; x <= maxX; ++x) {
+                const cv::Point3f point(static_cast<float>(x),
+                                        static_cast<float>(y),
+                                        static_cast<float>(z));
+                if (!analysisCell.isPointInsideEllipsoid(point)) {
+                    continue;
+                }
+                const cv::Point3f gradient(
+                    0.5f * (row[x + 1] - row[x - 1]),
+                    0.5f * (rowYp[x] - rowYm[x]),
+                    0.5f * (nextRow[x] - prevRow[x]));
+                const float norm = static_cast<float>(cv::norm(gradient));
+                if (norm > bestNorm) {
+                    bestNorm = norm;
+                    bestGradient = gradient;
+                }
+            }
+        }
+    }
+
+    if (bestNorm <= std::max(0.0f, minGradientNorm)) {
+        return false;
+    }
+
+    direction = bestGradient * (1.0f / bestNorm);
+    return true;
 }
 
 static bool estimateBrightCoreCentroidInCell(const std::vector<cv::Mat> &realFrame,
@@ -1024,7 +1123,8 @@ size_t Frame::length() const
 CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight,
                                     bool useSignalGuidance,
                                     float randomPerturbRadiusRatio,
-                                    bool pcaRefitWellFilledMove)
+                                    bool pcaRefitWellFilledMove,
+                                    bool useSignalMapGuidance)
 {
     if (index >= cells.size()) {
         return {0.0, [](bool) {}};
@@ -1059,7 +1159,56 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight,
         const float radiusRatio = std::max(0.0f, randomPerturbRadiusRatio);
         posScale = (maxR * radiusRatio) / refR;
     }
-    cells[index] = cells[index].getPerturbedCell(&perturbDirections, posScale);
+    cv::Point3f signalMapDirection(0.0f, 0.0f, 0.0f);
+    const bool hasSignalMapDirection =
+        useSignalMapGuidance &&
+        !useSignalGuidance &&
+        simulationConfig.signal_map_enabled &&
+        simulationConfig.signal_map_perturb_guidance_enabled &&
+        !_signalMap.empty() &&
+        findMaxSignalMapGradientInCell(
+            _signalMap,
+            oldCell,
+            simulationConfig.signal_map_cell_radius_scale,
+            simulationConfig.signal_map_min_gradient_norm,
+            signalMapDirection);
+
+    const float signalMapProbabilityBoost = hasSignalMapDirection
+        ? simulationConfig.signal_map_direction_probability_boost
+        : 0.0f;
+    cells[index] = cells[index].getPerturbedCell(&perturbDirections,
+                                                 posScale,
+                                                 signalMapDirection,
+                                                 signalMapProbabilityBoost);
+
+    if (hasSignalMapDirection && !_realFrame.empty()) {
+        const cv::Point3f oldPos(oldCell.getX(), oldCell.getY(), oldCell.getZ());
+        cv::Point3f candidate(cells[index].getX(), cells[index].getY(), cells[index].getZ());
+        const cv::Point3f randomDelta = candidate - oldPos;
+        const float uphillDot = randomDelta.x * signalMapDirection.x +
+                                randomDelta.y * signalMapDirection.y +
+                                randomDelta.z * signalMapDirection.z;
+        const float damping = std::clamp(
+            simulationConfig.signal_map_opposing_move_damping, 0.0f, 1.0f);
+        if (uphillDot < 0.0f && damping > 0.0f) {
+            candidate -= signalMapDirection * (uphillDot * damping);
+        }
+
+        const float maxSigma = std::max({std::abs(Ellipsoid::cellConfig.x.sigma),
+                                         std::abs(Ellipsoid::cellConfig.y.sigma),
+                                         std::abs(Ellipsoid::cellConfig.z.sigma)});
+        const float stepBudget = std::max(0.0f, maxSigma * posScale);
+        const float guideStrength = std::max(0.0f, simulationConfig.signal_map_guide_strength);
+        candidate += signalMapDirection * (guideStrength * stepBudget);
+
+        const float maxX = static_cast<float>(_realFrame[0].cols - 1);
+        const float maxY = static_cast<float>(_realFrame[0].rows - 1);
+        const float maxZ = static_cast<float>(_realFrame.size() - 1);
+        cells[index].setPosition(
+            std::clamp(candidate.x, 0.0f, maxX),
+            std::clamp(candidate.y, 0.0f, maxY),
+            std::clamp(candidate.z, 0.0f, maxZ));
+    }
 
     if (!useSignalGuidance &&
         Ellipsoid::cellConfig.randomPerturbBrightCoreGuidanceEnabled &&
@@ -2984,7 +3133,10 @@ CostCallbackPair Frame::trySplitCellPhased(
     const PreviousFrameSnapshot &snapshot,
     const ClaimSet &otherCellsClaimSets,
     bool useSnapshotDirection,
-    const ProbabilityConfig &probConfig)
+    const ProbabilityConfig &probConfig,
+    std::vector<cv::Mat> *splitPerturbDebugPlacements,
+    int *splitPerturbDebugPlacementCount,
+    float splitPerturbDebugBrightness)
 {
     const auto noop = [](bool) {};
     if (cellIndex >= cells.size()) return {0.0, noop};
@@ -3716,8 +3868,21 @@ CostCallbackPair Frame::trySplitCellPhased(
         for (int it = 0; it < burnIters; ++it) {
             const size_t target = (it % 2 == 0) ? d1Idx : d2Idx;
             CostCallbackPair cp = perturbCell(target,
-                                              probConfig.overlap_penalty_weight);
+                                              probConfig.overlap_penalty_weight,
+                                              /*useSignalGuidance=*/false,
+                                              /*randomPerturbRadiusRatio=*/1.0f,
+                                              /*pcaRefitWellFilledMove=*/false,
+                                              /*useSignalMapGuidance=*/false);
             const bool accept = cp.first < 0.0;
+            if (splitPerturbDebugPlacements != nullptr) {
+                accumulateDebugCellPlacement(*splitPerturbDebugPlacements,
+                                             cells[target],
+                                             simulationConfig,
+                                             splitPerturbDebugBrightness);
+                if (splitPerturbDebugPlacementCount != nullptr) {
+                    ++(*splitPerturbDebugPlacementCount);
+                }
+            }
             cp.second(accept);
         }
 
@@ -3956,8 +4121,21 @@ CostCallbackPair Frame::trySplitCellPhased(
         for (int it = 0; it < refineIters; ++it) {
             const size_t target = (it % 2 == 0) ? d1IdxRefine : d2IdxRefine;
             CostCallbackPair cp = perturbCell(target,
-                                              probConfig.overlap_penalty_weight);
+                                              probConfig.overlap_penalty_weight,
+                                              /*useSignalGuidance=*/false,
+                                              /*randomPerturbRadiusRatio=*/1.0f,
+                                              /*pcaRefitWellFilledMove=*/false,
+                                              /*useSignalMapGuidance=*/false);
             const bool accept = cp.first < 0.0;
+            if (splitPerturbDebugPlacements != nullptr) {
+                accumulateDebugCellPlacement(*splitPerturbDebugPlacements,
+                                             cells[target],
+                                             simulationConfig,
+                                             splitPerturbDebugBrightness);
+                if (splitPerturbDebugPlacementCount != nullptr) {
+                    ++(*splitPerturbDebugPlacementCount);
+                }
+            }
             if (accept) ++refineAccepts;
             cp.second(accept);
         }

@@ -450,6 +450,153 @@ static std::vector<cv::Mat> cloneMatStack(const std::vector<cv::Mat> &stack)
     return cloned;
 }
 
+static float percentileValue(std::vector<float> values, float percentile)
+{
+    if (values.empty()) {
+        return 0.0f;
+    }
+    percentile = std::clamp(percentile, 0.0f, 100.0f);
+    const float rank = (percentile / 100.0f) * static_cast<float>(values.size() - 1);
+    const size_t lo = static_cast<size_t>(std::floor(rank));
+    const size_t hi = static_cast<size_t>(std::ceil(rank));
+    std::nth_element(values.begin(), values.begin() + static_cast<std::ptrdiff_t>(lo), values.end());
+    const float loVal = values[lo];
+    if (hi == lo) {
+        return loVal;
+    }
+    std::nth_element(values.begin(), values.begin() + static_cast<std::ptrdiff_t>(hi), values.end());
+    const float hiVal = values[hi];
+    return loVal + (hiVal - loVal) * (rank - static_cast<float>(lo));
+}
+
+static std::vector<cv::Mat> gaussianBlurStack3D(const std::vector<cv::Mat> &stack,
+                                                float sigma)
+{
+    if (stack.empty() || sigma <= 0.0f) {
+        return cloneMatStack(stack);
+    }
+
+    std::vector<cv::Mat> xyBlurred(stack.size());
+    #pragma omp parallel for schedule(static)
+    for (int z = 0; z < static_cast<int>(stack.size()); ++z) {
+        cv::GaussianBlur(stack[static_cast<size_t>(z)],
+                         xyBlurred[static_cast<size_t>(z)],
+                         cv::Size(0, 0),
+                         sigma,
+                         sigma,
+                         cv::BORDER_REPLICATE);
+    }
+
+    const int radius = std::max(1, static_cast<int>(std::ceil(3.0f * sigma)));
+    std::vector<float> kernel(static_cast<size_t>(2 * radius + 1));
+    float kernelSum = 0.0f;
+    for (int dz = -radius; dz <= radius; ++dz) {
+        const float w = std::exp(-0.5f * static_cast<float>(dz * dz) / (sigma * sigma));
+        kernel[static_cast<size_t>(dz + radius)] = w;
+        kernelSum += w;
+    }
+    for (float &w : kernel) {
+        w /= std::max(kernelSum, 1e-12f);
+    }
+
+    std::vector<cv::Mat> blurred(stack.size());
+    #pragma omp parallel for schedule(static)
+    for (int z = 0; z < static_cast<int>(xyBlurred.size()); ++z) {
+        blurred[static_cast<size_t>(z)] = cv::Mat::zeros(xyBlurred[static_cast<size_t>(z)].size(), CV_32F);
+        for (int dz = -radius; dz <= radius; ++dz) {
+            const int zz = std::clamp(z + dz, 0, static_cast<int>(xyBlurred.size()) - 1);
+            blurred[static_cast<size_t>(z)] +=
+                kernel[static_cast<size_t>(dz + radius)] * xyBlurred[static_cast<size_t>(zz)];
+        }
+    }
+    return blurred;
+}
+
+static std::vector<cv::Mat> buildSignalMapStack(const std::vector<cv::Mat> &realFrame,
+                                                const SimulationConfig &simulation,
+                                                const fs::path &framePath,
+                                                std::ostream &log)
+{
+    std::vector<cv::Mat> signalMap = cloneMatStack(realFrame);
+    if (!simulation.signal_map_enabled || signalMap.empty()) {
+        return {};
+    }
+
+    std::vector<float> nonzeroValues;
+    for (const auto &slice : realFrame) {
+        for (int y = 0; y < slice.rows; ++y) {
+            const float *row = slice.ptr<float>(y);
+            for (int x = 0; x < slice.cols; ++x) {
+                if (row[x] > 0.0f) {
+                    nonzeroValues.push_back(row[x]);
+                }
+            }
+        }
+    }
+
+    const float threshold = nonzeroValues.empty()
+        ? 0.0f
+        : percentileValue(std::move(nonzeroValues), simulation.signal_map_bright_center_percentile);
+    double targetSum = 0.0;
+    std::size_t targetCount = 0;
+    for (const auto &slice : realFrame) {
+        for (int y = 0; y < slice.rows; ++y) {
+            const float *row = slice.ptr<float>(y);
+            for (int x = 0; x < slice.cols; ++x) {
+                if (row[x] >= threshold) {
+                    targetSum += row[x];
+                    ++targetCount;
+                }
+            }
+        }
+    }
+
+    const float eps = std::max(simulation.signal_map_epsilon, 1e-12f);
+    const double targetMean = targetCount > 0
+        ? targetSum / static_cast<double>(targetCount)
+        : 0.0;
+    const int iterations = std::max(0, simulation.signal_map_max_iterations);
+    for (int iter = 0; iter < iterations; ++iter) {
+        signalMap = gaussianBlurStack3D(signalMap, simulation.signal_map_blur_sigma);
+        double blurredSum = 0.0;
+        std::size_t blurredCount = 0;
+        for (size_t z = 0; z < signalMap.size(); ++z) {
+            const auto &slice = signalMap[z];
+            const auto &referenceSlice = realFrame[z];
+            for (int y = 0; y < slice.rows; ++y) {
+                const float *row = slice.ptr<float>(y);
+                const float *referenceRow = referenceSlice.ptr<float>(y);
+                for (int x = 0; x < slice.cols; ++x) {
+                    if (referenceRow[x] >= threshold) {
+                        blurredSum += row[x];
+                        ++blurredCount;
+                    }
+                }
+            }
+        }
+        const double blurredMean = blurredCount > 0
+            ? blurredSum / static_cast<double>(blurredCount)
+            : 0.0;
+        const float recoveryFactor = targetMean > eps
+            ? static_cast<float>(targetMean / std::max(blurredMean, static_cast<double>(eps)))
+            : 1.0f;
+        #pragma omp parallel for schedule(static)
+        for (int z = 0; z < static_cast<int>(signalMap.size()); ++z) {
+            signalMap[static_cast<size_t>(z)] *= recoveryFactor;
+        }
+    }
+
+    log << "[Signal Map] frame=" << framePath.filename().string()
+        << " enabled=1"
+        << " sigma=" << simulation.signal_map_blur_sigma
+        << " iterations=" << iterations
+        << " bright_center_percentile=" << simulation.signal_map_bright_center_percentile
+        << " target_mean=" << targetMean
+        << " threshold=" << threshold
+        << std::endl;
+    return signalMap;
+}
+
 struct BlackPercentileResult
 {
     bool applied = false;
@@ -1016,6 +1163,70 @@ static void accumulateDebugCellPlacement(std::vector<cv::Mat> &stack,
         debugCell.draw(temp, simulationConfig, static_cast<float>(z));
         stack[static_cast<size_t>(z)] += temp;
     }
+}
+
+static std::vector<cv::Mat> makeCellCenterLabelDebugStack(
+    const std::vector<cv::Mat> &realFrame,
+    const std::vector<Ellipsoid> &cells,
+    int cubeRadius)
+{
+    std::vector<cv::Mat> stack = makeEmptyDebugStackLike(realFrame);
+    if (stack.empty()) {
+        return stack;
+    }
+
+    const int radius = std::max(1, cubeRadius);
+    const int fontFace = cv::FONT_HERSHEY_SIMPLEX;
+    const double fontScale = 0.45;
+    const int thickness = 1;
+    const float value = 1.0f;
+
+    for (const auto &cell : cells) {
+        const int cx = static_cast<int>(std::round(cell.getX()));
+        const int cy = static_cast<int>(std::round(cell.getY()));
+        const int cz = static_cast<int>(std::round(cell.getZ()));
+        if (cz < 0 || cz >= static_cast<int>(stack.size())) {
+            continue;
+        }
+
+        const int zMin = std::max(0, cz - radius);
+        const int zMax = std::min(static_cast<int>(stack.size()) - 1, cz + radius);
+        for (int z = zMin; z <= zMax; ++z) {
+            cv::Mat &slice = stack[static_cast<size_t>(z)];
+            if (slice.empty()) {
+                continue;
+            }
+            const int xMin = std::max(0, cx - radius);
+            const int xMax = std::min(slice.cols - 1, cx + radius);
+            const int yMin = std::max(0, cy - radius);
+            const int yMax = std::min(slice.rows - 1, cy + radius);
+            for (int y = yMin; y <= yMax; ++y) {
+                float *row = slice.ptr<float>(y);
+                for (int x = xMin; x <= xMax; ++x) {
+                    row[x] = value;
+                }
+            }
+        }
+
+        cv::Mat &centerSlice = stack[static_cast<size_t>(cz)];
+        if (centerSlice.empty()) {
+            continue;
+        }
+        int baseline = 0;
+        const cv::Size textSize = cv::getTextSize(
+            cell.getName(), fontFace, fontScale, thickness, &baseline);
+        int textX = cx + radius + 4;
+        if (textX + textSize.width >= centerSlice.cols) {
+            textX = cx - radius - 4 - textSize.width;
+        }
+        textX = std::clamp(textX, 0, std::max(0, centerSlice.cols - textSize.width - 1));
+        int textY = std::clamp(cy - radius - 4, textSize.height + 1,
+                               std::max(textSize.height + 1, centerSlice.rows - 2));
+        cv::putText(centerSlice, cell.getName(), cv::Point(textX, textY),
+                    fontFace, fontScale, cv::Scalar(value), thickness, cv::LINE_AA);
+    }
+
+    return stack;
 }
 
 // === Signal-guided perturbation helpers (yp ffc1917) ===
@@ -1777,6 +1988,11 @@ void CellUniverse::prepareFrame(int frameIndex)
                                 config.simulation,
                                 imagePaths[static_cast<size_t>(frameIndex)],
                                 std::cout);
+    std::vector<cv::Mat> signalMap = buildSignalMapStack(
+        real_frame,
+        config.simulation,
+        imagePaths[static_cast<size_t>(frameIndex)],
+        std::cout);
 
     if (config.simulation.export_preprocessed_images) {
         exportPreprocessedStack(real_frame, fs::path(outputPath),
@@ -1789,6 +2005,7 @@ void CellUniverse::prepareFrame(int frameIndex)
     // cost cache. The previous `if (config.cell) regenerateSynthFrame()` was
     // redundant work (2x render + 2x cost cache per frame).
     frames[frameIndex].loadImageStacks(real_frame);
+    frames[frameIndex].setSignalMap(std::move(signalMap));
     prepareSignalCentersForFrame(frameIndex, real_frame, true);
 }
 
@@ -1901,6 +2118,11 @@ void CellUniverse::preprocessAllFramesAlignedToMinimumBackground(bool loadIntoFr
                                         config.simulation,
                                         imagePaths[static_cast<size_t>(frameIndex)],
                                         std::cout);
+            std::vector<cv::Mat> signalMap = buildSignalMapStack(
+                realFrame,
+                config.simulation,
+                imagePaths[static_cast<size_t>(frameIndex)],
+                std::cout);
 
             if (config.simulation.export_preprocessed_images) {
                 exportPreprocessedStack(realFrame, fs::path(outputPath),
@@ -1911,6 +2133,7 @@ void CellUniverse::preprocessAllFramesAlignedToMinimumBackground(bool loadIntoFr
 
             if (loadIntoFrames) {
                 frames[static_cast<size_t>(frameIndex)].loadImageStacks(realFrame);
+                frames[static_cast<size_t>(frameIndex)].setSignalMap(std::move(signalMap));
                 prepareSignalCentersForFrame(frameIndex, realFrame, true);
             } else if (config.simulation.export_signal_debug_images) {
                 prepareSignalCentersForFrame(frameIndex, realFrame, false);
@@ -1980,6 +2203,11 @@ void CellUniverse::preprocessAllFramesAlignedToMinimumBackground(bool loadIntoFr
                                     config.simulation,
                                     imagePaths[static_cast<size_t>(frameIndex)],
                                     std::cout);
+        std::vector<cv::Mat> signalMap = buildSignalMapStack(
+            item.stack,
+            config.simulation,
+            imagePaths[static_cast<size_t>(frameIndex)],
+            std::cout);
 
         if (config.simulation.export_preprocessed_images) {
             exportPreprocessedStack(item.stack, fs::path(outputPath),
@@ -1990,6 +2218,7 @@ void CellUniverse::preprocessAllFramesAlignedToMinimumBackground(bool loadIntoFr
 
         if (loadIntoFrames) {
             frames[static_cast<size_t>(frameIndex)].loadImageStacks(item.stack);
+            frames[static_cast<size_t>(frameIndex)].setSignalMap(std::move(signalMap));
             prepareSignalCentersForFrame(frameIndex, item.stack, true);
         } else if (config.simulation.export_signal_debug_images) {
             prepareSignalCentersForFrame(frameIndex, item.stack, false);
@@ -2965,14 +3194,21 @@ void CellUniverse::optimize(int frameIndex)
         return others;
     };
 
-    std::vector<cv::Mat> perturbDebugPlacements;
-    int perturbDebugPlacementCount = 0;
+    std::vector<cv::Mat> movementPerturbDebugPlacements;
+    std::vector<cv::Mat> splitPerturbDebugPlacements;
+    int movementPerturbDebugPlacementCount = 0;
+    int splitPerturbDebugPlacementCount = 0;
     const bool exportPerturbDebug =
         config.simulation.export_perturb_debug_images &&
         !frame.getRealFrame().empty() &&
         (config.simulation.export_frame_png || config.simulation.export_frame_tiff);
+    const bool exportPerturbCenterDebug =
+        config.simulation.export_perturb_cell_center_debug_images &&
+        !frame.getRealFrame().empty() &&
+        (config.simulation.export_frame_png || config.simulation.export_frame_tiff);
     if (exportPerturbDebug) {
-        perturbDebugPlacements = makeEmptyDebugStackLike(frame.getRealFrame());
+        movementPerturbDebugPlacements = makeEmptyDebugStackLike(frame.getRealFrame());
+        splitPerturbDebugPlacements = makeEmptyDebugStackLike(frame.getRealFrame());
     }
 
     // ---- Single-phase iteration helper ----
@@ -3212,7 +3448,10 @@ void CellUniverse::optimize(int frameIndex)
                 }
 
                 auto result = frame.trySplitCellPhased(
-                    cellIdx, splitSnapshot, others, useSnapDir, config.prob);
+                    cellIdx, splitSnapshot, others, useSnapDir, config.prob,
+                    exportPerturbDebug ? &splitPerturbDebugPlacements : nullptr,
+                    exportPerturbDebug ? &splitPerturbDebugPlacementCount : nullptr,
+                    config.simulation.perturb_debug_cell_brightness);
 
                 double costDiff = result.first;
                 auto callback = result.second;
@@ -3257,8 +3496,18 @@ void CellUniverse::optimize(int frameIndex)
                     // as the parent (in place), so no find_if needed.
                     auto compResult = frame.perturbCell(
                         cellIdx, overlapWeight, useSignalGuidanceThisFrame,
-                        randomPerturbRadiusRatio);
+                        randomPerturbRadiusRatio,
+                        /*pcaRefitWellFilledMove=*/false,
+                        /*useSignalMapGuidance=*/false);
                     const bool compAccept = compResult.first < 0.0;
+                    if (exportPerturbDebug) {
+                        accumulateDebugCellPlacement(
+                            splitPerturbDebugPlacements,
+                            frame.cells[cellIdx],
+                            config.simulation,
+                            config.simulation.perturb_debug_cell_brightness);
+                        ++splitPerturbDebugPlacementCount;
+                    }
                     compResult.second(compAccept);
                     if (compAccept) {
                         perturbAccepted++;
@@ -3279,11 +3528,11 @@ void CellUniverse::optimize(int frameIndex)
                 const bool perturbAccept = costDiff < 0;
                 if (exportPerturbDebug) {
                     accumulateDebugCellPlacement(
-                        perturbDebugPlacements,
+                        movementPerturbDebugPlacements,
                         frame.cells[cellIdx],
                         config.simulation,
                         config.simulation.perturb_debug_cell_brightness);
-                    ++perturbDebugPlacementCount;
+                    ++movementPerturbDebugPlacementCount;
                 }
                 recordPerturbLoss(cellName, frame.cells[cellIdx], costDiff, perturbAccept);
                 if (perturbAccept) {
@@ -3325,13 +3574,40 @@ void CellUniverse::optimize(int frameIndex)
             ? imagePaths[static_cast<size_t>(frameIndex)]
             : fs::path(frame.getImageName());
         std::cout << "[Perturb Debug Export] frame " << displayFrame
-                  << " placements=" << perturbDebugPlacementCount
+                  << " movement_placements=" << movementPerturbDebugPlacementCount
+                  << " split_placements=" << splitPerturbDebugPlacementCount
                   << " brightness=" << config.simulation.perturb_debug_cell_brightness
-                  << " output_dir=" << (fs::path(outputPath) / "perturb_debug" / "placements").string()
+                  << " output_dir=" << (fs::path(outputPath) / "perturb_debug").string()
                   << std::endl;
-        exportStackToSubdir(perturbDebugPlacements,
+        exportStackToSubdir(movementPerturbDebugPlacements,
                             fs::path(outputPath),
-                            "perturb_debug/placements",
+                            "perturb_debug/movement_placements",
+                            framePath,
+                            config.simulation.export_frame_png,
+                            config.simulation.export_frame_tiff);
+        exportStackToSubdir(splitPerturbDebugPlacements,
+                            fs::path(outputPath),
+                            "perturb_debug/split_placements",
+                            framePath,
+                            config.simulation.export_frame_png,
+                            config.simulation.export_frame_tiff);
+    }
+
+    if (exportPerturbCenterDebug) {
+        const fs::path framePath = (frameIndex >= 0 && static_cast<size_t>(frameIndex) < imagePaths.size())
+            ? imagePaths[static_cast<size_t>(frameIndex)]
+            : fs::path(frame.getImageName());
+        std::vector<cv::Mat> cellCenterLabels = makeCellCenterLabelDebugStack(
+            frame.getRealFrame(), frame.cells,
+            config.simulation.perturb_debug_center_cube_radius);
+        std::cout << "[Perturb Debug Center Export] frame " << displayFrame
+                  << " cells=" << frame.cells.size()
+                  << " cube_radius=" << config.simulation.perturb_debug_center_cube_radius
+                  << " output_dir=" << (fs::path(outputPath) / "perturb_debug/cell_centers").string()
+                  << std::endl;
+        exportStackToSubdir(cellCenterLabels,
+                            fs::path(outputPath),
+                            "perturb_debug/cell_centers",
                             framePath,
                             config.simulation.export_frame_png,
                             config.simulation.export_frame_tiff);

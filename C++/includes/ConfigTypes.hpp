@@ -79,6 +79,7 @@ public:
     bool export_preprocessed_images = false;
     bool export_signal_debug_images = false;
     bool export_perturb_debug_images = false;
+    bool export_perturb_cell_center_debug_images = false;
     bool export_frame_png = true;
     bool export_frame_tiff = false;
     bool quit_after_preprocessing = false;
@@ -98,6 +99,7 @@ public:
     bool perturb_oscillation_black_pixel_boost_enabled = false;
     float perturb_oscillation_black_pixel_boost_weight = 1.0f;
     float perturb_debug_cell_brightness = 0.30f;
+    int perturb_debug_center_cube_radius = 2;
 
     // Checkpoint resume (Approach 2): skip frames 0..resume_from-1 and
     // load state from {resume_source_dir}/checkpoints/frame_{resume_from-1:03d}.txt.
@@ -121,6 +123,17 @@ public:
     float signal_guided_initial_bright_fraction = 0.70f;
     float signal_guided_recursive_bright_fraction = 0.50f;
     int signal_guided_max_recursive_depth = 2;
+    bool signal_map_enabled = true;
+    float signal_map_blur_sigma = 2.5f;
+    int signal_map_max_iterations = 15;
+    float signal_map_bright_center_percentile = 0.0f;
+    float signal_map_epsilon = 1e-6f;
+    bool signal_map_perturb_guidance_enabled = true;
+    float signal_map_cell_radius_scale = 1.2f;
+    float signal_map_min_gradient_norm = 1e-6f;
+    float signal_map_direction_probability_boost = 0.5f;
+    float signal_map_opposing_move_damping = 0.0f;
+    float signal_map_guide_strength = 0.0f;
 
     // Asymmetric L2 cost weight (Fix E). Per-voxel squared error is
     // multiplied by this factor when synth > real (cell covers darker
@@ -266,6 +279,7 @@ public:
         if (node["export_preprocessed_images"]) export_preprocessed_images = node["export_preprocessed_images"].as<bool>();
         if (node["export_signal_debug_images"]) export_signal_debug_images = node["export_signal_debug_images"].as<bool>();
         if (node["export_perturb_debug_images"]) export_perturb_debug_images = node["export_perturb_debug_images"].as<bool>();
+        if (node["export_perturb_cell_center_debug_images"]) export_perturb_cell_center_debug_images = node["export_perturb_cell_center_debug_images"].as<bool>();
         if (node["export_frame_png"]) export_frame_png = node["export_frame_png"].as<bool>();
         if (node["export_frame_tiff"]) export_frame_tiff = node["export_frame_tiff"].as<bool>();
         if (node["quit_after_preprocessing"]) quit_after_preprocessing = node["quit_after_preprocessing"].as<bool>();
@@ -285,6 +299,7 @@ public:
         if (node["perturb_oscillation_black_pixel_boost_enabled"]) perturb_oscillation_black_pixel_boost_enabled = node["perturb_oscillation_black_pixel_boost_enabled"].as<bool>();
         if (node["perturb_oscillation_black_pixel_boost_weight"]) perturb_oscillation_black_pixel_boost_weight = node["perturb_oscillation_black_pixel_boost_weight"].as<float>();
         if (node["perturb_debug_cell_brightness"]) perturb_debug_cell_brightness = node["perturb_debug_cell_brightness"].as<float>();
+        if (node["perturb_debug_center_cube_radius"]) perturb_debug_center_cube_radius = node["perturb_debug_center_cube_radius"].as<int>();
         if (node["resume_from"]) resume_from = node["resume_from"].as<int>();
         if (node["resume_source_dir"]) resume_source_dir = node["resume_source_dir"].as<std::string>();
         if (node["cube_pooling_enabled"]) cube_pooling_enabled = node["cube_pooling_enabled"].as<bool>();
@@ -303,6 +318,17 @@ public:
         if (node["signal_guided_initial_bright_fraction"]) signal_guided_initial_bright_fraction = node["signal_guided_initial_bright_fraction"].as<float>();
         if (node["signal_guided_recursive_bright_fraction"]) signal_guided_recursive_bright_fraction = node["signal_guided_recursive_bright_fraction"].as<float>();
         if (node["signal_guided_max_recursive_depth"]) signal_guided_max_recursive_depth = node["signal_guided_max_recursive_depth"].as<int>();
+        if (node["signal_map_enabled"]) signal_map_enabled = node["signal_map_enabled"].as<bool>();
+        if (node["signal_map_blur_sigma"]) signal_map_blur_sigma = node["signal_map_blur_sigma"].as<float>();
+        if (node["signal_map_max_iterations"]) signal_map_max_iterations = node["signal_map_max_iterations"].as<int>();
+        if (node["signal_map_bright_center_percentile"]) signal_map_bright_center_percentile = node["signal_map_bright_center_percentile"].as<float>();
+        if (node["signal_map_epsilon"]) signal_map_epsilon = node["signal_map_epsilon"].as<float>();
+        if (node["signal_map_perturb_guidance_enabled"]) signal_map_perturb_guidance_enabled = node["signal_map_perturb_guidance_enabled"].as<bool>();
+        if (node["signal_map_cell_radius_scale"]) signal_map_cell_radius_scale = node["signal_map_cell_radius_scale"].as<float>();
+        if (node["signal_map_min_gradient_norm"]) signal_map_min_gradient_norm = node["signal_map_min_gradient_norm"].as<float>();
+        if (node["signal_map_direction_probability_boost"]) signal_map_direction_probability_boost = node["signal_map_direction_probability_boost"].as<float>();
+        if (node["signal_map_opposing_move_damping"]) signal_map_opposing_move_damping = node["signal_map_opposing_move_damping"].as<float>();
+        if (node["signal_map_guide_strength"]) signal_map_guide_strength = node["signal_map_guide_strength"].as<float>();
         if (node["asymmetric_cost_weight"]) asymmetric_cost_weight = node["asymmetric_cost_weight"].as<float>();
         if (node["asymmetric_cost_threshold"]) asymmetric_cost_threshold = node["asymmetric_cost_threshold"].as<float>();
         if (node["voronoi_cost_enabled"]) voronoi_cost_enabled = node["voronoi_cost_enabled"].as<bool>();
@@ -377,6 +403,7 @@ public:
         std::cout << "export_preprocessed_images: " << export_preprocessed_images << '\n';
         std::cout << "export_signal_debug_images: " << export_signal_debug_images << '\n';
         std::cout << "export_perturb_debug_images: " << export_perturb_debug_images << '\n';
+        std::cout << "export_perturb_cell_center_debug_images: " << export_perturb_cell_center_debug_images << '\n';
         std::cout << "export_frame_png: " << export_frame_png << '\n';
         std::cout << "export_frame_tiff: " << export_frame_tiff << '\n';
         std::cout << "quit_after_preprocessing: " << quit_after_preprocessing << '\n';
@@ -396,6 +423,7 @@ public:
         std::cout << "perturb_oscillation_black_pixel_boost_enabled: " << perturb_oscillation_black_pixel_boost_enabled << '\n';
         std::cout << "perturb_oscillation_black_pixel_boost_weight: " << perturb_oscillation_black_pixel_boost_weight << '\n';
         std::cout << "perturb_debug_cell_brightness: " << perturb_debug_cell_brightness << '\n';
+        std::cout << "perturb_debug_center_cube_radius: " << perturb_debug_center_cube_radius << '\n';
         std::cout << "cube_pooling_enabled: " << cube_pooling_enabled << '\n';
         std::cout << "cube_pooling_cost_comparison_enabled: " << cube_pooling_cost_comparison_enabled << '\n';
         std::cout << "cube_pooling_cube_size: " << cube_pooling_cube_size << '\n';
@@ -412,6 +440,13 @@ public:
         std::cout << "signal_guided_initial_bright_fraction: " << signal_guided_initial_bright_fraction << '\n';
         std::cout << "signal_guided_recursive_bright_fraction: " << signal_guided_recursive_bright_fraction << '\n';
         std::cout << "signal_guided_max_recursive_depth: " << signal_guided_max_recursive_depth << '\n';
+        std::cout << "signal_map_enabled: " << signal_map_enabled << '\n';
+        std::cout << "signal_map_blur_sigma: " << signal_map_blur_sigma << '\n';
+        std::cout << "signal_map_max_iterations: " << signal_map_max_iterations << '\n';
+        std::cout << "signal_map_bright_center_percentile: " << signal_map_bright_center_percentile << '\n';
+        std::cout << "signal_map_perturb_guidance_enabled: " << signal_map_perturb_guidance_enabled << '\n';
+        std::cout << "signal_map_cell_radius_scale: " << signal_map_cell_radius_scale << '\n';
+        std::cout << "signal_map_direction_probability_boost: " << signal_map_direction_probability_boost << '\n';
         std::cout << "z_slices: " << z_slices << std::endl;
     }
 };
@@ -784,6 +819,41 @@ public:
             return {-magnitude, -1};
         }
         return {0.0f, 0};
+    }
+    [[nodiscard]] Sample samplePerturbWithSignedProbabilityBias(float signedBias,
+                                                                float boost) const {
+        const bool hasSeparateSignProbabilities = increase_prob >= 0.0f || decrease_prob >= 0.0f;
+        if (!hasSeparateSignProbabilities || std::abs(signedBias) <= 1e-6f || boost <= 0.0f) {
+            return samplePerturb();
+        }
+
+        PerturbParams biased = *this;
+        float inc = std::clamp(increase_prob >= 0.0f ? increase_prob : 0.0f, 0.0f, 1.0f);
+        float dec = std::clamp(decrease_prob >= 0.0f ? decrease_prob : 0.0f, 0.0f, 1.0f);
+        if (inc + dec > 1.0f) {
+            dec = 1.0f - inc;
+        }
+
+        float amount = std::clamp(boost, 0.0f, 1.0f) * std::min(1.0f, std::abs(signedBias));
+        if (signedBias > 0.0f) {
+            const float fromDec = std::min(dec, amount);
+            dec -= fromDec;
+            inc += fromDec;
+            amount -= fromDec;
+            const float fromNone = std::min(1.0f - inc - dec, amount);
+            inc += fromNone;
+        } else {
+            const float fromInc = std::min(inc, amount);
+            inc -= fromInc;
+            dec += fromInc;
+            amount -= fromInc;
+            const float fromNone = std::min(1.0f - inc - dec, amount);
+            dec += fromNone;
+        }
+
+        biased.increase_prob = std::clamp(inc, 0.0f, 1.0f);
+        biased.decrease_prob = std::clamp(dec, 0.0f, 1.0f - biased.increase_prob);
+        return biased.samplePerturb();
     }
     [[nodiscard]] float getPerturbOffset() const {
         return samplePerturb().offset;

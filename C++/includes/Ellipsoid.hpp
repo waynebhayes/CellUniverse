@@ -196,7 +196,9 @@ class Ellipsoid
         // large cells take bigger steps and small cells take smaller steps.
         // Default 1.0 = use the base sigma from config unchanged.
         [[nodiscard]] Ellipsoid getPerturbedCell(PerturbDirections *directions = nullptr,
-                                                  float positionScale = 1.0f) const;
+                                                 float positionScale = 1.0f,
+                                                 const cv::Point3f &positionProbabilityBias = cv::Point3f(0.0f, 0.0f, 0.0f),
+                                                 float positionProbabilityBoost = 0.0f) const;
 
         // Test if point is inside this cell's (optionally scaled) ellipsoid
         bool isPointInsideEllipsoid(const cv::Point3f &worldPoint,
