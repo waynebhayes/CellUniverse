@@ -902,3 +902,96 @@ auto result = frame.trySplitCellPhased(
 - **`split-candidate-current-code.md` should be updated** to add `bridge_primary` to the candidate label table once validation lands.
 - **Eligibility coupling:** the bridge proposal is currently consumed only when `P(split)` triggers an attempt. For cells where snapshot elongation is low but post-PCA elongation is high (the original use case for the bridge), the snap-driven `P(split)` may not fire even though the bridge sees a valid gap. If validation shows missed splits here, consider boosting `P(split)` for cells with a discovered proposal.
 - **Cells without snapshot.** A bridge proposal can exist for a newborn daughter that has no snapshot (frame after split). The current code falls through `splitBlacklist.insert(cellName)` then `continue` when the snapshot is missing, so the bridge proposal is silently dropped. Acceptable for now (newborn daughters shouldn't re-split immediately) but worth a log line.
+
+## 2026-05-04: Port prolate-shape pre-filter from yp_opt_speed 1ec91e7 (Change 13b) — **status: ACTIVE, awaiting build**
+
+### Problem / Motivation
+
+Vincent's commit `1ec91e7` ("debug for the black bridge split shortcut, add a missing logic") added a parent-shape gate to the PCA bridge that rejects ellipsoids whose elongation comes from one collapsed axis instead of a clean rod shape. Concrete failure case from the commit message: `R = (43, 30, 12)` has `long/short = 3.58` (passes the elong=2.0 trigger) but `mid/short = 2.5` — a wedge, not a rod. The bin-analysis "valley" along the long axis is not biological in that case and should not produce a daughter pair.
+
+This change is complementary to Change 13 (bridge demote): demote unifies acceptance under the main gate stack so cost/overlap can catch false positives at evaluation time; the prolate gate rejects geometrically-suspect proposals **at discovery time** so they never enter the candidate list, never burn-in, never log noise. Both fix bridge false-positive sources from different angles.
+
+### Files changed
+
+- `C++/includes/ConfigTypes.hpp`
+- `C++/config/config.yaml`
+- `C++/src/Frame.cpp`
+
+### Code changes
+
+**File:** `C++/includes/ConfigTypes.hpp`
+
+**Before (around L666–668):**
+```cpp
+bool pca_bridge_split_enabled = false;
+float pca_bridge_elongation_ratio = 3.0f;
+float pca_bridge_black_threshold = 0.05f;
+```
+
+**After:**
+```cpp
+bool pca_bridge_split_enabled = false;
+float pca_bridge_elongation_ratio = 3.0f;
+// Prolate-shape pre-filter (ported from yp_opt_speed 1ec91e7). Reject
+// bridge candidates where the high elongation comes from one collapsed
+// axis instead of a clean rod shape. R=(43,30,12) has long/short=3.58
+// (passes elong gate) but mid/short=2.5 — wedge, not rod, and the
+// bin-analysis "valley" along the long axis is not biological.
+//   long/mid >= pca_bridge_min_long_mid_ratio  → one clearly long axis
+//   mid/short <= pca_bridge_max_mid_short_ratio → two non-long axes
+//                                                 close in size
+// Set either to 0 to disable that half of the gate.
+float pca_bridge_min_long_mid_ratio = 1.35f;
+float pca_bridge_max_mid_short_ratio = 1.35f;
+float pca_bridge_black_threshold = 0.05f;
+```
+
+YAML reads + cout dumps for both new fields added alongside the existing `pca_bridge_elongation_ratio` entries.
+
+**File:** `C++/config/config.yaml`
+
+**Inserted under `prob:` after `pca_bridge_elongation_ratio`:**
+```yaml
+  pca_bridge_min_long_mid_ratio: 1.35
+  pca_bridge_max_mid_short_ratio: 1.35
+```
+
+**File:** `C++/src/Frame.cpp`
+
+**Inside `discoverPcaBridgeProposal`, immediately after the elong threshold check (around L2865–L2895):**
+
+Adds a `midIdx` lookup, computes `midR`, then:
+
+```cpp
+const float longMidRatio = longR / midR;
+const float midShortRatio = midR / shortR;
+const float minLongMidRatio = std::max(0.0f, probConfig.pca_bridge_min_long_mid_ratio);
+const float maxMidShortRatio = std::max(0.0f, probConfig.pca_bridge_max_mid_short_ratio);
+const bool longAxisDistinct = minLongMidRatio <= 0.0f || longMidRatio >= minLongMidRatio;
+const bool shortAxesSimilar = maxMidShortRatio <= 0.0f || midShortRatio <= maxMidShortRatio;
+if (!longAxisDistinct || !shortAxesSimilar) {
+    log << "  [PCA Bridge Propose] cell=" << parent.getName()
+        << " elong=" << elong
+        << " rejected=triaxial_shape"
+        << " longR=" << longR
+        << " midR=" << midR
+        << " shortR=" << shortR
+        << " longMidRatio=" << longMidRatio
+        << " minLongMidRatio=" << minLongMidRatio
+        << " midShortRatio=" << midShortRatio
+        << " maxMidShortRatio=" << maxMidShortRatio
+        << std::endl;
+    return false;
+}
+```
+
+The log tag is `[PCA Bridge Propose]` (consistent with the discover-only naming from Change 13a) rather than the original commit's `[PCA Bridge Split]`. The reject reason `triaxial_shape` is preserved verbatim for grep continuity with Vincent's branch.
+
+### Effect
+
+- Cells with collapsed-axis geometry now bypass bin-analysis entirely. Saves a small amount of compute; more importantly, prevents proposals that come from a non-biological "valley" derived from wonky ellipsoid fits.
+- Pairs with Change 13a: the demote unifies acceptance economics (good against false positives caused by unfair scoring), the prolate gate rejects geometrically degenerate parents at discovery (good against false positives caused by wonky shapes). Together they make the bridge produce only proposals worth competing in the main candidate list.
+
+### Open follow-ups
+
+- Tune `pca_bridge_min_long_mid_ratio` and `pca_bridge_max_mid_short_ratio` against fluo runs. 1.35/1.35 may be too tight for asymmetric divisions where one daughter remains larger.

@@ -665,6 +665,17 @@ public:
     // per-frame PCA shape fit, before growth caps/reference updates.
     bool pca_bridge_split_enabled = false;
     float pca_bridge_elongation_ratio = 3.0f;
+    // Prolate-shape pre-filter (ported from yp_opt_speed 1ec91e7). Reject
+    // bridge candidates where the high elongation comes from one collapsed
+    // axis instead of a clean rod shape. R=(43,30,12) has long/short=3.58
+    // (passes elong gate) but mid/short=2.5 — wedge, not rod, and the
+    // bin-analysis "valley" along the long axis is not biological.
+    //   long/mid >= pca_bridge_min_long_mid_ratio  → one clearly long axis
+    //   mid/short <= pca_bridge_max_mid_short_ratio → two non-long axes
+    //                                                 close in size
+    // Set either to 0 to disable that half of the gate.
+    float pca_bridge_min_long_mid_ratio = 1.35f;
+    float pca_bridge_max_mid_short_ratio = 1.35f;
     float pca_bridge_black_threshold = 0.05f;
     float pca_bridge_min_black_fraction = 0.75f;
     float pca_bridge_gap_center_fraction = 0.35f;
@@ -732,6 +743,8 @@ public:
         if (node["split_daughter_volume_scale"]) split_daughter_volume_scale = node["split_daughter_volume_scale"].as<float>();
         if (node["pca_bridge_split_enabled"]) pca_bridge_split_enabled = node["pca_bridge_split_enabled"].as<bool>();
         if (node["pca_bridge_elongation_ratio"]) pca_bridge_elongation_ratio = node["pca_bridge_elongation_ratio"].as<float>();
+        if (node["pca_bridge_min_long_mid_ratio"]) pca_bridge_min_long_mid_ratio = node["pca_bridge_min_long_mid_ratio"].as<float>();
+        if (node["pca_bridge_max_mid_short_ratio"]) pca_bridge_max_mid_short_ratio = node["pca_bridge_max_mid_short_ratio"].as<float>();
         if (node["pca_bridge_black_threshold"]) pca_bridge_black_threshold = node["pca_bridge_black_threshold"].as<float>();
         if (node["pca_bridge_min_black_fraction"]) pca_bridge_min_black_fraction = node["pca_bridge_min_black_fraction"].as<float>();
         if (node["pca_bridge_gap_center_fraction"]) pca_bridge_gap_center_fraction = node["pca_bridge_gap_center_fraction"].as<float>();
@@ -775,6 +788,8 @@ public:
         std::cout << "bio_daughter_size_ratio_max: " << bio_daughter_size_ratio_max << std::endl;
         std::cout << "pca_bridge_split_enabled: " << pca_bridge_split_enabled << '\n';
         std::cout << "pca_bridge_elongation_ratio: " << pca_bridge_elongation_ratio << '\n';
+        std::cout << "pca_bridge_min_long_mid_ratio: " << pca_bridge_min_long_mid_ratio << '\n';
+        std::cout << "pca_bridge_max_mid_short_ratio: " << pca_bridge_max_mid_short_ratio << '\n';
     }
 };
 

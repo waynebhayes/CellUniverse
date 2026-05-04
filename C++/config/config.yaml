@@ -419,6 +419,12 @@ prob:
   # accepted only when image+overlap cost improves.
   pca_bridge_split_enabled: true
   pca_bridge_elongation_ratio: 2.0
+  # Require a prolate bridge shape: one clearly long axis, and the two
+  # non-long axes close to each other. This blocks triaxial false bridges
+  # like R=(43,30,12), where long/short is high only because one axis
+  # collapsed.
+  pca_bridge_min_long_mid_ratio: 1.35
+  pca_bridge_max_mid_short_ratio: 1.35
   pca_bridge_black_threshold: 0.05
   pca_bridge_min_black_fraction: 0.75
   pca_bridge_gap_center_fraction: 0.35

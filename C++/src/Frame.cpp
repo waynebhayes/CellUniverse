@@ -2868,10 +2868,44 @@ bool Frame::discoverPcaBridgeProposal(size_t cellIndex,
         if (radii[i] > radii[longIdx]) longIdx = i;
         if (radii[i] < radii[shortIdx]) shortIdx = i;
     }
+    int midIdx = 0;
+    for (int i = 0; i < 3; ++i) {
+        if (i != longIdx && i != shortIdx) {
+            midIdx = i;
+            break;
+        }
+    }
     const float longR = radii[longIdx];
+    const float midR = std::max(1e-3f, radii[midIdx]);
     const float shortR = std::max(1e-3f, radii[shortIdx]);
     const float elong = longR / shortR;
     if (elong < probConfig.pca_bridge_elongation_ratio) return false;
+
+    // Prolate-shape gate (yp_opt_speed 1ec91e7). Reject bridge candidates
+    // whose elongation comes from one collapsed axis rather than a clean
+    // rod shape. Example: R=(43,30,12) has long/short=3.58 (passes elong
+    // gate) but mid/short=2.5 — the dark-bridge bin scan along the long
+    // axis would be misled by the wedge geometry, not biology.
+    const float longMidRatio = longR / midR;
+    const float midShortRatio = midR / shortR;
+    const float minLongMidRatio = std::max(0.0f, probConfig.pca_bridge_min_long_mid_ratio);
+    const float maxMidShortRatio = std::max(0.0f, probConfig.pca_bridge_max_mid_short_ratio);
+    const bool longAxisDistinct = minLongMidRatio <= 0.0f || longMidRatio >= minLongMidRatio;
+    const bool shortAxesSimilar = maxMidShortRatio <= 0.0f || midShortRatio <= maxMidShortRatio;
+    if (!longAxisDistinct || !shortAxesSimilar) {
+        log << "  [PCA Bridge Propose] cell=" << parent.getName()
+            << " elong=" << elong
+            << " rejected=triaxial_shape"
+            << " longR=" << longR
+            << " midR=" << midR
+            << " shortR=" << shortR
+            << " longMidRatio=" << longMidRatio
+            << " minLongMidRatio=" << minLongMidRatio
+            << " midShortRatio=" << midShortRatio
+            << " maxMidShortRatio=" << maxMidShortRatio
+            << std::endl;
+        return false;
+    }
 
     std::array<double, 9> R_T;
     parent.generateInverseRotationMatrix(R_T);
