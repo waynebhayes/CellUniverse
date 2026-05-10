@@ -163,17 +163,38 @@ void Spheroid::generateInverseRotationMatrix(std::array<double, 9> &R_T) const {
     R_T[6] = R02; R_T[7] = R12; R_T[8] = R22;
 }
 
+cv::Point3f Spheroid::axisAlignedExtents() const
+{
+    std::array<double, 9> R_T;
+    generateInverseRotationMatrix(R_T);
+
+    const double ax = a * R_T[0];
+    const double bx = b * R_T[3];
+    const double cx = c * R_T[6];
+    const double ay = a * R_T[1];
+    const double by = b * R_T[4];
+    const double cy = c * R_T[7];
+    const double az = a * R_T[2];
+    const double bz = b * R_T[5];
+    const double cz = c * R_T[8];
+
+    return cv::Point3f(
+        static_cast<float>(std::sqrt(ax * ax + bx * bx + cx * cx)),
+        static_cast<float>(std::sqrt(ay * ay + by * by + cy * cy)),
+        static_cast<float>(std::sqrt(az * az + bz * bz + cz * cz)));
+}
+
 bool Spheroid::computeSliceBounds(const cv::Mat &image, float z,
                                   int &minX, int &maxX, int &minY, int &maxY) const {
-    float maxR = std::max({static_cast<float>(a), static_cast<float>(b), static_cast<float>(c)});
-    if (std::abs(z - _position.z) > maxR) {
+    const cv::Point3f extents = axisAlignedExtents();
+    if (std::abs(z - _position.z) > extents.z) {
         return false;
     }
 
-    minX = std::max(0, static_cast<int>(std::floor(_position.x - maxR)));
-    maxX = std::min(image.cols - 1, static_cast<int>(std::ceil(_position.x + maxR)));
-    minY = std::max(0, static_cast<int>(std::floor(_position.y - maxR)));
-    maxY = std::min(image.rows - 1, static_cast<int>(std::ceil(_position.y + maxR)));
+    minX = std::max(0, static_cast<int>(std::floor(_position.x - extents.x)));
+    maxX = std::min(image.cols - 1, static_cast<int>(std::ceil(_position.x + extents.x)));
+    minY = std::max(0, static_cast<int>(std::floor(_position.y - extents.y)));
+    maxY = std::min(image.rows - 1, static_cast<int>(std::ceil(_position.y + extents.y)));
     return true;
 }
 
@@ -561,16 +582,15 @@ SpheroidParams Spheroid::getCellParams() const {
 
 
 [[nodiscard]] std::pair<std::vector<float>, std::vector<float>> Spheroid::calculateCorners() const {
-    // Use max radius as conservative bound for rotated spheroid
-    float maxR = std::max({static_cast<float>(a), static_cast<float>(b), static_cast<float>(c)});
+    const cv::Point3f extents = axisAlignedExtents();
 
-    std::vector<float> min_corner = {static_cast<float>(_position.x) - maxR,
-                                     static_cast<float>(_position.y) - maxR,
-                                     static_cast<float>(_position.z) - maxR};
+    std::vector<float> min_corner = {static_cast<float>(_position.x) - extents.x,
+                                     static_cast<float>(_position.y) - extents.y,
+                                     static_cast<float>(_position.z) - extents.z};
 
-    std::vector<float> max_corner = {static_cast<float>(_position.x) + maxR,
-                                     static_cast<float>(_position.y) + maxR,
-                                     static_cast<float>(_position.z) + maxR};
+    std::vector<float> max_corner = {static_cast<float>(_position.x) + extents.x,
+                                     static_cast<float>(_position.y) + extents.y,
+                                     static_cast<float>(_position.z) + extents.z};
 
     return std::make_pair(min_corner, max_corner);
 }

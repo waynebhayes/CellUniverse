@@ -52,6 +52,8 @@ public:
     bool enable_lineage_tree_window = false;
     float adaptive_background_expand_factor = 1.1f;
     float adaptive_background_top_fraction = 0.4f;
+    int parallel_threads = 1;
+    int parallel_min_slices = 8;
 
     // Constructor with default values
     SimulationConfig() : iterations_per_cell(0),
@@ -98,6 +100,10 @@ public:
         if (node["lineage_tree_window"]) enable_lineage_tree_window = node["lineage_tree_window"].as<bool>();
         if (node["adaptive_background_expand_factor"]) adaptive_background_expand_factor = node["adaptive_background_expand_factor"].as<float>();
         if (node["adaptive_background_top_fraction"]) adaptive_background_top_fraction = node["adaptive_background_top_fraction"].as<float>();
+        if (node["parallel_threads"]) parallel_threads = node["parallel_threads"].as<int>();
+        if (node["parallel_min_slices"]) parallel_min_slices = node["parallel_min_slices"].as<int>();
+        parallel_threads = std::max(1, parallel_threads);
+        parallel_min_slices = std::max(1, parallel_min_slices);
     }
     void printConfig() const {
         std::cout << "Simulation Config\n";
@@ -138,6 +144,8 @@ public:
         std::cout << "enable_lineage_tree_window: " << enable_lineage_tree_window << '\n';
         std::cout << "adaptive_background_expand_factor: " << adaptive_background_expand_factor << '\n';
         std::cout << "adaptive_background_top_fraction: " << adaptive_background_top_fraction << '\n';
+        std::cout << "parallel_threads: " << parallel_threads << '\n';
+        std::cout << "parallel_min_slices: " << parallel_min_slices << '\n';
         std::cout << "z_slices: " << z_slices << std::endl;
     }
 };

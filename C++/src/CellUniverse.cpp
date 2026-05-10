@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <limits>
 #include <numeric>
+#include <chrono>
 
 namespace utils
 {
@@ -46,6 +47,11 @@ static float computeStackMean(const std::vector<cv::Mat> &stack)
     }
 
     return (count > 0.0) ? static_cast<float>(sum / count) : 0.0f;
+}
+
+static double secondsSince(std::chrono::steady_clock::time_point start)
+{
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
 }
 
 static float computeMeanOfTopFraction(std::vector<float> values, float topFraction)
@@ -320,9 +326,25 @@ void CellUniverse::optimize(int frameIndex)
         throw std::invalid_argument("Invalid frame index");
     }
 
-    ensureFrameLoaded(static_cast<size_t>(frameIndex));
-    Frame &frame = *frames[frameIndex];
+    const auto frameTimerStart = std::chrono::steady_clock::now();
+    auto stageTimerStart = std::chrono::steady_clock::now();
+    double loadSeconds = 0.0;
+    double adaptiveBackgroundSeconds = 0.0;
+    double initialRenderSeconds = 0.0;
+    double probabilitySeconds = 0.0;
+    double prePassSeconds = 0.0;
+    double calibrationSeconds = 0.0;
+    double phaseASeconds = 0.0;
+    double phaseBSeconds = 0.0;
+    double snapshotSeconds = 0.0;
+    double brightnessUpdateSeconds = 0.0;
 
+    ensureFrameLoaded(static_cast<size_t>(frameIndex));
+    loadSeconds = secondsSince(stageTimerStart);
+    Frame &frame = *frames[frameIndex];
+    const size_t startingCellCount = frame.cells.size();
+
+    stageTimerStart = std::chrono::steady_clock::now();
     if (frameIndex > 0) {
         ensureFrameLoaded(static_cast<size_t>(frameIndex - 1));
         const Frame &previousFrame = *frames[frameIndex - 1];
@@ -339,14 +361,24 @@ void CellUniverse::optimize(int frameIndex)
                   << " ratio=" << brightnessScale
                   << " background=" << updatedBackground << '\n';
     }
+    adaptiveBackgroundSeconds = secondsSince(stageTimerStart);
 
+    stageTimerStart = std::chrono::steady_clock::now();
     frame.regenerateSynthFrame();
+    initialRenderSeconds = secondsSince(stageTimerStart);
 
     size_t totalIterations = frame.length() * config.simulation.iterations_per_cell;
     int displayFrame = firstFrame + frameIndex;
 
     std::cout << "[Optimize] frame " << displayFrame
               << " (" << frame.cells.size() << " cells, " << totalIterations << " iterations)" << std::endl;
+    std::cout << "[Optimize Metric] frame " << displayFrame
+              << " primary=seconds_per_frame"
+              << " normalized=seconds_per_cell_iteration"
+              << " cells_start=" << startingCellCount
+              << " iterations_per_cell=" << config.simulation.iterations_per_cell
+              << " parallel_threads=" << config.simulation.parallel_threads
+              << std::endl;
 
     const bool isResumeStartFrame = (frameIndex == 0 && firstFrame > 1);
     if (isResumeStartFrame && previousSnapshots.empty() && !frame.cells.empty()) {
@@ -367,6 +399,8 @@ void CellUniverse::optimize(int frameIndex)
                       << std::endl;
         }
     }
+
+    stageTimerStart = std::chrono::steady_clock::now();
 
     std::random_device rd;
     std::mt19937 gen(rd());
@@ -496,11 +530,14 @@ void CellUniverse::optimize(int frameIndex)
         expectedDaughters[name] = {seed1, seed2};
     }
 
+    probabilitySeconds = secondsSince(stageTimerStart);
+
     // ---- Pre-pass: image-ground the seeds ----
     // For each pre_classified cell, gather bright pixels in the snapshot
     // bounding box using the current seed claim sets, run PCA, overwrite
     // D1_exp/D2_exp with the image-grounded centroids. Optionally iterate —
     // round k+1 uses the D1_exp/D2_exp from round k to build the claim sets.
+    stageTimerStart = std::chrono::steady_clock::now();
     const int prePassRounds = std::max(1, config.prob.expected_daughter_pre_pass_iterations);
     if (!preClassifiedNames.empty()) {
         std::cout << "[Pre-Pass] frame " << displayFrame
@@ -586,6 +623,7 @@ void CellUniverse::optimize(int frameIndex)
             }
         }
     }
+    prePassSeconds = secondsSince(stageTimerStart);
 
     // ---- Per-cell position calibration pass ----
     // Refine each cell's position with tight position sigmas and frozen
@@ -601,6 +639,7 @@ void CellUniverse::optimize(int frameIndex)
     // shrink or grow during calibration. After calibration, Phase A/B runs
     // at normal sigmas and may still drift, but by then the calibrated
     // state is used as the starting point.
+    stageTimerStart = std::chrono::steady_clock::now();
     const int calibrationIters = std::max(0, config.prob.split_calibration_iterations_per_cell);
     if (calibrationIters > 0 && !frame.cells.empty()) {
         const float posScale = std::max(0.0f, config.prob.split_burn_in_pos_sigma_scale);
@@ -713,6 +752,7 @@ void CellUniverse::optimize(int frameIndex)
         Spheroid::cellConfig.bRadius     = savedCalB;
         Spheroid::cellConfig.minorRadius = savedCalMinor;
     }
+    calibrationSeconds = secondsSince(stageTimerStart);
 
     // ---- Helper: build claim-set for other cells during a split attempt ----
     auto buildOtherClaimSet = [&](const std::string &selfName,
@@ -780,11 +820,13 @@ void CellUniverse::optimize(int frameIndex)
     auto runPhase = [&](const std::set<std::string> &phaseNames,
                         bool phaseB,
                         std::set<std::string> &splitAcceptedInPhase,
-                        std::set<std::string> &splitRejectedInPhase) {
+                        std::set<std::string> &splitRejectedInPhase,
+                        size_t &iterationsExecuted) {
         if (phaseNames.empty()) return;
 
         const size_t perCellIters = static_cast<size_t>(config.simulation.iterations_per_cell);
         const size_t totalPhaseIters = perCellIters * phaseNames.size();
+        const auto phaseTimerStart = std::chrono::steady_clock::now();
 
         for (size_t i = 0; i < totalPhaseIters; ++i) {
             if (frame.cells.empty()) break;
@@ -802,6 +844,7 @@ void CellUniverse::optimize(int frameIndex)
                 eligible.push_back(ci);
             }
             if (eligible.empty()) break;
+            ++iterationsExecuted;
 
             std::uniform_int_distribution<size_t> cellDist(0, eligible.size() - 1);
             const size_t cellIdx = eligible[cellDist(gen)];
@@ -914,24 +957,42 @@ void CellUniverse::optimize(int frameIndex)
             }
 
             if ((i + 1) % 500 == 0) {
+                const double phaseElapsed = secondsSince(phaseTimerStart);
+                const double iterPerSecond =
+                    (phaseElapsed > 1e-9)
+                        ? (static_cast<double>(i + 1) / phaseElapsed)
+                        : 0.0;
                 std::cout << "Frame " << displayFrame
                           << (phaseB ? " PhaseB " : " PhaseA ")
                           << "iter=" << i
                           << " perturb_accepted=" << perturbAccepted
                           << " split_attempts=" << splitAttempted
                           << " split_accepted=" << splitAccepted
-                          << " cells=" << frame.cells.size() << std::endl;
+                          << " cells=" << frame.cells.size()
+                          << " elapsed_sec=" << phaseElapsed
+                          << " iter_per_sec=" << iterPerSecond
+                          << " sec_per_iter="
+                          << ((iterPerSecond > 1e-9) ? (1.0 / iterPerSecond) : 0.0)
+                          << std::endl;
             }
         }
     };
 
     std::set<std::string> phaseASplitAccepted;
     std::set<std::string> phaseASplitRejected;
-    runPhase(nonClassifiedNames, /* phaseB */ false, phaseASplitAccepted, phaseASplitRejected);
+    size_t phaseAIterationsExecuted = 0;
+    stageTimerStart = std::chrono::steady_clock::now();
+    runPhase(nonClassifiedNames, /* phaseB */ false, phaseASplitAccepted, phaseASplitRejected,
+             phaseAIterationsExecuted);
+    phaseASeconds = secondsSince(stageTimerStart);
 
     std::set<std::string> phaseBSplitAccepted;
     std::set<std::string> phaseBSplitRejected;
-    runPhase(preClassifiedNames, /* phaseB */ true, phaseBSplitAccepted, phaseBSplitRejected);
+    size_t phaseBIterationsExecuted = 0;
+    stageTimerStart = std::chrono::steady_clock::now();
+    runPhase(preClassifiedNames, /* phaseB */ true, phaseBSplitAccepted, phaseBSplitRejected,
+             phaseBIterationsExecuted);
+    phaseBSeconds = secondsSince(stageTimerStart);
 
     // End of frame: build PreviousFrameSnapshot for each cell, combining the
     // in-frame running max (from the periodic sampling above) with the
@@ -943,6 +1004,7 @@ void CellUniverse::optimize(int frameIndex)
     // frame (e.g., parents replaced by daughters) become stale but are
     // overwritten below for surviving cells. Daughters get fresh snapshots.
     // We do erase entries that don't exist anymore to prevent unbounded growth.
+    stageTimerStart = std::chrono::steady_clock::now();
     {
         std::set<std::string> liveCells;
         for (const auto &cell : frame.cells) {
@@ -970,7 +1032,9 @@ void CellUniverse::optimize(int frameIndex)
                   << "," << snap.position.z << ")"
                   << std::endl;
     }
+    snapshotSeconds = secondsSince(stageTimerStart);
 
+    stageTimerStart = std::chrono::steady_clock::now();
     const float brightnessBlend = std::clamp(config.cell ? config.cell->brightnessUpdateBlend : 0.0f, 0.0f, 1.0f);
     if (brightnessBlend > 0.0f && config.cell) {
         const auto &realFrame = frame.getRealFrame();
@@ -984,12 +1048,48 @@ void CellUniverse::optimize(int frameIndex)
         }
         frame.regenerateSynthFrame();
     }
+    brightnessUpdateSeconds = secondsSince(stageTimerStart);
+
+    const double optimizeSeconds = secondsSince(frameTimerStart);
+    const size_t scheduledCellIterations =
+        (static_cast<size_t>(std::max(0, calibrationIters)) * startingCellCount) +
+        phaseAIterationsExecuted +
+        phaseBIterationsExecuted;
+    const double secondsPerCellIteration =
+        scheduledCellIterations > 0
+            ? optimizeSeconds / static_cast<double>(scheduledCellIterations)
+            : 0.0;
+    const double iterationsPerSecond =
+        optimizeSeconds > 1e-9
+            ? static_cast<double>(scheduledCellIterations) / optimizeSeconds
+            : 0.0;
 
     std::cout << "[Optimize Done] frame " << displayFrame
               << " perturb_accepted=" << perturbAccepted
               << " split_attempts=" << splitAttempted
               << " split_accepted=" << splitAccepted
               << " final_cells=" << frame.cells.size() << std::endl;
+    std::cout << "[Frame Timing] frame " << displayFrame
+              << " total_sec=" << optimizeSeconds
+              << " load_sec=" << loadSeconds
+              << " adaptive_background_sec=" << adaptiveBackgroundSeconds
+              << " initial_render_sec=" << initialRenderSeconds
+              << " probability_classify_sec=" << probabilitySeconds
+              << " prepass_sec=" << prePassSeconds
+              << " calibration_sec=" << calibrationSeconds
+              << " phaseA_sec=" << phaseASeconds
+              << " phaseB_sec=" << phaseBSeconds
+              << " snapshot_sec=" << snapshotSeconds
+              << " brightness_update_sec=" << brightnessUpdateSeconds
+              << " scheduled_cell_iterations=" << scheduledCellIterations
+              << " phaseA_iterations=" << phaseAIterationsExecuted
+              << " phaseB_iterations=" << phaseBIterationsExecuted
+              << " split_attempts=" << splitAttempted
+              << " sec_per_cell_iteration=" << secondsPerCellIteration
+              << " iter_per_sec=" << iterationsPerSecond
+              << " cells_start=" << startingCellCount
+              << " cells_final=" << frame.cells.size()
+              << std::endl;
 }
 
 void CellUniverse::saveImages(int frameIndex)

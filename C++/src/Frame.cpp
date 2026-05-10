@@ -1,8 +1,37 @@
 #include "../includes/Frame.hpp"
 
+#include <chrono>
 #include <sstream>
 
 namespace {
+template <typename Fn>
+void forEachSliceIndex(const SimulationConfig &config, int count, const Fn &fn)
+{
+    if (count <= 0) {
+        return;
+    }
+
+    const bool useParallel = config.parallel_threads > 1 &&
+                             count >= config.parallel_min_slices;
+    if (!useParallel) {
+        for (int i = 0; i < count; ++i) {
+            fn(i);
+        }
+        return;
+    }
+
+    cv::parallel_for_(cv::Range(0, count), [&](const cv::Range &range) {
+        for (int i = range.start; i < range.end; ++i) {
+            fn(i);
+        }
+    });
+}
+
+double elapsedSeconds(std::chrono::steady_clock::time_point start)
+{
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+}
+
 double computeSizeReductionPenalty(const Spheroid &oldCell, const Spheroid &newCell, float weight)
 {
     if (weight <= 0.0f) {
@@ -66,11 +95,16 @@ void Frame::refreshFullCostCache()
     }
 
     _currentCostPerSlice.assign(_realFrame.size(), 0.0);
+    forEachSliceIndex(simulationConfig, static_cast<int>(_realFrame.size()), [&](int i) {
+        _currentCostPerSlice[static_cast<size_t>(i)] =
+            cv::norm(_realFrame[static_cast<size_t>(i)],
+                     _synthFrame[static_cast<size_t>(i)],
+                     cv::NORM_L2);
+    });
+
     double totalCost = 0.0;
-    for (size_t i = 0; i < _realFrame.size(); ++i)
+    for (double sliceCost : _currentCostPerSlice)
     {
-        const double sliceCost = cv::norm(_realFrame[i], _synthFrame[i], cv::NORM_L2);
-        _currentCostPerSlice[i] = sliceCost;
         totalCost += sliceCost;
     }
     _currentCost = totalCost;
@@ -96,10 +130,14 @@ double Frame::calculateIncrementalCost(const std::vector<cv::Mat> &newSynthFrame
         const int nSlices = static_cast<int>(_realFrame.size());
         const int zMin = std::max(0, affectedZMin);
         const int zMax = std::min(nSlices - 1, affectedZMax);
-        for (int i = zMin; i <= zMax; ++i)
-        {
-            outNewPerSlice[i] = cv::norm(_realFrame[i], newSynthFrame[i], cv::NORM_L2);
-        }
+        const int affectedCount = zMax - zMin + 1;
+        forEachSliceIndex(simulationConfig, affectedCount, [&](int localIndex) {
+            const int i = zMin + localIndex;
+            outNewPerSlice[static_cast<size_t>(i)] =
+                cv::norm(_realFrame[static_cast<size_t>(i)],
+                         newSynthFrame[static_cast<size_t>(i)],
+                         cv::NORM_L2);
+        });
     }
 
     // Always sum in slice-index order so the result is bit-identical to
@@ -116,17 +154,17 @@ double Frame::calculateIncrementalCost(const std::vector<cv::Mat> &newSynthFrame
 std::vector<cv::Mat> Frame::generateSynthFrame()
 {
     cv::Size shape = getImageShape();
-    std::vector<cv::Mat> frame;
+    std::vector<cv::Mat> frame(z_slices.size());
 
-    for (double z : z_slices)
-    {
+    forEachSliceIndex(simulationConfig, static_cast<int>(z_slices.size()), [&](int i) {
+        const double z = z_slices[static_cast<size_t>(i)];
         Image synthImage = cv::Mat(shape, CV_32F, cv::Scalar(_backgroundValue));
         for (const auto &cell : cells)
         {
             cell.draw(synthImage, simulationConfig, z);
         }
-        frame.push_back(synthImage);
-    }
+        frame[static_cast<size_t>(i)] = synthImage;
+    });
     return frame;
 }
 
@@ -163,7 +201,7 @@ std::vector<cv::Mat> Frame::generateSynthFrameFast(Spheroid &oldCell, Spheroid &
     }
 
     cv::Size shape = getImageShape(); // Assuming getImageShape() returns a cv::Size
-    std::vector<cv::Mat> synthFrame;
+    std::vector<cv::Mat> synthFrame = _synthFrame;
 
     // Calculate the smallest box that contains both the old and new cell
     MinBox minBox = oldCell.calculateMinimumBox(newCell);
@@ -177,30 +215,30 @@ std::vector<cv::Mat> Frame::generateSynthFrameFast(Spheroid &oldCell, Spheroid &
     int affectedMin = -1;
     int affectedMax = -1;
 
-    // preallocate space to avoid reallocation
-    synthFrame.reserve(z_slices.size());
     for (size_t i = 0; i < z_slices.size(); ++i)
     {
-        double z = z_slices[i];
-        // If the z-slice is outside the min/max box, append the existing synthetic image to the stack
-        // index 2 is representing the z parameter
-        if (z < minCorner[2] || z > maxCorner[2])
-        {
-            synthFrame.push_back(_synthFrame[i]);
+        const double z = z_slices[i];
+        if (z < minCorner[2] || z > maxCorner[2]) {
             continue;
         }
-
         if (affectedMin < 0) affectedMin = static_cast<int>(i);
         affectedMax = static_cast<int>(i);
+    }
 
-        cv::Mat synthImage = cv::Mat(shape, CV_32F, cv::Scalar(_backgroundValue));
+    if (affectedMin >= 0 && affectedMax >= affectedMin) {
+        const int affectedCount = affectedMax - affectedMin + 1;
+        forEachSliceIndex(simulationConfig, affectedCount, [&](int localIndex) {
+            const int sliceIndex = affectedMin + localIndex;
+            const double z = z_slices[static_cast<size_t>(sliceIndex)];
+            cv::Mat synthImage = cv::Mat(shape, CV_32F, cv::Scalar(_backgroundValue));
 
-        for (const auto &cell : cells)
-        {
-            cell.draw(synthImage, simulationConfig, z);
-        }
+            for (const auto &cell : cells)
+            {
+                cell.draw(synthImage, simulationConfig, z);
+            }
 
-        synthFrame.push_back(synthImage);
+            synthFrame[static_cast<size_t>(sliceIndex)] = synthImage;
+        });
     }
 
     if (outAffectedZMin) *outAffectedZMin = affectedMin;
@@ -211,10 +249,10 @@ std::vector<cv::Mat> Frame::generateSynthFrameFast(Spheroid &oldCell, Spheroid &
 
 std::vector<cv::Mat> Frame::generateOutputFrame()
 {
-    std::vector<cv::Mat> realFrameWithOutlines;
+    std::vector<cv::Mat> realFrameWithOutlines(_realFrame.size());
 
-    for (size_t i = 0; i < _realFrame.size(); ++i)
-    {
+    forEachSliceIndex(simulationConfig, static_cast<int>(_realFrame.size()), [&](int sliceIndex) {
+        const size_t i = static_cast<size_t>(sliceIndex);
         const cv::Mat &realImage = _realFrame[i];
         double z = z_slices[i];
         const float outlineIntensity = std::min(1.0f, _backgroundValue * 1.6f);
@@ -233,18 +271,19 @@ std::vector<cv::Mat> Frame::generateOutputFrame()
             outputFrame.convertTo(outputFrame, CV_8U, 255.0);
         }
 
-        realFrameWithOutlines.push_back(outputFrame);
-    }
+        realFrameWithOutlines[i] = outputFrame;
+    });
 
     return realFrameWithOutlines;
 }
 
 std::vector<cv::Mat> Frame::generateOutputSynthFrame()
 {
-    std::vector<cv::Mat> outputSynthFrame;
+    std::vector<cv::Mat> outputSynthFrame(_synthFrame.size());
 
-    for (const auto &synthImage : _synthFrame)
-    {
+    forEachSliceIndex(simulationConfig, static_cast<int>(_synthFrame.size()), [&](int sliceIndex) {
+        const size_t i = static_cast<size_t>(sliceIndex);
+        const auto &synthImage = _synthFrame[i];
         cv::Mat outputImage;
         if (synthImage.depth() != CV_8U)
         {
@@ -256,8 +295,8 @@ std::vector<cv::Mat> Frame::generateOutputSynthFrame()
             outputImage = synthImage.clone();
         }
 
-        outputSynthFrame.push_back(outputImage);
-    }
+        outputSynthFrame[i] = outputImage;
+    });
 
     return outputSynthFrame;
 }
@@ -1033,6 +1072,7 @@ CostCallbackPair Frame::trySplitCellPhased(
     bool useSnapshotDirection,
     const ProbabilityConfig &probConfig)
 {
+    const auto splitTimerStart = std::chrono::steady_clock::now();
     const auto noop = [](bool) {};
     if (cellIndex >= cells.size()) return {0.0, noop};
 
@@ -1228,6 +1268,7 @@ CostCallbackPair Frame::trySplitCellPhased(
     }
 
     GatherStats gstats;
+    const auto gatherPcaTimerStart = std::chrono::steady_clock::now();
     std::vector<BrightPixel> pixels = gatherBrightPixelsVoronoi(
         _realFrame,
         _backgroundValue,
@@ -1408,6 +1449,7 @@ CostCallbackPair Frame::trySplitCellPhased(
     if (static_cast<int>(candidates.size()) > Kmax) {
         candidates.resize(Kmax);
     }
+    const double gatherPcaSeconds = elapsedSeconds(gatherPcaTimerStart);
 
     // --- 4. Evaluate each candidate via a short burn-in ---
     // Save the pre-split state to revert cheaply. Use the current _synthFrame
@@ -1484,6 +1526,7 @@ CostCallbackPair Frame::trySplitCellPhased(
               << " minorSigma=" << savedPerturbMinor.sigma << "->" << Spheroid::cellConfig.minorRadius.sigma
               << std::endl;
 
+    const auto candidateTimerStart = std::chrono::steady_clock::now();
     for (size_t ci = 0; ci < candidates.size(); ++ci) {
         const auto &cand = candidates[ci];
         Spheroid child1 = buildDaughter(parentName + "0", cand.d1Pos, parent,
@@ -1554,6 +1597,7 @@ CostCallbackPair Frame::trySplitCellPhased(
         _currentCost = savedCost;
         _currentCostPerSlice = savedPerSlice;
     }
+    const double candidateSeconds = elapsedSeconds(candidateTimerStart);
 
     if (bestIdx < 0) {
         // Restore main-loop perturbation sigmas before the early return.
@@ -1575,7 +1619,9 @@ CostCallbackPair Frame::trySplitCellPhased(
     // best candidate's state (reinstalled), and the post-refine state is
     // re-captured as bestCells / bestSynth / etc.
     const int refineIters = std::max(0, probConfig.split_final_refine_iterations);
+    double refineSeconds = 0.0;
     if (refineIters > 0) {
+        const auto refineTimerStart = std::chrono::steady_clock::now();
         // Reinstall the winning candidate's state.
         cells = bestCells;
         _synthFrame = bestSynth;
@@ -1650,6 +1696,7 @@ CostCallbackPair Frame::trySplitCellPhased(
         _synthFrame = savedSynth;
         _currentCost = savedCost;
         _currentCostPerSlice = savedPerSlice;
+        refineSeconds = elapsedSeconds(refineTimerStart);
     }
 
     // Restore main-loop perturbation sigmas before the gate sequence.
@@ -1659,6 +1706,17 @@ CostCallbackPair Frame::trySplitCellPhased(
     Spheroid::cellConfig.majorRadius = savedPerturbMajor;
     Spheroid::cellConfig.bRadius     = savedPerturbB;
     Spheroid::cellConfig.minorRadius = savedPerturbMinor;
+
+    std::cout << "  [Split Timing] " << parentName
+              << " total_so_far_sec=" << elapsedSeconds(splitTimerStart)
+              << " gather_pca_sec=" << gatherPcaSeconds
+              << " candidate_eval_sec=" << candidateSeconds
+              << " final_refine_sec=" << refineSeconds
+              << " candidates=" << candidates.size()
+              << " burn_iters=" << burnIters
+              << " refine_iters=" << refineIters
+              << " parallel_threads=" << simulationConfig.parallel_threads
+              << std::endl;
 
     // --- 5. Bio checks on the best candidate's final state ---
     // Rebuild daughter indices from bestCells (parent was at cellIndex,

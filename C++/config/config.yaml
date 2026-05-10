@@ -147,6 +147,11 @@ simulation:
 
   adaptive_background_expand_factor: 1.1
   adaptive_background_top_fraction: 0.4
+  # Runtime parallelism. Keep local Mac runs at 1 by default to avoid memory
+  # pressure. On Openlab, either set this to 16 or run with:
+  #   CELLUNIVERSE_THREADS=16 ./celluniverse ...
+  parallel_threads: 1
+  parallel_min_slices: 8
 
 # Triaxial split detection pipeline (2026-04-11 redesign).
 # Classification: cells with snapshot.shapeElongation > T_classify become

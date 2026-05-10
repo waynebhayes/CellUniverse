@@ -95,6 +95,8 @@ class Spheroid
 
         void generateInverseRotationMatrix(std::array<double, 9> &R_T) const;
 
+        cv::Point3f axisAlignedExtents() const;
+
         bool computeSliceBounds(const cv::Mat &image, float z,
                                 int &minX, int &maxX, int &minY, int &maxY) const;
 

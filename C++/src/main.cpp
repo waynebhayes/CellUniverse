@@ -15,6 +15,8 @@
 #include "LineageTreeCreator.hpp"
 #include <chrono>
 #include <algorithm>
+#include <cstdlib>
+#include <thread>
 
 
 class Args
@@ -43,6 +45,57 @@ void loadConfig(const std::string &path, BaseConfig &config)
 {
     YAML::Node node = YAML::LoadFile(path);
     config.explodeConfig(node);
+}
+
+void applyRuntimeOverrides(BaseConfig &config)
+{
+    const char *threadEnv = std::getenv("CELLUNIVERSE_THREADS");
+    std::string threadSource = "config";
+
+    if (threadEnv != nullptr && std::string(threadEnv).size() > 0)
+    {
+        try
+        {
+            config.simulation.parallel_threads = std::stoi(threadEnv);
+            threadSource = "CELLUNIVERSE_THREADS";
+        }
+        catch (const std::exception &)
+        {
+            std::cerr << "[WARN] Ignoring invalid CELLUNIVERSE_THREADS="
+                      << threadEnv << "; using config value "
+                      << config.simulation.parallel_threads << '\n';
+        }
+    }
+
+    config.simulation.parallel_threads = std::max(1, config.simulation.parallel_threads);
+    config.simulation.parallel_min_slices = std::max(1, config.simulation.parallel_min_slices);
+
+    const unsigned int hardwareThreads = std::thread::hardware_concurrency();
+    if (hardwareThreads > 0 &&
+        config.simulation.parallel_threads > static_cast<int>(hardwareThreads))
+    {
+        std::cerr << "[WARN] Requested parallel_threads="
+                  << config.simulation.parallel_threads
+                  << " but hardware_concurrency=" << hardwareThreads
+                  << "; clamping to hardware_concurrency." << '\n';
+        config.simulation.parallel_threads = static_cast<int>(hardwareThreads);
+    }
+
+    cv::setNumThreads(config.simulation.parallel_threads);
+
+    std::cout << "[Runtime Parallelism] mode="
+              << (config.simulation.parallel_threads > 1 ? "parallel_z_slices" : "single_thread")
+              << " threads=" << config.simulation.parallel_threads
+              << " source=" << threadSource
+              << " hardware_concurrency=" << hardwareThreads
+              << " parallel_min_slices=" << config.simulation.parallel_min_slices
+              << " opencv_threads=" << cv::getNumThreads()
+              << std::endl;
+    std::cout << "[Efficiency Metric] primary=seconds_per_frame"
+              << " normalized=seconds_per_cell_iteration"
+              << " realtime=iterations_per_second"
+              << " note=split_attempts_are_reported_separately_because_they_are_much_more_expensive"
+              << std::endl;
 }
 
 Args initArgs(char *argv[]) {
@@ -155,6 +208,7 @@ int main(int argc, char *argv[])
         GroundTruthArgs args = initGroundTruthArgs(argv);
         BaseConfig config;
         loadConfig(args.config, config);
+        applyRuntimeOverrides(config);
         config.printConfig();
 
         fs::create_directories(args.output);
@@ -179,6 +233,7 @@ int main(int argc, char *argv[])
     loadConfig(args.config, config);
 
     ImageHandler::applyDatasetRuntimeProfile(args.input, config);
+    applyRuntimeOverrides(config);
 
     // load file paths
     PathVec imageFilePaths = ImageHandler::getImageFilePaths(args.input, args.firstFrame, args.lastFrame, config);
@@ -212,7 +267,13 @@ int main(int argc, char *argv[])
     auto start = std::chrono::steady_clock::now();
     for (int frame = 0; frame < lineage.length(); ++frame)
     {
+        const auto frameWallStart = std::chrono::steady_clock::now();
+        const int displayFrame = args.firstFrame + frame;
+
+        auto stageStart = std::chrono::steady_clock::now();
         lineage.optimize(frame);
+        const double optimizeSeconds =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - stageStart).count();
 
         if (showLineageTreeWindow)
         {
@@ -220,11 +281,30 @@ int main(int argc, char *argv[])
                                LineageTreeCreator::makeCellViz(lineage.getCells(frame)));
         }
 
+        stageStart = std::chrono::steady_clock::now();
         lineage.saveImages(frame);
+        const double saveImagesSeconds =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - stageStart).count();
 
+        stageStart = std::chrono::steady_clock::now();
         lineage.saveCells(frame);
+        const double saveCellsSeconds =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - stageStart).count();
 
+        stageStart = std::chrono::steady_clock::now();
         lineage.copyCellsForward(frame + 1);
+        const double carrySeconds =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - stageStart).count();
+
+        const double frameWallSeconds =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - frameWallStart).count();
+        std::cout << "[Frame Wall Timing] frame=" << displayFrame
+                  << " wall_sec=" << frameWallSeconds
+                  << " optimize_sec=" << optimizeSeconds
+                  << " save_images_sec=" << saveImagesSeconds
+                  << " save_cells_sec=" << saveCellsSeconds
+                  << " carry_forward_sec=" << carrySeconds
+                  << std::endl;
     }
     lineageTree.close();
     auto end = std::chrono::steady_clock::now(); // timer end
