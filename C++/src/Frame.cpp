@@ -1,6 +1,7 @@
 #include "../includes/Frame.hpp"
 
 #include <chrono>
+#include <numeric>
 #include <sstream>
 
 namespace {
@@ -650,8 +651,10 @@ bool pca3DWithCentroids(
     ev1.z = static_cast<float>(ev1.z / n);
     eigvec1Out = ev1;
 
-    // Project every pixel onto ev1, find the median projection, partition
-    // points into two groups, compute weighted centroid of each group.
+    // Project every pixel onto ev1, then do a tiny weighted 1D k means.
+    // Median splitting fails when one daughter is dimmer or smaller because
+    // the median can cut the larger daughter in half. Weighted k means keeps
+    // a small but real second lobe from being averaged back into the parent.
     std::vector<float> projections;
     projections.reserve(points.size());
     for (const auto &bp : points) {
@@ -661,27 +664,76 @@ bool pca3DWithCentroids(
         projections.push_back(px * ev1.x + py * ev1.y + pz * ev1.z);
     }
 
-    std::vector<float> sortedProj = projections;
-    std::nth_element(
-        sortedProj.begin(),
-        sortedProj.begin() + sortedProj.size() / 2,
-        sortedProj.end());
-    const float median = sortedProj[sortedProj.size() / 2];
+    std::vector<size_t> order(projections.size());
+    std::iota(order.begin(), order.end(), 0);
+    std::sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+        return projections[a] < projections[b];
+    });
+
+    const auto weightedQuantile = [&](float q) {
+        const double target = std::clamp(q, 0.0f, 1.0f) * wsum;
+        double acc = 0.0;
+        for (size_t idx : order) {
+            acc += points[idx].weight;
+            if (acc >= target) {
+                return projections[idx];
+            }
+        }
+        return projections[order.back()];
+    };
+
+    float centerLo = weightedQuantile(0.25f);
+    float centerHi = weightedQuantile(0.75f);
+    if (std::abs(centerHi - centerLo) < 1e-4f) {
+        centerLo = projections[order.front()];
+        centerHi = projections[order.back()];
+    }
+    if (std::abs(centerHi - centerLo) < 1e-4f) return false;
+
+    std::vector<unsigned char> highCluster(points.size(), 0);
+    for (int iter = 0; iter < 16; ++iter) {
+        double sumLoProj = 0.0, sumHiProj = 0.0;
+        double wLoProj = 0.0, wHiProj = 0.0;
+        for (size_t i = 0; i < points.size(); ++i) {
+            const float p = projections[i];
+            const bool high =
+                std::abs(p - centerHi) < std::abs(p - centerLo);
+            highCluster[i] = high ? 1 : 0;
+            if (high) {
+                sumHiProj += static_cast<double>(p) * points[i].weight;
+                wHiProj += points[i].weight;
+            } else {
+                sumLoProj += static_cast<double>(p) * points[i].weight;
+                wLoProj += points[i].weight;
+            }
+        }
+        if (wLoProj < 1e-6 || wHiProj < 1e-6) return false;
+        const float nextLo = static_cast<float>(sumLoProj / wLoProj);
+        const float nextHi = static_cast<float>(sumHiProj / wHiProj);
+        if (std::abs(nextLo - centerLo) < 1e-3f &&
+            std::abs(nextHi - centerHi) < 1e-3f) {
+            centerLo = nextLo;
+            centerHi = nextHi;
+            break;
+        }
+        centerLo = nextLo;
+        centerHi = nextHi;
+    }
 
     cv::Point3f sumLo{0, 0, 0}, sumHi{0, 0, 0};
     double wLo = 0.0, wHi = 0.0;
     for (size_t i = 0; i < points.size(); ++i) {
         const auto &bp = points[i];
-        if (projections[i] < median) {
-            sumLo.x += bp.pos.x * bp.weight;
-            sumLo.y += bp.pos.y * bp.weight;
-            sumLo.z += bp.pos.z * bp.weight;
-            wLo += bp.weight;
-        } else {
+        if (highCluster[i]) {
             sumHi.x += bp.pos.x * bp.weight;
             sumHi.y += bp.pos.y * bp.weight;
             sumHi.z += bp.pos.z * bp.weight;
             wHi += bp.weight;
+        } else {
+            sumLo.x += bp.pos.x * bp.weight;
+            sumLo.y += bp.pos.y * bp.weight;
+            sumLo.z += bp.pos.z * bp.weight;
+            wLo += bp.weight;
         }
     }
     if (wLo < 1e-6 || wHi < 1e-6) return false;
@@ -1445,6 +1497,129 @@ CostCallbackPair Frame::trySplitCellPhased(
         }
     }
 
+    if (probConfig.split_far_candidate_enabled && !pixels.empty()) {
+        const cv::Point3f livePos(liveParent.getX(), liveParent.getY(), liveParent.getZ());
+        std::vector<std::pair<float, size_t>> distanceOrder;
+        distanceOrder.reserve(pixels.size());
+        double totalWeight = 0.0;
+        for (size_t i = 0; i < pixels.size(); ++i) {
+            const cv::Point3f delta = pixels[i].pos - livePos;
+            const float dist = static_cast<float>(cv::norm(delta));
+            distanceOrder.emplace_back(dist, i);
+            totalWeight += pixels[i].weight;
+        }
+
+        if (totalWeight > 1e-6) {
+            std::sort(distanceOrder.begin(), distanceOrder.end(),
+                      [](const auto &a, const auto &b) { return a.first < b.first; });
+
+            const double quantileTarget =
+                std::clamp(probConfig.split_far_candidate_quantile, 0.0f, 1.0f) * totalWeight;
+            double cumulativeWeight = 0.0;
+            float quantileDistance = distanceOrder.back().first;
+            for (const auto &entry : distanceOrder) {
+                cumulativeWeight += pixels[entry.second].weight;
+                if (cumulativeWeight >= quantileTarget) {
+                    quantileDistance = entry.first;
+                    break;
+                }
+            }
+
+            const float minFarDistance = std::max(
+                srcMaxR * std::max(0.0f, probConfig.split_far_candidate_min_distance_fraction),
+                quantileDistance);
+
+            const cv::Point3f farAnchor = pixels[distanceOrder.back().second].pos;
+            const float requiredSeparation =
+                srcMaxR * std::max(0.0f, probConfig.split_far_candidate_min_distance_fraction);
+            const float anchorSeparation =
+                static_cast<float>(cv::norm(farAnchor - livePos));
+            if (anchorSeparation >= requiredSeparation) {
+                candidates.insert(candidates.begin(), {livePos, farAnchor, "far_residual_anchor"});
+                std::cout << "  [Split Far Candidate] " << parentName
+                          << " live=(" << livePos.x << "," << livePos.y << "," << livePos.z << ")"
+                          << " anchor=(" << farAnchor.x << "," << farAnchor.y << "," << farAnchor.z << ")"
+                          << " separation=" << anchorSeparation
+                          << " minDistance=" << minFarDistance
+                          << " mode=anchor"
+                          << std::endl;
+            }
+
+            const float farClusterRadius = std::max(1.0f, srcMaxR);
+
+            cv::Point3f farSum(0.0f, 0.0f, 0.0f);
+            double farWeight = 0.0;
+            int farCount = 0;
+            for (const auto &entry : distanceOrder) {
+                if (entry.first < minFarDistance) continue;
+                const BrightPixel &bp = pixels[entry.second];
+                if (cv::norm(bp.pos - farAnchor) > farClusterRadius) continue;
+                farSum.x += bp.pos.x * bp.weight;
+                farSum.y += bp.pos.y * bp.weight;
+                farSum.z += bp.pos.z * bp.weight;
+                farWeight += bp.weight;
+                ++farCount;
+            }
+
+            const float farWeightFraction =
+                static_cast<float>(farWeight / std::max(totalWeight, 1e-6));
+            if (farWeight > 1e-6 &&
+                farWeightFraction >= probConfig.split_far_candidate_min_weight_fraction) {
+                const cv::Point3f farCentroid(
+                    farSum.x / static_cast<float>(farWeight),
+                    farSum.y / static_cast<float>(farWeight),
+                    farSum.z / static_cast<float>(farWeight));
+                const float farSeparation =
+                    static_cast<float>(cv::norm(farCentroid - livePos));
+                if (farSeparation >= requiredSeparation) {
+                    candidates.insert(candidates.begin(), {livePos, farCentroid, "far_residual_live"});
+                    std::cout << "  [Split Far Candidate] " << parentName
+                              << " live=(" << livePos.x << "," << livePos.y << "," << livePos.z << ")"
+                              << " anchor=(" << farAnchor.x << "," << farAnchor.y << "," << farAnchor.z << ")"
+                              << " farCentroid=(" << farCentroid.x << "," << farCentroid.y << "," << farCentroid.z << ")"
+                              << " separation=" << farSeparation
+                              << " minDistance=" << minFarDistance
+                              << " clusterRadius=" << farClusterRadius
+                              << " farCount=" << farCount
+                              << " farWeightFraction=" << farWeightFraction
+                              << std::endl;
+                }
+            }
+        }
+    }
+
+    if (probConfig.split_snapshot_xy_candidate_enabled &&
+        snapshotValid &&
+        snapshot.longAxisLength > 1e-3f) {
+        cv::Point3f dirXY(snapshot.longAxisDir.x, snapshot.longAxisDir.y, 0.0f);
+        const float dirXYNorm = static_cast<float>(cv::norm(dirXY));
+        if (dirXYNorm > 1e-3f) {
+            dirXY.x /= dirXYNorm;
+            dirXY.y /= dirXYNorm;
+            const cv::Point3f livePos(liveParent.getX(), liveParent.getY(), liveParent.getZ());
+            const float planarSep = std::max(
+                snapshot.longAxisLength * std::max(0.0f, probConfig.split_snapshot_xy_separation_scale),
+                srcMaxR * std::max(0.0f, probConfig.split_snapshot_xy_min_parent_radius_fraction));
+            for (float sign : {-1.0f, 1.0f}) {
+                const cv::Point3f d2(
+                    livePos.x + sign * planarSep * dirXY.x,
+                    livePos.y + sign * planarSep * dirXY.y,
+                    livePos.z);
+                candidates.insert(candidates.begin(), {
+                    livePos,
+                    d2,
+                    sign < 0.0f ? "snapshot_xy_far-" : "snapshot_xy_far+"
+                });
+                std::cout << "  [Split Snapshot XY Candidate] " << parentName
+                          << " live=(" << livePos.x << "," << livePos.y << "," << livePos.z << ")"
+                          << " d2=(" << d2.x << "," << d2.y << "," << d2.z << ")"
+                          << " separation=" << planarSep
+                          << " sign=" << sign
+                          << std::endl;
+            }
+        }
+    }
+
     const int Kmax = std::max(1, probConfig.split_candidates_per_attempt);
     if (static_cast<int>(candidates.size()) > Kmax) {
         candidates.resize(Kmax);
@@ -1753,6 +1928,26 @@ CostCallbackPair Frame::trySplitCellPhased(
         return {0.0, noop};
     }
 
+    const cv::Point3f daughterD1Pos(bestD1.getX(), bestD1.getY(), bestD1.getZ());
+    const cv::Point3f daughterD2Pos(bestD2.getX(), bestD2.getY(), bestD2.getZ());
+    const float daughterSeparation = static_cast<float>(cv::norm(daughterD2Pos - daughterD1Pos));
+    const float daughterSeparationRatio =
+        (srcMaxR > 1e-6f) ? daughterSeparation / srcMaxR : 0.0f;
+    const float minDaughterSeparation =
+        std::max(0.0f, probConfig.bio_min_daughter_separation_parent_fraction) * srcMaxR;
+    if (minDaughterSeparation > 0.0f && daughterSeparation < minDaughterSeparation) {
+        std::cout << "[Split Reject bio] " << parentName
+                  << " reason=daughter_separation"
+                  << " separation=" << daughterSeparation
+                  << " minSeparation=" << minDaughterSeparation
+                  << " ratio=" << daughterSeparationRatio
+                  << " minRatio=" << probConfig.bio_min_daughter_separation_parent_fraction
+                  << " srcMaxR=" << srcMaxR
+                  << std::endl;
+        restoreLiveParent();
+        return {0.0, noop};
+    }
+
     // Daughter midpoint (shared by the bridge gate below for axis
     // projection and diagnostic logging). Previously also used by a
     // midpoint-near-snapshot-parent gate (2026-04-11 afternoon), but
@@ -1763,9 +1958,9 @@ CostCallbackPair Frame::trySplitCellPhased(
     // gate catches the same false-split patterns directly via the
     // image content.
     const cv::Point3f daughterMidpoint(
-        0.5f * (bestD1.getX() + bestD2.getX()),
-        0.5f * (bestD1.getY() + bestD2.getY()),
-        0.5f * (bestD1.getZ() + bestD2.getZ()));
+        0.5f * (daughterD1Pos.x + daughterD2Pos.x),
+        0.5f * (daughterD1Pos.y + daughterD2Pos.y),
+        0.5f * (daughterD1Pos.z + daughterD2Pos.z));
     bool bridgeStatsValid = false;
     float bridgeGapDensity = 1.0f;
     float bridgeValleyRatio = 1.0f;
@@ -1957,6 +2152,8 @@ CostCallbackPair Frame::trySplitCellPhased(
                   << " rescueStrongBridge=" << rescueStrongBridge
                   << " perfectBridgeRescueStrongBridge=" << perfectBridgeRescueStrongBridge
                   << " overlap=" << bestOverlap
+                  << " separation=" << daughterSeparation
+                  << " separationRatio=" << daughterSeparationRatio
                   << " rescueLowOverlap=" << rescueLowOverlap
                   << " perfectBridgeRescueLowOverlap=" << perfectBridgeRescueLowOverlap
                   << " rescueDriftLimit=" << rescueDriftLimit
@@ -1981,6 +2178,8 @@ CostCallbackPair Frame::trySplitCellPhased(
                   << " gapDensity=" << bridgeGapDensity
                   << " valleyRatio=" << bridgeValleyRatio
                   << " overlap=" << bestOverlap
+                  << " separation=" << daughterSeparation
+                  << " separationRatio=" << daughterSeparationRatio
                   << " drift1=" << drift1
                   << " drift2=" << drift2
                   << " rescueDriftLimit=" << rescueDriftLimit
@@ -1996,6 +2195,8 @@ CostCallbackPair Frame::trySplitCellPhased(
                   << " gapDensity=" << bridgeGapDensity
                   << " valleyRatio=" << bridgeValleyRatio
                   << " overlap=" << bestOverlap
+                  << " separation=" << daughterSeparation
+                  << " separationRatio=" << daughterSeparationRatio
                   << " drift1=" << drift1
                   << " drift2=" << drift2
                   << " rescueDriftLimit=" << rescueDriftLimit
@@ -2019,6 +2220,8 @@ CostCallbackPair Frame::trySplitCellPhased(
     const cv::Point3f acceptedD2R(bestD2.getMajorRadius(), bestD2.getBRadius(), bestD2.getMinorRadius());
     const float acceptedDrift1 = drift1;
     const float acceptedDrift2 = drift2;
+    const float acceptedSeparation = daughterSeparation;
+    const float acceptedSeparationRatio = daughterSeparationRatio;
     const cv::Point3f acceptedSeed1 = bestSeedD1;
     const cv::Point3f acceptedSeed2 = bestSeedD2;
 
@@ -2035,7 +2238,8 @@ CostCallbackPair Frame::trySplitCellPhased(
                              savedCellsCopy, savedSynthCopy, savedPerSliceCopy, savedCostCopy,
                              parentName, costDiff, acceptedD1Pos, acceptedD2Pos,
                              acceptedD1R, acceptedD2R, acceptedSeed1, acceptedSeed2,
-                             acceptedDrift1, acceptedDrift2, acceptedLabel,
+                             acceptedDrift1, acceptedDrift2, acceptedSeparation,
+                             acceptedSeparationRatio, acceptedLabel,
                              liveParentCopy, snapshotParentCopy, cellIndexCopy,
                              snapshotValidCopy](bool accept) mutable {
         if (accept) {
@@ -2046,6 +2250,8 @@ CostCallbackPair Frame::trySplitCellPhased(
             std::cout << "[Split Accepted] " << parentName
                       << " costDiff=" << costDiff
                       << " bestLabel=" << acceptedLabel
+                      << " separation=" << acceptedSeparation
+                      << " separationRatio=" << acceptedSeparationRatio
                       << " seed1=(" << acceptedSeed1.x << "," << acceptedSeed1.y << "," << acceptedSeed1.z << ")"
                       << " d1=(" << acceptedD1Pos.x << "," << acceptedD1Pos.y << "," << acceptedD1Pos.z << ")"
                       << " r1=(" << acceptedD1R.x << "," << acceptedD1R.y << "," << acceptedD1R.z << ")"

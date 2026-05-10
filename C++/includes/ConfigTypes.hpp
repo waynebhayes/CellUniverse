@@ -7,8 +7,25 @@
 #include <memory>
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include "yaml-cpp/yaml.h"
 #include <iostream>
+
+inline std::mt19937 &cellUniverseRandomGenerator()
+{
+    static thread_local std::mt19937 gen([] {
+        const char *seedEnv = std::getenv("CELLUNIVERSE_SEED");
+        if (seedEnv != nullptr && seedEnv[0] != '\0') {
+            char *end = nullptr;
+            const unsigned long seed = std::strtoul(seedEnv, &end, 10);
+            if (end != seedEnv && *end == '\0') {
+                return std::mt19937(static_cast<std::mt19937::result_type>(seed));
+            }
+        }
+        return std::mt19937(std::random_device{}());
+    }());
+    return gen;
+}
 
 class SimulationConfig {
 public:
@@ -161,16 +178,16 @@ public:
     float size_reduction_penalty_weight = 30.0f;
     float split_cost = 80.0f;
     bool split_cost_rescue_enabled = true;
-    float split_cost_rescue_min_fraction = 0.85f;
+    float split_cost_rescue_min_fraction = 0.60f;
     float split_cost_rescue_max_gap_density = 0.05f;
     float split_cost_rescue_max_valley_ratio = 0.35f;
     float split_cost_rescue_max_drift_fraction = 0.25f;
-    float split_cost_rescue_max_overlap_penalty = 1.0f;
+    float split_cost_rescue_max_overlap_penalty = 2.0f;
     bool split_cost_perfect_bridge_rescue_enabled = true;
-    float split_cost_perfect_bridge_rescue_min_fraction = 0.72f;
-    float split_cost_perfect_bridge_rescue_max_gap_density = 0.01f;
-    float split_cost_perfect_bridge_rescue_max_valley_ratio = 0.10f;
-    float split_cost_perfect_bridge_rescue_max_overlap_penalty = 0.25f;
+    float split_cost_perfect_bridge_rescue_min_fraction = 0.25f;
+    float split_cost_perfect_bridge_rescue_max_gap_density = 0.005f;
+    float split_cost_perfect_bridge_rescue_max_valley_ratio = 0.15f;
+    float split_cost_perfect_bridge_rescue_max_overlap_penalty = 0.50f;
 
     float split_direction_agreement_degrees = 20.0f;
     int expected_daughter_pre_pass_iterations = 1;
@@ -197,6 +214,15 @@ public:
     int split_calibration_iterations_per_cell = 50;
     float split_candidate_rotation_delta_degrees = 8.0f;
     float split_candidate_translation_delta_fraction = 0.2f;
+    bool split_far_candidate_enabled = false;
+    float split_far_candidate_min_distance_fraction = 0.70f;
+    float split_far_candidate_quantile = 0.70f;
+    float split_far_candidate_min_weight_fraction = 0.01f;
+    int split_reject_retry_limit = 2;
+    int split_reject_retry_cooldown_iterations = 500;
+    bool split_snapshot_xy_candidate_enabled = true;
+    float split_snapshot_xy_separation_scale = 1.8f;
+    float split_snapshot_xy_min_parent_radius_fraction = 1.5f;
 
     float bio_daughter_size_ratio_max = 1.5f;
     float bio_combined_volume_min_fraction = 0.6f;
@@ -209,7 +235,8 @@ public:
     // footprint during burn-in (the f4/f5 false-split pathology where one
     // daughter wanders to absorb a neighbor cell).
     float bio_max_drift_parent_fraction = 0.4f;
-    float bio_max_drift_daughter_fraction = 0.8f;
+    float bio_max_drift_daughter_fraction = 1.0f;
+    float bio_min_daughter_separation_parent_fraction = 1.70f;
 
     // Midpoint-near-parent gate. Reject when the daughter midpoint lies
     // further than `bio_max_midpoint_parent_fraction * srcMaxR` from the
@@ -298,11 +325,21 @@ public:
         if (node["split_calibration_iterations_per_cell"]) split_calibration_iterations_per_cell = node["split_calibration_iterations_per_cell"].as<int>();
         if (node["split_candidate_rotation_delta_degrees"]) split_candidate_rotation_delta_degrees = node["split_candidate_rotation_delta_degrees"].as<float>();
         if (node["split_candidate_translation_delta_fraction"]) split_candidate_translation_delta_fraction = node["split_candidate_translation_delta_fraction"].as<float>();
+        if (node["split_far_candidate_enabled"]) split_far_candidate_enabled = node["split_far_candidate_enabled"].as<bool>();
+        if (node["split_far_candidate_min_distance_fraction"]) split_far_candidate_min_distance_fraction = node["split_far_candidate_min_distance_fraction"].as<float>();
+        if (node["split_far_candidate_quantile"]) split_far_candidate_quantile = node["split_far_candidate_quantile"].as<float>();
+        if (node["split_far_candidate_min_weight_fraction"]) split_far_candidate_min_weight_fraction = node["split_far_candidate_min_weight_fraction"].as<float>();
+        if (node["split_reject_retry_limit"]) split_reject_retry_limit = node["split_reject_retry_limit"].as<int>();
+        if (node["split_reject_retry_cooldown_iterations"]) split_reject_retry_cooldown_iterations = node["split_reject_retry_cooldown_iterations"].as<int>();
+        if (node["split_snapshot_xy_candidate_enabled"]) split_snapshot_xy_candidate_enabled = node["split_snapshot_xy_candidate_enabled"].as<bool>();
+        if (node["split_snapshot_xy_separation_scale"]) split_snapshot_xy_separation_scale = node["split_snapshot_xy_separation_scale"].as<float>();
+        if (node["split_snapshot_xy_min_parent_radius_fraction"]) split_snapshot_xy_min_parent_radius_fraction = node["split_snapshot_xy_min_parent_radius_fraction"].as<float>();
         if (node["bio_daughter_size_ratio_max"]) bio_daughter_size_ratio_max = node["bio_daughter_size_ratio_max"].as<float>();
         if (node["bio_combined_volume_min_fraction"]) bio_combined_volume_min_fraction = node["bio_combined_volume_min_fraction"].as<float>();
         if (node["bio_combined_volume_max_fraction"]) bio_combined_volume_max_fraction = node["bio_combined_volume_max_fraction"].as<float>();
         if (node["bio_max_drift_parent_fraction"]) bio_max_drift_parent_fraction = node["bio_max_drift_parent_fraction"].as<float>();
         if (node["bio_max_drift_daughter_fraction"]) bio_max_drift_daughter_fraction = node["bio_max_drift_daughter_fraction"].as<float>();
+        if (node["bio_min_daughter_separation_parent_fraction"]) bio_min_daughter_separation_parent_fraction = node["bio_min_daughter_separation_parent_fraction"].as<float>();
         if (node["bio_max_midpoint_parent_fraction"]) bio_max_midpoint_parent_fraction = node["bio_max_midpoint_parent_fraction"].as<float>();
         if (node["bio_max_single_daughter_volume_fraction"]) bio_max_single_daughter_volume_fraction = node["bio_max_single_daughter_volume_fraction"].as<float>();
         if (node["bio_bridge_max_gap_density"]) bio_bridge_max_gap_density = node["bio_bridge_max_gap_density"].as<float>();
@@ -336,7 +373,29 @@ public:
         std::cout << "size_reduction_penalty_weight: " << size_reduction_penalty_weight << '\n';
         std::cout << "split_candidates_per_attempt: " << split_candidates_per_attempt << '\n';
         std::cout << "split_candidate_burn_in_iterations: " << split_candidate_burn_in_iterations << '\n';
-        std::cout << "bio_daughter_size_ratio_max: " << bio_daughter_size_ratio_max << std::endl;
+        std::cout << "split_final_refine_iterations: " << split_final_refine_iterations << '\n';
+        std::cout << "split_calibration_iterations_per_cell: " << split_calibration_iterations_per_cell << '\n';
+        std::cout << "split_candidate_rotation_delta_degrees: " << split_candidate_rotation_delta_degrees << '\n';
+        std::cout << "split_candidate_translation_delta_fraction: " << split_candidate_translation_delta_fraction << '\n';
+        std::cout << "split_far_candidate_enabled: " << split_far_candidate_enabled << '\n';
+        std::cout << "split_far_candidate_min_distance_fraction: " << split_far_candidate_min_distance_fraction << '\n';
+        std::cout << "split_far_candidate_quantile: " << split_far_candidate_quantile << '\n';
+        std::cout << "split_far_candidate_min_weight_fraction: " << split_far_candidate_min_weight_fraction << '\n';
+        std::cout << "split_reject_retry_limit: " << split_reject_retry_limit << '\n';
+        std::cout << "split_reject_retry_cooldown_iterations: " << split_reject_retry_cooldown_iterations << '\n';
+        std::cout << "split_snapshot_xy_candidate_enabled: " << split_snapshot_xy_candidate_enabled << '\n';
+        std::cout << "split_snapshot_xy_separation_scale: " << split_snapshot_xy_separation_scale << '\n';
+        std::cout << "split_snapshot_xy_min_parent_radius_fraction: " << split_snapshot_xy_min_parent_radius_fraction << '\n';
+        std::cout << "bio_daughter_size_ratio_max: " << bio_daughter_size_ratio_max << '\n';
+        std::cout << "bio_combined_volume_min_fraction: " << bio_combined_volume_min_fraction << '\n';
+        std::cout << "bio_combined_volume_max_fraction: " << bio_combined_volume_max_fraction << '\n';
+        std::cout << "bio_max_drift_parent_fraction: " << bio_max_drift_parent_fraction << '\n';
+        std::cout << "bio_max_drift_daughter_fraction: " << bio_max_drift_daughter_fraction << '\n';
+        std::cout << "bio_min_daughter_separation_parent_fraction: " << bio_min_daughter_separation_parent_fraction << '\n';
+        std::cout << "bio_max_midpoint_parent_fraction: " << bio_max_midpoint_parent_fraction << '\n';
+        std::cout << "bio_max_single_daughter_volume_fraction: " << bio_max_single_daughter_volume_fraction << '\n';
+        std::cout << "bio_bridge_max_gap_density: " << bio_bridge_max_gap_density << '\n';
+        std::cout << "bio_bridge_max_valley_ratio: " << bio_bridge_max_valley_ratio << std::endl;
     }
 };
 
@@ -370,7 +429,7 @@ public:
         sigma = node["sigma"].as<float>();
     }
     [[nodiscard]] Sample samplePerturb() const {
-        thread_local std::mt19937 gen{std::random_device{}()};
+        std::mt19937 &gen = cellUniverseRandomGenerator();
         std::uniform_real_distribution<float> dis(0.0f, 1.0f);
         const bool hasSeparateSignProbabilities = increase_prob >= 0.0f || decrease_prob >= 0.0f;
         if (!hasSeparateSignProbabilities) {

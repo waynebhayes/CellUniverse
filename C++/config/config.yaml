@@ -164,23 +164,24 @@ prob:
   shape_elongation_classify_threshold: 1.20
 
   split_cost: 15
-  # Narrow rescue for true divisions that barely miss split_cost. This keeps
-  # the normal split_cost gate unchanged and only accepts near misses with
-  # very strong bridge, drift, and overlap evidence.
+  # Evidence rescue for true divisions that miss split_cost because the
+  # single parent already sits on one daughter. A split still needs clear
+  # bridge, drift, and overlap evidence; this avoids losing cells on a fixed
+  # absolute cost threshold.
   split_cost_rescue_enabled: true
-  split_cost_rescue_min_fraction: 0.85
+  split_cost_rescue_min_fraction: 0.60
   split_cost_rescue_max_gap_density: 0.05
   split_cost_rescue_max_valley_ratio: 0.35
   split_cost_rescue_max_drift_fraction: 0.25
-  split_cost_rescue_max_overlap_penalty: 1.0
-  # Even narrower rescue for frame-80-style true divisions where the bridge is
-  # essentially empty, daughters stay glued to the GT seed line, and the split
-  # still only misses split_cost on residual by a small margin.
+  split_cost_rescue_max_overlap_penalty: 2.0
+  # Narrow rescue for true divisions with an almost empty bridge between
+  # daughters. This handles cases where the single parent already explains
+  # much of the signal, so the residual cost gain is smaller than split_cost.
   split_cost_perfect_bridge_rescue_enabled: true
-  split_cost_perfect_bridge_rescue_min_fraction: 0.72
-  split_cost_perfect_bridge_rescue_max_gap_density: 0.01
-  split_cost_perfect_bridge_rescue_max_valley_ratio: 0.10
-  split_cost_perfect_bridge_rescue_max_overlap_penalty: 0.25
+  split_cost_perfect_bridge_rescue_min_fraction: 0.25
+  split_cost_perfect_bridge_rescue_max_gap_density: 0.005
+  split_cost_perfect_bridge_rescue_max_valley_ratio: 0.15
+  split_cost_perfect_bridge_rescue_max_overlap_penalty: 0.50
   overlap_penalty_weight: 500.0
   size_reduction_penalty_weight: 30
 
@@ -202,6 +203,24 @@ prob:
   split_calibration_iterations_per_cell: 50
   split_candidate_rotation_delta_degrees: 8
   split_candidate_translation_delta_fraction: 0.2
+  # Candidate rescue for asymmetric true divisions: if the live parent has
+  # already moved onto one daughter, use the far bright residual assigned to
+  # this cell as a second daughter candidate.
+  split_far_candidate_enabled: false
+  split_far_candidate_min_distance_fraction: 0.70
+  split_far_candidate_quantile: 0.70
+  split_far_candidate_min_weight_fraction: 0.01
+  # A failed split can be order dependent when two nearby parents are both
+  # about to divide. Retry a rejected parent later after nearby cells have
+  # had a chance to update their claim points.
+  split_reject_retry_limit: 2
+  split_reject_retry_cooldown_iterations: 500
+  # Extra candidates for low-elongation true splits where z evidence is noisy:
+  # try the previous-frame long-axis direction projected into x/y, with both
+  # signs, and let burn-in plus the normal gates choose or reject it.
+  split_snapshot_xy_candidate_enabled: true
+  split_snapshot_xy_separation_scale: 1.8
+  split_snapshot_xy_min_parent_radius_fraction: 1.5
 
   bio_daughter_size_ratio_max: 1.5
   bio_combined_volume_min_fraction: 0.6
@@ -209,10 +228,13 @@ prob:
   # Drift-from-seed bio gate (2026-04-11). Rejects a split when the best
   # candidate's post-burn-in daughter center has wandered more than
   # max(parent_frac * parent_maxR, daughter_frac * daughter_maxR) from the
-  # seed position. Catches daughters escaping the parent footprint during
-  # burn-in (f4/f5 false-split pathology).
+  # seed position. The daughter-side limit is one daughter radius so dim
+  # true daughters can still settle onto the image peak.
   bio_max_drift_parent_fraction: 0.4
-  bio_max_drift_daughter_fraction: 0.8
+  bio_max_drift_daughter_fraction: 1.0
+  # Prevents a still continuous cell from being split before the two daughter
+  # centers are far enough apart compared with the parent size.
+  bio_min_daughter_separation_parent_fraction: 1.70
   # Midpoint-near-snapshot-parent gate (2026-04-11). Rejects a split
   # when the daughter midpoint is more than 0.95 * parent_maxR from the
   # snapshot (last-frame) parent center. Catches parent drift and

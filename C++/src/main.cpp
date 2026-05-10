@@ -83,6 +83,7 @@ void applyRuntimeOverrides(BaseConfig &config)
 
     cv::setNumThreads(config.simulation.parallel_threads);
 
+    const char *seedEnv = std::getenv("CELLUNIVERSE_SEED");
     std::cout << "[Runtime Parallelism] mode="
               << (config.simulation.parallel_threads > 1 ? "parallel_z_slices" : "single_thread")
               << " threads=" << config.simulation.parallel_threads
@@ -91,6 +92,10 @@ void applyRuntimeOverrides(BaseConfig &config)
               << " parallel_min_slices=" << config.simulation.parallel_min_slices
               << " opencv_threads=" << cv::getNumThreads()
               << std::endl;
+    if (seedEnv != nullptr && std::string(seedEnv).size() > 0)
+    {
+        std::cout << "[Runtime Random] CELLUNIVERSE_SEED=" << seedEnv << std::endl;
+    }
     std::cout << "[Efficiency Metric] primary=seconds_per_frame"
               << " normalized=seconds_per_cell_iteration"
               << " realtime=iterations_per_second"

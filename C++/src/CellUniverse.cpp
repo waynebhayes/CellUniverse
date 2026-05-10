@@ -402,8 +402,7 @@ void CellUniverse::optimize(int frameIndex)
 
     stageTimerStart = std::chrono::steady_clock::now();
 
-    std::random_device rd;
-    std::mt19937 gen(rd());
+    std::mt19937 &gen = cellUniverseRandomGenerator();
     std::uniform_real_distribution<float> uniform01(0.0f, 1.0f);
 
     const float overlapWeight = config.prob.overlap_penalty_weight;
@@ -816,6 +815,9 @@ void CellUniverse::optimize(int frameIndex)
         return others;
     };
 
+    std::map<std::string, int> splitRejectCounts;
+    std::map<std::string, size_t> splitRetryAfterIteration;
+
     // ---- Single-phase iteration helper ----
     auto runPhase = [&](const std::set<std::string> &phaseNames,
                         bool phaseB,
@@ -851,8 +853,13 @@ void CellUniverse::optimize(int frameIndex)
             const std::string cellName = frame.cells[cellIdx].getName();
 
             const float pSplit = allowSplits ? splitProbabilities[cellName] : 0.0f;
+            const int retryLimit = std::max(1, config.prob.split_reject_retry_limit);
+            const int rejectCount = splitRejectCounts[cellName];
+            const size_t retryAfter = splitRetryAfterIteration[cellName];
             const bool canSplit = pSplit > 0.0f
-                               && splitBlacklist.count(cellName) == 0;
+                               && splitBlacklist.count(cellName) == 0
+                               && rejectCount < retryLimit
+                               && i >= retryAfter;
 
             if (canSplit && uniform01(gen) < pSplit) {
                 // --- Split attempt ---
@@ -912,17 +919,30 @@ void CellUniverse::optimize(int frameIndex)
                 if (accept) {
                     splitAccepted++;
                     splitAcceptedInPhase.insert(cellName);
+                    splitRejectCounts.erase(cellName);
+                    splitRetryAfterIteration.erase(cellName);
                     previousSnapshots.erase(cellName);
                 } else {
-                    splitBlacklist.insert(cellName);
-                    splitRejectedInPhase.insert(cellName);
+                    const int updatedRejectCount = ++splitRejectCounts[cellName];
+                    if (updatedRejectCount >= retryLimit) {
+                        splitBlacklist.insert(cellName);
+                        splitRejectedInPhase.insert(cellName);
+                    } else {
+                        const size_t cooldown = static_cast<size_t>(
+                            std::max(0, config.prob.split_reject_retry_cooldown_iterations));
+                        splitRetryAfterIteration[cellName] = i + cooldown;
+                        std::cout << "[Split Retry Scheduled] " << cellName
+                                  << " rejectCount=" << updatedRejectCount
+                                  << " retryLimit=" << retryLimit
+                                  << " retryAfterPhaseIter=" << splitRetryAfterIteration[cellName]
+                                  << std::endl;
+                    }
 
-                    // Plan compensation: "revert; blacklist i; perturb i once".
-                    // Run a single perturbation on the (now-reverted) parent
-                    // so a rejected split doesn't waste the whole iteration
-                    // budget for this cell. Re-lookup the cell index by name
-                    // because the cells vector is untouched by revert but
-                    // cellIdx is only cheap-safe immediately after the revert.
+                    // Plan compensation: revert, then perturb the parent once.
+                    // A rejected split should not waste the whole iteration
+                    // budget for this cell. The retry logic above decides
+                    // whether the parent is tried again later or finally
+                    // blacklisted for the frame.
                     auto parentIt = std::find_if(frame.cells.begin(), frame.cells.end(),
                         [&](const Spheroid &c) { return c.getName() == cellName; });
                     if (parentIt != frame.cells.end()) {
