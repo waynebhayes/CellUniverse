@@ -47,6 +47,11 @@ struct Observation
     int voxelCount = 0;
     float meanIntensity = 0.0f;
     float integratedIntensity = 0.0f;
+    float totalLuminosity = 0.0f;
+    float rawMeanIntensity = 0.0f;
+    float rawTotalLuminosity = 0.0f;
+    float rawFrameMin = 0.0f;
+    float rawFrameMax = 0.0f;
     float thresholdHigh = 0.0f;
     float thresholdLow = 0.0f;
     float thresholdSplitLow = 0.0f;
@@ -71,10 +76,24 @@ struct RegressionSummary
     double brightnessMin = std::numeric_limits<double>::quiet_NaN();
     double brightnessMax = std::numeric_limits<double>::quiet_NaN();
     double integratedMean = std::numeric_limits<double>::quiet_NaN();
+    double luminosityMean = std::numeric_limits<double>::quiet_NaN();
+    double luminosityMin = std::numeric_limits<double>::quiet_NaN();
+    double luminosityMax = std::numeric_limits<double>::quiet_NaN();
+    double luminosityStddev = std::numeric_limits<double>::quiet_NaN();
+    double luminosityCoeffVariation = std::numeric_limits<double>::quiet_NaN();
+    double rawLuminosityMean = std::numeric_limits<double>::quiet_NaN();
+    double rawLuminosityMin = std::numeric_limits<double>::quiet_NaN();
+    double rawLuminosityMax = std::numeric_limits<double>::quiet_NaN();
+    double rawLuminosityStddev = std::numeric_limits<double>::quiet_NaN();
+    double rawLuminosityCoeffVariation = std::numeric_limits<double>::quiet_NaN();
     double pearsonVolumeVsBrightness = std::numeric_limits<double>::quiet_NaN();
     double pearsonVolumeVsIntegrated = std::numeric_limits<double>::quiet_NaN();
+    double pearsonVolumeVsLuminosity = std::numeric_limits<double>::quiet_NaN();
+    double pearsonVolumeVsRawLuminosity = std::numeric_limits<double>::quiet_NaN();
     double slopeBrightnessPerVolume = std::numeric_limits<double>::quiet_NaN();
     double slopeIntegratedPerVolume = std::numeric_limits<double>::quiet_NaN();
+    double slopeLuminosityPerVolume = std::numeric_limits<double>::quiet_NaN();
+    double slopeRawLuminosityPerVolume = std::numeric_limits<double>::quiet_NaN();
 };
 
 struct RegressionLine
@@ -83,6 +102,165 @@ struct RegressionLine
     double intercept = std::numeric_limits<double>::quiet_NaN();
     bool valid = false;
 };
+
+struct RawIntensityRange
+{
+    float minValue = 0.0f;
+    float maxValue = 0.0f;
+    bool valid = false;
+};
+
+constexpr double kStableLuminosityCvThreshold = 0.35;
+constexpr double kStableLuminosityCorrelationThreshold = 0.30;
+constexpr double kInverseVolumeBrightnessCorrelationThreshold = -0.25;
+
+static RawIntensityRange computeRawIntensityRange(const fs::path& imageFile)
+{
+    std::vector<cv::Mat> pages;
+    if (!cv::imreadmulti(imageFile.string(), pages, cv::IMREAD_ANYDEPTH | cv::IMREAD_GRAYSCALE) || pages.empty())
+    {
+        throw std::runtime_error("imreadmulti failed while measuring raw intensity range: " + imageFile.string());
+    }
+
+    double globalMin = 0.0;
+    double globalMax = 0.0;
+    bool first = true;
+    for (const auto& page : pages)
+    {
+        double sliceMin = 0.0;
+        double sliceMax = 0.0;
+        cv::minMaxLoc(page, &sliceMin, &sliceMax);
+        if (first)
+        {
+            globalMin = sliceMin;
+            globalMax = sliceMax;
+            first = false;
+        }
+        else
+        {
+            globalMin = std::min(globalMin, sliceMin);
+            globalMax = std::max(globalMax, sliceMax);
+        }
+    }
+
+    RawIntensityRange range;
+    range.minValue = static_cast<float>(globalMin);
+    range.maxValue = static_cast<float>(globalMax);
+    range.valid = globalMax > globalMin;
+    return range;
+}
+
+static float computeNormalizedTotalLuminosity(float meanIntensity, int voxelCount)
+{
+    // This is the voxel-sum analog of total luminosity for the current analyzer.
+    // The input volume is already normalized per TIFF stack, so this is not raw
+    // photon luminosity; it is the total normalized brightness inside a cell mask.
+    if (voxelCount <= 0 || !std::isfinite(meanIntensity))
+    {
+        return 0.0f;
+    }
+    return meanIntensity * static_cast<float>(voxelCount);
+}
+
+static float computeRawMeanIntensity(float normalizedMeanIntensity, const RawIntensityRange& rawRange)
+{
+    // loadVolume() normalizes each TIFF stack as (raw - min) / (max - min).
+    // This reverses that transform for the mean intensity of the same segmented
+    // component, giving a raw intensity estimate without changing segmentation.
+    if (!rawRange.valid || !std::isfinite(normalizedMeanIntensity))
+    {
+        return 0.0f;
+    }
+    return normalizedMeanIntensity * (rawRange.maxValue - rawRange.minValue) + rawRange.minValue;
+}
+
+static float computeRawTotalLuminosity(float normalizedMeanIntensity, int voxelCount, const RawIntensityRange& rawRange)
+{
+    if (voxelCount <= 0)
+    {
+        return 0.0f;
+    }
+    return computeRawMeanIntensity(normalizedMeanIntensity, rawRange) * static_cast<float>(voxelCount);
+}
+
+static void fillLuminosityFields(Observation& obs, const RawIntensityRange& rawRange)
+{
+    obs.integratedIntensity = computeNormalizedTotalLuminosity(obs.meanIntensity, obs.voxelCount);
+    obs.totalLuminosity = obs.integratedIntensity;
+    obs.rawMeanIntensity = computeRawMeanIntensity(obs.meanIntensity, rawRange);
+    obs.rawTotalLuminosity = computeRawTotalLuminosity(obs.meanIntensity, obs.voxelCount, rawRange);
+    obs.rawFrameMin = rawRange.minValue;
+    obs.rawFrameMax = rawRange.maxValue;
+}
+
+static double observedTotalLuminosity(const Observation& obs)
+{
+    if (std::isfinite(obs.totalLuminosity) && obs.totalLuminosity > 0.0f)
+    {
+        return static_cast<double>(obs.totalLuminosity);
+    }
+    return static_cast<double>(obs.integratedIntensity);
+}
+
+static double observedRawTotalLuminosity(const Observation& obs)
+{
+    if (std::isfinite(obs.rawTotalLuminosity) && obs.rawTotalLuminosity > 0.0f)
+    {
+        return static_cast<double>(obs.rawTotalLuminosity);
+    }
+    return observedTotalLuminosity(obs);
+}
+
+static bool supportsConstantLuminosityHypothesis(const RegressionSummary& summary)
+{
+    // This diagnostic is intentionally narrow: it only labels a trend as
+    // "consistent" when volume and mean brightness move in opposite directions
+    // while the total voxel-sum brightness stays comparatively stable.
+    if (summary.count < 3 ||
+        !std::isfinite(summary.pearsonVolumeVsBrightness))
+    {
+        return false;
+    }
+
+    const double luminosityCorrelation = std::isfinite(summary.pearsonVolumeVsRawLuminosity)
+        ? summary.pearsonVolumeVsRawLuminosity
+        : summary.pearsonVolumeVsLuminosity;
+    const double luminosityCv = std::isfinite(summary.rawLuminosityCoeffVariation)
+        ? summary.rawLuminosityCoeffVariation
+        : summary.luminosityCoeffVariation;
+    if (!std::isfinite(luminosityCorrelation) || !std::isfinite(luminosityCv))
+    {
+        return false;
+    }
+
+    const bool brightnessRisesWhenVolumeFalls =
+        summary.pearsonVolumeVsBrightness <= kInverseVolumeBrightnessCorrelationThreshold ||
+        summary.slopeBrightnessPerVolume < 0.0;
+    const bool luminosityStaysStable =
+        std::abs(luminosityCorrelation) <= kStableLuminosityCorrelationThreshold &&
+        luminosityCv <= kStableLuminosityCvThreshold;
+    return brightnessRisesWhenVolumeFalls && luminosityStaysStable;
+}
+
+static std::string luminosityHypothesisLabel(const RegressionSummary& summary)
+{
+    if (summary.count < 3)
+    {
+        return "insufficient_data";
+    }
+    if (supportsConstantLuminosityHypothesis(summary))
+    {
+        return "consistent";
+    }
+    const double luminosityCv = std::isfinite(summary.rawLuminosityCoeffVariation)
+        ? summary.rawLuminosityCoeffVariation
+        : summary.luminosityCoeffVariation;
+    if (std::isfinite(luminosityCv) && luminosityCv <= kStableLuminosityCvThreshold)
+    {
+        return "stable_luminosity_without_inverse_brightness";
+    }
+    return "not_consistent";
+}
 
 static float clampf(float v, float lo, float hi)
 {
@@ -500,47 +678,97 @@ static RegressionSummary summarizeObservations(const std::vector<Observation>& o
     std::vector<double> volumes;
     std::vector<double> brightness;
     std::vector<double> integrated;
+    std::vector<double> luminosity;
+    std::vector<double> rawLuminosity;
     volumes.reserve(observations.size());
     brightness.reserve(observations.size());
     integrated.reserve(observations.size());
+    luminosity.reserve(observations.size());
+    rawLuminosity.reserve(observations.size());
 
     double volumeSum = 0.0;
     double brightnessSum = 0.0;
     double integratedSum = 0.0;
+    double luminositySum = 0.0;
+    double rawLuminositySum = 0.0;
 
     summary.volumeMin = std::numeric_limits<double>::infinity();
     summary.volumeMax = -std::numeric_limits<double>::infinity();
     summary.brightnessMin = std::numeric_limits<double>::infinity();
     summary.brightnessMax = -std::numeric_limits<double>::infinity();
+    summary.luminosityMin = std::numeric_limits<double>::infinity();
+    summary.luminosityMax = -std::numeric_limits<double>::infinity();
+    summary.rawLuminosityMin = std::numeric_limits<double>::infinity();
+    summary.rawLuminosityMax = -std::numeric_limits<double>::infinity();
 
     for (const auto& obs : observations)
     {
         const double volume = static_cast<double>(obs.voxelCount);
         const double bright = static_cast<double>(obs.meanIntensity);
         const double integ = static_cast<double>(obs.integratedIntensity);
+        const double totalLum = observedTotalLuminosity(obs);
+        const double rawTotalLum = observedRawTotalLuminosity(obs);
 
         volumes.push_back(volume);
         brightness.push_back(bright);
         integrated.push_back(integ);
+        luminosity.push_back(totalLum);
+        rawLuminosity.push_back(rawTotalLum);
 
         volumeSum += volume;
         brightnessSum += bright;
         integratedSum += integ;
+        luminositySum += totalLum;
+        rawLuminositySum += rawTotalLum;
 
         summary.volumeMin = std::min(summary.volumeMin, volume);
         summary.volumeMax = std::max(summary.volumeMax, volume);
         summary.brightnessMin = std::min(summary.brightnessMin, bright);
         summary.brightnessMax = std::max(summary.brightnessMax, bright);
+        summary.luminosityMin = std::min(summary.luminosityMin, totalLum);
+        summary.luminosityMax = std::max(summary.luminosityMax, totalLum);
+        summary.rawLuminosityMin = std::min(summary.rawLuminosityMin, rawTotalLum);
+        summary.rawLuminosityMax = std::max(summary.rawLuminosityMax, rawTotalLum);
     }
 
     const double n = static_cast<double>(observations.size());
     summary.volumeMean = volumeSum / n;
     summary.brightnessMean = brightnessSum / n;
     summary.integratedMean = integratedSum / n;
+    summary.luminosityMean = luminositySum / n;
+    summary.rawLuminosityMean = rawLuminositySum / n;
+
+    double luminosityVarianceSum = 0.0;
+    double rawLuminosityVarianceSum = 0.0;
+    for (std::size_t i = 0; i < luminosity.size(); ++i)
+    {
+        const double totalLum = luminosity[i];
+        const double delta = totalLum - summary.luminosityMean;
+        luminosityVarianceSum += delta * delta;
+
+        const double rawTotalLum = rawLuminosity[i];
+        const double rawDelta = rawTotalLum - summary.rawLuminosityMean;
+        rawLuminosityVarianceSum += rawDelta * rawDelta;
+    }
+    summary.luminosityStddev = std::sqrt(luminosityVarianceSum / n);
+    if (std::abs(summary.luminosityMean) > 1e-12)
+    {
+        summary.luminosityCoeffVariation = summary.luminosityStddev / std::abs(summary.luminosityMean);
+    }
+    summary.rawLuminosityStddev = std::sqrt(rawLuminosityVarianceSum / n);
+    if (std::abs(summary.rawLuminosityMean) > 1e-12)
+    {
+        summary.rawLuminosityCoeffVariation = summary.rawLuminosityStddev / std::abs(summary.rawLuminosityMean);
+    }
+
     summary.pearsonVolumeVsBrightness = pearsonCorrelation(volumes, brightness);
     summary.pearsonVolumeVsIntegrated = pearsonCorrelation(volumes, integrated);
+    summary.pearsonVolumeVsLuminosity = pearsonCorrelation(volumes, luminosity);
+    summary.pearsonVolumeVsRawLuminosity = pearsonCorrelation(volumes, rawLuminosity);
     summary.slopeBrightnessPerVolume = slopeYOnX(volumes, brightness);
     summary.slopeIntegratedPerVolume = slopeYOnX(volumes, integrated);
+    summary.slopeLuminosityPerVolume = slopeYOnX(volumes, luminosity);
+    summary.slopeRawLuminosityPerVolume = slopeYOnX(volumes, rawLuminosity);
     return summary;
 }
 
@@ -707,7 +935,7 @@ static void writeObservationsCsv(const fs::path& path, const std::vector<Observa
     }
 
     out << std::fixed << std::setprecision(6);
-    out << "frame_index,frame_name,cell_id,parent_id,source,x,y,z,diameter,volume_voxels,mean_intensity,integrated_intensity,threshold_high,threshold_low,threshold_split_low\n";
+    out << "frame_index,frame_name,cell_id,parent_id,source,x,y,z,diameter,volume_voxels,mean_intensity,integrated_intensity,total_luminosity,raw_mean_intensity,raw_total_luminosity,raw_frame_min,raw_frame_max,threshold_high,threshold_low,threshold_split_low\n";
     for (const auto& obs : observations)
     {
         out << obs.frameIndex << ','
@@ -722,6 +950,11 @@ static void writeObservationsCsv(const fs::path& path, const std::vector<Observa
             << obs.voxelCount << ','
             << obs.meanIntensity << ','
             << obs.integratedIntensity << ','
+            << observedTotalLuminosity(obs) << ','
+            << obs.rawMeanIntensity << ','
+            << observedRawTotalLuminosity(obs) << ','
+            << obs.rawFrameMin << ','
+            << obs.rawFrameMax << ','
             << obs.thresholdHigh << ','
             << obs.thresholdLow << ','
             << obs.thresholdSplitLow << '\n';
@@ -762,7 +995,7 @@ static void writeSummaryCsv(const fs::path& path, const std::vector<Observation>
     }
 
     out << std::fixed << std::setprecision(6);
-    out << "cell_id,parent_id,num_observations,first_frame,last_frame,volume_mean,volume_min,volume_max,mean_intensity_mean,mean_intensity_min,mean_intensity_max,integrated_intensity_mean,pearson_r_volume_vs_mean_intensity,slope_mean_intensity_per_volume,pearson_r_volume_vs_integrated_intensity,slope_integrated_intensity_per_volume\n";
+    out << "cell_id,parent_id,num_observations,first_frame,last_frame,volume_mean,volume_min,volume_max,mean_intensity_mean,mean_intensity_min,mean_intensity_max,integrated_intensity_mean,total_luminosity_mean,total_luminosity_min,total_luminosity_max,total_luminosity_stddev,total_luminosity_cv,raw_total_luminosity_mean,raw_total_luminosity_min,raw_total_luminosity_max,raw_total_luminosity_stddev,raw_total_luminosity_cv,pearson_r_volume_vs_mean_intensity,slope_mean_intensity_per_volume,pearson_r_volume_vs_integrated_intensity,slope_integrated_intensity_per_volume,pearson_r_volume_vs_total_luminosity,slope_total_luminosity_per_volume,pearson_r_volume_vs_raw_total_luminosity,slope_raw_total_luminosity_per_volume,luminosity_hypothesis_label\n";
 
     for (const auto& [cellId, rows] : grouped)
     {
@@ -792,10 +1025,25 @@ static void writeSummaryCsv(const fs::path& path, const std::vector<Observation>
             << summary.brightnessMin << ','
             << summary.brightnessMax << ','
             << summary.integratedMean << ','
+            << summary.luminosityMean << ','
+            << summary.luminosityMin << ','
+            << summary.luminosityMax << ','
+            << summary.luminosityStddev << ','
+            << summary.luminosityCoeffVariation << ','
+            << summary.rawLuminosityMean << ','
+            << summary.rawLuminosityMin << ','
+            << summary.rawLuminosityMax << ','
+            << summary.rawLuminosityStddev << ','
+            << summary.rawLuminosityCoeffVariation << ','
             << summary.pearsonVolumeVsBrightness << ','
             << summary.slopeBrightnessPerVolume << ','
             << summary.pearsonVolumeVsIntegrated << ','
-            << summary.slopeIntegratedPerVolume << '\n';
+            << summary.slopeIntegratedPerVolume << ','
+            << summary.pearsonVolumeVsLuminosity << ','
+            << summary.slopeLuminosityPerVolume << ','
+            << summary.pearsonVolumeVsRawLuminosity << ','
+            << summary.slopeRawLuminosityPerVolume << ','
+            << luminosityHypothesisLabel(summary) << '\n';
     }
 
     const RegressionSummary global = summarizeObservations(observations);
@@ -808,10 +1056,99 @@ static void writeSummaryCsv(const fs::path& path, const std::vector<Observation>
         << global.brightnessMin << ','
         << global.brightnessMax << ','
         << global.integratedMean << ','
+        << global.luminosityMean << ','
+        << global.luminosityMin << ','
+        << global.luminosityMax << ','
+        << global.luminosityStddev << ','
+        << global.luminosityCoeffVariation << ','
+        << global.rawLuminosityMean << ','
+        << global.rawLuminosityMin << ','
+        << global.rawLuminosityMax << ','
+        << global.rawLuminosityStddev << ','
+        << global.rawLuminosityCoeffVariation << ','
         << global.pearsonVolumeVsBrightness << ','
         << global.slopeBrightnessPerVolume << ','
         << global.pearsonVolumeVsIntegrated << ','
-        << global.slopeIntegratedPerVolume << '\n';
+        << global.slopeIntegratedPerVolume << ','
+        << global.pearsonVolumeVsLuminosity << ','
+        << global.slopeLuminosityPerVolume << ','
+        << global.pearsonVolumeVsRawLuminosity << ','
+        << global.slopeRawLuminosityPerVolume << ','
+        << luminosityHypothesisLabel(global) << '\n';
+}
+
+static void writeLuminosityHypothesisCsv(const fs::path& path, const std::vector<Observation>& observations)
+{
+    std::map<std::string, std::vector<Observation>> grouped;
+    for (const auto& obs : observations)
+    {
+        grouped[obs.cellId].push_back(obs);
+    }
+
+    std::ofstream out(path);
+    if (!out)
+    {
+        throw std::runtime_error("Failed to open output file: " + path.string());
+    }
+
+    // This file is the professor-facing hypothesis test: it keeps the old
+    // per-cell metrics, but gives the total-luminosity stability metrics names
+    // that match the biological question directly.
+    out << std::fixed << std::setprecision(6);
+    out << "cell_id,parent_id,num_observations,first_frame,last_frame,volume_min,volume_max,mean_intensity_min,mean_intensity_max,total_luminosity_mean,total_luminosity_min,total_luminosity_max,total_luminosity_stddev,total_luminosity_cv,raw_total_luminosity_mean,raw_total_luminosity_min,raw_total_luminosity_max,raw_total_luminosity_stddev,raw_total_luminosity_cv,pearson_r_volume_vs_mean_intensity,pearson_r_volume_vs_total_luminosity,pearson_r_volume_vs_raw_total_luminosity,slope_mean_intensity_per_volume,slope_total_luminosity_per_volume,slope_raw_total_luminosity_per_volume,hypothesis_label\n";
+
+    auto writeRow = [&](const std::string& cellId, const std::string& parentId, const std::vector<Observation>& rows) {
+        const RegressionSummary summary = summarizeObservations(rows);
+        int firstFrame = rows.empty() ? 0 : rows.front().frameIndex;
+        int lastFrame = firstFrame;
+        for (const auto& row : rows)
+        {
+            firstFrame = std::min(firstFrame, row.frameIndex);
+            lastFrame = std::max(lastFrame, row.frameIndex);
+        }
+
+        out << cellId << ','
+            << parentId << ','
+            << summary.count << ','
+            << firstFrame << ','
+            << lastFrame << ','
+            << summary.volumeMin << ','
+            << summary.volumeMax << ','
+            << summary.brightnessMin << ','
+            << summary.brightnessMax << ','
+            << summary.luminosityMean << ','
+            << summary.luminosityMin << ','
+            << summary.luminosityMax << ','
+            << summary.luminosityStddev << ','
+            << summary.luminosityCoeffVariation << ','
+            << summary.rawLuminosityMean << ','
+            << summary.rawLuminosityMin << ','
+            << summary.rawLuminosityMax << ','
+            << summary.rawLuminosityStddev << ','
+            << summary.rawLuminosityCoeffVariation << ','
+            << summary.pearsonVolumeVsBrightness << ','
+            << summary.pearsonVolumeVsLuminosity << ','
+            << summary.pearsonVolumeVsRawLuminosity << ','
+            << summary.slopeBrightnessPerVolume << ','
+            << summary.slopeLuminosityPerVolume << ','
+            << summary.slopeRawLuminosityPerVolume << ','
+            << luminosityHypothesisLabel(summary) << '\n';
+    };
+
+    for (const auto& [cellId, rows] : grouped)
+    {
+        std::string parentId = rows.front().parentId;
+        for (const auto& row : rows)
+        {
+            if (parentId.empty() && !row.parentId.empty())
+            {
+                parentId = row.parentId;
+            }
+        }
+        writeRow(cellId, parentId, rows);
+    }
+
+    writeRow("__ALL__", "", observations);
 }
 
 static void writeReport(
@@ -851,30 +1188,49 @@ static void writeReport(
     out << "Global relation summary\n";
     out << "mean(volume_voxels)=" << global.volumeMean << '\n';
     out << "mean(mean_intensity)=" << global.brightnessMean << '\n';
+    out << "mean(total_luminosity)=" << global.luminosityMean << '\n';
+    out << "stddev(total_luminosity)=" << global.luminosityStddev << '\n';
+    out << "cv(total_luminosity)=" << global.luminosityCoeffVariation << '\n';
+    out << "mean(raw_total_luminosity)=" << global.rawLuminosityMean << '\n';
+    out << "stddev(raw_total_luminosity)=" << global.rawLuminosityStddev << '\n';
+    out << "cv(raw_total_luminosity)=" << global.rawLuminosityCoeffVariation << '\n';
     out << "pearson(volume, mean_intensity)=" << global.pearsonVolumeVsBrightness << '\n';
     out << "slope(mean_intensity vs volume)=" << global.slopeBrightnessPerVolume << '\n';
     out << "pearson(volume, integrated_intensity)=" << global.pearsonVolumeVsIntegrated << '\n';
     out << "slope(integrated_intensity vs volume)=" << global.slopeIntegratedPerVolume << '\n';
+    out << "pearson(volume, total_luminosity)=" << global.pearsonVolumeVsLuminosity << '\n';
+    out << "slope(total_luminosity vs volume)=" << global.slopeLuminosityPerVolume << '\n';
+    out << "pearson(volume, raw_total_luminosity)=" << global.pearsonVolumeVsRawLuminosity << '\n';
+    out << "slope(raw_total_luminosity vs volume)=" << global.slopeRawLuminosityPerVolume << '\n';
+    out << "luminosity_hypothesis_label=" << luminosityHypothesisLabel(global) << '\n';
     out << '\n';
     out << "Metric definitions\n";
     out << "- volume_voxels = number of voxels in the tracked 3D connected component after thresholding.\n";
     out << "- mean_intensity = average normalized voxel intensity inside that component.\n";
     out << "- integrated_intensity = mean_intensity * volume_voxels, i.e. total normalized brightness inside the component.\n";
+    out << "- total_luminosity = same numeric value as integrated_intensity in this analyzer; the new name matches the hypothesis being tested.\n";
+    out << "- raw_mean_intensity reverses the per-stack min-max normalization for the same segmented component mean.\n";
+    out << "- raw_total_luminosity = raw_mean_intensity * volume_voxels, so it is the closest current proxy to raw total light.\n";
     out << "- Each TIFF frame is min-max normalized independently to [0,1], so brightness is relative within frame, not absolute raw fluorescence.\n";
     out << "- volume_voxels is a segmented bright-region volume, not a physical micron^3 measurement.\n";
+    out << "- luminosity_hypothesis_label prefers raw_total_luminosity when available, then falls back to normalized total_luminosity.\n";
+    out << "- luminosity_hypothesis_label is diagnostic only. It is not used by Cell Universe to accept or reject a tracked cell.\n";
     out << '\n';
     out << "How to read the outputs\n";
     out << "- per_cell_observations.csv = one row per cell per frame.\n";
     out << "- per_cell_summary.csv = one summary row per cell plus a global __ALL__ row.\n";
+    out << "- luminosity_hypothesis_summary.csv = per-cell test of whether total luminosity stays roughly stable while mean brightness and volume move oppositely.\n";
     out << "- volume_vs_mean_intensity_scatter.png = best plot for the question: when segmented cell volume changes, does mean brightness tend to move in the opposite direction?\n";
-    out << "- volume_vs_integrated_intensity_scatter.png = total segmented brightness, which often increases with volume because more voxels are included.\n";
-    out << "- per_cell_normalized_time_series.png = easiest plot to inspect trend shape cell by cell.\n";
+    out << "- volume_vs_total_luminosity_scatter.png = raw total luminosity scatter plot for the constant-total-luminosity hypothesis.\n";
+    out << "- volume_vs_integrated_intensity_scatter.png = backward-compatible normalized total-luminosity plot.\n";
+    out << "- per_cell_luminosity_hypothesis_timeseries.png = easiest plot to inspect volume, mean brightness, and raw total luminosity cell by cell.\n";
     out << '\n';
     out << "Interpretation\n";
     out << "- Negative pearson(volume, mean_intensity) suggests larger cells tend to be dimmer.\n";
+    out << "- Near-zero pearson(volume, raw_total_luminosity) plus low raw_total_luminosity_cv supports the constant-luminosity hypothesis.\n";
     out << "- Positive pearson(volume, mean_intensity) suggests larger cells tend to stay brighter.\n";
     out << "- If your new embryo only becomes clear around t013-t015, run this program with firstFrame=13 (or 14/15) so the first selected frame becomes the automatic initialization frame.\n";
-    out << "- Generated plots: volume_vs_mean_intensity_scatter.png, volume_vs_integrated_intensity_scatter.png, per_cell_normalized_time_series.png\n";
+    out << "- Generated plots: volume_vs_mean_intensity_scatter.png, volume_vs_total_luminosity_scatter.png, volume_vs_integrated_intensity_scatter.png, per_cell_normalized_time_series.png, per_cell_luminosity_hypothesis_timeseries.png\n";
 }
 
 static std::vector<EmbryoBrightTracker::CellState> loadInitialCellsFromCsv(
@@ -1034,7 +1390,8 @@ static void drawAxes(
 static void drawScatterPlot(
     const fs::path& path,
     const std::vector<Observation>& observations,
-    bool useIntegratedIntensity)
+    bool useIntegratedIntensity,
+    bool useRawLuminosity = false)
 {
     if (observations.empty())
     {
@@ -1061,7 +1418,7 @@ static void drawScatterPlot(
     {
         const double x = static_cast<double>(obs.voxelCount);
         const double y = useIntegratedIntensity
-            ? static_cast<double>(obs.integratedIntensity)
+            ? (useRawLuminosity ? observedRawTotalLuminosity(obs) : observedTotalLuminosity(obs))
             : static_cast<double>(obs.meanIntensity);
 
         xs.push_back(x);
@@ -1099,13 +1456,18 @@ static void drawScatterPlot(
     const cv::Rect legendRect(1210, 220, 560, 820);
 
     const std::string title = useIntegratedIntensity
-        ? "Segmented Cell Volume vs Integrated Normalized Brightness"
+        ? (useRawLuminosity ? "Segmented Cell Volume vs Raw Total Luminosity" : "Segmented Cell Volume vs Total Normalized Luminosity")
         : "Segmented Cell Volume vs Mean Normalized Brightness";
     const std::vector<std::string> subtitleLines = useIntegratedIntensity
-        ? std::vector<std::string>{
-            "X axis = segmented cell volume: number of voxels inside the tracked 3D connected component.",
-            "Y axis = integrated normalized brightness: sum of normalized voxel intensities in that same component.",
-            "Each point = one cell in one frame. Each TIFF frame is min-max normalized independently before measurement."}
+        ? (useRawLuminosity
+            ? std::vector<std::string>{
+                "X axis = segmented cell volume: number of voxels inside the tracked 3D connected component.",
+                "Y axis = raw total luminosity estimated by reversing per-stack min-max normalization, then summing over voxels.",
+                "Each point = one cell in one frame. The segmentation still comes from the normalized analysis volume."}
+            : std::vector<std::string>{
+                "X axis = segmented cell volume: number of voxels inside the tracked 3D connected component.",
+                "Y axis = total normalized luminosity: sum of normalized voxel intensities in that same component.",
+                "Each point = one cell in one frame. Each TIFF frame is min-max normalized independently before measurement."})
         : std::vector<std::string>{
             "X axis = segmented cell volume: number of voxels inside the tracked 3D connected component.",
             "Y axis = mean normalized brightness: average voxel intensity inside that component after per-frame normalization.",
@@ -1122,7 +1484,9 @@ static void drawScatterPlot(
         yMin,
         yMax,
         "Segmented cell volume (voxel count)",
-        useIntegratedIntensity ? "Integrated normalized brightness" : "Mean normalized brightness (0 to 1)",
+        useIntegratedIntensity
+            ? (useRawLuminosity ? "Raw total luminosity" : "Total normalized luminosity")
+            : "Mean normalized brightness (0 to 1)",
         0,
         useIntegratedIntensity ? 0 : 3,
         true,
@@ -1147,7 +1511,7 @@ static void drawScatterPlot(
         {
             const double x = static_cast<double>(obs.voxelCount);
             const double y = useIntegratedIntensity
-                ? static_cast<double>(obs.integratedIntensity)
+                ? (useRawLuminosity ? observedRawTotalLuminosity(obs) : observedTotalLuminosity(obs))
                 : static_cast<double>(obs.meanIntensity);
             const cv::Point p = toPixel(x, y);
             cv::circle(canvas, p, 6, color, -1, cv::LINE_AA);
@@ -1206,12 +1570,20 @@ static void drawScatterPlot(
     putTextBlock(
         canvas,
         useIntegratedIntensity
-            ? std::vector<std::string>{
+            ? (useRawLuminosity ? std::vector<std::string>{
                 "Interpretation note:",
-                "Integrated brightness often rises with volume",
-                "because it sums over more voxels.",
-                "Use the mean-brightness plot for",
-                "the question: does a larger cell become dimmer?"}
+                "If raw total luminosity stays roughly flat",
+                "while segmented volume and mean brightness change,",
+                "this supports Professor Hayes's hypothesis.",
+                "A strong positive trend means raw total light",
+                "still tracks segmented volume."}
+            : std::vector<std::string>{
+                "Interpretation note:",
+                "If total luminosity stays roughly flat",
+                "while mean brightness changes, this supports",
+                "the constant-luminosity hypothesis.",
+                "A strong positive trend means the total",
+                "voxel-sum brightness still tracks volume."})
             : std::vector<std::string>{
                 "Interpretation note:",
                 "Negative r or slope: larger segmented cells",
@@ -1240,7 +1612,10 @@ static void drawScatterPlot(
     cv::imwrite(path.string(), canvas);
 }
 
-static void drawPerCellNormalizedTimeSeries(const fs::path& path, const std::vector<Observation>& observations)
+static void drawPerCellNormalizedTimeSeries(
+    const fs::path& path,
+    const std::vector<Observation>& observations,
+    bool useRawLuminosity = false)
 {
     if (observations.empty())
     {
@@ -1266,17 +1641,28 @@ static void drawPerCellNormalizedTimeSeries(const fs::path& path, const std::vec
     const int panelH = 340;
     const cv::Scalar volumeColor(219, 152, 52);
     const cv::Scalar intensityColor(44, 127, 255);
+    const cv::Scalar luminosityColor(86, 170, 82);
 
     cv::Mat canvas(230 + rowsCount * panelH, 100 + cols * panelW, CV_8UC3, cv::Scalar(250, 250, 250));
-    cv::putText(canvas, "Per-cell normalized time series", cv::Point(40, 45),
+    cv::putText(
+        canvas,
+        useRawLuminosity
+            ? "Per-cell normalized volume, brightness, and raw luminosity time series"
+            : "Per-cell normalized volume, brightness, and normalized luminosity time series",
+        cv::Point(40, 45),
                 cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(30, 30, 30), 2, cv::LINE_AA);
     putTextBlock(
         canvas,
         {
             "Blue line = segmented cell volume normalized within this cell across the selected frames.",
             "Orange line = mean normalized brightness normalized within this cell across the selected frames.",
+            useRawLuminosity
+                ? "Green line = raw total luminosity, estimated by reversing frame min-max normalization before summing."
+                : "Green line = total normalized luminosity, computed as mean brightness multiplied by segmented voxel volume.",
             "Y axis is re-scaled to 0 to 1 separately for each cell and each metric. Compare trend shape, not absolute magnitude.",
-            "In each panel, r = pearson correlation between segmented volume and mean brightness for that cell."
+            useRawLuminosity
+                ? "In each panel, rVB = volume/brightness correlation and cvL = raw total-luminosity coefficient of variation."
+                : "In each panel, rVB = volume/brightness correlation and cvL = normalized total-luminosity coefficient of variation."
         },
         cv::Point(40, 78),
         0.62,
@@ -1291,6 +1677,10 @@ static void drawPerCellNormalizedTimeSeries(const fs::path& path, const std::vec
     cv::line(canvas, cv::Point(410, 182), cv::Point(460, 182), intensityColor, 3, cv::LINE_AA);
     cv::circle(canvas, cv::Point(435, 182), 4, intensityColor, -1, cv::LINE_AA);
     cv::putText(canvas, "normalized mean brightness", cv::Point(472, 188),
+                cv::FONT_HERSHEY_SIMPLEX, 0.54, cv::Scalar(70, 70, 70), 1, cv::LINE_AA);
+    cv::line(canvas, cv::Point(46, 210), cv::Point(96, 210), luminosityColor, 3, cv::LINE_AA);
+    cv::circle(canvas, cv::Point(71, 210), 4, luminosityColor, -1, cv::LINE_AA);
+    cv::putText(canvas, useRawLuminosity ? "raw total luminosity" : "normalized total luminosity", cv::Point(108, 216),
                 cv::FONT_HERSHEY_SIMPLEX, 0.54, cv::Scalar(70, 70, 70), 1, cv::LINE_AA);
 
     int panelIndex = 0;
@@ -1308,9 +1698,15 @@ static void drawPerCellNormalizedTimeSeries(const fs::path& path, const std::vec
                     cv::FONT_HERSHEY_SIMPLEX, 0.64, cv::Scalar(40, 40, 40), 2, cv::LINE_AA);
 
         const RegressionSummary summary = summarizeObservations(cellRows);
-        cv::putText(canvas, "r = " + formatDouble(summary.pearsonVolumeVsBrightness, 4),
+        cv::putText(canvas, "rVB = " + formatDouble(summary.pearsonVolumeVsBrightness, 4),
                     cv::Point(panelRect.x + 320, panelRect.y + 28),
                     cv::FONT_HERSHEY_SIMPLEX, 0.56, cv::Scalar(70, 70, 70), 1, cv::LINE_AA);
+        const double luminosityCv = useRawLuminosity
+            ? summary.rawLuminosityCoeffVariation
+            : summary.luminosityCoeffVariation;
+        cv::putText(canvas, "cvL = " + formatDouble(luminosityCv, 4),
+                    cv::Point(panelRect.x + 320, panelRect.y + 52),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.48, cv::Scalar(70, 70, 70), 1, cv::LINE_AA);
 
         cv::rectangle(canvas, plotRect, cv::Scalar(215, 215, 215), 1, cv::LINE_AA);
 
@@ -1323,6 +1719,8 @@ static void drawPerCellNormalizedTimeSeries(const fs::path& path, const std::vec
         double volumeMax = -std::numeric_limits<double>::infinity();
         double intensityMin = std::numeric_limits<double>::infinity();
         double intensityMax = -std::numeric_limits<double>::infinity();
+        double luminosityMin = std::numeric_limits<double>::infinity();
+        double luminosityMax = -std::numeric_limits<double>::infinity();
 
         for (const auto& obs : cellRows)
         {
@@ -1330,6 +1728,9 @@ static void drawPerCellNormalizedTimeSeries(const fs::path& path, const std::vec
             volumeMax = std::max(volumeMax, static_cast<double>(obs.voxelCount));
             intensityMin = std::min(intensityMin, static_cast<double>(obs.meanIntensity));
             intensityMax = std::max(intensityMax, static_cast<double>(obs.meanIntensity));
+            const double totalLum = useRawLuminosity ? observedRawTotalLuminosity(obs) : observedTotalLuminosity(obs);
+            luminosityMin = std::min(luminosityMin, totalLum);
+            luminosityMax = std::max(luminosityMax, totalLum);
         }
 
         auto normalize = [](double value, double lo, double hi) -> double {
@@ -1368,17 +1769,21 @@ static void drawPerCellNormalizedTimeSeries(const fs::path& path, const std::vec
 
         std::vector<cv::Point> volumePoints;
         std::vector<cv::Point> intensityPoints;
+        std::vector<cv::Point> luminosityPoints;
         for (const auto& obs : cellRows)
         {
             const double frame = static_cast<double>(obs.frameIndex);
             volumePoints.push_back(mapPoint(frame, normalize(static_cast<double>(obs.voxelCount), volumeMin, volumeMax)));
             intensityPoints.push_back(mapPoint(frame, normalize(static_cast<double>(obs.meanIntensity), intensityMin, intensityMax)));
+            const double totalLum = useRawLuminosity ? observedRawTotalLuminosity(obs) : observedTotalLuminosity(obs);
+            luminosityPoints.push_back(mapPoint(frame, normalize(totalLum, luminosityMin, luminosityMax)));
         }
 
         for (std::size_t i = 1; i < volumePoints.size(); ++i)
         {
             cv::line(canvas, volumePoints[i - 1], volumePoints[i], volumeColor, 2, cv::LINE_AA);
             cv::line(canvas, intensityPoints[i - 1], intensityPoints[i], intensityColor, 2, cv::LINE_AA);
+            cv::line(canvas, luminosityPoints[i - 1], luminosityPoints[i], luminosityColor, 2, cv::LINE_AA);
         }
 
         for (const auto& p : volumePoints)
@@ -1388,6 +1793,10 @@ static void drawPerCellNormalizedTimeSeries(const fs::path& path, const std::vec
         for (const auto& p : intensityPoints)
         {
             cv::circle(canvas, p, 4, intensityColor, -1, cv::LINE_AA);
+        }
+        for (const auto& p : luminosityPoints)
+        {
+            cv::circle(canvas, p, 4, luminosityColor, -1, cv::LINE_AA);
         }
 
         cv::putText(canvas, "normalized value within this cell (0 to 1)", cv::Point(plotRect.x - 10, plotRect.y - 16),
@@ -1439,6 +1848,7 @@ int main(int argc, char* argv[])
     std::vector<SplitRecord> splitEvents;
 
     const std::vector<cv::Mat> vol0 = tracker.loadVolumeForAnalysis(imagePaths.front());
+    const RawIntensityRange rawRange0 = computeRawIntensityRange(imagePaths.front());
     if (vol0.empty())
     {
         throw std::runtime_error("Failed to load initial volume.");
@@ -1504,7 +1914,7 @@ int main(int argc, char* argv[])
         obs.diameter = cell.diameter;
         obs.voxelCount = cell.voxelCount;
         obs.meanIntensity = cell.meanIntensity;
-        obs.integratedIntensity = cell.meanIntensity * static_cast<float>(cell.voxelCount);
+        fillLuminosityFields(obs, rawRange0);
         obs.thresholdHigh = initThresholdHigh;
         obs.thresholdLow = initThresholdLow;
         obs.thresholdSplitLow = initThresholdSplitLow;
@@ -1517,6 +1927,7 @@ int main(int argc, char* argv[])
         const std::string frameName = imagePaths[localFrame].filename().string();
 
         const std::vector<cv::Mat> volume = tracker.loadVolumeForAnalysis(imagePaths[localFrame]);
+        const RawIntensityRange rawRange = computeRawIntensityRange(imagePaths[localFrame]);
         float thresholdHigh = tracker.percentileThresholdForAnalysis(volume, (localFrame <= 7) ? 99.3f : 98.8f);
         thresholdHigh = clampf(thresholdHigh, 0.2f, 0.95f);
         const float thresholdLow = clampf(thresholdHigh * 0.50f, 0.06f, 0.95f);
@@ -1602,7 +2013,7 @@ int main(int argc, char* argv[])
             obs.diameter = cell.diameter;
             obs.voxelCount = cell.voxelCount;
             obs.meanIntensity = cell.meanIntensity;
-            obs.integratedIntensity = cell.meanIntensity * static_cast<float>(cell.voxelCount);
+            fillLuminosityFields(obs, rawRange);
             obs.thresholdHigh = thresholdHigh;
             obs.thresholdLow = thresholdLow;
             obs.thresholdSplitLow = thresholdSplitLow;
@@ -1614,19 +2025,25 @@ int main(int argc, char* argv[])
 
     const fs::path observationsCsv = analysisDir / "per_cell_observations.csv";
     const fs::path summaryCsv = analysisDir / "per_cell_summary.csv";
+    const fs::path luminositySummaryCsv = analysisDir / "luminosity_hypothesis_summary.csv";
     const fs::path splitCsv = analysisDir / "split_events.csv";
     const fs::path reportTxt = analysisDir / "report.txt";
     const fs::path scatterMeanPng = analysisDir / "volume_vs_mean_intensity_scatter.png";
     const fs::path scatterIntegratedPng = analysisDir / "volume_vs_integrated_intensity_scatter.png";
+    const fs::path scatterLuminosityPng = analysisDir / "volume_vs_total_luminosity_scatter.png";
     const fs::path perCellTimeSeriesPng = analysisDir / "per_cell_normalized_time_series.png";
+    const fs::path luminosityTimeSeriesPng = analysisDir / "per_cell_luminosity_hypothesis_timeseries.png";
 
     writeObservationsCsv(observationsCsv, observations);
     writeSummaryCsv(summaryCsv, observations);
+    writeLuminosityHypothesisCsv(luminositySummaryCsv, observations);
     writeSplitEventsCsv(splitCsv, splitEvents);
     writeReport(reportTxt, args, imagePaths, matureDiamAvg, observations, splitEvents);
     drawScatterPlot(scatterMeanPng, observations, false);
     drawScatterPlot(scatterIntegratedPng, observations, true);
+    drawScatterPlot(scatterLuminosityPng, observations, true, true);
     drawPerCellNormalizedTimeSeries(perCellTimeSeriesPng, observations);
+    drawPerCellNormalizedTimeSeries(luminosityTimeSeriesPng, observations, true);
 
     std::cout << "Brightness/volume analysis finished.\n";
     std::cout << "Frames analyzed: " << imagePaths.size() << '\n';
@@ -1635,7 +2052,9 @@ int main(int argc, char* argv[])
     std::cout << "Output directory: " << analysisDir << '\n';
     std::cout << "Plots:\n";
     std::cout << "  - " << scatterMeanPng << '\n';
+    std::cout << "  - " << scatterLuminosityPng << '\n';
     std::cout << "  - " << scatterIntegratedPng << '\n';
     std::cout << "  - " << perCellTimeSeriesPng << '\n';
+    std::cout << "  - " << luminosityTimeSeriesPng << '\n';
     return 0;
 }

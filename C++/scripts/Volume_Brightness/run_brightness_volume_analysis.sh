@@ -2,7 +2,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-CPP_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# This script lives in scripts/Volume_Brightness, so the C++ project root is two levels up.
+CPP_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 OUTPUT_ROOT="$CPP_ROOT/output"
 LOG_DIR="$OUTPUT_ROOT/logs"
 mkdir -p "$OUTPUT_ROOT" "$LOG_DIR"
@@ -84,9 +85,12 @@ log ""
 log "Main outputs:"
 log "  - $RESULT_DIR/per_cell_observations.csv"
 log "  - $RESULT_DIR/per_cell_summary.csv"
+log "  - $RESULT_DIR/luminosity_hypothesis_summary.csv"
 log "  - $RESULT_DIR/split_events.csv"
 log "  - $RESULT_DIR/report.txt"
 log "  - $RESULT_DIR/volume_vs_mean_intensity_scatter.png"
+log "  - $RESULT_DIR/volume_vs_total_luminosity_scatter.png"
 log "  - $RESULT_DIR/volume_vs_integrated_intensity_scatter.png"
 log "  - $RESULT_DIR/per_cell_normalized_time_series.png"
+log "  - $RESULT_DIR/per_cell_luminosity_hypothesis_timeseries.png"
 log "======================================================================================================="
