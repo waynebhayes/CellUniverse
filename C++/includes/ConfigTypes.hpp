@@ -69,7 +69,15 @@ public:
     bool enable_lineage_tree_window = false;
     float adaptive_background_expand_factor = 1.1f;
     float adaptive_background_top_fraction = 0.4f;
+
+    // Number of OpenCV workers used for independent z-slice work. The default
+    // stays at one so laptops do not accidentally oversubscribe memory; OpenLab
+    // jobs override it with CELLUNIVERSE_THREADS after Slurm grants the cores.
     int parallel_threads = 1;
+
+    // Very small slice ranges are faster in a plain loop than through the
+    // OpenCV scheduler. This threshold keeps partial redraws cheap when a
+    // small cell touches only a few z slices.
     int parallel_min_slices = 8;
 
     // Constructor with default values

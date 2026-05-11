@@ -49,6 +49,10 @@ void loadConfig(const std::string &path, BaseConfig &config)
 
 void applyRuntimeOverrides(BaseConfig &config)
 {
+    // Keep the YAML file conservative for laptop runs, then let batch jobs
+    // opt into parallel execution through the environment. This makes the
+    // command line self-contained on OpenLab while preserving the default
+    // single-thread behavior for memory-limited local machines.
     const char *threadEnv = std::getenv("CELLUNIVERSE_THREADS");
     std::string threadSource = "config";
 
@@ -81,6 +85,11 @@ void applyRuntimeOverrides(BaseConfig &config)
         config.simulation.parallel_threads = static_cast<int>(hardwareThreads);
     }
 
+    // OpenCV owns the worker pool used by cv::parallel_for_. Matching the
+    // OpenCV thread count to the Cell Universe setting keeps the z-slice
+    // renderer and cost evaluator inside the CPU allocation requested from
+    // Slurm. The algorithm still schedules the same perturbations and split
+    // candidates; only independent slice work is distributed across workers.
     cv::setNumThreads(config.simulation.parallel_threads);
 
     const char *seedEnv = std::getenv("CELLUNIVERSE_SEED");

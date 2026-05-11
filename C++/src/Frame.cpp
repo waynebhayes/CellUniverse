@@ -21,6 +21,11 @@ void forEachSliceIndex(const SimulationConfig &config, int count, const Fn &fn)
         return;
     }
 
+    // The 3D image stack is independent by z slice for rendering, outline
+    // export, and L2 cost calculation. Parallelizing at this boundary is
+    // intentionally narrow: each worker writes only the slice index it owns,
+    // so cells, random perturbation order, split decisions, and lineage state
+    // remain controlled by the single optimization loop.
     cv::parallel_for_(cv::Range(0, count), [&](const cv::Range &range) {
         for (int i = range.start; i < range.end; ++i) {
             fn(i);
@@ -95,6 +100,10 @@ void Frame::refreshFullCostCache()
         throw std::runtime_error("Mismatch in image stack sizes");
     }
 
+    // Store the L2 contribution of every z slice after a full render. Later
+    // perturbations usually move one cell, which only changes a small z range;
+    // keeping this cache lets us recompute the changed slices and reuse the
+    // exact previous values for the rest of the stack.
     _currentCostPerSlice.assign(_realFrame.size(), 0.0);
     forEachSliceIndex(simulationConfig, static_cast<int>(_realFrame.size()), [&](int i) {
         _currentCostPerSlice[static_cast<size_t>(i)] =
@@ -128,6 +137,10 @@ double Frame::calculateIncrementalCost(const std::vector<cv::Mat> &newSynthFrame
 
     if (affectedZMin >= 0 && affectedZMax >= 0)
     {
+        // Only the affected slices need new L2 measurements. This is the main
+        // runtime win for ordinary perturbations: the candidate frame can be
+        // compared against the real frame without scanning all 225 slices on
+        // every accepted or rejected move.
         const int nSlices = static_cast<int>(_realFrame.size());
         const int zMin = std::max(0, affectedZMin);
         const int zMax = std::min(nSlices - 1, affectedZMax);
@@ -228,6 +241,10 @@ std::vector<cv::Mat> Frame::generateSynthFrameFast(Spheroid &oldCell, Spheroid &
 
     if (affectedMin >= 0 && affectedMax >= affectedMin) {
         const int affectedCount = affectedMax - affectedMin + 1;
+        // Re-render just the contiguous z range touched by the old or new cell
+        // bounding box. All other cv::Mat entries keep sharing the previous
+        // pixel buffers, which is safe because the callback either commits this
+        // candidate as the new frame or restores the old cell state.
         forEachSliceIndex(simulationConfig, affectedCount, [&](int localIndex) {
             const int sliceIndex = affectedMin + localIndex;
             const double z = z_slices[static_cast<size_t>(sliceIndex)];

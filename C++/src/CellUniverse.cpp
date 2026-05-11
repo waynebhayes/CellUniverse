@@ -1071,6 +1071,11 @@ void CellUniverse::optimize(int frameIndex)
     brightnessUpdateSeconds = secondsSince(stageTimerStart);
 
     const double optimizeSeconds = secondsSince(frameTimerStart);
+    // A frame with more cells naturally schedules more perturbation work, so
+    // raw seconds per frame is useful for user-facing wall time but is not a
+    // fair algorithm efficiency metric by itself. Normalizing by scheduled
+    // cell iterations makes frame 85, frame 100, and later dense frames
+    // comparable even when the cell count changes.
     const size_t scheduledCellIterations =
         (static_cast<size_t>(std::max(0, calibrationIters)) * startingCellCount) +
         phaseAIterationsExecuted +
