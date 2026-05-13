@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <limits>
 #include "yaml-cpp/yaml.h"
 #include <iostream>
 
@@ -80,6 +81,12 @@ public:
     // small cell touches only a few z slices.
     int parallel_min_slices = 8;
 
+    // How initial CSV z coordinates should be interpreted.
+    // auto: preserve the old heuristic, where theta columns mean a resume CSV
+    // scaled: CSV z is already in interpolated optimizer space
+    // raw: CSV z comes from the raw TIFF or GT stack and must be multiplied by z_scaling
+    std::string initial_z_space = "auto";
+
     // Constructor with default values
     SimulationConfig() : iterations_per_cell(0),
                          z_scaling(1.0), blur_sigma(0.0f), z_slices(-1) {
@@ -127,8 +134,14 @@ public:
         if (node["adaptive_background_top_fraction"]) adaptive_background_top_fraction = node["adaptive_background_top_fraction"].as<float>();
         if (node["parallel_threads"]) parallel_threads = node["parallel_threads"].as<int>();
         if (node["parallel_min_slices"]) parallel_min_slices = node["parallel_min_slices"].as<int>();
+        if (node["initial_z_space"]) initial_z_space = node["initial_z_space"].as<std::string>();
         parallel_threads = std::max(1, parallel_threads);
         parallel_min_slices = std::max(1, parallel_min_slices);
+        if (initial_z_space != "auto" &&
+            initial_z_space != "raw" &&
+            initial_z_space != "scaled") {
+            throw std::invalid_argument("simulation.initial_z_space must be one of: auto, raw, scaled");
+        }
     }
     void printConfig() const {
         std::cout << "Simulation Config\n";
@@ -171,6 +184,7 @@ public:
         std::cout << "adaptive_background_top_fraction: " << adaptive_background_top_fraction << '\n';
         std::cout << "parallel_threads: " << parallel_threads << '\n';
         std::cout << "parallel_min_slices: " << parallel_min_slices << '\n';
+        std::cout << "initial_z_space: " << initial_z_space << '\n';
         std::cout << "z_slices: " << z_slices << std::endl;
     }
 };
@@ -521,11 +535,12 @@ public:
     float abRatioProbabilityTrust{1.0f};
     float brightnessUpdateBlend{0.2f};
     float brightnessMeanAmplification{1.0f};
-    // Maximum valid z position (interpolated z-space). Used to clamp Spheroid
-    // center z in the constructor, preventing cells from drifting off the z-stack.
-    // Default 224 = (z_slices=225) - 1. Runtime-updated by CellUniverse::loadFrame
-    // to the actual interpolated slice count - 1. Not parsed from YAML.
-    float maxZ{224.0f};
+    // Maximum valid z position in interpolated optimizer space. It starts open
+    // because initial cells are constructed before the first frame has loaded,
+    // so using an embryo-sized default would clip deeper datasets such as
+    // Drosophila. CellUniverse::ensureFrameLoaded updates this to the actual
+    // slice count before optimization and later perturbations.
+    float maxZ{std::numeric_limits<float>::max()};
     ~SpheroidConfig() = default;
 
     void explodeConfig(const YAML::Node& node)

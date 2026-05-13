@@ -18,27 +18,27 @@ cell:
     increase_prob: 0.35
     decrease_prob: 0.35
     mu: 0
-    sigma: 8
+    sigma: 4
   majorRadius:
-    increase_prob: 0.5
-    decrease_prob: 0.7
+    increase_prob: 0.2
+    decrease_prob: 0.6
     mu: 0
-    sigma: 2
+    sigma: 0.8
   bRadius:
     increase_prob: 0.2
-    decrease_prob: 0.2
+    decrease_prob: 0.6
     mu: 0
-    sigma: 2
+    sigma: 0.8
   abRatio:
-    increase_prob: 0.5
-    decrease_prob: 0.5
+    increase_prob: 0.25
+    decrease_prob: 0.25
     mu: 0
-    sigma: 0.08
+    sigma: 0.04
   minorRadius:
-    increase_prob: 0.5
-    decrease_prob: 0.85
+    increase_prob: 0.2
+    decrease_prob: 0.6
     mu: 0
-    sigma: 2
+    sigma: 0.8
   # Rotation perturbation — tuned DOWN from (prob 0.9, sigma 0.1) on
   # 2026-04-11 because the old values were fine under oblate (a==b makes
   # rotation around z a structural no-op, so the random walk was invisible)
@@ -67,17 +67,18 @@ cell:
     mu: 0
     sigma: 0.0
 
-  minMajorRadius: 10
-  maxMajorRadius: 50
-  # Triaxial b-axis bounds. Keeping them wide (matching major) means the b
-  # axis can shrink or grow into the full equatorial range. Tighten these
-  # to constrain the aspect ratio (e.g. minBRadius: 8, maxBRadius: 45).
-  minBRadius: 10
-  maxBRadius: 50
-  minMinorRadius: 5
-  maxMinorRadius: 45
+  # Drosophila nuclei are much smaller and denser than the C. elegans embryo
+  # cells this file was copied from. Tight bounds are intentional here: the GT
+  # only marks a sparse subset of nuclei, so wide embryo radii let those few
+  # tracked cells expand until they explain unrelated bright nuclei.
+  minMajorRadius: 3
+  maxMajorRadius: 12
+  minBRadius: 3
+  maxBRadius: 12
+  minMinorRadius: 2
+  maxMinorRadius: 10
 
-  initialRadiusScale: 1.0
+  initialRadiusScale: 0.6
   initialBrightness: 0.22
   backgroundColor: 0.05
 
@@ -106,6 +107,9 @@ simulation:
   iterations_per_cell: 500
   z_scaling: 5
   blur_sigma: 0.0
+  # This seed CSV is derived from raw TRA GT z slices, not from a CellUniverse
+  # checkpoint. Scale z by z_scaling even though the CSV includes theta columns.
+  initial_z_space: raw
 
   iterative_penalty: 0.1
   iterative_min_penalty: 0.005
@@ -159,9 +163,12 @@ simulation:
 # Split attempts generate K candidate placements around the snapshot/PCA
 # direction, burn each in briefly, pick the best, then bio check + cost gate.
 prob:
-  P_split_base: 0.03
-  P_split_max: 0.5
-  shape_elongation_classify_threshold: 1.20
+  # Disable split attempts for the first Drosophila smoke tests. The GT marks a
+  # sparse subset of a dense nuclear shell; before segmentation is tuned, split
+  # candidates are slow and mostly false positives.
+  P_split_base: 0.0
+  P_split_max: 0.0
+  shape_elongation_classify_threshold: 99.0
 
   split_cost: 15
   # Evidence rescue for true divisions that miss split_cost because the
@@ -200,7 +207,7 @@ prob:
   # Runs M perturbCell iterations with tight position sigmas and radii
   # frozen at 0 sigma so the parent position refines without radius
   # collapse. Catches the "Phase A parks parent on one daughter" pathology.
-  split_calibration_iterations_per_cell: 50
+  split_calibration_iterations_per_cell: 10
   split_candidate_rotation_delta_degrees: 8
   split_candidate_translation_delta_fraction: 0.2
   # Candidate rescue for asymmetric true divisions: if the live parent has

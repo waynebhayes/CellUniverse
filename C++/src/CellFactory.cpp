@@ -17,7 +17,8 @@ CellFactory::CellFactory(const BaseConfig &config) {
 
 // TODO: use abstract base class in the future to handle different cell types
 std::map<Path, std::vector<Spheroid>> CellFactory::createCells(const Path &init_params_path, int z_offset, float z_scaling,
-                                                               const std::string& firstFrameFile) {
+                                                               const std::string& firstFrameFile,
+                                                               const std::string& initialZSpace) {
     std::ifstream file(init_params_path);
     std::string line;
     std::string firstLine;
@@ -91,10 +92,14 @@ while (std::getline(file, line)) {
 
         float brightness = initialBrightness;
 
-        // Tracker resume CSVs already store z in the interpolated/scaled
-        // coordinate system used by the optimizer. Re-scaling them here pushes
-        // cells to the volume ceiling and corrupts mid-sequence resume runs.
-        if (!resumeStateCsv) {
+        // Tracker resume CSVs already store z in the interpolated coordinate
+        // system used by the optimizer. GT-derived initial CSVs store raw TIFF
+        // slice indices and must be scaled. Datasets can override the heuristic
+        // when a fresh seed CSV includes theta columns but is not a checkpoint.
+        const bool zAlreadyScaled =
+            (initialZSpace == "scaled") ||
+            (initialZSpace == "auto" && resumeStateCsv);
+        if (!zAlreadyScaled) {
             z *= z_scaling;
         }
 
@@ -146,6 +151,9 @@ while (std::getline(file, line)) {
 }
 
     std::cout << "Input Line Count : " << line_cnt << '\n';
+    std::cout << "Initial z space : " << initialZSpace
+              << "  resume_state_csv : " << resumeStateCsv
+              << "  z_scaling : " << z_scaling << '\n';
     std::cout << "Initial frame keys loaded : " << initialCells.size() << '\n';
     if (!initialCells.empty()) {
         const auto& firstKey = initialCells.begin()->first;

@@ -271,7 +271,8 @@ int main(int argc, char *argv[])
     // load cells here
     CellFactory cellFactory(config);
     std::map<Path, std::vector<Spheroid>> cells = cellFactory.createCells(args.initial, config.simulation.z_slices / 2,
-                                                                        config.simulation.z_scaling, firstFrameFile);
+                                                                        config.simulation.z_scaling, firstFrameFile,
+                                                                        config.simulation.initial_z_space);
     // create lineage
     CellUniverse lineage = CellUniverse(cells, imageFilePaths, config, args.output, args.firstFrame, args.continueFrom);
     LineageTreeCreator lineageTree;
