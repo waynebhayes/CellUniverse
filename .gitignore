@@ -238,6 +238,14 @@ pip-selfcheck.json
 *.dmg
 *.gz
 *.iso
+
+# Repository boundary guard
+# Keep this parent repository focused on the C++ CellUniverse code.
+# The macOS app is maintained as its own nested Git repository.
+/*
+!/.gitignore
+!/C++/
+/CellUniverse_MacLiquidGlass/
 *.jar
 *.rar
 *.tar
