@@ -1,7 +1,0 @@
-point_type,display_name,x,y,z_scaled_for_celluniverse,z_raw_slice_for_napari_if_needed,color_name,rgba,note
-missing_gt,GT_label_680_parent_672,481.0,215.0,77.0,11.0,red,"1,0,0,1",GT missing child; born at frame 80
-failed_split_candidate_d2,Cell type 1_30101_candidate_from_rejected_split,483.599,214.804,67.922,9.703,orange,"1,0.55,0,1",Algorithm found this as d2 for parent Cell type 1_3010 but rejected by cost gate
-existing_parent_like_d1,Cell type 1_3010_existing_at_d1,461.972,164.73,67.358,9.622,cyan,"0,1,1,1","Current surviving CU cell, matches first GT daughter 673"
-neighbor_2,Cell type 1_4111,459.635,242.613,119.567,17.081,yellow,"1,1,0,1",Nearest existing CU neighbor 2
-neighbor_3,Cell type 1_21011,496.117,169.229,120.951,17.279,magenta,"1,0,1,1",Nearest existing CU neighbor 3
-neighbor_4,Cell type 1_30001,408.045,242.274,69.81,9.973,lime,"0,1,0,1",Nearest existing CU neighbor 4
