@@ -89,6 +89,11 @@ Frame::Frame(const std::vector<cv::Mat> &realFrame, const SimulationConfig &simu
         double zValue = i;
         z_slices.push_back(zValue);
     }
+    _frameAnchorCenters.reserve(this->cells.size());
+    for (const auto &cell : this->cells)
+    {
+        _frameAnchorCenters.emplace_back(cell.getX(), cell.getY(), cell.getZ());
+    }
     _synthFrame = generateSynthFrame();
     refreshFullCostCache();
 }
@@ -324,6 +329,25 @@ size_t Frame::length() const
     return cells.size();
 }
 
+bool Frame::centerWithinFrameDriftLimit(size_t index, const cv::Point3f &candidateCenter) const
+{
+    const float maxXY = Spheroid::cellConfig.maxCenterDriftXY;
+    const float maxZ = Spheroid::cellConfig.maxCenterDriftZ;
+    if ((maxXY <= 0.0f && maxZ <= 0.0f) || index >= _frameAnchorCenters.size()) {
+        return true;
+    }
+
+    const cv::Point3f &anchor = _frameAnchorCenters[index];
+    const float dx = candidateCenter.x - anchor.x;
+    const float dy = candidateCenter.y - anchor.y;
+    const float dz = candidateCenter.z - anchor.z;
+    const float distXY = std::sqrt(dx * dx + dy * dy);
+
+    const bool xyOk = (maxXY <= 0.0f) || (distXY <= maxXY);
+    const bool zOk = (maxZ <= 0.0f) || (std::abs(dz) <= maxZ);
+    return xyOk && zOk;
+}
+
 CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight, float sizeReductionWeight)
 {
     if (index >= cells.size()) {
@@ -337,6 +361,11 @@ CostCallbackPair Frame::perturbCell(size_t index, float overlapWeight, float siz
     double oldOverlapCell = computeOverlapForCell(index, overlapWeight);
 
     cells[index] = cells[index].getPerturbedCell(&perturbDirections);
+    const cv::Point3f proposedCenter(cells[index].getX(), cells[index].getY(), cells[index].getZ());
+    if (!centerWithinFrameDriftLimit(index, proposedCenter)) {
+        cells[index] = oldCell;
+        return {0.0, [](bool) {}};
+    }
 
     // Min-radius hard clamp (2026-04-09): prevent cells from ratcheting down to
     // minimum radius bounds via unconstrained perturbation. The Spheroid ctor
@@ -1076,6 +1105,18 @@ bool Frame::calibrateCellPositionViaCentroid(
                   << " currentPos=(" << currentPos.x << "," << currentPos.y << "," << currentPos.z << ")"
                   << " dist=" << moveDist << " kept=" << gstats.voronoiKept
                   << " result=no_move" << std::endl;
+        return false;
+    }
+
+    if (!centerWithinFrameDriftLimit(cellIndex, centroid)) {
+        const cv::Point3f &anchor = _frameAnchorCenters[cellIndex];
+        std::cout << "  [Centroid Calibration] cell=" << savedCell.getName()
+                  << " skipped (drift_limited)"
+                  << " centroid=(" << centroid.x << "," << centroid.y << "," << centroid.z << ")"
+                  << " anchor=(" << anchor.x << "," << anchor.y << "," << anchor.z << ")"
+                  << " dist=" << moveDist
+                  << " kept=" << gstats.voronoiKept
+                  << std::endl;
         return false;
     }
 

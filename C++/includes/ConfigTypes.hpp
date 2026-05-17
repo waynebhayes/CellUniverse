@@ -535,6 +535,13 @@ public:
     float abRatioProbabilityTrust{1.0f};
     float brightnessUpdateBlend{0.2f};
     float brightnessMeanAmplification{1.0f};
+    // Optional movement gate per frame in optimizer coordinates. Defaults to
+    // disabled so established datasets keep their existing behavior. Dense,
+    // sparsely annotated datasets can enable this to keep a tracked object near
+    // its frame start seed instead of letting the L2 cost pull it onto a nearby
+    // untracked bright object.
+    float maxCenterDriftXY{0.0f};
+    float maxCenterDriftZ{0.0f};
     // Maximum valid z position in interpolated optimizer space. It starts open
     // because initial cells are constructed before the first frame has loaded,
     // so using an embryo-sized default would clip deeper datasets such as
@@ -584,6 +591,22 @@ public:
         if (node["abRatioProbabilityTrust"]) abRatioProbabilityTrust = node["abRatioProbabilityTrust"].as<float>();
         if (node["brightnessUpdateBlend"]) brightnessUpdateBlend = node["brightnessUpdateBlend"].as<float>();
         if (node["brightnessMeanAmplification"]) brightnessMeanAmplification = node["brightnessMeanAmplification"].as<float>();
+        if (node["maxCenterDriftXY"]) maxCenterDriftXY = node["maxCenterDriftXY"].as<float>();
+        if (node["maxCenterDriftZ"]) maxCenterDriftZ = node["maxCenterDriftZ"].as<float>();
+    }
+
+    void printConfig() const
+    {
+        std::cout << "Cell Config\n";
+        std::cout << "minMajorRadius: " << minMajorRadius << '\n';
+        std::cout << "maxMajorRadius: " << maxMajorRadius << '\n';
+        std::cout << "minBRadius: " << minBRadius << '\n';
+        std::cout << "maxBRadius: " << maxBRadius << '\n';
+        std::cout << "minMinorRadius: " << minMinorRadius << '\n';
+        std::cout << "maxMinorRadius: " << maxMinorRadius << '\n';
+        std::cout << "initialRadiusScale: " << initialRadiusScale << '\n';
+        std::cout << "maxCenterDriftXY: " << maxCenterDriftXY << '\n';
+        std::cout << "maxCenterDriftZ: " << maxCenterDriftZ << '\n';
     }
 };
 
@@ -627,6 +650,7 @@ public:
     }
 
     void printConfig() const {
+        if (cell) cell->printConfig();
         simulation.printConfig();
         prob.printConfig();
     }

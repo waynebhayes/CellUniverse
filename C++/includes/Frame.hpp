@@ -116,6 +116,7 @@ private:
     // background invariant). Updated per-frame by the adaptive background path in
     // CellUniverse::optimize via setBackgroundColor().
     float _backgroundValue = 0.0f;
+    std::vector<cv::Point3f> _frameAnchorCenters;
     cv::Size getImageShape();
 
     // Rebuild _currentCostPerSlice and _currentCost from scratch by walking
@@ -136,5 +137,7 @@ private:
     double calculateIncrementalCost(const std::vector<cv::Mat> &newSynthFrame,
                                     int affectedZMin, int affectedZMax,
                                     std::vector<double> &outNewPerSlice) const;
+
+    bool centerWithinFrameDriftLimit(size_t index, const cv::Point3f &candidateCenter) const;
 };
 #endif // FRAME_H

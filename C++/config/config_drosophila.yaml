@@ -67,20 +67,45 @@ cell:
     mu: 0
     sigma: 0.0
 
-  # Drosophila nuclei are much smaller and denser than the C. elegans embryo
-  # cells this file was copied from. Tight bounds are intentional here: the GT
-  # only marks a sparse subset of nuclei, so wide embryo radii let those few
-  # tracked cells expand until they explain unrelated bright nuclei.
+  # Drosophila nuclei are much smaller and much denser than the C. elegans
+  # embryo cells used by the older configs. The TRA labels in frame 0 are only
+  # about 5 pixels wide in x/y and 3 raw slices deep in z. Since z_scaling is 5,
+  # that means one labeled nucleus occupies roughly 5 x 5 x 15 optimizer voxels.
+  #
+  # These radius bounds keep each synthetic ellipsoid close to that nucleus
+  # scale. The lower bounds avoid collapse into tiny invisible dots. The upper
+  # bounds stop a sparse tracked label from growing large enough to explain
+  # nearby unlabeled nuclei, which was the source of the large yellow blobs.
   minMajorRadius: 3
-  maxMajorRadius: 12
+  maxMajorRadius: 7
   minBRadius: 3
-  maxBRadius: 12
+  maxBRadius: 7
   minMinorRadius: 2
-  maxMinorRadius: 10
+  maxMinorRadius: 6
 
-  initialRadiusScale: 0.6
+  # The seed CSV still stores a generic radius around 10 from the GT builder.
+  # Scaling it down starts Drosophila cells near a small nucleus size before the
+  # optimizer runs. This reduces the chance that early iterations accept large
+  # radius changes just because a larger sphere covers more bright pixels.
+  initialRadiusScale: 0.5
   initialBrightness: 0.22
   backgroundColor: 0.05
+
+  # The TRA seed marks specific nuclei, not the full embryo surface. In this
+  # dense dataset, many unlabeled nuclei sit close to the labeled ones, so the
+  # image cost alone can prefer drifting to a nearby brighter nucleus. These
+  # limits keep every cell near its frame start position while still allowing a
+  # small local correction.
+  #
+  # maxCenterDriftXY is measured in x/y pixels. 8 pixels is larger than one
+  # nucleus radius but much smaller than the bad 100 plus pixel jumps observed in
+  # run 4533572.
+  #
+  # maxCenterDriftZ is measured after z interpolation. 20 optimizer slices equals
+  # 4 raw z slices with z_scaling 5, enough for local z correction but not enough
+  # to jump across the embryo shell.
+  maxCenterDriftXY: 8
+  maxCenterDriftZ: 20
 
   minBrightness: 0.1
   maxBrightness: 0.98
