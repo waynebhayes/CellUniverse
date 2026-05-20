@@ -1,23 +1,20 @@
 #include "../includes/ImageHandler.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <functional>
 #include <iostream>
 #include <limits>
+#include <queue>
+#include <random>
+#include <sstream>
 #include <stdexcept>
 
 namespace
 {
-std::string toLowerCopy(std::string value)
-{
-    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
-        return static_cast<char>(std::tolower(ch));
-    });
-    return value;
-}
-
 int makeOddAtLeast(int value, int minimum = 3)
 {
     int adjusted = std::max(value, minimum);
@@ -46,46 +43,15 @@ void updateTiffConfigIfNeeded(const fs::path &file, BaseConfig &config)
     config.simulation.z_slices = static_cast<int>(images.size());
 }
 
-void applyDatasetRuntimeProfileIfKnown(const fs::path &inputPath, BaseConfig &config)
-{
-    const std::string lowerPath = toLowerCopy(inputPath.string());
-
-    if (lowerPath.find("simulated_nuclei_hl60 cells_stained_with_hoechst") != std::string::npos ||
-        lowerPath.find("fluo-n3dh-sim+") != std::string::npos)
-    {
-        const float inferredZScaling = 0.200f / 0.125f;
-        config.simulation.z_scaling = inferredZScaling;
-        std::cout << "[Dataset Runtime] profile=hl60_sim"
-                  << " z_scaling=" << inferredZScaling
-                  << " voxel_size_xyz=(0.125,0.125,0.200)"
-                  << std::endl;
-        return;
-    }
-
-    if (lowerPath.find("c.elegans_developing embryo_fluo-n3dh-ce_training") != std::string::npos ||
-        lowerPath.find("fluo-n3dh-ce") != std::string::npos)
-    {
-        std::cout << "[Dataset Runtime] profile=celegans_embryo"
-                  << " z_scaling=" << config.simulation.z_scaling
-                  << std::endl;
-        return;
-    }
-
-    if (lowerPath.find("original_data") != std::string::npos)
-    {
-        std::cout << "[Dataset Runtime] profile=original_data"
-                  << " z_scaling=" << config.simulation.z_scaling
-                  << std::endl;
-    }
-}
-
 struct StackStats
 {
     double minValue = 0.0;
     double maxValue = 0.0;
     double mean = 0.0;
     double stddev = 0.0;
+    double saturatedFraction = 0.0;
     std::size_t count = 0;
+    std::size_t nonFiniteCount = 0;
 };
 
 StackStats computeStackStats(const ImageStack &stack)
@@ -93,26 +59,17 @@ StackStats computeStackStats(const ImageStack &stack)
     StackStats stats;
     double sum = 0.0;
     double sumSq = 0.0;
-    bool firstValue = true;
+    double minValue = std::numeric_limits<double>::infinity();
+    double maxValue = -std::numeric_limits<double>::infinity();
+    std::size_t count = 0;
+    std::size_t saturatedCount = 0;
+    std::size_t nonFiniteCount = 0;
 
-    for (const auto &slice : stack)
+    #pragma omp parallel for schedule(static) reduction(+:sum,sumSq,count,saturatedCount,nonFiniteCount) reduction(min:minValue) reduction(max:maxValue)
+    for (int i = 0; i < static_cast<int>(stack.size()); ++i)
     {
+        const auto &slice = stack[static_cast<std::size_t>(i)];
         CV_Assert(slice.type() == CV_32F);
-
-        double sliceMin = 0.0;
-        double sliceMax = 0.0;
-        cv::minMaxLoc(slice, &sliceMin, &sliceMax);
-        if (firstValue)
-        {
-            stats.minValue = sliceMin;
-            stats.maxValue = sliceMax;
-            firstValue = false;
-        }
-        else
-        {
-            stats.minValue = std::min(stats.minValue, sliceMin);
-            stats.maxValue = std::max(stats.maxValue, sliceMax);
-        }
 
         for (int y = 0; y < slice.rows; ++y)
         {
@@ -120,64 +77,505 @@ StackStats computeStackStats(const ImageStack &stack)
             for (int x = 0; x < slice.cols; ++x)
             {
                 const double value = row[x];
+                if (!std::isfinite(value))
+                {
+                    ++nonFiniteCount;
+                    ++count;
+                    continue;
+                }
+                minValue = std::min(minValue, value);
+                maxValue = std::max(maxValue, value);
+                if (value >= 1.0 - 1e-6 && value <= 1.0 + 1e-6)
+                {
+                    ++saturatedCount;
+                }
                 sum += value;
                 sumSq += value * value;
-                ++stats.count;
+                ++count;
             }
         }
     }
 
+    stats.count = count;
     if (stats.count == 0)
     {
         return stats;
     }
 
+    stats.minValue = minValue;
+    stats.maxValue = maxValue;
     stats.mean = sum / static_cast<double>(stats.count);
+    stats.saturatedFraction =
+        static_cast<double>(saturatedCount) / static_cast<double>(stats.count);
+    stats.nonFiniteCount = nonFiniteCount;
     const double variance =
         std::max(0.0, sumSq / static_cast<double>(stats.count) - stats.mean * stats.mean);
     stats.stddev = std::sqrt(variance);
     return stats;
 }
 
-void printStackStats(const std::string &stage, const std::string &imageFile, const ImageStack &stack)
+void printStackStats(std::ostream &log,
+                     const std::string &stage,
+                     const std::string &imageFile,
+                     const ImageStack &stack)
 {
     const StackStats stats = computeStackStats(stack);
-    std::cout << "[Preprocess] file=" << fs::path(imageFile).filename().string()
-              << " stage=" << stage
-              << " slices=" << stack.size()
-              << " voxels=" << stats.count
-              << " min=" << stats.minValue
-              << " max=" << stats.maxValue
-              << " mean=" << stats.mean
-              << " stddev=" << stats.stddev
-              << std::endl;
+    log << "[Preprocess] file=" << fs::path(imageFile).filename().string()
+        << " stage=" << stage
+        << " slices=" << stack.size()
+        << " voxels=" << stats.count
+        << " min=" << stats.minValue
+        << " max=" << stats.maxValue
+        << " mean=" << stats.mean
+        << " stddev=" << stats.stddev
+        << " saturated_fraction=" << stats.saturatedFraction
+        << " nonfinite=" << stats.nonFiniteCount
+        << std::endl;
 }
 
 ImageStack cloneStack(const ImageStack &sequence)
 {
-    ImageStack cloned;
-    cloned.reserve(sequence.size());
-    for (const auto &slice : sequence)
+    ImageStack cloned(sequence.size());
+
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < static_cast<int>(sequence.size()); ++i)
     {
-        cloned.push_back(slice.clone());
+        cloned[static_cast<std::size_t>(i)] = sequence[static_cast<std::size_t>(i)].clone();
     }
     return cloned;
 }
 
+ImageStack applyCubePooling(const ImageStack &stack,
+                            const BaseConfig &config,
+                            std::ostream &log)
+{
+    if (stack.empty() || !config.simulation.cube_pooling_enabled)
+    {
+        return cloneStack(stack);
+    }
+
+    const int depth = static_cast<int>(stack.size());
+    const int rows = stack[0].rows;
+    const int cols = stack[0].cols;
+    if (depth <= 0 || rows <= 0 || cols <= 0)
+    {
+        return cloneStack(stack);
+    }
+
+    const int cubeSize = std::max(1, config.simulation.cube_pooling_cube_size);
+    std::string poolingMode = config.simulation.cube_pooling_mode;
+    std::transform(poolingMode.begin(), poolingMode.end(), poolingMode.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    if (poolingMode != "mean" && poolingMode != "max" &&
+        poolingMode != "min" && poolingMode != "median" &&
+        poolingMode != "top_percentile" && poolingMode != "low_percentile")
+    {
+        log << "[CubePooling] unsupported mode=" << config.simulation.cube_pooling_mode
+            << "; using mean" << std::endl;
+        poolingMode = "mean";
+    }
+    const float topFraction = std::clamp(config.simulation.cube_pooling_top_fraction, 0.0f, 1.0f);
+    const float lowFraction = std::clamp(config.simulation.cube_pooling_low_fraction, 0.0f, 1.0f);
+    const int gridZ = (depth + cubeSize - 1) / cubeSize;
+    const int gridY = (rows + cubeSize - 1) / cubeSize;
+    const int gridX = (cols + cubeSize - 1) / cubeSize;
+
+    ImageStack pooled(depth);
+    for (int z = 0; z < depth; ++z)
+    {
+        pooled[static_cast<size_t>(z)] = cv::Mat::zeros(rows, cols, CV_32F);
+    }
+
+    #pragma omp parallel for collapse(3) schedule(static)
+    for (int gz = 0; gz < gridZ; ++gz)
+    {
+        for (int gy = 0; gy < gridY; ++gy)
+        {
+            for (int gx = 0; gx < gridX; ++gx)
+            {
+                const int z0 = gz * cubeSize;
+                const int z1 = std::min(depth, z0 + cubeSize);
+                const int y0 = gy * cubeSize;
+                const int y1 = std::min(rows, y0 + cubeSize);
+                const int x0 = gx * cubeSize;
+                const int x1 = std::min(cols, x0 + cubeSize);
+
+                double sum = 0.0;
+                float extrema = poolingMode == "min"
+                    ? std::numeric_limits<float>::infinity()
+                    : -std::numeric_limits<float>::infinity();
+                int voxelCount = 0;
+                std::vector<float> pooledValues;
+                if (poolingMode == "median" ||
+                    poolingMode == "top_percentile" ||
+                    poolingMode == "low_percentile")
+                {
+                    pooledValues.reserve(
+                        static_cast<std::size_t>((z1 - z0) * (y1 - y0) * (x1 - x0)));
+                }
+                for (int z = z0; z < z1; ++z)
+                {
+                    const cv::Mat &slice = stack[static_cast<size_t>(z)];
+                    for (int y = y0; y < y1; ++y)
+                    {
+                        const float *row = slice.ptr<float>(y);
+                        for (int x = x0; x < x1; ++x)
+                        {
+                            const float value = row[x];
+                            sum += value;
+                            if (poolingMode == "median" ||
+                                poolingMode == "top_percentile" ||
+                                poolingMode == "low_percentile")
+                            {
+                                pooledValues.push_back(value);
+                            }
+                            else if (poolingMode == "min")
+                            {
+                                extrema = std::min(extrema, value);
+                            }
+                            else if (poolingMode == "max")
+                            {
+                                extrema = std::max(extrema, value);
+                            }
+                            ++voxelCount;
+                        }
+                    }
+                }
+                float pooledValue = 0.0f;
+                if (voxelCount > 0)
+                {
+                    if (poolingMode == "mean")
+                    {
+                        pooledValue = static_cast<float>(sum / static_cast<double>(voxelCount));
+                    }
+                    else if (poolingMode == "median")
+                    {
+                        const std::size_t medianIndex = pooledValues.size() / 2U;
+                        std::nth_element(pooledValues.begin(),
+                                         pooledValues.begin() + static_cast<std::ptrdiff_t>(medianIndex),
+                                         pooledValues.end());
+                        pooledValue = pooledValues[medianIndex];
+                    }
+                    else if (poolingMode == "top_percentile")
+                    {
+                        const std::size_t selectedCount = std::max<std::size_t>(
+                            1U,
+                            static_cast<std::size_t>(
+                                std::ceil(std::max(topFraction, 1e-6f) *
+                                          static_cast<float>(pooledValues.size()))));
+                        const std::size_t thresholdIndex = pooledValues.size() - selectedCount;
+                        std::nth_element(pooledValues.begin(),
+                                         pooledValues.begin() + static_cast<std::ptrdiff_t>(thresholdIndex),
+                                         pooledValues.end());
+                        double topSum = 0.0;
+                        for (std::size_t i = thresholdIndex; i < pooledValues.size(); ++i)
+                        {
+                            topSum += pooledValues[i];
+                        }
+                        pooledValue = static_cast<float>(
+                            topSum / static_cast<double>(selectedCount));
+                    }
+                    else if (poolingMode == "low_percentile")
+                    {
+                        const std::size_t selectedCount = std::max<std::size_t>(
+                            1U,
+                            static_cast<std::size_t>(
+                                std::ceil(std::max(lowFraction, 1e-6f) *
+                                          static_cast<float>(pooledValues.size()))));
+                        const std::size_t lastSelectedIndex = selectedCount - 1U;
+                        std::nth_element(pooledValues.begin(),
+                                         pooledValues.begin() + static_cast<std::ptrdiff_t>(lastSelectedIndex),
+                                         pooledValues.end());
+                        double lowSum = 0.0;
+                        for (std::size_t i = 0; i < selectedCount; ++i)
+                        {
+                            lowSum += pooledValues[i];
+                        }
+                        pooledValue = static_cast<float>(
+                            lowSum / static_cast<double>(selectedCount));
+                    }
+                    else
+                    {
+                        pooledValue = extrema;
+                    }
+                }
+
+                for (int z = z0; z < z1; ++z)
+                {
+                    cv::Mat &slice = pooled[static_cast<size_t>(z)];
+                    for (int y = y0; y < y1; ++y)
+                    {
+                        float *row = slice.ptr<float>(y);
+                        for (int x = x0; x < x1; ++x)
+                        {
+                            row[x] = pooledValue;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    log << "[CubePooling]"
+        << " cubeSize=" << cubeSize
+        << " grid=" << gridX << "x" << gridY << "x" << gridZ
+        << " mode=" << poolingMode
+        << " top_fraction=" << topFraction
+        << " low_fraction=" << lowFraction
+        << std::endl;
+
+    return pooled;
+}
+
+struct BrightBox
+{
+    int ix = 0;
+    int iy = 0;
+    int iz = 0;
+    cv::Point3f center{0.0f, 0.0f, 0.0f};
+    float brightness = 0.0f;
+    int voxels = 0;
+};
+
+int chooseNearestDivisorSize(int axisLength, float targetSize)
+{
+    if (axisLength <= 1)
+    {
+        return 1;
+    }
+
+    const float clampedTarget = std::clamp(targetSize, 1.0f, static_cast<float>(axisLength));
+    int bestDivisor = 1;
+    float bestDistance = std::abs(static_cast<float>(bestDivisor) - clampedTarget);
+    for (int d = 1; d <= axisLength; ++d)
+    {
+        if (axisLength % d != 0)
+        {
+            continue;
+        }
+        const float distance = std::abs(static_cast<float>(d) - clampedTarget);
+        if (distance < bestDistance ||
+            (std::abs(distance - bestDistance) <= 1e-6f && d > bestDivisor))
+        {
+            bestDivisor = d;
+            bestDistance = distance;
+        }
+    }
+    return bestDivisor;
+}
+
+std::vector<Frame::SignalCenter> localizeSignalCentersInStack(const ImageStack &stack,
+                                                              const BaseConfig &config)
+{
+    std::vector<Frame::SignalCenter> centers;
+    if (stack.empty() || !config.cell)
+    {
+        return centers;
+    }
+
+    const int sizeX = stack[0].cols;
+    const int sizeY = stack[0].rows;
+    const int sizeZ = static_cast<int>(stack.size());
+    if (sizeX <= 0 || sizeY <= 0 || sizeZ <= 0)
+    {
+        return centers;
+    }
+
+    const float targetBoxSize =
+        static_cast<float>(std::max(1, config.simulation.signal_guided_box_side_length));
+
+    const int boxSizeX = chooseNearestDivisorSize(sizeX, targetBoxSize);
+    const int boxSizeY = chooseNearestDivisorSize(sizeY, targetBoxSize);
+    const int boxSizeZ = chooseNearestDivisorSize(sizeZ, targetBoxSize);
+    const int gridX = std::max(1, sizeX / boxSizeX);
+    const int gridY = std::max(1, sizeY / boxSizeY);
+    const int gridZ = std::max(1, sizeZ / boxSizeZ);
+
+    const float backgroundValue = 0.0f;
+    const float minDelta = std::max(0.0f, config.simulation.signal_guided_min_box_brightness_delta);
+
+    std::vector<BrightBox> boxes;
+    boxes.reserve(static_cast<size_t>(gridX) * gridY * gridZ);
+    for (int iz = 0; iz < gridZ; ++iz)
+    {
+        const int z0 = iz * boxSizeZ;
+        const int z1 = z0 + boxSizeZ;
+        for (int iy = 0; iy < gridY; ++iy)
+        {
+            const int y0 = iy * boxSizeY;
+            const int y1 = y0 + boxSizeY;
+            for (int ix = 0; ix < gridX; ++ix)
+            {
+                const int x0 = ix * boxSizeX;
+                const int x1 = x0 + boxSizeX;
+
+                double sum = 0.0;
+                int voxels = 0;
+                for (int z = z0; z < z1; ++z)
+                {
+                    for (int y = y0; y < y1; ++y)
+                    {
+                        const float *row = stack[static_cast<size_t>(z)].ptr<float>(y);
+                        for (int x = x0; x < x1; ++x)
+                        {
+                            sum += row[x];
+                            ++voxels;
+                        }
+                    }
+                }
+                if (voxels <= 0)
+                {
+                    continue;
+                }
+
+                const float meanBrightness = static_cast<float>(sum / static_cast<double>(voxels));
+                if (meanBrightness <= backgroundValue + minDelta)
+                {
+                    continue;
+                }
+
+                boxes.push_back({
+                    ix, iy, iz,
+                    cv::Point3f(
+                        static_cast<float>(x0 + x1 - 1) * 0.5f,
+                        static_cast<float>(y0 + y1 - 1) * 0.5f,
+                        static_cast<float>(z0 + z1 - 1) * 0.5f),
+                    meanBrightness,
+                    voxels
+                });
+            }
+        }
+    }
+
+    std::sort(boxes.begin(), boxes.end(),
+              [](const BrightBox &a, const BrightBox &b)
+              {
+                  return a.brightness > b.brightness;
+              });
+
+    std::map<std::tuple<int, int, int>, size_t> boxIndex;
+    for (size_t i = 0; i < boxes.size(); ++i)
+    {
+        boxIndex[{boxes[i].ix, boxes[i].iy, boxes[i].iz}] = i;
+    }
+
+    std::vector<char> visited(boxes.size(), 0);
+    float maxCenterBrightness = backgroundValue;
+    for (size_t seed = 0; seed < boxes.size(); ++seed)
+    {
+        if (visited[seed])
+        {
+            continue;
+        }
+
+        std::queue<size_t> queue;
+        queue.push(seed);
+        visited[seed] = 1;
+        double weightSum = 0.0;
+        double xSum = 0.0;
+        double ySum = 0.0;
+        double zSum = 0.0;
+        double brightnessSum = 0.0;
+        int clusterBoxes = 0;
+
+        while (!queue.empty())
+        {
+            const size_t current = queue.front();
+            queue.pop();
+            const BrightBox &box = boxes[current];
+            const float weight = std::max(1e-6f, box.brightness - backgroundValue);
+            weightSum += weight;
+            xSum += weight * static_cast<double>(box.center.x);
+            ySum += weight * static_cast<double>(box.center.y);
+            zSum += weight * static_cast<double>(box.center.z);
+            brightnessSum += static_cast<double>(box.brightness);
+            ++clusterBoxes;
+
+            static constexpr std::array<std::array<int, 3>, 6> kFaceNeighbors{{
+                {{ 1,  0,  0}}, {{-1,  0,  0}},
+                {{ 0,  1,  0}}, {{ 0, -1,  0}},
+                {{ 0,  0,  1}}, {{ 0,  0, -1}}
+            }};
+            for (const auto &offset : kFaceNeighbors)
+            {
+                auto it = boxIndex.find({
+                    box.ix + offset[0],
+                    box.iy + offset[1],
+                    box.iz + offset[2]});
+                if (it == boxIndex.end())
+                {
+                    continue;
+                }
+                const size_t neighbor = it->second;
+                if (visited[neighbor])
+                {
+                    continue;
+                }
+                visited[neighbor] = 1;
+                queue.push(neighbor);
+            }
+        }
+
+        if (clusterBoxes <= 0 || weightSum <= 0.0)
+        {
+            continue;
+        }
+
+        Frame::SignalCenter center;
+        center.position = cv::Point3f(
+            static_cast<float>(xSum / weightSum),
+            static_cast<float>(ySum / weightSum),
+            static_cast<float>(zSum / weightSum));
+        center.brightness = static_cast<float>(brightnessSum / static_cast<double>(clusterBoxes));
+        center.boxes = clusterBoxes;
+        centers.push_back(center);
+        maxCenterBrightness = std::max(maxCenterBrightness, center.brightness);
+    }
+
+    for (auto &center : centers)
+    {
+        const float normalized = (maxCenterBrightness > backgroundValue + 1e-6f)
+            ? std::clamp((center.brightness - backgroundValue) /
+                         (maxCenterBrightness - backgroundValue), 0.0f, 1.0f)
+            : 0.0f;
+        center.sigmaScale = std::max(
+            config.simulation.signal_guided_min_sigma_scale,
+            1.0f - normalized * (1.0f - config.simulation.signal_guided_min_sigma_scale));
+    }
+
+    std::sort(centers.begin(), centers.end(),
+              [](const Frame::SignalCenter &a, const Frame::SignalCenter &b)
+              {
+                  return a.brightness > b.brightness;
+              });
+
+    return centers;
+}
+
 void clipStack(ImageStack &sequence)
 {
-    for (auto &slice : sequence)
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < static_cast<int>(sequence.size()); ++i)
     {
-        cv::min(slice, 1.0f, slice);
-        cv::max(slice, 0.0f, slice);
+        auto &slice = sequence[static_cast<std::size_t>(i)];
+        for (int y = 0; y < slice.rows; ++y)
+        {
+            float *row = slice.ptr<float>(y);
+            for (int x = 0; x < slice.cols; ++x)
+            {
+                if (!std::isfinite(row[x]) || row[x] < 0.0f)
+                {
+                    row[x] = 0.0f;
+                }
+                else if (row[x] > 1.0f)
+                {
+                    row[x] = 1.0f;
+                }
+            }
+        }
     }
 }
 } // namespace
-
-void ImageHandler::applyDatasetRuntimeProfile(const std::string &input, BaseConfig &config)
-{
-    applyDatasetRuntimeProfileIfKnown(fs::path(input), config);
-}
 
 Image ImageHandler::processImage(const Image &image, const BaseConfig &config)
 {
@@ -192,7 +590,9 @@ Image ImageHandler::processImage(const Image &image, const BaseConfig &config)
         processedImage = image.clone();
     }
 
-    processedImage.convertTo(processedImage, CV_32F, 1.0 / 255.0);
+    // Preserve the source intensity scale here. Frames are normalized later
+    // using one shared percentile-based scale across the selected run.
+    processedImage.convertTo(processedImage, CV_32F);
 
     if (config.simulation.blur_sigma > 0.0f)
     {
@@ -223,6 +623,38 @@ float ImageHandler::computePercentileFromValues(std::vector<float> values, float
     return values[index];
 }
 
+float computeMeanOfTopFraction(std::vector<float> values, float topFraction)
+{
+    if (values.empty())
+    {
+        return 0.0f;
+    }
+
+    const float clampedFraction = std::clamp(topFraction, 0.0f, 1.0f);
+    if (clampedFraction <= 0.0f)
+    {
+        return 0.0f;
+    }
+
+    const std::size_t selectedCount = std::max<std::size_t>(
+        1,
+        static_cast<std::size_t>(
+            std::ceil(clampedFraction * static_cast<float>(values.size()))));
+    const std::size_t thresholdIndex = values.size() - selectedCount;
+
+    std::nth_element(values.begin(),
+                     values.begin() + static_cast<std::ptrdiff_t>(thresholdIndex),
+                     values.end());
+
+    double sum = 0.0;
+    for (std::size_t i = thresholdIndex; i < values.size(); ++i)
+    {
+        sum += values[i];
+    }
+
+    return static_cast<float>(sum / static_cast<double>(selectedCount));
+}
+
 float ImageHandler::computePercentileFromSlice(const cv::Mat &slice, float percentileFraction)
 {
     CV_Assert(slice.type() == CV_32F);
@@ -251,104 +683,126 @@ cv::Mat ImageHandler::boxMean(const cv::Mat &image, int windowSize)
 
 float ImageHandler::evaluateSequenceContrastScore(const ImageStack &sequence, const BaseConfig &config)
 {
-    const float majorRadius =
-        (config.cell ? static_cast<float>(config.cell->maxMajorRadius) : 40.0f);
-    const float minorRadius =
-        (config.cell ? static_cast<float>(config.cell->maxMinorRadius) : 35.0f);
-    const std::array<float, 2> radii = {
-        std::max(1.0f, majorRadius),
-        std::max(1.0f, minorRadius)
-    };
+    const float aRadius =
+        (config.cell ? static_cast<float>(config.cell->maxARadius) : 40.0f);
+    const float cRadius =
+        (config.cell ? static_cast<float>(config.cell->maxCRadius) : 35.0f);
+    const float maxRadius = std::max(1.0f, std::max(aRadius, cRadius));
+    return evaluateSequenceContrastScoreForRadius(sequence, config, maxRadius);
+}
 
-    std::vector<float> scaleScores;
-    scaleScores.reserve(radii.size());
+float ImageHandler::evaluateBestWindowContrastScore(const ImageStack &sequence, const BaseConfig &config)
+{
+    const float defaultMinRadius = 5.0f;
+    const float defaultMaxRadius = 65.0f;
+    const float minRadius = config.cell
+        ? std::max(1.0f, static_cast<float>(std::min({
+              config.cell->minARadius,
+              config.cell->minBRadius,
+              config.cell->minCRadius})))
+        : defaultMinRadius;
+    const float maxRadius = config.cell
+        ? std::max(minRadius, static_cast<float>(std::max({
+              config.cell->maxARadius,
+              config.cell->maxBRadius > 0.0 ? config.cell->maxBRadius : config.cell->maxARadius,
+              config.cell->maxCRadius})))
+        : defaultMaxRadius;
+    const float radiusStep = std::max(1.0f, config.simulation.contrast_window_radius_step);
+    const float radiusStart = 0.5f * (minRadius + maxRadius);
+    const float penaltyRadius = std::clamp(
+        minRadius * std::max(1.0f, config.simulation.contrast_penalty_min_radius_scale),
+        minRadius,
+        maxRadius);
+    const float rewardWeight = config.simulation.contrast_reward_weight;
+    const float penaltyWeight = config.simulation.contrast_penalty_weight;
 
-    for (const float radiusAtScale : radii)
+    std::vector<float> scoringRadii;
+    for (float radius = radiusStart; radius < maxRadius - 1e-6f; radius += radiusStep) {
+        scoringRadii.push_back(radius);
+    }
+    if (scoringRadii.empty() || std::abs(scoringRadii.back() - maxRadius) > 1e-6f) {
+        scoringRadii.push_back(maxRadius);
+    }
+
+    const float penaltyScore = evaluateSequenceContrastScoreForRadius(sequence, config, penaltyRadius);
+    std::vector<float> scores(scoringRadii.size(), 0.0f);
+    #pragma omp parallel for schedule(dynamic)
+    for (int i = 0; i < static_cast<int>(scoringRadii.size()); ++i) {
+        const float rawScore = evaluateSequenceContrastScoreForRadius(
+            sequence, config, scoringRadii[static_cast<std::size_t>(i)]);
+        scores[static_cast<std::size_t>(i)] = rewardWeight * rawScore - penaltyWeight * penaltyScore;
+    }
+
+    return *std::max_element(scores.begin(), scores.end());
+}
+
+float ImageHandler::evaluateSequenceContrastScoreForRadius(const ImageStack &sequence,
+                                                           const BaseConfig &config,
+                                                           float radiusAtScale)
+{
+    const int innerWindow = makeOddAtLeast(
+        static_cast<int>(std::lround(radiusAtScale * 2.0f + 1.0f)));
+    const int outerWindow = makeOddAtLeast(
+        static_cast<int>(std::lround(radiusAtScale * 4.0f + 1.0f)),
+        innerWindow + 2);
+
+    std::vector<float> sliceScores(sequence.size(), 0.0f);
+
+    #pragma omp parallel for schedule(dynamic)
+    for (int sliceIndex = 0; sliceIndex < static_cast<int>(sequence.size()); ++sliceIndex)
     {
-        const int innerWindow = makeOddAtLeast(
-            static_cast<int>(std::lround(radiusAtScale * 2.0f + 1.0f)));
-        const int outerWindow = makeOddAtLeast(
-            static_cast<int>(std::lround(radiusAtScale * 4.0f + 1.0f)),
-            innerWindow + 2);
+        const auto &slice = sequence[static_cast<std::size_t>(sliceIndex)];
+        CV_Assert(slice.type() == CV_32F);
 
-        std::vector<float> sliceScores;
-        sliceScores.reserve(sequence.size());
+        const cv::Mat innerMean = boxMean(slice, innerWindow);
+        const cv::Mat outerMean = boxMean(slice, outerWindow);
 
-        for (const auto &slice : sequence)
+        std::vector<float> contrastValues;
+        std::vector<float> brightInteriorValues;
+        contrastValues.reserve(static_cast<std::size_t>(slice.total()));
+        brightInteriorValues.reserve(static_cast<std::size_t>(slice.total() / 8));
+
+        for (int y = 0; y < slice.rows; ++y)
         {
-            CV_Assert(slice.type() == CV_32F);
-
-            const cv::Mat innerMean = boxMean(slice, innerWindow);
-            const cv::Mat outerMean = boxMean(slice, outerWindow);
-
-            std::vector<float> contrastValues;
-            contrastValues.reserve(static_cast<std::size_t>(slice.total()));
-
-            for (int y = 0; y < slice.rows; ++y)
+            const float *sliceRow = slice.ptr<float>(y);
+            const float *innerRow = innerMean.ptr<float>(y);
+            const float *outerRow = outerMean.ptr<float>(y);
+            for (int x = 0; x < slice.cols; ++x)
             {
-                const float *innerRow = innerMean.ptr<float>(y);
-                const float *outerRow = outerMean.ptr<float>(y);
-                for (int x = 0; x < slice.cols; ++x)
+                const float localDifference = innerRow[x] - outerRow[x];
+                if (localDifference < config.simulation.contrast_structure_threshold)
                 {
-                    const float localDifference = std::abs(innerRow[x] - outerRow[x]);
-                    if (localDifference < config.simulation.contrast_structure_threshold)
-                    {
-                        continue;
-                    }
-
-                    const float localContrast =
-                        localDifference / (outerRow[x] + config.simulation.contrast_eps);
-                    contrastValues.push_back(localContrast);
+                    continue;
                 }
-            }
 
-            if (contrastValues.empty())
-            {
-                sliceScores.push_back(0.0f);
-                continue;
-            }
+                const float stableBackground =
+                    std::max(outerRow[x], config.simulation.contrast_background_floor);
+                const float localContrast =
+                    localDifference / (stableBackground + config.simulation.contrast_eps);
+                contrastValues.push_back(localContrast);
 
-            sliceScores.push_back(computePercentileFromValues(
-                std::move(contrastValues),
-                config.simulation.iterative_score_percentile));
+                // Reward bright filled interiors in regions that already
+                // exhibit positive local contrast.
+                brightInteriorValues.push_back(sliceRow[x]);
+            }
         }
 
-        if (sliceScores.empty())
+        if (contrastValues.empty())
         {
-            scaleScores.push_back(0.0f);
+            sliceScores[static_cast<std::size_t>(sliceIndex)] = 0.0f;
             continue;
         }
 
-        scaleScores.push_back(computePercentileFromValues(std::move(sliceScores), 0.5f));
-    }
+        const float contrastScore = computePercentileFromValues(
+            std::move(contrastValues),
+            config.simulation.iterative_score_percentile);
+        const float brightInteriorScore = computeMeanOfTopFraction(
+            std::move(brightInteriorValues),
+            config.simulation.contrast_bright_fraction);
 
-    if (scaleScores.empty())
-    {
-        return 0.0f;
-    }
-
-    float sumScores = 0.0f;
-    for (float score : scaleScores)
-    {
-        sumScores += score;
-    }
-    return sumScores / static_cast<float>(scaleScores.size());
-}
-
-float ImageHandler::evaluateSequencePercentileMichelsonContrast(const ImageStack &sequence, const BaseConfig &config)
-{
-    std::vector<float> sliceScores;
-    sliceScores.reserve(sequence.size());
-
-    for (const auto &slice : sequence)
-    {
-        const float lowValue = computePercentileFromSlice(
-            slice, config.simulation.michelson_low_percentile);
-        const float highValue = computePercentileFromSlice(
-            slice, config.simulation.michelson_high_percentile);
-        sliceScores.push_back(
-            (highValue - lowValue) /
-            (highValue + lowValue + config.simulation.michelson_eps));
+        sliceScores[static_cast<std::size_t>(sliceIndex)] =
+            contrastScore +
+            config.simulation.contrast_brightness_weight * brightInteriorScore;
     }
 
     if (sliceScores.empty())
@@ -359,204 +813,440 @@ float ImageHandler::evaluateSequencePercentileMichelsonContrast(const ImageStack
     return computePercentileFromValues(std::move(sliceScores), 0.5f);
 }
 
-float ImageHandler::evaluateSequencePercentileWeberContrast(const ImageStack &sequence, const BaseConfig &config)
+ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
+                                                const BaseConfig &config,
+                                                std::ostream &log,
+                                                const std::string &imageFile)
 {
-    std::vector<float> sliceScores;
-    sliceScores.reserve(sequence.size());
+    const int maxIterations = std::max(1, config.simulation.iterative_max_count);
+    const float gateStart = config.simulation.iterative_reward_gate;
+    const float gateMin = std::min(gateStart, config.simulation.iterative_reward_gate_min);
+    const float gateStep = config.simulation.iterative_reward_gate_step;
 
-    for (const auto &slice : sequence)
-    {
-        const float backgroundValue = computePercentileFromSlice(
-            slice, config.simulation.weber_background_percentile);
-        const float signalValue = computePercentileFromSlice(
-            slice, config.simulation.weber_signal_percentile);
-        const float stableBackground =
-            std::max(backgroundValue, config.simulation.weber_background_floor);
-        sliceScores.push_back(
-            (signalValue - stableBackground) /
-            (stableBackground + config.simulation.weber_eps));
+    std::vector<float> rewardGates;
+    if (gateStep <= 1e-6f || gateStart <= gateMin + 1e-6f) {
+        rewardGates.push_back(gateStart);
+    } else {
+        for (float gate = gateStart; gate > gateMin + 1e-6f; gate -= gateStep) {
+            rewardGates.push_back(gate);
+        }
+        if (rewardGates.empty() || std::abs(rewardGates.back() - gateMin) > 1e-6f) {
+            rewardGates.push_back(gateMin);
+        }
     }
 
-    if (sliceScores.empty())
-    {
-        return 0.0f;
+    const double learningRate = std::clamp(
+        static_cast<double>(config.simulation.iterative_reward_gate_learning_rate),
+        0.0,
+        1.0);
+    const int noImprovementPatience = std::max(1, config.simulation.iterative_no_improvement_patience);
+    const float explosionThreshold = std::max(
+        config.simulation.iterative_score_explosion_threshold,
+        config.simulation.iterative_score_max);
+    const std::size_t imageHash = std::hash<std::string>{}(fs::path(imageFile).filename().string());
+
+    const float defaultMinRadius = 5.0f;
+    const float defaultMaxRadius = 65.0f;
+    const float minRadius = config.cell
+        ? std::max(1.0f, static_cast<float>(std::min({
+              config.cell->minARadius,
+              config.cell->minBRadius,
+              config.cell->minCRadius})))
+        : defaultMinRadius;
+    const float maxRadius = config.cell
+        ? std::max(minRadius, static_cast<float>(std::max({
+              config.cell->maxARadius,
+              config.cell->maxBRadius > 0.0 ? config.cell->maxBRadius : config.cell->maxARadius,
+              config.cell->maxCRadius})))
+        : defaultMaxRadius;
+    const float radiusStep = std::max(1.0f, config.simulation.contrast_window_radius_step);
+    const float radiusStart = 0.5f * (minRadius + maxRadius);
+    const float penaltyRadius = std::clamp(
+        minRadius * std::max(1.0f, config.simulation.contrast_penalty_min_radius_scale),
+        minRadius,
+        maxRadius);
+    const float rewardWeight = config.simulation.contrast_reward_weight;
+    const float penaltyWeight = config.simulation.contrast_penalty_weight;
+
+    std::vector<float> scoringRadii;
+    for (float radius = radiusStart; radius < maxRadius - 1e-6f; radius += radiusStep) {
+        scoringRadii.push_back(radius);
+    }
+    if (scoringRadii.empty() || std::abs(scoringRadii.back() - maxRadius) > 1e-6f) {
+        scoringRadii.push_back(maxRadius);
     }
 
-    return computePercentileFromValues(std::move(sliceScores), 0.5f);
-}
-
-ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence, const BaseConfig &config)
-{
-    ImageStack current = cloneStack(sequence);
-
-    ImageStack bestSequence = cloneStack(current);
-    float bestScore = -std::numeric_limits<float>::infinity();
-    float previousScore = 0.0f;
-    bool hasPreviousScore = false;
-
-    int count = 0;
-    bool rewardNextRound = true;
-    float currentPenalty = config.simulation.iterative_penalty;
-    int noImprovementCount = 0;
-    bool restoreBestBeforeReward = false;
-    float scorePercentile = config.simulation.iterative_score_percentile;
-    float rewardGate = config.simulation.iterative_reward_gate;
-
-    while (true)
+    struct PreprocessTrialResult
     {
-        for (auto &slice : current)
+        ImageStack sequence;
+        float score = -std::numeric_limits<float>::infinity();
+        float radius = 0.0f;
+        std::string logText;
+    };
+
+    enum class PreprocessOperation
+    {
+        Penalty,
+        Reward
+    };
+
+    struct PreprocessStep
+    {
+        PreprocessOperation operation = PreprocessOperation::Reward;
+        float gate = 0.0f;
+    };
+
+    const float targetScore = config.simulation.iterative_score_max;
+    const float targetScoreTolerance =
+        std::max(0.0f, config.simulation.iterative_score_target_tolerance);
+    const float targetScoreLowerBound = targetScore - targetScoreTolerance;
+    const float targetScoreUpperBound = targetScore + targetScoreTolerance;
+
+    struct ScoreSelectionQuality
+    {
+        bool inTargetWindow = false;
+        bool belowTargetWindow = false;
+        bool aboveTargetWindow = false;
+        float distanceToTarget = std::numeric_limits<float>::infinity();
+        float score = -std::numeric_limits<float>::infinity();
+    };
+
+    auto scoreSelectionQuality = [&](float score) {
+        ScoreSelectionQuality quality;
+        quality.score = score;
+        if (!std::isfinite(score)) {
+            return quality;
+        }
+        quality.distanceToTarget = std::abs(score - targetScore);
+        quality.inTargetWindow =
+            score >= targetScoreLowerBound && score <= targetScoreUpperBound;
+        quality.belowTargetWindow = score < targetScoreLowerBound;
+        quality.aboveTargetWindow = score > targetScoreUpperBound;
+        return quality;
+    };
+
+    auto isBetterScoreForSelection = [&](float candidateScore, float selectedScore) {
+        const ScoreSelectionQuality candidate = scoreSelectionQuality(candidateScore);
+        const ScoreSelectionQuality selected = scoreSelectionQuality(selectedScore);
+        if (!std::isfinite(candidate.score)) {
+            return false;
+        }
+        if (!std::isfinite(selected.score)) {
+            return true;
+        }
+        if (candidate.inTargetWindow || selected.inTargetWindow) {
+            if (candidate.inTargetWindow != selected.inTargetWindow) {
+                return candidate.inTargetWindow;
+            }
+            if (std::abs(candidate.distanceToTarget - selected.distanceToTarget) > 1e-6f) {
+                return candidate.distanceToTarget < selected.distanceToTarget;
+            }
+            if (candidate.score <= targetScore && selected.score > targetScore) {
+                return true;
+            }
+            return false;
+        }
+        if (candidate.belowTargetWindow || selected.belowTargetWindow) {
+            if (candidate.belowTargetWindow != selected.belowTargetWindow) {
+                return candidate.belowTargetWindow;
+            }
+            return candidate.score > selected.score + config.simulation.iterative_improvement_tolerance;
+        }
+        return candidate.distanceToTarget < selected.distanceToTarget;
+    };
+
+    auto runRadiusTrial = [&](float scoringRadius, int radiusIndex) {
+        std::ostringstream trialLog;
+        ImageStack current = cloneStack(sequence);
+        ImageStack bestSequence = cloneStack(current);
+        auto scoreForRadiusWithPenalty = [&](const ImageStack &stack) {
+            const float rewardScore = evaluateSequenceContrastScoreForRadius(stack, config, scoringRadius);
+            const float penaltyScore = evaluateSequenceContrastScoreForRadius(stack, config, penaltyRadius);
+            return rewardWeight * rewardScore - penaltyWeight * penaltyScore;
+        };
+
+        float currentScore = scoreForRadiusWithPenalty(current);
+        float bestScore = currentScore;
+        const float penaltyAmount = std::max(0.0f, config.simulation.iterative_penalty);
+        const float candidateMaxMean = std::max(0.0f, config.simulation.iterative_candidate_max_mean);
+        const float candidateMaxSaturatedFraction = std::clamp(
+            config.simulation.iterative_candidate_max_saturated_fraction, 0.0f, 1.0f);
+
+        std::vector<PreprocessStep> steps;
+        steps.reserve(rewardGates.size() * 2U);
+        for (float gate : rewardGates) {
+            steps.push_back({PreprocessOperation::Penalty, gate});
+            steps.push_back({PreprocessOperation::Reward, gate});
+        }
+
+        std::vector<double> stepProbabilities(
+            steps.size(), 1.0 / static_cast<double>(steps.size()));
+        const double minProbability = std::min(
+            std::max(0.0, static_cast<double>(config.simulation.iterative_reward_gate_min_probability)),
+            1.0 / static_cast<double>(steps.size()));
+        auto normalizeStepProbabilities = [&]() {
+            double sum = 0.0;
+            for (double &probability : stepProbabilities) {
+                probability = std::max(probability, minProbability);
+                sum += probability;
+            }
+            if (sum <= 0.0) {
+                const double uniform = 1.0 / static_cast<double>(stepProbabilities.size());
+                std::fill(stepProbabilities.begin(), stepProbabilities.end(), uniform);
+                return;
+            }
+            for (double &probability : stepProbabilities) {
+                probability /= sum;
+            }
+        };
+
+        auto updateStepProbability = [&](std::size_t stepIndex, bool improved) {
+            const double multiplier = improved ? (1.0 + learningRate) : (1.0 - learningRate);
+            stepProbabilities[stepIndex] *= multiplier;
+            normalizeStepProbabilities();
+        };
+
+        const unsigned int rngSeed =
+            static_cast<unsigned int>(config.simulation.iterative_reward_gate_seed) ^
+            static_cast<unsigned int>(imageHash & 0xffffffffU) ^
+            (static_cast<unsigned int>(radiusIndex) * 0x9e3779b9U);
+        std::mt19937 rng(rngSeed);
+
+        trialLog << "[IterPreprocess] radius=" << scoringRadius
+                 << " penalty_radius=" << penaltyRadius
+                 << " reward_weight=" << rewardWeight
+                 << " penalty_weight=" << penaltyWeight
+                 << " initial_score=" << currentScore
+                 << " target_score=" << targetScore
+                 << " target_tolerance=" << targetScoreTolerance
+                 << " step_count=" << steps.size()
+                 << " learning_rate=" << learningRate
+                 << " min_probability=" << minProbability
+                 << " max_mean=" << candidateMaxMean
+                 << " max_saturated_fraction=" << candidateMaxSaturatedFraction
+                 << std::endl;
+
+        int noImprovementCount = 0;
+        for (int count = 0; count < maxIterations; ++count)
         {
-            for (int y = 0; y < slice.rows; ++y)
-            {
-                float *row = slice.ptr<float>(y);
-                for (int x = 0; x < slice.cols; ++x)
+            std::discrete_distribution<int> stepDistribution(
+                stepProbabilities.begin(), stepProbabilities.end());
+            const int selectedStepIndex = stepDistribution(rng);
+            const PreprocessStep selectedStep = steps[static_cast<std::size_t>(selectedStepIndex)];
+
+            ImageStack candidate = cloneStack(current);
+
+            if (selectedStep.operation == PreprocessOperation::Penalty) {
+                const float penaltyGate = std::min(
+                    selectedStep.gate,
+                    std::max(1e-6f, config.simulation.iterative_penalty_range));
+                #pragma omp parallel for schedule(static)
+                for (int sliceIndex = 0; sliceIndex < static_cast<int>(candidate.size()); ++sliceIndex)
                 {
-                    if (row[x] < config.simulation.iterative_penalty_range)
+                    auto &slice = candidate[static_cast<std::size_t>(sliceIndex)];
+                    for (int y = 0; y < slice.rows; ++y)
                     {
-                        row[x] -= currentPenalty;
-                        if (row[x] < 0.0f)
+                        float *row = slice.ptr<float>(y);
+                        for (int x = 0; x < slice.cols; ++x)
                         {
-                            row[x] = 0.0f;
+                            if (row[x] < penaltyGate)
+                            {
+                                const float normalizedDistanceToKeep =
+                                    (penaltyGate > 1e-6f)
+                                        ? ((penaltyGate - row[x]) / penaltyGate)
+                                        : 1.0f;
+                                const float penaltyStrength =
+                                    std::clamp(normalizedDistanceToKeep, 0.0f, 1.0f);
+                                row[x] -= penaltyAmount * penaltyStrength;
+                                if (row[x] < 0.0f)
+                                {
+                                    row[x] = 0.0f;
+                                }
+                            }
                         }
                     }
                 }
-            }
-        }
-
-        if (rewardNextRound)
-        {
-            if (restoreBestBeforeReward)
-            {
-                current = cloneStack(bestSequence);
-                restoreBestBeforeReward = false;
-            }
-
-            for (auto &slice : current)
-            {
-                for (int y = 0; y < slice.rows; ++y)
+            } else {
+                #pragma omp parallel for schedule(static)
+                for (int sliceIndex = 0; sliceIndex < static_cast<int>(candidate.size()); ++sliceIndex)
                 {
-                    float *row = slice.ptr<float>(y);
-                    for (int x = 0; x < slice.cols; ++x)
+                    auto &slice = candidate[static_cast<std::size_t>(sliceIndex)];
+                    for (int y = 0; y < slice.rows; ++y)
                     {
-                        if (row[x] > rewardGate)
+                        float *row = slice.ptr<float>(y);
+                        for (int x = 0; x < slice.cols; ++x)
                         {
-                            row[x] += config.simulation.iterative_reward;
-                            if (row[x] > 1.0f)
+                            if (row[x] > selectedStep.gate)
                             {
-                                row[x] = 1.0f;
+                                row[x] += config.simulation.iterative_reward;
+                                if (row[x] > 1.0f)
+                                {
+                                    row[x] = 1.0f;
+                                }
                             }
                         }
                     }
                 }
             }
 
-            scorePercentile = std::min(
-                scorePercentile + config.simulation.iterative_score_percentile_increment,
-                config.simulation.iterative_score_percentile_max);
-            rewardGate = std::max(
-                config.simulation.iterative_reward_gate_min,
-                rewardGate -
-                    config.simulation.iterative_reward_gate_decrement);
-        }
+            clipStack(candidate);
+            const StackStats candidateStats = computeStackStats(candidate);
+            const bool candidateMeanOk =
+                candidateMaxMean <= 0.0f || candidateStats.mean <= candidateMaxMean;
+            const bool candidateSaturationOk =
+                candidateMaxSaturatedFraction <= 0.0f ||
+                candidateStats.saturatedFraction <= candidateMaxSaturatedFraction;
+            if (!candidateMeanOk || !candidateSaturationOk || candidateStats.nonFiniteCount > 0)
+            {
+                updateStepProbability(static_cast<std::size_t>(selectedStepIndex), false);
+                ++noImprovementCount;
 
-        rewardNextRound = !rewardNextRound;
+                if (count % 50 == 0)
+                {
+                    trialLog << "[IterPreprocess] radius=" << scoringRadius
+                             << " round=" << count
+                             << " reject=candidate_range"
+                             << " operation="
+                             << (selectedStep.operation == PreprocessOperation::Penalty ? "penalty" : "reward")
+                             << " gate=" << selectedStep.gate
+                             << " mean=" << candidateStats.mean
+                             << " saturated_fraction=" << candidateStats.saturatedFraction
+                             << " nonfinite=" << candidateStats.nonFiniteCount
+                             << " max_mean=" << candidateMaxMean
+                             << " max_saturated_fraction=" << candidateMaxSaturatedFraction
+                             << std::endl;
+                }
 
-        BaseConfig scoringConfig = config;
-        scoringConfig.simulation.iterative_score_percentile = scorePercentile;
-        const float score = evaluateSequenceContrastScore(current, scoringConfig);
+                if (noImprovementCount >= noImprovementPatience) {
+                    trialLog << "[IterPreprocess] radius=" << scoringRadius
+                             << " stop=no_improvement"
+                             << " round=" << count
+                             << " patience=" << noImprovementPatience
+                             << " best_score=" << bestScore
+                             << std::endl;
+                    break;
+                }
+                continue;
+            }
 
-        if (hasPreviousScore &&
-            previousScore - score >= config.simulation.iterative_score_drop_stop_threshold)
-        {
-            rewardNextRound = true;
-            restoreBestBeforeReward = true;
-            currentPenalty = std::max(
-                config.simulation.iterative_min_penalty,
-                currentPenalty * config.simulation.iterative_collapse_backoff);
-            previousScore = score;
-            hasPreviousScore = true;
-            ++count;
-            continue;
-        }
+            const float score = scoreForRadiusWithPenalty(candidate);
+            if (!std::isfinite(score) || score > explosionThreshold) {
+                trialLog << "[IterPreprocess] radius=" << scoringRadius
+                         << " stop=score_explosion"
+                         << " round=" << count
+                         << " score=" << score
+                         << " threshold=" << explosionThreshold
+                         << std::endl;
+                break;
+            }
 
-        if (score > bestScore + config.simulation.iterative_improvement_tolerance)
-        {
-            bestScore = score;
-            bestSequence = cloneStack(current);
-            noImprovementCount = 0;
-        }
-        else
-        {
-            ++noImprovementCount;
-        }
+            const bool improvedCurrent =
+                score > currentScore + config.simulation.iterative_improvement_tolerance;
+            updateStepProbability(static_cast<std::size_t>(selectedStepIndex), improvedCurrent);
 
-        if (count % 50 == 0)
-        {
-            std::cout << "[IterPreprocess] round=" << count
-                      << " score=" << score << std::endl;
-        }
+            if (improvedCurrent) {
+                currentScore = score;
+                current = std::move(candidate);
+            }
 
-        previousScore = score;
-        hasPreviousScore = true;
-        ++count;
+            const bool improvedBest = isBetterScoreForSelection(currentScore, bestScore);
+            if (improvedBest) {
+                bestScore = currentScore;
+                bestSequence = cloneStack(current);
+                noImprovementCount = 0;
+            } else {
+                ++noImprovementCount;
+            }
 
-        if (score >= config.simulation.iterative_score_max)
-        {
-            break;
-        }
+            if (count % 50 == 0)
+            {
+                trialLog << "[IterPreprocess] radius=" << scoringRadius
+                         << " round=" << count
+                         << " score=" << score
+                         << " current_score=" << currentScore
+                         << " best_score=" << bestScore
+                         << " operation="
+                         << (selectedStep.operation == PreprocessOperation::Penalty ? "penalty" : "reward")
+                         << " gate=" << selectedStep.gate
+                         << " step_probability="
+                         << stepProbabilities[static_cast<std::size_t>(selectedStepIndex)]
+                         << std::endl;
+            }
 
-        if (score == 0.0f)
-        {
-            currentPenalty = std::max(
-                config.simulation.iterative_min_penalty,
-                currentPenalty * config.simulation.iterative_collapse_backoff);
-            current = cloneStack(bestSequence);
-            rewardNextRound = true;
-            continue;
-        }
-
-        if (noImprovementCount >= config.simulation.iterative_no_improvement_patience)
-        {
-            if (currentPenalty <= config.simulation.iterative_min_penalty)
+            if (scoreSelectionQuality(bestScore).inTargetWindow)
             {
                 break;
             }
 
-            currentPenalty = std::max(
-                config.simulation.iterative_min_penalty,
-                currentPenalty * config.simulation.iterative_collapse_backoff);
-            current = cloneStack(bestSequence);
-            noImprovementCount = 0;
-            rewardNextRound = true;
-            continue;
-        }
-
-        if (count >= config.simulation.iterative_max_count)
-        {
-            break;
-        }
-    }
-
-    std::cout << "[IterPreprocess] best_score=" << bestScore << std::endl;
-
-    for (auto &slice : bestSequence)
-    {
-        for (int y = 0; y < slice.rows; ++y)
-        {
-            float *row = slice.ptr<float>(y);
-            for (int x = 0; x < slice.cols; ++x)
-            {
-                if (row[x] < config.simulation.post_process_black_percentile)
-                {
-                    row[x] = 0.0f;
-                }
-                else if (row[x] < config.simulation.post_process_white_percentile)
-                {
-                    row[x] *= config.simulation.post_process_amplification;
-                }
+            if (noImprovementCount >= noImprovementPatience) {
+                trialLog << "[IterPreprocess] radius=" << scoringRadius
+                         << " stop=no_improvement"
+                         << " round=" << count
+                         << " patience=" << noImprovementPatience
+                         << " best_score=" << bestScore
+                         << std::endl;
+                break;
             }
         }
 
+        trialLog << "[IterPreprocess] radius=" << scoringRadius
+                 << " best_score=" << bestScore << std::endl;
+        return PreprocessTrialResult{
+            std::move(bestSequence),
+            bestScore,
+            scoringRadius,
+            trialLog.str()
+        };
+    };
+
+    const int configuredRadiusBatchSize =
+        config.simulation.preprocess_radius_batch_size;
+    const int radiusThreadCount = std::min(
+        std::max(1, configuredRadiusBatchSize),
+        static_cast<int>(scoringRadii.size()));
+
+    log << "[IterPreprocess] radius_trials=" << scoringRadii.size()
+        << " radius_start=" << radiusStart
+        << " radius_max=" << maxRadius
+        << " radius_step=" << radiusStep
+        << " penalty_radius=" << penaltyRadius
+        << " reward_weight=" << rewardWeight
+        << " penalty_weight=" << penaltyWeight
+        << " target_score=" << targetScore
+        << " target_tolerance=" << targetScoreTolerance
+        << " radius_threads=" << radiusThreadCount
+        << " configured_radius_batch_size=" << configuredRadiusBatchSize
+        << std::endl;
+
+    std::vector<PreprocessTrialResult> trialResults(scoringRadii.size());
+    #pragma omp parallel for schedule(dynamic) num_threads(radiusThreadCount)
+    for (int radiusIndex = 0; radiusIndex < static_cast<int>(scoringRadii.size()); ++radiusIndex)
+    {
+        trialResults[static_cast<std::size_t>(radiusIndex)] =
+            runRadiusTrial(scoringRadii[static_cast<std::size_t>(radiusIndex)], radiusIndex);
+    }
+
+    std::size_t bestTrialIndex = 0;
+    for (std::size_t i = 1; i < trialResults.size(); ++i) {
+        if (isBetterScoreForSelection(trialResults[i].score, trialResults[bestTrialIndex].score)) {
+            bestTrialIndex = i;
+        }
+    }
+
+    for (const auto &result : trialResults) {
+        log << result.logText;
+    }
+    ImageStack bestSequence = std::move(trialResults[bestTrialIndex].sequence);
+    const float bestScore = trialResults[bestTrialIndex].score;
+    log << "[IterPreprocess] selected_radius=" << trialResults[bestTrialIndex].radius
+        << " best_score=" << bestScore << std::endl;
+
+    const ImageStack prePostProcessSequence = cloneStack(bestSequence);
+
+    #pragma omp parallel for schedule(static)
+    for (int sliceIndex = 0; sliceIndex < static_cast<int>(bestSequence.size()); ++sliceIndex)
+    {
+        auto &slice = bestSequence[static_cast<std::size_t>(sliceIndex)];
         if (config.simulation.post_process_blur_sigma > 0.0f)
         {
             cv::GaussianBlur(slice,
@@ -567,14 +1257,80 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence, con
         }
     }
 
+    if (config.simulation.post_process_final_blur_sigma > 0.0f)
+    {
+        const float directWeight = std::clamp(
+            config.simulation.post_process_final_direct_weight,
+            0.0f,
+            1.0f);
+        const float blurredWeight = 1.0f - directWeight;
+        const float directAmplification =
+            std::max(0.0f, config.simulation.post_process_final_direct_amplification);
+        const float blurredAmplification =
+            std::max(0.0f, config.simulation.post_process_final_blurred_amplification);
+
+        #pragma omp parallel for schedule(static)
+        for (int sliceIndex = 0; sliceIndex < static_cast<int>(bestSequence.size()); ++sliceIndex)
+        {
+            auto &slice = bestSequence[static_cast<std::size_t>(sliceIndex)];
+            cv::Mat directSlice = slice.clone();
+            cv::Mat blurredSlice;
+            cv::GaussianBlur(slice,
+                             blurredSlice,
+                             cv::Size(0, 0),
+                             config.simulation.post_process_final_blur_sigma,
+                             config.simulation.post_process_final_blur_sigma);
+
+            if (directAmplification != 1.0f)
+            {
+                directSlice *= directAmplification;
+            }
+            if (blurredAmplification != 1.0f)
+            {
+                blurredSlice *= blurredAmplification;
+            }
+
+            cv::addWeighted(directSlice,
+                            directWeight,
+                            blurredSlice,
+                            blurredWeight,
+                            0.0,
+                            slice);
+        }
+    }
+
     clipStack(bestSequence);
+    const StackStats postProcessStats = computeStackStats(bestSequence);
+    const float candidateMaxMean = std::max(0.0f, config.simulation.iterative_candidate_max_mean);
+    const float candidateMaxSaturatedFraction = std::clamp(
+        config.simulation.iterative_candidate_max_saturated_fraction, 0.0f, 1.0f);
+    const bool postMeanOk =
+        candidateMaxMean <= 0.0f || postProcessStats.mean <= candidateMaxMean;
+    const bool postSaturationOk =
+        candidateMaxSaturatedFraction <= 0.0f ||
+        postProcessStats.saturatedFraction <= candidateMaxSaturatedFraction;
+    if (!postMeanOk || !postSaturationOk || postProcessStats.nonFiniteCount > 0)
+    {
+        log << "[IterPreprocess] reject=post_process_range"
+            << " mean=" << postProcessStats.mean
+            << " saturated_fraction=" << postProcessStats.saturatedFraction
+            << " nonfinite=" << postProcessStats.nonFiniteCount
+            << " max_mean=" << candidateMaxMean
+            << " max_saturated_fraction=" << candidateMaxSaturatedFraction
+            << "; using_pre_postprocess_sequence=1"
+            << std::endl;
+        bestSequence = cloneStack(prePostProcessSequence);
+        clipStack(bestSequence);
+    }
     return bestSequence;
 }
 
-std::vector<cv::Mat> ImageHandler::loadFrame(const std::string &imageFile, BaseConfig &config)
+std::vector<cv::Mat> ImageHandler::loadRawFrame(const std::string &imageFile,
+                                                const BaseConfig &config,
+                                                std::ostream *logSink)
 {
-    std::vector<cv::Mat> processedZSlices;
-    std::vector<cv::Mat> interpolatedZSlices;
+    std::ostream &log = logSink ? *logSink : std::cout;
+    std::vector<cv::Mat> normalizedSlices;
 
     const std::string extension = imageFile.substr(imageFile.find_last_of('.') + 1);
     if (extension == "tiff" || extension == "tif")
@@ -592,26 +1348,27 @@ std::vector<cv::Mat> ImageHandler::loadFrame(const std::string &imageFile, BaseC
         if (firstSlice.empty())
         {
             std::cout << "Error: Could not read the TIFF image" << '\n';
-            return processedZSlices;
+            return normalizedSlices;
         }
 
-        std::cout << "[LoadFrame] file=" << fs::path(imageFile).filename().string()
-                  << " rawSlices=" << numTiffSlices
-                  << " rawType=" << firstSlice.type()
-                  << " rawChannels=" << firstSlice.channels()
-                  << " rawRows=" << firstSlice.rows
-                  << " rawCols=" << firstSlice.cols
-                  << std::endl;
+        log << "[LoadFrame] file=" << fs::path(imageFile).filename().string()
+            << " rawSlices=" << numTiffSlices
+            << " rawType=" << firstSlice.type()
+            << " rawChannels=" << firstSlice.channels()
+            << " rawRows=" << firstSlice.rows
+            << " rawCols=" << firstSlice.cols
+            << std::endl;
 
-        processedZSlices.reserve(numTiffSlices);
-        for (const auto &rawSlice : tiffImage)
+        normalizedSlices.resize(numTiffSlices);
+        #pragma omp parallel for schedule(static)
+        for (int i = 0; i < static_cast<int>(numTiffSlices); ++i)
         {
-            cv::Mat slice = rawSlice;
+            cv::Mat slice = tiffImage[static_cast<std::size_t>(i)];
             if (slice.channels() == 3)
             {
                 cv::cvtColor(slice, slice, cv::COLOR_BGR2GRAY);
             }
-            processedZSlices.push_back(processImage(slice, config));
+            normalizedSlices[static_cast<std::size_t>(i)] = processImage(slice, config);
         }
     }
     else
@@ -620,7 +1377,7 @@ std::vector<cv::Mat> ImageHandler::loadFrame(const std::string &imageFile, BaseC
         if (image.empty())
         {
             std::cout << "Error: Could not read the image" << '\n';
-            return processedZSlices;
+            return normalizedSlices;
         }
 
         if (image.channels() == 3)
@@ -628,24 +1385,30 @@ std::vector<cv::Mat> ImageHandler::loadFrame(const std::string &imageFile, BaseC
             cv::cvtColor(image, image, cv::COLOR_BGR2GRAY);
         }
 
-        processedZSlices.push_back(processImage(image, config));
+        normalizedSlices.push_back(processImage(image, config));
     }
 
-    printStackStats("normalized_input", imageFile, processedZSlices);
+    printStackStats(log, "normalized_input", imageFile, normalizedSlices);
+    return normalizedSlices;
+}
 
-    processedZSlices = processPreparedSequence(processedZSlices, config);
+std::vector<cv::Mat> ImageHandler::preprocessLoadedFrame(const std::vector<cv::Mat> &normalizedSlices,
+                                                         const std::string &imageFile,
+                                                         const BaseConfig &config,
+                                                         std::ostream *logSink)
+{
+    std::ostream &log = logSink ? *logSink : std::cout;
+    std::vector<cv::Mat> processedZSlices = cloneStack(normalizedSlices);
+    std::vector<cv::Mat> interpolatedZSlices;
 
-    const float localScore = evaluateSequenceContrastScore(processedZSlices, config);
-    const float michelsonScore = evaluateSequencePercentileMichelsonContrast(processedZSlices, config);
-    const float weberScore = evaluateSequencePercentileWeberContrast(processedZSlices, config);
+    processedZSlices = processPreparedSequence(processedZSlices, config, log, imageFile);
 
-    std::cout << "[PreprocessScores] file=" << fs::path(imageFile).filename().string()
-              << " local=" << localScore
-              << " michelson=" << michelsonScore
-              << " weber=" << weberScore
-              << std::endl;
+    const float localScore = evaluateBestWindowContrastScore(processedZSlices, config);
+    log << "[PreprocessScores] file=" << fs::path(imageFile).filename().string()
+        << " local=" << localScore
+        << std::endl;
 
-    printStackStats("processed_sequence", imageFile, processedZSlices);
+    printStackStats(log, "processed_sequence", imageFile, processedZSlices);
 
     if (processedZSlices.empty())
     {
@@ -658,36 +1421,75 @@ std::vector<cv::Mat> ImageHandler::loadFrame(const std::string &imageFile, BaseC
     }
     else
     {
-        const float expandFactor = std::max(1.0f, config.simulation.z_scaling);
-        const float scaledDepth = expandFactor * static_cast<float>(processedZSlices.size() - 1U);
-        const unsigned numSynthSlices = static_cast<unsigned>(std::lround(scaledDepth)) + 1U;
+        const int expandFactor = config.simulation.z_scaling;
+        const unsigned numSynthSlices =
+            static_cast<unsigned>(expandFactor) * (processedZSlices.size() - 1U) + 1U;
 
-        interpolatedZSlices.reserve(numSynthSlices);
-        const int lastSourceIndex = static_cast<int>(processedZSlices.size()) - 1;
-        for (unsigned synthSlice = 0; synthSlice < numSynthSlices; ++synthSlice)
+        interpolatedZSlices.resize(numSynthSlices);
+        #pragma omp parallel for schedule(static)
+        for (int synthSliceIndex = 0; synthSliceIndex < static_cast<int>(numSynthSlices); ++synthSliceIndex)
         {
-            const float sourcePosition = static_cast<float>(synthSlice) / expandFactor;
-            const int sourceLower = std::clamp(static_cast<int>(std::floor(sourcePosition)), 0, lastSourceIndex);
-            const int sourceUpper = std::min(sourceLower + 1, lastSourceIndex);
-            const float alpha = std::clamp(sourcePosition - static_cast<float>(sourceLower), 0.0f, 1.0f);
-
-            if (sourceLower == sourceUpper || alpha <= 1e-6f)
+            const unsigned synthSlice = static_cast<unsigned>(synthSliceIndex);
+            const int sourceSlice = static_cast<int>(synthSlice / expandFactor);
+            if (synthSlice % expandFactor == 0)
             {
-                interpolatedZSlices.push_back(processedZSlices[sourceLower]);
-                continue;
+                interpolatedZSlices[static_cast<std::size_t>(synthSlice)] =
+                    processedZSlices[static_cast<std::size_t>(sourceSlice)];
             }
+            else
+            {
+                const double t = static_cast<double>(synthSlice % expandFactor) /
+                                 static_cast<double>(expandFactor);
+                interpolatedZSlices[static_cast<std::size_t>(synthSlice)] =
+                    (1.0 - t) * processedZSlices[static_cast<std::size_t>(sourceSlice)] +
+                    t * processedZSlices[static_cast<std::size_t>(sourceSlice + 1)];
+            }
+        }
 
-            cv::Mat blended;
-            cv::addWeighted(processedZSlices[sourceLower], 1.0 - alpha,
-                            processedZSlices[sourceUpper], alpha,
-                            0.0, blended);
-            interpolatedZSlices.push_back(blended);
+        if (interpolatedZSlices.size() != numSynthSlices)
+        {
+            throw std::runtime_error(
+                "interpolatedZSlices must have exactly " + std::to_string(numSynthSlices) +
+                " slices, but has " + std::to_string(interpolatedZSlices.size()) + " slices");
         }
     }
 
-    printStackStats("post_interpolation", imageFile, interpolatedZSlices);
-    std::cout << std::to_string(interpolatedZSlices.size()) << "slices built successfully" << std::endl;
+    printStackStats(log, "post_interpolation", imageFile, interpolatedZSlices);
+    ImageStack preCubePoolingSlices = cloneStack(interpolatedZSlices);
+    interpolatedZSlices = applyCubePooling(interpolatedZSlices, config, log);
+    clipStack(interpolatedZSlices);
+    const StackStats cubeStats = computeStackStats(interpolatedZSlices);
+    const float candidateMaxMean = std::max(0.0f, config.simulation.iterative_candidate_max_mean);
+    const float candidateMaxSaturatedFraction = std::clamp(
+        config.simulation.iterative_candidate_max_saturated_fraction, 0.0f, 1.0f);
+    const bool cubeMeanOk =
+        candidateMaxMean <= 0.0f || cubeStats.mean <= candidateMaxMean;
+    const bool cubeSaturationOk =
+        candidateMaxSaturatedFraction <= 0.0f ||
+        cubeStats.saturatedFraction <= candidateMaxSaturatedFraction;
+    if (!cubeMeanOk || !cubeSaturationOk || cubeStats.nonFiniteCount > 0)
+    {
+        log << "[CubePooling] reject=range"
+            << " mean=" << cubeStats.mean
+            << " saturated_fraction=" << cubeStats.saturatedFraction
+            << " nonfinite=" << cubeStats.nonFiniteCount
+            << " max_mean=" << candidateMaxMean
+            << " max_saturated_fraction=" << candidateMaxSaturatedFraction
+            << "; using_pre_cube_pooling_sequence=1"
+            << std::endl;
+        interpolatedZSlices = std::move(preCubePoolingSlices);
+    }
+    printStackStats(log, "post_cube_pooling", imageFile, interpolatedZSlices);
+    log << std::to_string(interpolatedZSlices.size()) << "slices built successfully" << std::endl;
     return interpolatedZSlices;
+}
+
+std::vector<cv::Mat> ImageHandler::loadFrame(const std::string &imageFile,
+                                             BaseConfig &config,
+                                             std::ostream *logSink)
+{
+    const std::vector<cv::Mat> normalizedSlices = loadRawFrame(imageFile, config, logSink);
+    return preprocessLoadedFrame(normalizedSlices, imageFile, config, logSink);
 }
 
 PathVec ImageHandler::getImageFilePaths(const std::string &input, int firstFrame, int lastFrame, BaseConfig &config)

@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-class Spheroid;
+class Ellipsoid;
 
 class LineageTreeCreator
 {
@@ -42,7 +42,7 @@ public:
     void update(int frameIndex, const std::vector<CellViz> &cells);
     void close();
 
-    static std::vector<CellViz> makeCellViz(const std::vector<Spheroid> &cells);
+    static std::vector<CellViz> makeCellViz(const std::vector<Ellipsoid> &cells);
 
     static bool renderCsvFiles(const std::vector<std::string> &csvPaths,
                                const std::string &outputPath,

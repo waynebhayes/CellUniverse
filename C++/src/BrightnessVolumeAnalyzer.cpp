@@ -1280,9 +1280,9 @@ static std::vector<EmbryoBrightTracker::CellState> loadInitialCellsFromCsv(
             std::stof(tokens[3]),
             std::stof(tokens[4]));
 
-        const float majorRadius = std::stof(tokens[5]);
-        const float minorRadius = std::stof(tokens[6]);
-        seed.diameter = 2.0f * std::max(majorRadius, minorRadius);
+        const float aRadius = std::stof(tokens[5]);
+        const float cRadius = std::stof(tokens[6]);
+        seed.diameter = 2.0f * std::max(aRadius, cRadius);
         seed.meanIntensity = 0.0f;
         if (tokens.size() >= 8 && !tokens[7].empty() && tokens[7] != "None")
         {

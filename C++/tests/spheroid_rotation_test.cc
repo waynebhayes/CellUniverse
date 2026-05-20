@@ -1,15 +1,15 @@
 #include <gtest/gtest.h>
 
-#include "Spheroid.hpp"
+#include "Ellipsoid.hpp"
 
 #include <cmath>
 
 namespace {
-void ConfigureSpheroidBounds() {
-    Spheroid::cellConfig.minMajorRadius = 1.0;
-    Spheroid::cellConfig.maxMajorRadius = 20.0;
-    Spheroid::cellConfig.minMinorRadius = 0.5;
-    Spheroid::cellConfig.maxMinorRadius = 20.0;
+void ConfigureEllipsoidBounds() {
+    Ellipsoid::cellConfig.minARadius = 1.0;
+    Ellipsoid::cellConfig.maxARadius = 20.0;
+    Ellipsoid::cellConfig.minCRadius = 0.5;
+    Ellipsoid::cellConfig.maxCRadius = 20.0;
 }
 
 constexpr float kTestBrightness = 1.0f;
@@ -22,25 +22,25 @@ SimulationConfig MakeSimConfig() {
 }
 } // namespace
 
-TEST(SpheroidRotationTest, NoRotationFillsAlongMajorXAxis) {
-    ConfigureSpheroidBounds();
+TEST(EllipsoidRotationTest, NoRotationFillsAlongMajorXAxis) {
+    ConfigureEllipsoidBounds();
     const SimulationConfig cfg = MakeSimConfig();
 
     cv::Mat image(41, 41, CV_32F, cv::Scalar(cfg.background_color));
-    Spheroid spheroid(SpheroidParams("rot0", 20.0f, 20.0f, 0.0f, 5.0f, 2.0f, 0.0f, 0.0f, 0.0f, kTestBrightness));
+    Ellipsoid spheroid(EllipsoidParams("rot0", 20.0f, 20.0f, 0.0f, 5.0f, 2.0f, 0.0f, 0.0f, 0.0f, kTestBrightness));
 
     spheroid.draw(image, cfg, 0.0f);
 
     EXPECT_NEAR(image.at<float>(20, 24), kTestBrightness, 1e-6f);
 }
 
-TEST(SpheroidRotationTest, YAxisQuarterTurnShrinksXAxisCrossSection) {
-    ConfigureSpheroidBounds();
+TEST(EllipsoidRotationTest, YAxisQuarterTurnShrinksXAxisCrossSection) {
+    ConfigureEllipsoidBounds();
     const SimulationConfig cfg = MakeSimConfig();
 
     cv::Mat image(41, 41, CV_32F, cv::Scalar(cfg.background_color));
     const float kPiOver2 = static_cast<float>(M_PI) / 2.0f;
-    Spheroid spheroid(SpheroidParams("rotY", 20.0f, 20.0f, 0.0f, 5.0f, 2.0f, 0.0f, kPiOver2, 0.0f, kTestBrightness));
+    Ellipsoid spheroid(EllipsoidParams("rotY", 20.0f, 20.0f, 0.0f, 5.0f, 2.0f, 0.0f, kPiOver2, 0.0f, kTestBrightness));
 
     spheroid.draw(image, cfg, 0.0f);
 
@@ -48,13 +48,13 @@ TEST(SpheroidRotationTest, YAxisQuarterTurnShrinksXAxisCrossSection) {
     EXPECT_NEAR(image.at<float>(24, 20), kTestBrightness, 1e-6f);
 }
 
-TEST(SpheroidRotationTest, XAxisQuarterTurnShrinksYAxisCrossSection) {
-    ConfigureSpheroidBounds();
+TEST(EllipsoidRotationTest, XAxisQuarterTurnShrinksYAxisCrossSection) {
+    ConfigureEllipsoidBounds();
     const SimulationConfig cfg = MakeSimConfig();
 
     cv::Mat image(41, 41, CV_32F, cv::Scalar(cfg.background_color));
     const float kPiOver2 = static_cast<float>(M_PI) / 2.0f;
-    Spheroid spheroid(SpheroidParams("rotX", 20.0f, 20.0f, 0.0f, 5.0f, 2.0f, kPiOver2, 0.0f, 0.0f, kTestBrightness));
+    Ellipsoid spheroid(EllipsoidParams("rotX", 20.0f, 20.0f, 0.0f, 5.0f, 2.0f, kPiOver2, 0.0f, 0.0f, kTestBrightness));
 
     spheroid.draw(image, cfg, 0.0f);
 
@@ -62,15 +62,15 @@ TEST(SpheroidRotationTest, XAxisQuarterTurnShrinksYAxisCrossSection) {
     EXPECT_NEAR(image.at<float>(20, 24), kTestBrightness, 1e-6f);
 }
 
-TEST(SpheroidRotationTest, ZAxisRotationPreservesShapeForOblateSpheroid) {
-    ConfigureSpheroidBounds();
+TEST(EllipsoidRotationTest, ZAxisRotationPreservesShapeForOblateEllipsoid) {
+    ConfigureEllipsoidBounds();
     const SimulationConfig cfg = MakeSimConfig();
 
     cv::Mat unrotated(41, 41, CV_32F, cv::Scalar(cfg.background_color));
     cv::Mat zRotated(41, 41, CV_32F, cv::Scalar(cfg.background_color));
 
-    Spheroid noRotation(SpheroidParams("baseZ", 20.0f, 20.0f, 0.0f, 5.0f, 2.0f, 0.0f, 0.0f, 0.0f));
-    Spheroid rotatedZ(SpheroidParams("rotZ", 20.0f, 20.0f, 0.0f, 5.0f, 2.0f, 0.0f, 0.0f, static_cast<float>(M_PI) / 3.0f));
+    Ellipsoid noRotation(EllipsoidParams("baseZ", 20.0f, 20.0f, 0.0f, 5.0f, 2.0f, 0.0f, 0.0f, 0.0f));
+    Ellipsoid rotatedZ(EllipsoidParams("rotZ", 20.0f, 20.0f, 0.0f, 5.0f, 2.0f, 0.0f, 0.0f, static_cast<float>(M_PI) / 3.0f));
 
     noRotation.draw(unrotated, cfg, 0.0f);
     rotatedZ.draw(zRotated, cfg, 0.0f);
@@ -80,16 +80,16 @@ TEST(SpheroidRotationTest, ZAxisRotationPreservesShapeForOblateSpheroid) {
     EXPECT_LT(diff, 10.0);
 }
 
-TEST(SpheroidRotationTest, DrawnRegionChangesAfterRotation) {
-    ConfigureSpheroidBounds();
+TEST(EllipsoidRotationTest, DrawnRegionChangesAfterRotation) {
+    ConfigureEllipsoidBounds();
     const SimulationConfig cfg = MakeSimConfig();
 
     cv::Mat unrotated(41, 41, CV_32F, cv::Scalar(cfg.background_color));
     cv::Mat rotated(41, 41, CV_32F, cv::Scalar(cfg.background_color));
 
-    Spheroid noRotation(SpheroidParams("base", 20.0f, 20.0f, 0.0f, 5.0f, 2.0f, 0.0f, 0.0f, 0.0f));
+    Ellipsoid noRotation(EllipsoidParams("base", 20.0f, 20.0f, 0.0f, 5.0f, 2.0f, 0.0f, 0.0f, 0.0f));
     const float kPiOver2 = static_cast<float>(M_PI) / 2.0f;
-    Spheroid yRotated(SpheroidParams("rot", 20.0f, 20.0f, 0.0f, 5.0f, 2.0f, 0.0f, kPiOver2, 0.0f));
+    Ellipsoid yRotated(EllipsoidParams("rot", 20.0f, 20.0f, 0.0f, 5.0f, 2.0f, 0.0f, kPiOver2, 0.0f));
 
     noRotation.draw(unrotated, cfg, 0.0f);
     yRotated.draw(rotated, cfg, 0.0f);

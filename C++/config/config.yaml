@@ -1,11 +1,11 @@
-cellType: spheroid
+cellType: ellipsoid
 
-# Perturbation parameters for each dimension.
-# increase_prob/decrease_prob: probability of applying a random offset per iteration.
-# mu/sigma: Gaussian offset mean and standard deviation.
+# Position + rotation perturbation only.
+# Radii are fit by iterative PCA on bright pixels each frame, so
+# radius perturbation params are not read here.
 cell:
   x:
-    increase_prob: 0.45
+    increase_prob: 0.45 # 0.45
     decrease_prob: 0.45
     mu: 0
     sigma: 5
@@ -15,71 +15,38 @@ cell:
     mu: 0
     sigma: 5
   z:
-    increase_prob: 0.35
+    increase_prob: 0.35 # 0.35
     decrease_prob: 0.35
     mu: 0
     sigma: 8
-  majorRadius:
-    increase_prob: 0.5
-    decrease_prob: 0.7
-    mu: 0
-    sigma: 2
-  bRadius:
-    increase_prob: 0.2
-    decrease_prob: 0.2
-    mu: 0
-    sigma: 2
-  abRatio:
-    increase_prob: 0.5
-    decrease_prob: 0.5
-    mu: 0
-    sigma: 0.08
-  minorRadius:
-    increase_prob: 0.5
-    decrease_prob: 0.85
-    mu: 0
-    sigma: 2
-  # Rotation perturbation — tuned DOWN from (prob 0.9, sigma 0.1) on
-  # 2026-04-11 because the old values were fine under oblate (a==b makes
-  # rotation around z a structural no-op, so the random walk was invisible)
-  # but tumble the cell under triaxial (a != b makes rotation affect L2).
-  # Current: prob 0.3, sigma 0.05 rad (~3°). Random-walk stddev over 350
-  # iters is sqrt(0.3*350*0.0025) ≈ 0.51 rad (~29°) before the cost basin
-  # pulls back — small enough to let the optimizer lock in orientation.
   thetaX:
-    increase_prob: 0.7
-    decrease_prob: 0.7
+    increase_prob: 0.75
+    decrease_prob: 0.75
     mu: 0
     sigma: 0.05
   thetaY:
-    increase_prob: 0.7
-    decrease_prob: 0.7
+    increase_prob: 0.75
+    decrease_prob: 0.75
     mu: 0
     sigma: 0.05
   thetaZ:
-    increase_prob: 0.7
-    decrease_prob: 0.7
+    increase_prob: 0.75
+    decrease_prob: 0.75
     mu: 0
     sigma: 0.05
-  brightness:
-    increase_prob: 0.7
-    decrease_prob: 0.8
-    mu: 0
-    sigma: 0.0
 
-  minMajorRadius: 10
-  maxMajorRadius: 50
-  # Triaxial b-axis bounds. Keeping them wide (matching major) means the b
-  # axis can shrink or grow into the full equatorial range. Tighten these
-  # to constrain the aspect ratio (e.g. minBRadius: 8, maxBRadius: 45).
-  minBRadius: 10
-  maxBRadius: 50
-  minMinorRadius: 5
-  maxMinorRadius: 45
+  minARadius: 5
+  maxARadius: 70
+  minBRadius: 5
+  maxBRadius: 70
+  minCRadius: 5
+  maxCRadius: 70
+  minAnyRadiusEnabled: false
+  minAnyRadius: 5
 
   initialRadiusScale: 1.0
-  initialBrightness: 0.22
-  backgroundColor: 0.05
+  initialBrightness: 1.0
+  backgroundColor: 0.0
 
   minBrightness: 0.1
   maxBrightness: 0.98
@@ -87,181 +54,385 @@ cell:
   brightnessProbabilityStep: 0.02
   brightnessProbabilityTrust: 0.3
 
-  majorRadiusProbabilityStep: 0.01
-  majorRadiusProbabilityTrust: 0.1
-
-  minorRadiusProbabilityStep: 0.01
-  minorRadiusProbabilityTrust: 0.1
-
-  abRatioProbabilityStep: 0.02
-  abRatioProbabilityTrust: 0.1
-
-  brightnessUpdateBlend: 0.9
+  brightnessUpdateBlend: 0.95
   brightnessMeanAmplification: 1.1
+  brightnessMeasurementTopPercentile: 0.3
+
+  # Iterative PCA shape fit (per frame, after perturbation loop).
+  # Converges rotation + radii (+ centroid) to the Voronoi-filtered
+  # bright cloud inside maskScale * current ellipsoid. See
+  # Frame::calibrateCellShapeViaPca.
+  pcaShapeMaxIters: 15
+  pcaShapeRadiusScale: 2.5         # sqrt(5)=2.236: uniform-ellipsoid variance.
+                                   # Raise to enlarge fitted radii (e.g. 2.4 / 2.5).
+  pcaShapeMinPixels: 50
+  pcaShapeMaskScale: 2.2
+  pcaShapeConvergeRadius: 0.3
+  pcaShapeConvergeAngleDeg: 2.0
+  pcaShapeUpdatePosition: true   # When true, post-perturb PCA can also shift
+                                  # the cell center toward the fitted centroid.
+  pcaShapeMaxPosShiftFraction: 0.5
+  pcaShapeWeightExponent: 1.0
+
+  pcaShapeAdaptiveExponent: true
+  pcaShapeWeightExponentBright: 1.15
+  pcaShapeCoreBrightnessThreshold: 0.15
+  pcaShapeCoreFractionLow: 0.25
+  pcaShapeCoreFractionHigh: 0.35
+  # Adaptive radius inflation for peaked cells. PCA's analytic formula
+  # radii = sqrt(5) * sqrt(variance) gives the 97% containment radius for
+  # a Gaussian-like distribution — correct for uniform ellipsoids but
+  # too tight for peaked cells whose visible halo extends to 3σ+.
+  # This multiplier inflates radii for peaked cells (pCore high), leaves
+  # uniform cells unchanged (pCore low). Same ramp as adaptive exponent.
+  # Typical peaked cell: 15% inflation captures the visible halo.
+  # Over-inflating (>1.2) risks halo bloat; stay ≤ 1.2 unless evidence.
+  pcaShapeRadiusInflationBright: 1.15
+  pcaShapeRadiusPercentile: 0.90
+  pcaShapeFitGrowthCapEnabled: true
+  pcaShapeFitGrowthCap: 0.90
+  trashPcaShapeFitEnabled: true
+  trashPcaShapeMaxOriginalRadiusFactor: 2.0
+  # Post-optimization cleanup: trash cells dimmer than this threshold are
+  # removed after the current frame is fully optimized. Their brightness is
+  # averaged into the remaining background before synth export and before the
+  # next frame inherits the environment.
+  trashRemovalEnabled: true
+  trashRemovalBrightnessThreshold: 0.2
+
+  # Radius-proportional perturbation sigma. Position perturbation offsets
+  # are scaled by (maxRadius / referenceRadius). Large cells (R=50) take
+  # bigger steps; small daughters (R=15) take smaller steps. This
+  # normalizes convergence rate across cell sizes.
+  # Set to 0 to disable (all cells use base sigma from x/y/z blocks).
+  # 25.0 = average initial cell radius in this dataset; cells at R=25
+  # use the base sigma unchanged.
+  perturbSigmaReferenceRadius: 25.0
+  # Random perturbation only: use this fraction of each cell's fitted
+  # max radius when scaling x/y/z perturbation sigma. This does not shrink
+  # the fitted/output cell; it only makes random motion act like the cell
+  # radius is smaller. 0.5 = half-radius random perturb steps.
+  randomPerturbRadiusRatio: 0.9
+  # Local bright-core guidance for normal random perturbing. This does not
+  # use global signal centers; it looks only inside the current ellipsoid
+  # and nudges random proposals toward the brightest enclosed chunk.
+  randomPerturbBrightCoreGuidanceEnabled: true
+  # Keep pixels >= this fraction of the brightest enclosed pixel when finding
+  # the local bright core. Higher = tighter to the brightest center.
+  randomPerturbBrightCoreThresholdFraction: 0.5
+  # Centroid weighting exponent. 1.0 = linear brightness, 2.0 = quadratic,
+  # larger values concentrate faster onto the brightest part of the chunk.
+  randomPerturbBrightCoreWeightExponent: 2.0
+  # Trust controls. Base trust is always added after a bright core is found.
+  # Black trust increases guidance when part of the cell is black and part is
+  # bright. Brightness trust increases guidance for stronger bright cores.
+  randomPerturbBrightCoreBaseTrust: 0.35
+  randomPerturbBrightCoreBlackTrust: 0.65
+  randomPerturbBrightCoreBrightnessTrust: 0.65
+  # Main strength knob for the added push toward the bright core. 0 disables
+  # the push, while still damping random movement away from the bright core.
+  randomPerturbBrightCoreGuideStrength: 0.75
 
 # Image preprocessing pipeline — iterative contrast enhancer ported from
-# scripts/image_processor_clean.py. No sigmoid — the old sigmoid fields
-# were removed when the dual pipeline was torn out.
+# scripts/image_processor_clean.py. No sigmoid.
 simulation:
-  iterations_per_cell: 500
+  iterations_per_cell: 250
+  signal_guided_iterations_per_cell: 50
+  random_iterations_per_cell: 50
   z_scaling: 7
-  blur_sigma: 0.0
+  blur_sigma: 1.1 # 0.0
 
   iterative_penalty: 0.1
-  iterative_min_penalty: 0.005
-  iterative_collapse_backoff: 0.99
-  iterative_penalty_range: 0.9
-  iterative_reward_gate: 1.0
-  iterative_reward_gate_decrement: 0.008
-  iterative_reward_gate_min: 0.025
-  iterative_reward: 0.1
-  iterative_score_max: 0.5
-  iterative_max_count: 300
-  iterative_no_improvement_patience: 10
-  iterative_improvement_tolerance: 0.01
-  iterative_score_drop_stop_threshold: 0.1
-  iterative_score_percentile: 0.05
-  iterative_score_percentile_max: 0.90
-  iterative_score_percentile_increment: 0.025
+  iterative_penalty_range: 1.0
+  iterative_reward_gate: 0.5
+  iterative_reward_gate_step: 0.05
+  iterative_reward_gate_min: 0.1
+  iterative_reward: 0.2
+  iterative_reward_gate_learning_rate: 0.1
+  iterative_reward_gate_min_probability: 0.001
+  iterative_no_improvement_patience: 200
+  iterative_score_explosion_threshold: 5.0
+  iterative_candidate_max_mean: 0.40
+  iterative_candidate_max_saturated_fraction: 0.3
+  iterative_reward_gate_seed: 12345
+  iterative_score_max: 0.6 # 0.6
+  iterative_score_target_tolerance: 0.05
+  iterative_max_count: 400
+  iterative_improvement_tolerance: 0.001
+  iterative_score_percentile: 1.0
 
   contrast_structure_threshold: 0.02
+  contrast_background_floor: 0.02
+  contrast_bright_fraction: 0.02
+  contrast_brightness_weight: 0.25
+  contrast_window_radius_step: 2.5
+  contrast_penalty_min_radius_scale: 2.5
+  contrast_reward_weight: 0.85
+  contrast_penalty_weight: 0.07
   contrast_eps: 0.000001
 
-  post_process_blur_sigma: 2.5
-  post_process_amplification: 2.5
-  post_process_black_percentile: 0.1
-  post_process_white_percentile: 0.5
+  frame_intensity_normalization_enabled: true
+  frame_intensity_percentile_exclude_zeros: true
+  frame_intensity_scale_low_percentile: 0.05
+  frame_intensity_scale_high_percentile: 0.99
+  frame_intensity_hard_max: 512.0
 
-  michelson_low_percentile: 0.10
-  michelson_high_percentile: 0.90
-  michelson_eps: 0.000001
+  # Edge brightness alignment runs after preprocessing and samples a
+  # frame-shaped region on each XY slice.
+  # left/right are relative to x=0 / x=image_width-1.
+  # top/bottom are relative to y=0 / y=image_height-1.
+  # Each offset moves the sampled band inward from that real edge; xy_margin
+  # is the shared band thickness after the offset. All Z slices are sampled.
+  # All frames are preprocessed first, then aligned to the minimum sampled
+  # background across those completed frames before export/analysis.
+  edge_brightness_alignment_enabled: false
+  edge_brightness_alignment_xy_margin: 5
+  edge_brightness_alignment_left_offset: 0
+  edge_brightness_alignment_right_offset: 16
+  edge_brightness_alignment_top_offset: 16
+  edge_brightness_alignment_bottom_offset: 0
+  edge_brightness_alignment_max_shift: 0.20
 
-  weber_background_percentile: 0.10
-  weber_signal_percentile: 0.90
-  weber_background_floor: 0.0039215686
-  weber_eps: 0.000001
+  # After all-frame brightness alignment, pixels below this normalized
+  # brightness are forced to black. Set <=0 to disable.
+  post_alignment_black_threshold: 0.045
+
+  # After the fixed threshold above, each frame independently forces its
+  # lowest brightness percentile to black. Set <=0 to disable.
+  post_alignment_black_percentile: 0.975
+  # After the initial percentile blackoff, detect isolated nonzero 3D chunks
+  # using 26-neighbor connectivity. A chunk is counted when each z/y/x
+  # bounding-box dimension is in [min_size, max_size]. If too many chunks
+  # remain, raise the percentile and reapply blackoff until count <= target.
+  post_alignment_chunk_blackoff_enabled: true # no need for good data
+  post_alignment_chunk_target_count: 15 # 15
+  post_alignment_chunk_min_size: 5
+  post_alignment_chunk_max_size: 10
+  post_alignment_chunk_percentile_step: 0.0005
+  post_alignment_chunk_max_percentile: 0.999
+  post_alignment_chunk_non_improvement_patience: 10
+  post_alignment_chunk_disable_below_count: 15
+  # Thread cap for the chunk detector foreground-mask prepass. The exact
+  # connected-component flood fill remains serial to avoid racy overcounts.
+  post_alignment_chunk_detector_threads: 8
+  # After adaptive chunk blackoff, remove isolated nonzero connected
+  # components whose z/y/x bounding-box dimensions are all smaller than the
+  # configured minimum cell diameters. Disabled by default.
+  post_alignment_tiny_particle_removal_enabled: true
+  preprocess_radius_batch_size: 8
+
+  post_process_blur_sigma: 0.0
+  post_process_final_blur_sigma: 2.5
+  post_process_final_direct_weight: 0.95
+  post_process_final_direct_amplification: 1.0
+  post_process_final_blurred_amplification: 0.5
+  post_alignment_final_blur_sigma: 1.25
 
   export_preprocessed_images: false
+  # Debug signal-guidance localization. When true, exports two stacks per
+  # frame under signal_debug/: center cubes on black background and a
+  # grayscale perturb-probability field on black background.
+  export_signal_debug_images: false
+  # Debug normal perturb proposals. Draws every proposed cell placement during
+  # normal perturbation onto black; overlaps accumulate brightness.
+  export_perturb_debug_images: true
+  # Extra perturb debug export: black background with a small cube at each
+  # current cell center and the cell name drawn next to that cube.
+  export_perturb_cell_center_debug_images: true
+  export_frame_png: false
+  export_frame_tiff: true
   quit_after_preprocessing: false
-  enable_lineage_tree_window: false
+  prepare_analyze_one_frame: true
+  # When true, after a frame has been optimized and exported, release its
+  # image-heavy stacks from memory while keeping cells, cached summaries,
+  # checkpoints, and other state needed by later frames.
+  release_analyzed_exported_frames: true
+
+  # Early normal-perturb escape: if a cell's proposal loss oscillates during
+  # the first fraction of its perturb attempts, multiply position-step scale
+  # until an accepted move resets it. Split attempts and split compensation are
+  # not affected.
+  perturb_oscillation_boost_cells_enabled: false
+  perturb_oscillation_boost_trash_enabled: true
+  perturb_oscillation_warmup_fraction: 0.05
+  perturb_oscillation_window: 6
+  perturb_oscillation_min_samples: 8
+  perturb_oscillation_sign_change_ratio: 0.60
+  perturb_oscillation_boost_ratio: 1.5
+  perturb_oscillation_max_multiplier: 10.0
+  perturb_oscillation_reset_on_accept: true
+  perturb_oscillation_small_step_probability: 0.20
+  perturb_oscillation_small_step_multiplier: 1.0
+  # When oscillation boosting triggers, multiply the boost by
+  # 1 + black_fraction_inside_cell * weight. Cells enclosing mostly black
+  # pixels get a larger escape step than cells already covering signal.
+  perturb_oscillation_black_pixel_boost_enabled: true
+  perturb_oscillation_black_pixel_boost_weight: 1.7
+  perturb_debug_cell_brightness: 0.30
+  perturb_debug_center_cube_radius: 2
+
+  # Cube pooling: fixed-size pooling over 3D cubes.
+  # cube_pooling_mode can be mean, max, min, median, top_percentile, or low_percentile.
+  cube_pooling_enabled: false
+  cube_pooling_cost_comparison_enabled: false
+  cube_pooling_cube_size: 4
+  cube_pooling_mode: low_percentile
+  # For top_percentile mode, each cube is filled with the mean of its
+  # brightest fraction of voxels. 0.10 means top 10%.
+  cube_pooling_top_fraction: 0.10
+  # For low_percentile mode, each cube is filled with the mean of its
+  # dimmest fraction of voxels. 0.10 means lowest 10%.
+  cube_pooling_low_fraction: 0.5
 
   adaptive_background_expand_factor: 1.1
-  adaptive_background_top_fraction: 0.4
-  # Runtime parallelism. Keep local Mac runs at 1 by default to avoid memory
-  # pressure. On Openlab, either set this to 16 or run with:
-  #   CELLUNIVERSE_THREADS=16 ./celluniverse ...
-  parallel_threads: 1
-  parallel_min_slices: 8
+  adaptive_background_top_fraction: 0.2
 
-# Triaxial split detection pipeline (2026-04-11 redesign).
-# Classification: cells with snapshot.shapeElongation > T_classify become
-# pre_classified (Phase B); the rest stay non_classified (Phase A).
-# Split attempts generate K candidate placements around the snapshot/PCA
-# direction, burn each in briefly, pick the best, then bio check + cost gate.
+  asymmetric_cost_weight: 8.0
+  # Minimum overshoot (synth - real) to activate asymK. Below this,
+  # overshoot is penalized at 1x (symmetric). Eliminates the double-
+  # boundary bias: two daughters have 2× boundary rendering artifacts
+  # (small d ≈ 0.01-0.05 at ellipsoid edges) but the same valley-
+  # coverage signal (large d ≈ 0.1+) as one parent. Without threshold,
+  # asymK amplifies the artifacts 8x, making daughters structurally
+  # more expensive than keeping the parent — blocking real splits.
+  # 0.03 = just above typical background noise (~0.01-0.02).
+  asymmetric_cost_threshold: 0.03
+
+  signal_guided_position_enabled: false
+  # Signal-detection box side length in voxels/pixels. Smaller = more boxes,
+  # finer-grain clusters.
+  signal_guided_box_side_length: 10
+  signal_guided_min_box_brightness_delta: 0.01
+  # Floor on the per-cluster sigma scale. Brighter clusters get smaller sigma
+  # (tighter teleport); dimmer clusters get sigma toward 1.0 (looser).
+  # 0.35 = brightest cluster's sigma is 35% of cellConfig.x/y/z.sigma.
+  signal_guided_min_sigma_scale: 0.15
+  signal_guided_sigma_range_multiplier: 15.0
+  # Initial signal grouping keeps only this brightest fraction of candidate
+  # boxes after the background+delta noise floor. 0.70 = top 70%.
+  signal_guided_initial_bright_fraction: 0.70
+  # Recursive center splitting keeps this brightest fraction inside each
+  # already-grouped center and checks whether it breaks into separate BFS
+  # face-connected islands. 0.50 = top 50%.
+  signal_guided_recursive_bright_fraction: 0.60
+  # Maximum recursive split depth. 0 disables recursive splitting while
+  # keeping the initial bright-fraction filter active.
+  signal_guided_max_recursive_depth: 2
+  # Signal map: copy the fully preprocessed frame, iteratively blur it, and
+  # rescale after each blur to recover the original bright-center mean.
+  signal_map_enabled: true
+  signal_map_blur_sigma: 2.5
+  signal_map_max_iterations: 15
+  signal_map_bright_center_percentile: 0.0
+  signal_map_epsilon: 0.000001
+  # Normal movement perturbation guidance from the signal map. Split burn-in,
+  # split refine, and split compensation perturbations explicitly skip this.
+  signal_map_perturb_guidance_enabled: true
+  signal_map_cell_radius_scale: 1.2
+  signal_map_min_gradient_norm: 0.000001
+  # Per-proposal temporary boost toward the signal-map gradient. 0 disables
+  # probability bias; 1 can move all opposite-direction probability mass to
+  # the uphill sign for axes strongly aligned with the gradient.
+  signal_map_direction_probability_boost: 0.5
+  signal_map_opposing_move_damping: 0.0
+  signal_map_guide_strength: 0.0
+
+# Triaxial split detection pipeline.
 prob:
+  # P(split) ramps linearly from P_split_base at snap elong=1.0 to
+  # P_split_max at snap elong=2.0 (clamped above). No classification
+  # threshold — every cell has at least P_split_base chance per iter,
+  # elongated cells get progressively higher.
   P_split_base: 0.03
   P_split_max: 0.5
-  shape_elongation_classify_threshold: 1.20
 
-  split_cost: 15
-  # Evidence rescue for true divisions that miss split_cost because the
-  # single parent already sits on one daughter. A split still needs clear
-  # bridge, drift, and overlap evidence; this avoids losing cells on a fixed
-  # absolute cost threshold.
-  split_cost_rescue_enabled: true
-  split_cost_rescue_min_fraction: 0.60
-  split_cost_rescue_max_gap_density: 0.05
-  split_cost_rescue_max_valley_ratio: 0.35
-  split_cost_rescue_max_drift_fraction: 0.25
-  split_cost_rescue_max_overlap_penalty: 2.0
-  # Narrow rescue for true divisions with an almost empty bridge between
-  # daughters. This handles cases where the single parent already explains
-  # much of the signal, so the residual cost gain is smaller than split_cost.
-  split_cost_perfect_bridge_rescue_enabled: true
-  split_cost_perfect_bridge_rescue_min_fraction: 0.25
-  split_cost_perfect_bridge_rescue_max_gap_density: 0.005
-  split_cost_perfect_bridge_rescue_max_valley_ratio: 0.15
-  split_cost_perfect_bridge_rescue_max_overlap_penalty: 0.50
-  overlap_penalty_weight: 500.0
-  size_reduction_penalty_weight: 30
+  split_cost: 2000
+  split_cost_fraction: 0.03
+  # Some visually correct divisions have a strong dark bridge but still lose
+  # bbox image cost against the current live parent. Let those pass when the
+  # bridge is strong and the positive cost delta is bounded.
+  split_bridge_cost_rescue_enabled: true
+  split_bridge_cost_rescue_max_positive_fraction: 0.20
+  split_bridge_cost_rescue_max_valley_ratio: 0.40
+  split_bridge_cost_rescue_max_gap_density: 0.05
 
-  split_direction_agreement_degrees: 20
+  position_prior_weight: 75.0
+  position_prior_threshold: 20.0
+  overlap_penalty_weight: 75000.0
+
   expected_daughter_pre_pass_iterations: 1
 
-  # 2 midpoints (PCA + snapshot) x 5 variants each = 10 candidates per
-  # primary direction. With split_direction_agreement giving 1 primary in
-  # most cases, total is 10.
-  split_candidates_per_attempt: 10
-  split_candidate_burn_in_iterations: 20
-  # Extra refine iterations on the winning candidate's daughters before
-  # the bio/cost gates fire. Uses the same tight burn-in sigmas.
+  split_candidates_per_attempt: 30
+  split_candidate_burn_in_iterations: 50
   split_final_refine_iterations: 30
-  # Per-cell position calibration pass between pre-pass and Phase A/B.
-  # Runs M perturbCell iterations with tight position sigmas and radii
-  # frozen at 0 sigma so the parent position refines without radius
-  # collapse. Catches the "Phase A parks parent on one daughter" pathology.
   split_calibration_iterations_per_cell: 50
   split_candidate_rotation_delta_degrees: 8
   split_candidate_translation_delta_fraction: 0.2
-  # Candidate rescue for asymmetric true divisions: if the live parent has
-  # already moved onto one daughter, use the far bright residual assigned to
-  # this cell as a second daughter candidate.
-  split_far_candidate_enabled: false
-  split_far_candidate_min_distance_fraction: 0.70
-  split_far_candidate_quantile: 0.70
-  split_far_candidate_min_weight_fraction: 0.01
-  # A failed split can be order dependent when two nearby parents are both
-  # about to divide. Retry a rejected parent later after nearby cells have
-  # had a chance to update their claim points.
-  split_reject_retry_limit: 2
-  split_reject_retry_cooldown_iterations: 500
-  # Extra candidates for low-elongation true splits where z evidence is noisy:
-  # try the previous-frame long-axis direction projected into x/y, with both
-  # signs, and let burn-in plus the normal gates choose or reject it.
-  split_snapshot_xy_candidate_enabled: true
-  split_snapshot_xy_separation_scale: 1.8
-  split_snapshot_xy_min_parent_radius_fraction: 1.5
+
+  # Reject split candidates whose daughters only fit by walking far away from
+  # the proposed split geometry. This catches false splits where an elongated
+  # parent shape is plausible, but the final daughters are no longer a local
+  # division of that parent.
+  split_geometry_gate_enabled: false
+  # Max daughter drift from its split seed, measured as this fraction of the
+  # parent max radius. Set <= 0 to disable this sub-check.
+  split_max_daughter_seed_drift_fraction: 1.25
+  # Max final daughter-to-daughter span as a multiple of the initial split
+  # seed span. Set <= 0 to disable this sub-check.
+  split_max_daughter_axis_expansion: 1.8
+  # After daughter PCA refit, require each daughter's shortest axis to stay
+  # aligned with the parent shortest axis. The axis is unoriented, so measured
+  # angles are folded to 0-90 degrees. The sphere-like angle starts permissive
+  # and shrinks as parent elongation increases.
+  split_axis_alignment_gate_enabled: true
+  split_axis_alignment_sphere_angle_degrees: 120.0
+  # allowed = max(min_angle, sphere_angle / (1 + shrink * max(0, elongation - 1)))
+  split_axis_alignment_elongation_shrink: 0.75
+  split_axis_alignment_min_angle_degrees: 20.0
+  # Reject if generated daughters overlap each other by more than this
+  # fraction of either daughter's voxel body.
+  split_daughter_overlap_gate_enabled: true
+  split_max_daughter_overlap_fraction: 0.05
+  split_daughter_overlap_scale: 1.0
 
   bio_daughter_size_ratio_max: 1.5
   bio_combined_volume_min_fraction: 0.6
   bio_combined_volume_max_fraction: 1.3
-  # Drift-from-seed bio gate (2026-04-11). Rejects a split when the best
-  # candidate's post-burn-in daughter center has wandered more than
-  # max(parent_frac * parent_maxR, daughter_frac * daughter_maxR) from the
-  # seed position. The daughter-side limit is one daughter radius so dim
-  # true daughters can still settle onto the image peak.
-  bio_max_drift_parent_fraction: 0.4
-  bio_max_drift_daughter_fraction: 1.0
-  # Prevents a still continuous cell from being split before the two daughter
-  # centers are far enough apart compared with the parent size.
-  bio_min_daughter_separation_parent_fraction: 1.70
-  # Midpoint-near-snapshot-parent gate (2026-04-11). Rejects a split
-  # when the daughter midpoint is more than 0.95 * parent_maxR from the
-  # snapshot (last-frame) parent center. Catches parent drift and
-  # parent inflation — real divisions happen at the parent's last-frame
-  # location, false ones place daughters in adjacent empty image space.
-  bio_max_midpoint_parent_fraction: 0.95
-  # Single-daughter volume gate (2026-04-11). Rejects a split when one
-  # daughter's volume exceeds 0.65 * parent volume. Catches the
-  # "one daughter mimics parent, one is a small satellite" pattern
-  # (1f2ed f4: d2 vol = 0.74 * parent vol).
-  bio_max_single_daughter_volume_fraction: 0.65
-  # Bridge brightness gate (2026-04-11). Reuses the Voronoi-filtered
-  # bright-pixel set from PCA, projects onto the split axis, and checks
-  # for a dividing groove between daughter centers. Rejects when BOTH
-  # signals indicate a flat profile: (1) >18% of in-range pixels are
-  # in the middle 30% of the axis, AND (2) gap-pixel brightness is
-  # >85% of edge-pixel brightness. Catches the hardest false-split
-  # pattern where two equal-size daughters mimic a single continuous
-  # cell at parent center.
-  bio_bridge_max_gap_density: 0.18
-  bio_bridge_max_valley_ratio: 0.85
-  # Multiplier on Spheroid x/y/z perturbation sigmas during candidate burn-in.
-  # Main-loop sigmas (5, 5, 8) let daughters wander 15-25 voxels across
-  # 20 iters; 0.4 tightens to (2, 2, 3.2) so burn-in only refines.
+  bio_max_single_daughter_volume_fraction: 0.6
+  bio_bridge_max_valley_ratio: 0.8
+  bio_bridge_min_edge_brightness_absolute: 0.07
+
   split_burn_in_pos_sigma_scale: 0.4
-  # Multiplier on Spheroid majorR/bR/minorR perturbation sigmas during
-  # burn-in. 0.1 preserves the snapshot-based daughter sizing (0.794 *
-  # src) through burn-in + refine, preventing the "collapsed sliver"
-  # false-split pattern where one daughter shrinks to the radius floor.
-  split_burn_in_radius_sigma_scale: 0.1
+
+  use_bbox_cost: true
+  bbox_margin_scale: 2.5
+
+  split_daughter_refit_iterations: 3
+  split_daughter_refit_min_radius_fraction: 0.85
+  split_daughter_refit_max_radius_fraction: 1.05
+
+  split_daughter_volume_scale: 0.7937
+
+  # Post-PCA false-long-cell rescue. After PCA shape fitting, very elongated
+  # cells are scanned along their longest axis. If a dark bridge exists near
+  # the center, two daughters are fit from nonblack voxels on either side and
+  # accepted only when image+overlap cost improves.
+  pca_bridge_split_enabled: true
+  pca_bridge_elongation_ratio: 2.0
+  # Require a prolate bridge shape: one clearly long axis, and the two
+  # non-long axes close to each other. This blocks triaxial false bridges
+  # like R=(43,30,12), where long/short is high only because one axis
+  # collapsed.
+  pca_bridge_min_long_mid_ratio: 1.35
+  pca_bridge_max_mid_short_ratio: 1.35
+  pca_bridge_black_threshold: 0.05
+  pca_bridge_min_black_fraction: 0.75
+  pca_bridge_gap_center_fraction: 0.35
+  pca_bridge_profile_bins: 21
+  pca_bridge_min_gap_bins: 2
+  pca_bridge_min_side_voxels: 40
+  pca_bridge_daughter_radius_scale: 2.236
+  pca_bridge_min_radius_fraction: 0.35
+  pca_bridge_max_radius_fraction: 0.90
+  pca_bridge_min_cost_improvement: 0.0
+  pca_bridge_overlap_weight: -1.0

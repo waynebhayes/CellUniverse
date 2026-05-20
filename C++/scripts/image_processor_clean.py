@@ -172,12 +172,10 @@ def process_prepared_sequence(sequence: np.ndarray) -> np.ndarray:
     """Run the current iterative enhancement loop on normalized TIFF data."""
 
     panelty = 0.1
-    min_panelty = 0.005
-    collapse_backoff = 0.99
     panelty_range = 0.9
 
     reward_gate = 1.0
-    reward_gate_decrement = 0.008
+    reward_gate_step = 0.008
     reward_gate_min = 0.025
     reward = panelty
 
@@ -191,9 +189,6 @@ def process_prepared_sequence(sequence: np.ndarray) -> np.ndarray:
     score_percentile_increment = 0.025
 
     post_process_blur_sigma = 2.5
-    post_process_amplification = 15.0
-    post_process_black_percentile = 0.005
-    post_process_white_percentile = 0.3
 
     current = _as_3d_float_sequence(sequence).copy()
     best_sequence = current.copy()
@@ -202,13 +197,12 @@ def process_prepared_sequence(sequence: np.ndarray) -> np.ndarray:
 
     count = 0
     reward_next_round = True
-    current_panelty = panelty
     no_improvement_count = 0
     restore_best_before_reward = False
 
     while True:
         # Apply the penalty only to values below the configured range ceiling.
-        current[current < panelty_range] -= current_panelty
+        current[current < panelty_range] -= panelty
         current[current < 0.0] = 0.0
 
         if reward_next_round:
@@ -225,7 +219,7 @@ def process_prepared_sequence(sequence: np.ndarray) -> np.ndarray:
                 score_percentile + score_percentile_increment,
                 score_percentile_max,
             )
-            reward_gate = max(reward_gate_min, reward_gate - reward_gate_decrement)
+            reward_gate = max(reward_gate_min, reward_gate - reward_gate_step)
 
         # The loop alternates between non-reward and reward rounds.
         reward_next_round = not reward_next_round
@@ -242,8 +236,7 @@ def process_prepared_sequence(sequence: np.ndarray) -> np.ndarray:
             # A sharp score drop schedules an immediate recovery reward.
             reward_next_round = True
             restore_best_before_reward = True
-            current_panelty = max(min_panelty, current_panelty * collapse_backoff)
-            print("round: ", count, " | score: ", score, " | panelty: ", current_panelty)
+            print("round: ", count, " | score: ", score, " | panelty: ", panelty)
             previous_score = score
             count += 1
             continue
@@ -255,7 +248,7 @@ def process_prepared_sequence(sequence: np.ndarray) -> np.ndarray:
         else:
             no_improvement_count += 1
 
-        print("round: ", count, " | score: ", score, " | panelty: ", current_panelty)
+        print("round: ", count, " | score: ", score, " | panelty: ", panelty)
         previous_score = score
         count += 1
 
@@ -264,34 +257,17 @@ def process_prepared_sequence(sequence: np.ndarray) -> np.ndarray:
 
         if score == 0.0:
             # Zero score means the current state lost all informative contrast.
-            current_panelty = max(min_panelty, current_panelty * collapse_backoff)
             current = best_sequence.copy()
             reward_next_round = True
             continue
 
         if no_improvement_count >= no_improvement_patience:
-            if current_panelty <= min_panelty:
-                break
-
-            current_panelty = max(min_panelty, current_panelty * collapse_backoff)
-            current = best_sequence.copy()
-            no_improvement_count = 0
-            reward_next_round = True
-            continue
+            break
 
         if count >= max_count:
             break
 
     print("best round score: ", best_score)
-
-    best_sequence[best_sequence < post_process_black_percentile] = 0.0
-    # Only amplify the middle intensity band; very dark pixels stay black and
-    # brighter pixels are left untouched.
-    amplification_mask = (
-        (best_sequence >= post_process_black_percentile)
-        & (best_sequence < post_process_white_percentile)
-    )
-    best_sequence[amplification_mask] *= post_process_amplification
 
     # Apply a final gentle blur slice-by-slice after the iterative loop.
     best_sequence = np.stack(

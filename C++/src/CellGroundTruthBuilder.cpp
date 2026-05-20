@@ -118,7 +118,7 @@ CellGroundTruthBuilder::DatasetProfile CellGroundTruthBuilder::inferDatasetProfi
     DatasetProfile profile;
     profile.effectiveZScaling = std::max(1.0f, config.simulation.z_scaling);
 
-    const float minMajor = config.cell ? static_cast<float>(config.cell->minMajorRadius) : 10.0f;
+    const float minMajor = config.cell ? static_cast<float>(config.cell->minARadius) : 10.0f;
     const int minComponentVoxels = computeMinComponentVoxels();
     profile.minHighSeedVoxels = std::max(8, minComponentVoxels / 8);
     profile.seedMergeDistance = std::max(6.0f, minMajor * 0.95f);
@@ -165,7 +165,7 @@ float CellGroundTruthBuilder::effectiveZScaling() const
 float CellGroundTruthBuilder::estimateBackgroundValue(const std::vector<cv::Mat> &volume) const
 {
     return percentileFromValues(collectSampledValues(volume),
-                                clampf(config.simulation.post_process_black_percentile, 0.0f, 1.0f));
+                                clampf(config.simulation.post_alignment_black_percentile, 0.0f, 1.0f));
 }
 
 int CellGroundTruthBuilder::computeMinComponentVoxels() const
@@ -175,8 +175,8 @@ int CellGroundTruthBuilder::computeMinComponentVoxels() const
         return 80;
     }
 
-    const double minMajor = config.cell->minMajorRadius;
-    const double minMinor = config.cell->minMinorRadius;
+    const double minMajor = config.cell->minARadius;
+    const double minMinor = config.cell->minCRadius;
     const double estimatedMinVolume = (4.0 / 3.0) * M_PI * minMajor * minMajor * minMinor;
     return std::max(80, static_cast<int>(std::lround(estimatedMinVolume * 0.03)));
 }
@@ -234,10 +234,10 @@ void CellGroundTruthBuilder::estimateAdaptiveRadii(const EmbryoBrightTracker::Co
         return equivalentRadius + blend * (axisRadius - equivalentRadius);
     };
 
-    const float minMajor = config.cell ? static_cast<float>(config.cell->minMajorRadius) : 10.0f;
-    const float maxMajor = config.cell ? static_cast<float>(config.cell->maxMajorRadius) : 50.0f;
-    const float minMinor = config.cell ? static_cast<float>(config.cell->minMinorRadius) : 5.0f;
-    const float maxMinor = config.cell ? static_cast<float>(config.cell->maxMinorRadius) : 45.0f;
+    const float minMajor = config.cell ? static_cast<float>(config.cell->minARadius) : 10.0f;
+    const float maxMajor = config.cell ? static_cast<float>(config.cell->maxARadius) : 50.0f;
+    const float minMinor = config.cell ? static_cast<float>(config.cell->minCRadius) : 5.0f;
+    const float maxMinor = config.cell ? static_cast<float>(config.cell->maxCRadius) : 45.0f;
     const float minB = (config.cell && config.cell->maxBRadius > 0.0f)
         ? static_cast<float>(config.cell->minBRadius)
         : minMajor;
@@ -268,7 +268,7 @@ std::optional<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::dete
     const int Y = volume[0].rows;
     const int X = volume[0].cols;
 
-    const float minMajor = config.cell ? static_cast<float>(config.cell->minMajorRadius) : 10.0f;
+    const float minMajor = config.cell ? static_cast<float>(config.cell->minARadius) : 10.0f;
     const float windowDiameter = std::clamp(
         std::max(seedComponent.diamXY() * 2.4f, minMajor * 3.0f),
         minMajor * 3.0f,
@@ -375,7 +375,7 @@ bool CellGroundTruthBuilder::shouldSplitCoarseComponent(
     const DetectedCell &coarseCell,
     const std::vector<EmbryoBrightTracker::Comp3DStat> &containedSeeds) const
 {
-    const float maxAllowedMajor = config.cell ? static_cast<float>(config.cell->maxMajorRadius) * 1.15f : 46.0f;
+    const float maxAllowedMajor = config.cell ? static_cast<float>(config.cell->maxARadius) * 1.15f : 46.0f;
     if (coarseCell.majorRadius > maxAllowedMajor && !containedSeeds.empty())
     {
         return true;
@@ -565,8 +565,8 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::pruneL
     }
     std::sort(voxelCounts.begin(), voxelCounts.end());
     const float medianVoxelCount = static_cast<float>(voxelCounts[voxelCounts.size() / 2]);
-    const float minMinor = config.cell ? static_cast<float>(config.cell->minMinorRadius) : 5.0f;
-    const float minMajor = config.cell ? static_cast<float>(config.cell->minMajorRadius) : 10.0f;
+    const float minMinor = config.cell ? static_cast<float>(config.cell->minCRadius) : 5.0f;
+    const float minMajor = config.cell ? static_cast<float>(config.cell->minARadius) : 10.0f;
     std::vector<float> majorRadii;
     std::vector<float> meanIntensities;
     majorRadii.reserve(cells.size());
@@ -714,9 +714,9 @@ float CellGroundTruthBuilder::scoreCandidateCells(const std::vector<DetectedCell
         return -std::numeric_limits<float>::max();
     }
 
-    const float minMinor = config.cell ? static_cast<float>(config.cell->minMinorRadius) : 5.0f;
-    const float minMajor = config.cell ? static_cast<float>(config.cell->minMajorRadius) : 10.0f;
-    const float maxMajor = config.cell ? static_cast<float>(config.cell->maxMajorRadius) : 40.0f;
+    const float minMinor = config.cell ? static_cast<float>(config.cell->minCRadius) : 5.0f;
+    const float minMajor = config.cell ? static_cast<float>(config.cell->minARadius) : 10.0f;
+    const float maxMajor = config.cell ? static_cast<float>(config.cell->maxARadius) : 40.0f;
 
     std::vector<float> majorRadii;
     std::vector<int> voxelCounts;
@@ -839,14 +839,14 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::detect
     return bestCells;
 }
 
-std::vector<Spheroid> CellGroundTruthBuilder::makeSpheroids(const std::vector<DetectedCell> &cells) const
+std::vector<Ellipsoid> CellGroundTruthBuilder::makeEllipsoids(const std::vector<DetectedCell> &cells) const
 {
-    std::vector<Spheroid> spheroids;
-    spheroids.reserve(cells.size());
+    std::vector<Ellipsoid> ellipsoids;
+    ellipsoids.reserve(cells.size());
 
     for (const auto &cell : cells)
     {
-        SpheroidParams params(cell.name,
+        EllipsoidParams params(cell.name,
                               cell.centerScaled.x,
                               cell.centerScaled.y,
                               cell.centerScaled.z,
@@ -857,10 +857,10 @@ std::vector<Spheroid> CellGroundTruthBuilder::makeSpheroids(const std::vector<De
                               0.0f,
                               config.cell ? config.cell->initialBrightness : 0.2f);
         params.bRadius = cell.bRadius;
-        spheroids.emplace_back(params);
+        ellipsoids.emplace_back(params);
     }
 
-    return spheroids;
+    return ellipsoids;
 }
 
 void CellGroundTruthBuilder::saveInitialCsv(const fs::path &csvOutputPath,
@@ -892,11 +892,11 @@ void CellGroundTruthBuilder::saveFrameOutputs(const fs::path &imageFile,
                                               const std::vector<cv::Mat> &realFrame,
                                               const std::vector<DetectedCell> &cells) const
 {
-    std::vector<Spheroid> spheroids = makeSpheroids(cells);
+    std::vector<Ellipsoid> ellipsoids = makeEllipsoids(cells);
 
     Frame frame(realFrame,
                 config.simulation,
-                spheroids,
+                ellipsoids,
                 outputDir.string(),
                 imageFile.filename().string());
     frame.setBackgroundColor(estimateBackgroundValue(realFrame));
@@ -952,8 +952,8 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::buildI
 
     if (config.cell)
     {
-        Spheroid::cellConfig = *config.cell;
-        Spheroid::cellConfig.maxZ = static_cast<float>(realFrame.size()) - 1.0f;
+        Ellipsoid::cellConfig = *config.cell;
+        Ellipsoid::cellConfig.maxZ = static_cast<float>(realFrame.size()) - 1.0f;
     }
 
     const std::string frameStem = imageFile.stem().string();

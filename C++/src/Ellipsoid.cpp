@@ -1,4 +1,4 @@
-#include "../includes/Spheroid.hpp"
+#include "../includes/Ellipsoid.hpp"
 #include <limits>
 #include <random>
 #include <type_traits>
@@ -9,7 +9,7 @@ template <typename>
 inline constexpr bool alwaysFalseV = false;
 
 template <typename Visitor>
-void scanSpheroidSlice(
+void scanEllipsoidSlice(
     int minX, int maxX, int minY, int maxY,
     const cv::Point3f &position, double z,
     const std::array<double, 9> &R_T,
@@ -42,7 +42,7 @@ void scanSpheroidSlice(
 }
 
 template <typename Visitor>
-void scanSpheroidVolume(
+void scanEllipsoidVolume(
     const std::vector<cv::Mat> &image,
     int minX, int maxX, int minY, int maxY, int minZ, int maxZ,
     const cv::Point3f &position,
@@ -75,7 +75,7 @@ void scanSpheroidVolume(
                     visitor(x, y, z, row[x], val);
                 } else {
                     static_assert(alwaysFalseV<Visitor>,
-                                  "scanSpheroidVolume visitor must be invocable with either "
+                                  "scanEllipsoidVolume visitor must be invocable with either "
                                   "(dx,dy,dz,x,y,z,pixel,val) or (x,y,z,pixel,val).");
                 }
 
@@ -88,14 +88,14 @@ void scanSpheroidVolume(
 }
 } // namespace
 
-SpheroidConfig Spheroid::cellConfig = SpheroidConfig();
+EllipsoidConfig Ellipsoid::cellConfig = EllipsoidConfig();
 
 // ---- INVERSE ROTATION ----
 // Transforms a world-space displacement vector back into the spheroid's 
 // local (upright) coordinate frame. Since the forward rotation is 
 // R_total = Rz * Ry * Rx, the inverse is R_total^T = Rx^T * Ry^T * Rz^T.
 // We undo z first, then y, then x.
-void Spheroid::inverseRotatePoint(double dx, double dy, double dz,
+void Ellipsoid::inverseRotatePoint(double dx, double dy, double dz,
                                    double &lx, double &ly, double &lz) const 
 {
     std::array<double, 9> R_T;
@@ -105,25 +105,30 @@ void Spheroid::inverseRotatePoint(double dx, double dy, double dz,
     lz = R_T[6] * dx + R_T[7] * dy + R_T[8] * dz;
 }
 
-void Spheroid::worldLongAxis(cv::Point3f &dir, float &length) const
+void Ellipsoid::worldSplitAxis(cv::Point3f &dir, float &length) const
 {
-    // Pick whichever of (a, b, c) is largest and rotate the corresponding
+    // Pick whichever of (a, b, c) is shortest and rotate the corresponding
     // local unit vector out to world space using the forward rotation
-    // R = Rz * Ry * Rx. Since R_T in generateInverseRotationMatrix is R^T
-    // stored row-major, column-i of R (which maps local axis i to world) is
-    // read out of R_T as (R_T[i], R_T[3 + i], R_T[6 + i]).
+    // R = Rz * Ry * Rx. R_T in generateInverseRotationMatrix is R^T stored
+    // row-major: R_T[r*3 + c] = R[c, r]. The world direction of local axis
+    // i is column i of R, which equals (R_T[3i], R_T[3i+1], R_T[3i+2]).
+    // (Bug 2026-04-19: previously read (R_T[i], R_T[3+i], R_T[6+i]) which
+    // is row i of R, not column i — wrong for any rotated cell.)
     std::array<double, 9> R_T{};
     generateInverseRotationMatrix(R_T);
 
-    int longestAxis = 0; // 0 = a (local x), 1 = b (local y), 2 = c (local z)
-    double longestValue = a;
-    if (b > longestValue) { longestAxis = 1; longestValue = b; }
-    if (c > longestValue) { longestAxis = 2; longestValue = c; }
+    // Use the SHORTEST axis as the split direction. For a pancake cell
+    // (a ≈ b >> c), daughters separate along c (stacked through the thin
+    // dimension). The split plane cuts perpendicular to the short axis.
+    int shortestAxis = 0; // 0 = a (local x), 1 = b (local y), 2 = c (local z)
+    double shortestValue = a;
+    if (b < shortestValue) { shortestAxis = 1; shortestValue = b; }
+    if (c < shortestValue) { shortestAxis = 2; shortestValue = c; }
 
-    // Column `longestAxis` of R = (R_T[longestAxis], R_T[3 + longestAxis], R_T[6 + longestAxis]).
-    const double dx = R_T[longestAxis];
-    const double dy = R_T[3 + longestAxis];
-    const double dz = R_T[6 + longestAxis];
+    const int base = 3 * shortestAxis;
+    const double dx = R_T[base];
+    const double dy = R_T[base + 1];
+    const double dz = R_T[base + 2];
 
     // The column should already be a unit vector because R is orthonormal,
     // but normalize defensively against floating-point drift.
@@ -136,10 +141,10 @@ void Spheroid::worldLongAxis(cv::Point3f &dir, float &length) const
     } else {
         dir = cv::Point3f(1.0f, 0.0f, 0.0f);
     }
-    length = static_cast<float>(longestValue);
+    length = static_cast<float>(shortestValue);
 }
 
-void Spheroid::generateInverseRotationMatrix(std::array<double, 9> &R_T) const {
+void Ellipsoid::generateInverseRotationMatrix(std::array<double, 9> &R_T) const {
     const double cx = std::cos(_theta_x), sx = std::sin(_theta_x);
     const double cy = std::cos(_theta_y), sy = std::sin(_theta_y);
     const double cz = std::cos(_theta_z), sz = std::sin(_theta_z);
@@ -163,69 +168,88 @@ void Spheroid::generateInverseRotationMatrix(std::array<double, 9> &R_T) const {
     R_T[6] = R02; R_T[7] = R12; R_T[8] = R22;
 }
 
-cv::Point3f Spheroid::axisAlignedExtents() const
-{
-    std::array<double, 9> R_T;
-    generateInverseRotationMatrix(R_T);
-
-    const double ax = a * R_T[0];
-    const double bx = b * R_T[3];
-    const double cx = c * R_T[6];
-    const double ay = a * R_T[1];
-    const double by = b * R_T[4];
-    const double cy = c * R_T[7];
-    const double az = a * R_T[2];
-    const double bz = b * R_T[5];
-    const double cz = c * R_T[8];
-
-    return cv::Point3f(
-        static_cast<float>(std::sqrt(ax * ax + bx * bx + cx * cx)),
-        static_cast<float>(std::sqrt(ay * ay + by * by + cy * cy)),
-        static_cast<float>(std::sqrt(az * az + bz * bz + cz * cz)));
-}
-
-bool Spheroid::computeSliceBounds(const cv::Mat &image, float z,
+bool Ellipsoid::computeSliceBounds(const cv::Mat &image, float z,
                                   int &minX, int &maxX, int &minY, int &maxY) const {
-    const cv::Point3f extents = axisAlignedExtents();
-    if (std::abs(z - _position.z) > extents.z) {
+    float maxR = std::max({static_cast<float>(a), static_cast<float>(b), static_cast<float>(c)});
+    if (std::abs(z - _position.z) > maxR) {
         return false;
     }
 
-    minX = std::max(0, static_cast<int>(std::floor(_position.x - extents.x)));
-    maxX = std::min(image.cols - 1, static_cast<int>(std::ceil(_position.x + extents.x)));
-    minY = std::max(0, static_cast<int>(std::floor(_position.y - extents.y)));
-    maxY = std::min(image.rows - 1, static_cast<int>(std::ceil(_position.y + extents.y)));
+    minX = std::max(0, static_cast<int>(std::floor(_position.x - maxR)));
+    maxX = std::min(image.cols - 1, static_cast<int>(std::ceil(_position.x + maxR)));
+    minY = std::max(0, static_cast<int>(std::floor(_position.y - maxR)));
+    maxY = std::min(image.rows - 1, static_cast<int>(std::ceil(_position.y + maxR)));
     return true;
 }
 
 
 // ---- SIMPLIFIED CONSTRUCTOR ----
 // No voxel matrix construction needed — drawing is done analytically.
-Spheroid::Spheroid(const SpheroidParams &init_props)
+namespace
+{
+void enforceMinAnyRadius(double &aRadius, double &bRadius, double &cRadius)
+{
+    if (!Ellipsoid::cellConfig.minAnyRadiusEnabled) {
+        return;
+    }
+    const double minAny = Ellipsoid::cellConfig.minAnyRadius;
+    if (minAny <= 0.0 || std::max({aRadius, bRadius, cRadius}) >= minAny) {
+        return;
+    }
+
+    const double minBR = (Ellipsoid::cellConfig.maxBRadius > 0.0)
+        ? Ellipsoid::cellConfig.minBRadius : Ellipsoid::cellConfig.minARadius;
+    const double maxBR = (Ellipsoid::cellConfig.maxBRadius > 0.0)
+        ? Ellipsoid::cellConfig.maxBRadius : Ellipsoid::cellConfig.maxARadius;
+
+    struct AxisCandidate {
+        double *value;
+        double maxValue;
+    };
+    std::array<AxisCandidate, 3> candidates{{
+        {&aRadius, Ellipsoid::cellConfig.maxARadius},
+        {&bRadius, maxBR},
+        {&cRadius, Ellipsoid::cellConfig.maxCRadius},
+    }};
+
+    auto best = std::max_element(
+        candidates.begin(), candidates.end(),
+        [](const AxisCandidate &lhs, const AxisCandidate &rhs) {
+            return *lhs.value < *rhs.value;
+        });
+    if (best != candidates.end() && best->maxValue >= minAny) {
+        *best->value = std::max(*best->value, minAny);
+    }
+}
+}
+
+Ellipsoid::Ellipsoid(const EllipsoidParams &init_props)
 : _name(init_props.name), _position{init_props.x, init_props.y, init_props.z},
-          _major_radius(init_props.majorRadius),
-          _b_radius(init_props.bRadius > 0.0f ? init_props.bRadius : init_props.majorRadius),
-          _minor_radius(init_props.minorRadius),
+          _major_radius(init_props.aRadius),
+          _b_radius(init_props.bRadius > 0.0f ? init_props.bRadius : init_props.aRadius),
+          _minor_radius(init_props.cRadius),
           _theta_x(init_props.theta_x), _theta_y(init_props.theta_y), _theta_z(init_props.theta_z),
           _brightness(init_props.brightness),
-          _majorRadiusPerturbParams(cellConfig.majorRadius),
-          _minorRadiusPerturbParams(cellConfig.minorRadius),
-          _abRatioPerturbParams(cellConfig.bRadius),
+          _isTrash(init_props.isTrash),
+          _aRadiusPerturbParams(cellConfig.aRadius),
+          _cRadiusPerturbParams(cellConfig.cRadius),
+          _bRadiusPerturbParams(cellConfig.bRadius),
           _brightnessPerturbParams(cellConfig.brightness)
 {
-    _major_radius = std::fmax(_major_radius, cellConfig.minMajorRadius);
-    _major_radius = std::fmin(_major_radius, cellConfig.maxMajorRadius);
-    _minor_radius = std::fmax(_minor_radius, cellConfig.minMinorRadius);
-    _minor_radius = std::fmin(_minor_radius, cellConfig.maxMinorRadius);
+    _major_radius = std::fmax(_major_radius, cellConfig.minARadius);
+    _major_radius = std::fmin(_major_radius, cellConfig.maxARadius);
+    _minor_radius = std::fmax(_minor_radius, cellConfig.minCRadius);
+    _minor_radius = std::fmin(_minor_radius, cellConfig.maxCRadius);
     // Triaxial b-axis is clamped to [minBRadius, maxBRadius] when those bounds
     // are configured. If they are not set (still zero), fall back to the same
     // bounds as the a-axis so an unconfigured run still behaves near-oblate.
     const double minBR = (cellConfig.maxBRadius > 0.0)
-        ? cellConfig.minBRadius : cellConfig.minMajorRadius;
+        ? cellConfig.minBRadius : cellConfig.minARadius;
     const double maxBR = (cellConfig.maxBRadius > 0.0)
-        ? cellConfig.maxBRadius : cellConfig.maxMajorRadius;
+        ? cellConfig.maxBRadius : cellConfig.maxARadius;
     _b_radius = std::fmax(_b_radius, minBR);
     _b_radius = std::fmin(_b_radius, maxBR);
+    enforceMinAnyRadius(_major_radius, _b_radius, _minor_radius);
 
     // Clamp z to the valid interpolated-z range. Without this, perturbation can
     // push cells off the z-stack (where they contribute zero pixels and reduce
@@ -245,56 +269,76 @@ Spheroid::Spheroid(const SpheroidParams &init_props)
     this->c = this->_minor_radius;
 
     if (a <= 0 || b <= 0 || c <= 0) {
-        throw std::invalid_argument("Spheroid radii must be positive");
+        throw std::invalid_argument("Ellipsoid radii must be positive");
     }
-
-    // No matrix construction needed — draw() uses analytic inverse rotation
 }
 
-cv::Point3f Spheroid::get_center() const {
+cv::Point3f Ellipsoid::get_center() const {
     return _position; // x, y, z position
 }
 
-void Spheroid::print() const {
-    std::cout << "Spheroid: " << _name
+void Ellipsoid::print() const {
+    std::cout << "Ellipsoid: " << _name
               << " pos=(" << _position.x << ", " << _position.y << ", " << _position.z << ")"
               << " a=" << a << " b=" << b << " c=" << c
               << " theta=(" << _theta_x << ", " << _theta_y << ", " << _theta_z << ")"
               << '\n';
 }
 
-void Spheroid::setBrightness(float brightness)
+void Ellipsoid::setBrightness(float brightness)
 {
     _brightness = std::clamp(brightness,
                              static_cast<float>(cellConfig.minBrightness),
                              static_cast<float>(cellConfig.maxBrightness));
 }
 
-void Spheroid::setMajorRadiusPerturbProbabilities(float increaseProbability, float decreaseProbability)
+void Ellipsoid::setRadii(float newA, float newB, float newC)
+{
+    const double minBR = (cellConfig.maxBRadius > 0.0)
+        ? cellConfig.minBRadius : cellConfig.minARadius;
+    const double maxBR = (cellConfig.maxBRadius > 0.0)
+        ? cellConfig.maxBRadius : cellConfig.maxARadius;
+    _major_radius = std::clamp(static_cast<double>(newA), cellConfig.minARadius, cellConfig.maxARadius);
+    _b_radius     = std::clamp(static_cast<double>(newB), minBR, maxBR);
+    _minor_radius = std::clamp(static_cast<double>(newC), cellConfig.minCRadius, cellConfig.maxCRadius);
+    enforceMinAnyRadius(_major_radius, _b_radius, _minor_radius);
+    a = _major_radius;
+    b = _b_radius;
+    c = _minor_radius;
+}
+
+void Ellipsoid::setRotation(float thetaX, float thetaY, float thetaZ)
+{
+    _theta_x = static_cast<double>(thetaX);
+    _theta_y = static_cast<double>(thetaY);
+    _theta_z = static_cast<double>(thetaZ);
+}
+
+void Ellipsoid::setARadiusPerturbProbabilities(float increaseProbability, float decreaseProbability)
 {
     const float clampedIncrease = std::clamp(increaseProbability, 0.0f, 1.0f);
-    _majorRadiusPerturbParams.increase_prob = clampedIncrease;
-    _majorRadiusPerturbParams.decrease_prob =
+    _aRadiusPerturbParams.increase_prob = clampedIncrease;
+    _aRadiusPerturbParams.decrease_prob =
         std::clamp(decreaseProbability, 0.0f, std::max(0.0f, 1.0f - clampedIncrease));
 }
 
-void Spheroid::setMinorRadiusPerturbProbabilities(float increaseProbability, float decreaseProbability)
+void Ellipsoid::setCRadiusPerturbProbabilities(float increaseProbability, float decreaseProbability)
 {
     const float clampedIncrease = std::clamp(increaseProbability, 0.0f, 1.0f);
-    _minorRadiusPerturbParams.increase_prob = clampedIncrease;
-    _minorRadiusPerturbParams.decrease_prob =
+    _cRadiusPerturbParams.increase_prob = clampedIncrease;
+    _cRadiusPerturbParams.decrease_prob =
         std::clamp(decreaseProbability, 0.0f, std::max(0.0f, 1.0f - clampedIncrease));
 }
 
-void Spheroid::setABRatioPerturbProbabilities(float increaseProbability, float decreaseProbability)
+void Ellipsoid::setBRadiusPerturbProbabilities(float increaseProbability, float decreaseProbability)
 {
     const float clampedIncrease = std::clamp(increaseProbability, 0.0f, 1.0f);
-    _abRatioPerturbParams.increase_prob = clampedIncrease;
-    _abRatioPerturbParams.decrease_prob =
+    _bRadiusPerturbParams.increase_prob = clampedIncrease;
+    _bRadiusPerturbParams.decrease_prob =
         std::clamp(decreaseProbability, 0.0f, std::max(0.0f, 1.0f - clampedIncrease));
 }
 
-void Spheroid::setBrightnessPerturbProbabilities(float increaseProbability, float decreaseProbability)
+void Ellipsoid::setBrightnessPerturbProbabilities(float increaseProbability, float decreaseProbability)
 {
     const float clampedIncrease = std::clamp(increaseProbability, 0.0f, 1.0f);
     _brightnessPerturbParams.increase_prob = clampedIncrease;
@@ -302,7 +346,7 @@ void Spheroid::setBrightnessPerturbProbabilities(float increaseProbability, floa
         std::clamp(decreaseProbability, 0.0f, std::max(0.0f, 1.0f - clampedIncrease));
 }
 
-void Spheroid::blendBrightnessPerturbProbabilitiesWithConfig(float trust)
+void Ellipsoid::blendBrightnessPerturbProbabilitiesWithConfig(float trust)
 {
     const float clampedTrust = std::clamp(trust, 0.0f, 1.0f);
     const float baseIncrease =
@@ -320,64 +364,64 @@ void Spheroid::blendBrightnessPerturbProbabilitiesWithConfig(float trust)
     setBrightnessPerturbProbabilities(blendedIncrease, blendedDecrease);
 }
 
-void Spheroid::blendAdaptivePerturbProbabilitiesWithConfig(float brightnessTrust,
-                                                           float majorRadiusTrust,
-                                                           float minorRadiusTrust,
-                                                           float abRatioTrust)
+void Ellipsoid::blendAdaptivePerturbProbabilitiesWithConfig(float brightnessTrust,
+                                                           float aRadiusTrust,
+                                                           float cRadiusTrust,
+                                                           float bRadiusTrust)
 {
-    const float clampedMajorTrust = std::clamp(majorRadiusTrust, 0.0f, 1.0f);
-    const float clampedMinorTrust = std::clamp(minorRadiusTrust, 0.0f, 1.0f);
-    const float clampedABTrust = std::clamp(abRatioTrust, 0.0f, 1.0f);
+    const float clampedMajorTrust = std::clamp(aRadiusTrust, 0.0f, 1.0f);
+    const float clampedBTrust = std::clamp(bRadiusTrust, 0.0f, 1.0f);
+    const float clampedMinorTrust = std::clamp(cRadiusTrust, 0.0f, 1.0f);
 
     const float baseMajorIncrease =
-        std::clamp(cellConfig.majorRadius.increase_prob >= 0.0f ? cellConfig.majorRadius.increase_prob : 0.0f,
+        std::clamp(cellConfig.aRadius.increase_prob >= 0.0f ? cellConfig.aRadius.increase_prob : 0.0f,
                    0.0f, 1.0f);
     const float baseMajorDecrease =
-        std::clamp(cellConfig.majorRadius.decrease_prob >= 0.0f ? cellConfig.majorRadius.decrease_prob : 0.0f,
+        std::clamp(cellConfig.aRadius.decrease_prob >= 0.0f ? cellConfig.aRadius.decrease_prob : 0.0f,
                    0.0f, 1.0f);
-    setMajorRadiusPerturbProbabilities(
-        baseMajorIncrease * (1.0f - clampedMajorTrust) + getMajorRadiusIncreaseProbability() * clampedMajorTrust,
-        baseMajorDecrease * (1.0f - clampedMajorTrust) + getMajorRadiusDecreaseProbability() * clampedMajorTrust);
+    setARadiusPerturbProbabilities(
+        baseMajorIncrease * (1.0f - clampedMajorTrust) + getARadiusIncreaseProbability() * clampedMajorTrust,
+        baseMajorDecrease * (1.0f - clampedMajorTrust) + getARadiusDecreaseProbability() * clampedMajorTrust);
+
+    const float baseBIncrease =
+        std::clamp(cellConfig.bRadius.increase_prob >= 0.0f ? cellConfig.bRadius.increase_prob : 0.0f,
+                   0.0f, 1.0f);
+    const float baseBDecrease =
+        std::clamp(cellConfig.bRadius.decrease_prob >= 0.0f ? cellConfig.bRadius.decrease_prob : 0.0f,
+                   0.0f, 1.0f);
+    setBRadiusPerturbProbabilities(
+        baseBIncrease * (1.0f - clampedBTrust) + getBRadiusIncreaseProbability() * clampedBTrust,
+        baseBDecrease * (1.0f - clampedBTrust) + getBRadiusDecreaseProbability() * clampedBTrust);
 
     const float baseMinorIncrease =
-        std::clamp(cellConfig.minorRadius.increase_prob >= 0.0f ? cellConfig.minorRadius.increase_prob : 0.0f,
+        std::clamp(cellConfig.cRadius.increase_prob >= 0.0f ? cellConfig.cRadius.increase_prob : 0.0f,
                    0.0f, 1.0f);
     const float baseMinorDecrease =
-        std::clamp(cellConfig.minorRadius.decrease_prob >= 0.0f ? cellConfig.minorRadius.decrease_prob : 0.0f,
+        std::clamp(cellConfig.cRadius.decrease_prob >= 0.0f ? cellConfig.cRadius.decrease_prob : 0.0f,
                    0.0f, 1.0f);
-    setMinorRadiusPerturbProbabilities(
-        baseMinorIncrease * (1.0f - clampedMinorTrust) + getMinorRadiusIncreaseProbability() * clampedMinorTrust,
-        baseMinorDecrease * (1.0f - clampedMinorTrust) + getMinorRadiusDecreaseProbability() * clampedMinorTrust);
-
-    const float baseABIncrease =
-        std::clamp(cellConfig.abRatio.increase_prob >= 0.0f ? cellConfig.abRatio.increase_prob : 0.0f,
-                   0.0f, 1.0f);
-    const float baseABDecrease =
-        std::clamp(cellConfig.abRatio.decrease_prob >= 0.0f ? cellConfig.abRatio.decrease_prob : 0.0f,
-                   0.0f, 1.0f);
-    setABRatioPerturbProbabilities(
-        baseABIncrease * (1.0f - clampedABTrust) + getABRatioIncreaseProbability() * clampedABTrust,
-        baseABDecrease * (1.0f - clampedABTrust) + getABRatioDecreaseProbability() * clampedABTrust);
+    setCRadiusPerturbProbabilities(
+        baseMinorIncrease * (1.0f - clampedMinorTrust) + getCRadiusIncreaseProbability() * clampedMinorTrust,
+        baseMinorDecrease * (1.0f - clampedMinorTrust) + getCRadiusDecreaseProbability() * clampedMinorTrust);
 
     blendBrightnessPerturbProbabilitiesWithConfig(brightnessTrust);
 }
 
-void Spheroid::adjustMajorRadiusPerturbProbability(int direction, float delta)
+void Ellipsoid::adjustARadiusPerturbProbability(int direction, float delta)
 {
-    _majorRadiusPerturbParams.adjustSignedProbability(direction, delta);
+    _aRadiusPerturbParams.adjustSignedProbability(direction, delta);
 }
 
-void Spheroid::adjustMinorRadiusPerturbProbability(int direction, float delta)
+void Ellipsoid::adjustCRadiusPerturbProbability(int direction, float delta)
 {
-    _minorRadiusPerturbParams.adjustSignedProbability(direction, delta);
+    _cRadiusPerturbParams.adjustSignedProbability(direction, delta);
 }
 
-void Spheroid::adjustABRatioPerturbProbability(int direction, float delta)
+void Ellipsoid::adjustBRadiusPerturbProbability(int direction, float delta)
 {
-    _abRatioPerturbParams.adjustSignedProbability(direction, delta);
+    _bRadiusPerturbParams.adjustSignedProbability(direction, delta);
 }
 
-void Spheroid::adjustBrightnessPerturbProbability(int direction, float delta)
+void Ellipsoid::adjustBrightnessPerturbProbability(int direction, float delta)
 {
     _brightnessPerturbParams.adjustSignedProbability(direction, delta);
 }
@@ -385,18 +429,23 @@ void Spheroid::adjustBrightnessPerturbProbability(int direction, float delta)
 // ---- ROTATION-AWARE draw() ----
 // Instead of checking a voxel matrix, we analytically test each pixel
 // against the rotated spheroid by inverse-transforming back to local coords.
-void Spheroid::draw(cv::Mat &image, const SimulationConfig &simulationConfig, float z) const{
-    int minX, maxX, minY, maxY;
-    if (!computeSliceBounds(image, z, minX, maxX, minY, maxY)) return;
-
+void Ellipsoid::draw(cv::Mat &image, const SimulationConfig &simulationConfig, float z) const{
     std::array<double, 9> R_T;
     generateInverseRotationMatrix(R_T);
-
     const double invA2 = 1.0 / (a * a);
     const double invB2 = 1.0 / (b * b);
     const double invC2 = 1.0 / (c * c);
+    drawWithRotation(image, simulationConfig, R_T, invA2, invB2, invC2, z);
+}
 
-    scanSpheroidSlice(
+void Ellipsoid::drawWithRotation(cv::Mat &image, const SimulationConfig &/*simulationConfig*/,
+                                 const std::array<double, 9> &R_T,
+                                 double invA2, double invB2, double invC2,
+                                 float z) const {
+    int minX, maxX, minY, maxY;
+    if (!computeSliceBounds(image, z, minX, maxX, minY, maxY)) return;
+
+    scanEllipsoidSlice(
         minX, maxX, minY, maxY,
         _position, static_cast<double>(z),
         R_T, invA2, invB2, invC2,
@@ -407,12 +456,62 @@ void Spheroid::draw(cv::Mat &image, const SimulationConfig &simulationConfig, fl
         });
 }
 
-float Spheroid::measureMeanBrightness(const std::vector<cv::Mat> &image) const
+float Ellipsoid::measureMeanBrightness(const std::vector<cv::Mat> &image,
+                                      float topPercentile) const
 {
-    return measureBrightnessStats(image).first;
+    if (image.empty()) {
+        return _brightness;
+    }
+
+    const float clampedTopPercentile = std::clamp(topPercentile, 0.0f, 1.0f);
+    if (clampedTopPercentile >= 1.0f) {
+        return measureBrightnessStats(image).first;
+    }
+
+    std::array<double, 9> R_T;
+    generateInverseRotationMatrix(R_T);
+
+    const double invA2 = 1.0 / (a * a);
+    const double invB2 = 1.0 / (b * b);
+    const double invC2 = 1.0 / (c * c);
+    const int maxZIndex = static_cast<int>(image.size()) - 1;
+    const float maxR = std::max({static_cast<float>(a), static_cast<float>(b), static_cast<float>(c)});
+
+    const int minX = std::max(0, static_cast<int>(std::floor(_position.x - maxR)));
+    const int maxX = std::min(image[0].cols - 1, static_cast<int>(std::ceil(_position.x + maxR)));
+    const int minY = std::max(0, static_cast<int>(std::floor(_position.y - maxR)));
+    const int maxY = std::min(image[0].rows - 1, static_cast<int>(std::ceil(_position.y + maxR)));
+    const int minZ = std::max(0, static_cast<int>(std::floor(_position.z - maxR)));
+    const int maxZ = std::min(maxZIndex, static_cast<int>(std::ceil(_position.z + maxR)));
+
+    std::vector<float> brightnessValues;
+    scanEllipsoidVolume(
+        image, minX, maxX, minY, maxY, minZ, maxZ, _position,
+        R_T, invA2, invB2, invC2,
+        [&](int /*x*/, int /*y*/, int /*z*/, float pixel, double val) {
+            if (val <= 1.0) {
+                brightnessValues.push_back(pixel);
+            }
+        });
+
+    if (brightnessValues.empty()) {
+        return _brightness;
+    }
+
+    const std::size_t keepCount = std::max<std::size_t>(
+        1, static_cast<std::size_t>(std::ceil(brightnessValues.size() * clampedTopPercentile)));
+    const auto keepBegin = brightnessValues.end() - static_cast<std::ptrdiff_t>(keepCount);
+    std::nth_element(brightnessValues.begin(), keepBegin, brightnessValues.end());
+
+    double sum = 0.0;
+    for (auto it = keepBegin; it != brightnessValues.end(); ++it) {
+        sum += *it;
+    }
+
+    return static_cast<float>(sum / static_cast<double>(keepCount));
 }
 
-std::pair<float, float> Spheroid::measureBrightnessStats(const std::vector<cv::Mat> &image) const
+std::pair<float, float> Ellipsoid::measureBrightnessStats(const std::vector<cv::Mat> &image) const
 {
     if (image.empty()) {
         return {_brightness, 0.0f};
@@ -437,7 +536,7 @@ std::pair<float, float> Spheroid::measureBrightnessStats(const std::vector<cv::M
     double sum = 0.0;
     double sumSquares = 0.0;
     int count = 0;
-    scanSpheroidVolume(
+    scanEllipsoidVolume(
         image, minX, maxX, minY, maxY, minZ, maxZ, _position,
         R_T, invA2, invB2, invC2,
         [&](int /*x*/, int /*y*/, int /*z*/, float pixel, double val) {
@@ -456,9 +555,10 @@ std::pair<float, float> Spheroid::measureBrightnessStats(const std::vector<cv::M
     return {static_cast<float>(mean), static_cast<float>(std::sqrt(variance))};
 }
 
+
 // ---- ROTATION-AWARE drawOutline() ----
 // Scans pixels and marks those near the spheroid surface.
-void Spheroid::drawOutline(cv::Mat &image, float color, float z) const {
+void Ellipsoid::drawOutline(cv::Mat &image, float color, float z) const {
     int minX, maxX, minY, maxY;
     if (!computeSliceBounds(image, z, minX, maxX, minY, maxY)) return;
 
@@ -473,7 +573,7 @@ void Spheroid::drawOutline(cv::Mat &image, float color, float z) const {
     const float outlineIntensity = std::clamp(color, 0.0f, 1.0f);
 
     if (channels == 1) {
-        scanSpheroidSlice(
+        scanEllipsoidSlice(
             minX, maxX, minY, maxY,
             _position, static_cast<double>(z),
             R_T, invA2, invB2, invC2,
@@ -484,7 +584,7 @@ void Spheroid::drawOutline(cv::Mat &image, float color, float z) const {
             });
     } else if (channels == 3) {
         const cv::Vec3f drawColor(outlineIntensity, outlineIntensity, outlineIntensity);
-        scanSpheroidSlice(
+        scanEllipsoidSlice(
             minX, maxX, minY, maxY,
             _position, static_cast<double>(z),
             R_T, invA2, invB2, invC2,
@@ -496,41 +596,51 @@ void Spheroid::drawOutline(cv::Mat &image, float color, float z) const {
     }
 }
 
-[[nodiscard]] Spheroid Spheroid::getPerturbedCell(PerturbDirections *directions) const {
-    const PerturbParams::Sample majorRadiusSample = _majorRadiusPerturbParams.samplePerturb();
-    const PerturbParams::Sample minorRadiusSample = _minorRadiusPerturbParams.samplePerturb();
-    const PerturbParams::Sample abRatioSample = _abRatioPerturbParams.samplePerturb();
+[[nodiscard]] Ellipsoid Ellipsoid::getPerturbedCell(PerturbDirections *directions,
+                                                    float positionScale,
+                                                    const cv::Point3f &positionProbabilityBias,
+                                                    float positionProbabilityBoost) const {
+    const PerturbParams::Sample aRadiusSample = _aRadiusPerturbParams.samplePerturb();
+    const PerturbParams::Sample cRadiusSample = _cRadiusPerturbParams.samplePerturb();
+    const PerturbParams::Sample bRadiusSample = _bRadiusPerturbParams.samplePerturb();
     const PerturbParams::Sample brightnessSample = _brightnessPerturbParams.samplePerturb();
+    const PerturbParams::Sample xSample =
+        cellConfig.x.samplePerturbWithSignedProbabilityBias(positionProbabilityBias.x,
+                                                            positionProbabilityBoost);
+    const PerturbParams::Sample ySample =
+        cellConfig.y.samplePerturbWithSignedProbabilityBias(positionProbabilityBias.y,
+                                                            positionProbabilityBoost);
+    const PerturbParams::Sample zSample =
+        cellConfig.z.samplePerturbWithSignedProbabilityBias(positionProbabilityBias.z,
+                                                            positionProbabilityBoost);
     if (directions != nullptr) {
         directions->brightness = brightnessSample.direction;
-        directions->majorRadius = majorRadiusSample.direction;
-        directions->minorRadius = minorRadiusSample.direction;
-        directions->abRatio = abRatioSample.direction;
+        directions->aRadius = _isTrash ? 0 : aRadiusSample.direction;
+        directions->bRadius = _isTrash ? 0 : bRadiusSample.direction;
+        directions->cRadius = _isTrash ? 0 : cRadiusSample.direction;
     }
-    SpheroidParams spheroidParams(
+    EllipsoidParams spheroidParams(
         _name,
-        _position.x + cellConfig.x.getPerturbOffset(),
-        _position.y + cellConfig.y.getPerturbOffset(),
-        _position.z + cellConfig.z.getPerturbOffset(),
-        _major_radius + majorRadiusSample.offset,
-        _minor_radius + minorRadiusSample.offset,
+        _position.x + positionScale * xSample.offset,
+        _position.y + positionScale * ySample.offset,
+        _position.z + positionScale * zSample.offset,
+        _major_radius + (_isTrash ? 0.0f : aRadiusSample.offset),
+        _minor_radius + (_isTrash ? 0.0f : cRadiusSample.offset),
         static_cast<float>(_theta_x) + cellConfig.thetaX.getPerturbOffset(),
         static_cast<float>(_theta_y) + cellConfig.thetaY.getPerturbOffset(),
         static_cast<float>(_theta_z) + cellConfig.thetaZ.getPerturbOffset(),
         _brightness + brightnessSample.offset);
-    // Triaxial b-axis perturbation via the adaptive abRatio PerturbParams
-    // (which tracks bRadius in our triaxial model). Applied as a separate
-    // field assignment because SpheroidParams constructors don't include bRadius.
-    spheroidParams.bRadius = static_cast<float>(_b_radius) + abRatioSample.offset;
-    Spheroid perturbedCell(spheroidParams);
-    perturbedCell._majorRadiusPerturbParams = _majorRadiusPerturbParams;
-    perturbedCell._minorRadiusPerturbParams = _minorRadiusPerturbParams;
-    perturbedCell._abRatioPerturbParams = _abRatioPerturbParams;
+    spheroidParams.bRadius = static_cast<float>(_b_radius) + (_isTrash ? 0.0f : bRadiusSample.offset);
+    spheroidParams.isTrash = _isTrash;
+    Ellipsoid perturbedCell(spheroidParams);
+    perturbedCell._aRadiusPerturbParams = _aRadiusPerturbParams;
+    perturbedCell._bRadiusPerturbParams = _bRadiusPerturbParams;
+    perturbedCell._cRadiusPerturbParams = _cRadiusPerturbParams;
     perturbedCell._brightnessPerturbParams = _brightnessPerturbParams;
     return perturbedCell;
 }
 
-bool Spheroid::isPointInsideEllipsoid(const cv::Point3f &worldPoint,
+bool Ellipsoid::isPointInsideEllipsoid(const cv::Point3f &worldPoint,
                                       float scaleFactor) const
 {
     // Inverse-rotate the world-space displacement back into the cell's
@@ -557,23 +667,24 @@ bool Spheroid::isPointInsideEllipsoid(const cv::Point3f &worldPoint,
 
 
 
-bool Spheroid::checkConstraints() const {
-    const bool majorOk = (cellConfig.minMajorRadius <= _major_radius) &&
-                         (_major_radius <= cellConfig.maxMajorRadius);
-    const bool minorOk = (cellConfig.minMinorRadius <= _minor_radius) &&
-                         (_minor_radius <= cellConfig.maxMinorRadius);
+bool Ellipsoid::checkConstraints() const {
+    const bool majorOk = (cellConfig.minARadius <= _major_radius) &&
+                         (_major_radius <= cellConfig.maxARadius);
+    const bool minorOk = (cellConfig.minCRadius <= _minor_radius) &&
+                         (_minor_radius <= cellConfig.maxCRadius);
     const bool bConfigured = (cellConfig.maxBRadius > 0.0);
     const bool bOk = !bConfigured ||
         ((cellConfig.minBRadius <= _b_radius) && (_b_radius <= cellConfig.maxBRadius));
     return majorOk && minorOk && bOk;
 }
 
-SpheroidParams Spheroid::getCellParams() const {
-    SpheroidParams params(_name, _position.x, _position.y, _position.z,
+EllipsoidParams Ellipsoid::getCellParams() const {
+    EllipsoidParams params(_name, _position.x, _position.y, _position.z,
                           static_cast<float>(_major_radius), static_cast<float>(_minor_radius),
                           static_cast<float>(_theta_x), static_cast<float>(_theta_y), static_cast<float>(_theta_z),
                           _brightness);
     params.bRadius = static_cast<float>(_b_radius);
+    params.isTrash = _isTrash;
     return params;
 }
 
@@ -581,21 +692,22 @@ SpheroidParams Spheroid::getCellParams() const {
 // removed during merge. See git history if needed.
 
 
-[[nodiscard]] std::pair<std::vector<float>, std::vector<float>> Spheroid::calculateCorners() const {
-    const cv::Point3f extents = axisAlignedExtents();
+[[nodiscard]] std::pair<std::vector<float>, std::vector<float>> Ellipsoid::calculateCorners() const {
+    // Use max radius as conservative bound for rotated spheroid
+    float maxR = std::max({static_cast<float>(a), static_cast<float>(b), static_cast<float>(c)});
 
-    std::vector<float> min_corner = {static_cast<float>(_position.x) - extents.x,
-                                     static_cast<float>(_position.y) - extents.y,
-                                     static_cast<float>(_position.z) - extents.z};
+    std::vector<float> min_corner = {static_cast<float>(_position.x) - maxR,
+                                     static_cast<float>(_position.y) - maxR,
+                                     static_cast<float>(_position.z) - maxR};
 
-    std::vector<float> max_corner = {static_cast<float>(_position.x) + extents.x,
-                                     static_cast<float>(_position.y) + extents.y,
-                                     static_cast<float>(_position.z) + extents.z};
+    std::vector<float> max_corner = {static_cast<float>(_position.x) + maxR,
+                                     static_cast<float>(_position.y) + maxR,
+                                     static_cast<float>(_position.z) + maxR};
 
     return std::make_pair(min_corner, max_corner);
 }
 
-std::pair<std::vector<float>, std::vector<float>> Spheroid::calculateMinimumBox(Spheroid &perturbed_cell) const {
+std::pair<std::vector<float>, std::vector<float>> Ellipsoid::calculateMinimumBox(Ellipsoid &perturbed_cell) const {
     auto [cell1_min_corner, cell1_max_corner] = calculateCorners();
     auto [cell2_min_corner, cell2_max_corner] = perturbed_cell.calculateCorners();
 

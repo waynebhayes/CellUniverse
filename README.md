@@ -90,4 +90,3 @@ These are **no longer maintained**. The 2D code once worked well with rod-shaped
 If you use CellUniverse in your research, please cite:
 
 > Li, T.; Dong, H.; Feng, Y.; Yang, J.; Hayes, W.B. CellUniverse: An Automated Framework for Quantifying Cell Migration and Division from Time-Lapse Videos. *Algorithms* **2022**, *15*, 51.
-

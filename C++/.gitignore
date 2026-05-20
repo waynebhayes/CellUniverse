@@ -4,6 +4,7 @@
 !src/
 !scripts/
 # Ignore all generated output folders
+examples/
 examples/output/
 examples/output_*/
 outputs/
@@ -12,3 +13,4 @@ output_*/
 build/
 cmake-build-*/
 .vscode/
+.codex

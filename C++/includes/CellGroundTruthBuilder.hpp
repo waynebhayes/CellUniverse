@@ -2,9 +2,9 @@
 #define CELL_GROUND_TRUTH_BUILDER_HPP
 
 #include "ConfigTypes.hpp"
+#include "Ellipsoid.hpp"
 #include "EmbryoBrightTracker.hpp"
 #include "Frame.hpp"
-#include "Spheroid.hpp"
 
 #include <filesystem>
 #include <optional>
@@ -86,7 +86,7 @@ private:
                               int &tinyFragmentCount) const;
     bool componentContainsBrightSeed(const EmbryoBrightTracker::Comp3DStat &component,
                                      const std::vector<EmbryoBrightTracker::Comp3DStat> &highComponents) const;
-    std::vector<Spheroid> makeSpheroids(const std::vector<DetectedCell> &cells) const;
+    std::vector<Ellipsoid> makeEllipsoids(const std::vector<DetectedCell> &cells) const;
     void saveInitialCsv(const fs::path &csvOutputPath,
                         const std::string &frameFileName,
                         const std::vector<DetectedCell> &cells) const;

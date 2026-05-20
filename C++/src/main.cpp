@@ -8,7 +8,7 @@
 #include "ConfigTypes.hpp"
 #include "CellFactory.hpp"
 #include "yaml-cpp/yaml.h"
-#include "Spheroid.hpp"
+#include "Ellipsoid.hpp"
 #include "CellUniverse.hpp"
 #include "CellGroundTruthBuilder.hpp"
 #include "ImageHandler.hpp"
@@ -16,8 +16,11 @@
 #include <chrono>
 #include <algorithm>
 #include <cstdlib>
+#include <filesystem>
 #include <thread>
-
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 class Args
 {
@@ -29,6 +32,12 @@ public:
     std::string initial{};
     std::string output{};
     int continueFrom = -1;
+    // Optional checkpoint-resume args (2026-04-22). When provided via the
+    // run_celluniverse.sh launcher (sourced from the INI preset), these
+    // override config.simulation.resume_from / resume_source_dir. Absent
+    // (argc < 9) → resume defaults to disabled (0 / "").
+    int resumeFromFrame = 0;
+    std::string resumeSourceDir{};
 };
 
 class GroundTruthArgs
@@ -49,10 +58,6 @@ void loadConfig(const std::string &path, BaseConfig &config)
 
 void applyRuntimeOverrides(BaseConfig &config)
 {
-    // Keep the YAML file conservative for laptop runs, then let batch jobs
-    // opt into parallel execution through the environment. This makes the
-    // command line self-contained on OpenLab while preserving the default
-    // single-thread behavior for memory-limited local machines.
     const char *threadEnv = std::getenv("CELLUNIVERSE_THREADS");
     std::string threadSource = "config";
 
@@ -85,12 +90,10 @@ void applyRuntimeOverrides(BaseConfig &config)
         config.simulation.parallel_threads = static_cast<int>(hardwareThreads);
     }
 
-    // OpenCV owns the worker pool used by cv::parallel_for_. Matching the
-    // OpenCV thread count to the Cell Universe setting keeps the z-slice
-    // renderer and cost evaluator inside the CPU allocation requested from
-    // Slurm. The algorithm still schedules the same perturbations and split
-    // candidates; only independent slice work is distributed across workers.
     cv::setNumThreads(config.simulation.parallel_threads);
+#ifdef _OPENMP
+    omp_set_num_threads(config.simulation.parallel_threads);
+#endif
 
     const char *seedEnv = std::getenv("CELLUNIVERSE_SEED");
     std::cout << "[Runtime Parallelism] mode="
@@ -112,7 +115,7 @@ void applyRuntimeOverrides(BaseConfig &config)
               << std::endl;
 }
 
-Args initArgs(char *argv[]) {
+Args initArgs(int argc, char *argv[]) {
     // parse args here
     Args args;
 
@@ -136,6 +139,25 @@ Args initArgs(char *argv[]) {
     std::cout << "Config file: " << args.config << '\n'
               << std::flush;
     args.continueFrom = -1;
+
+    // Optional resume args (positions 7 and 8). Both must be present to
+    // activate resume; either missing → leave defaults (resume disabled).
+    // argc indexing: argv[0]=binary, argv[1]=ff, ..., argv[6]=initial,
+    // argv[7]=resumeFrom, argv[8]=resumeSourceDir.
+    if (argc > static_cast<int>(resumeFrom)) {
+        try {
+            args.resumeFromFrame = std::stoi(argv[resumeFrom]);
+        } catch (const std::exception &) {
+            args.resumeFromFrame = 0;
+        }
+        std::cout << "Resume from frame (arg): " << args.resumeFromFrame
+                  << '\n' << std::flush;
+    }
+    if (argc > static_cast<int>(resumeSourceDir)) {
+        args.resumeSourceDir = argv[resumeSourceDir];
+        std::cout << "Resume source dir (arg): " << args.resumeSourceDir
+                  << '\n' << std::flush;
+    }
 
     return args;
 }
@@ -240,18 +262,31 @@ int main(int argc, char *argv[])
 
 
     // parse args
-    Args args = initArgs(argv);
+    Args args = initArgs(argc, argv);
 
     // load config
     BaseConfig config;
     loadConfig(args.config, config);
 
-    ImageHandler::applyDatasetRuntimeProfile(args.input, config);
+    // CLI resume args (from run_celluniverse.sh INI preset) override whatever
+    // was parsed from the YAML. Use argv-based detection so "absent CLI arg"
+    // (argc < 8 / 9) does NOT clobber a YAML-set value.
+    if (argc > static_cast<int>(resumeFrom)) {
+        config.simulation.resume_from = args.resumeFromFrame;
+    }
+    if (argc > static_cast<int>(resumeSourceDir)) {
+        config.simulation.resume_source_dir = args.resumeSourceDir;
+    }
+
     applyRuntimeOverrides(config);
+    config.printConfig();
+
+    if (config.cellType == "ellipsoid" && config.cell) {
+        Ellipsoid::cellConfig = *config.cell;
+    }
 
     // load file paths
     PathVec imageFilePaths = ImageHandler::getImageFilePaths(args.input, args.firstFrame, args.lastFrame, config);
-    config.printConfig();
 
     // load cells
     std::string firstFrameFile;
@@ -264,64 +299,85 @@ int main(int argc, char *argv[])
 
     if (config.simulation.quit_after_preprocessing) {
         CellUniverse preprocessOnlyLineage({}, imageFilePaths, config, args.output, args.firstFrame, args.continueFrom);
+        preprocessOnlyLineage.preprocessAllFramesAlignedToMinimumBackground(false);
         std::cout << "[DEBUG] quit_after_preprocessing=true; exiting after preprocessing/load phase." << std::endl;
         return 0;
     }
 
     // load cells here
     CellFactory cellFactory(config);
-    std::map<Path, std::vector<Spheroid>> cells = cellFactory.createCells(args.initial, config.simulation.z_slices / 2,
+    std::map<Path, std::vector<Ellipsoid>> cells = cellFactory.createCells(args.initial, config.simulation.z_slices / 2,
                                                                         config.simulation.z_scaling, firstFrameFile,
                                                                         config.simulation.initial_z_space);
     // create lineage
     CellUniverse lineage = CellUniverse(cells, imageFilePaths, config, args.output, args.firstFrame, args.continueFrom);
-    LineageTreeCreator lineageTree;
-    const bool showLineageTreeWindow = config.simulation.enable_lineage_tree_window;
+    const bool prepareAnalyzeOneFrame =
+        config.simulation.prepare_analyze_one_frame &&
+        !config.simulation.quit_after_preprocessing;
+    if (prepareAnalyzeOneFrame) {
+        std::cout << "[INFO] prepare_analyze_one_frame=true; each frame will be prepared immediately before optimize()."
+                  << std::endl;
+    } else {
+        lineage.preprocessAllFramesAlignedToMinimumBackground(true);
+    }
+
+    // Checkpoint resume (Approach 2): resume_from is the absolute dataset
+    // frame to analyze next. Load `{resume_source_dir}/checkpoints/
+    // frame_{resume_from - 1:03d}.txt`, install its copied-forward cells into
+    // the local frame corresponding to resume_from, then start the loop there.
+    int loopStart = 0;
+    if (config.simulation.resume_from > 0 && !config.simulation.resume_source_dir.empty()) {
+        const int resumeFrame = config.simulation.resume_from;
+        const int checkpointFrame = resumeFrame - 1;
+        const int targetLocalFrame = resumeFrame - args.firstFrame;
+        if (targetLocalFrame < 0 ||
+            targetLocalFrame >= static_cast<int>(lineage.length())) {
+            std::cerr << "[Resume] invalid resume_from=" << resumeFrame
+                      << " for requested frame range [" << args.firstFrame
+                      << "," << args.lastFrame << "]; running from local frame 0\n";
+        } else {
+            char buf[64];
+            std::snprintf(buf, sizeof(buf), "frame_%03d.txt", checkpointFrame);
+            const std::string ckptPath =
+                config.simulation.resume_source_dir + "/checkpoints/" + buf;
+            if (lineage.loadCheckpoint(checkpointFrame, targetLocalFrame, ckptPath)) {
+                loopStart = targetLocalFrame;
+                std::cout << "[Resume] skipping absolute frames "
+                          << args.firstFrame << ".." << (resumeFrame - 1)
+                          << " (local 0.." << (loopStart - 1) << ")"
+                          << " — loaded checkpoint from " << ckptPath << std::endl;
+            } else {
+                std::cerr << "[Resume] checkpoint load failed, running from frame 0\n";
+            }
+        }
+    }
 
     // Run
     auto start = std::chrono::steady_clock::now();
-    for (int frame = 0; frame < lineage.length(); ++frame)
+    for (int frame = loopStart; frame < lineage.length(); ++frame)
     {
-        const auto frameWallStart = std::chrono::steady_clock::now();
-        const int displayFrame = args.firstFrame + frame;
+        // M2 Option A: lazy-load this frame's images (raw TIFF load +
+        // percentile normalize + iterative preprocess). Constructor only
+        // sampled for percentiles; actual frame data is loaded here.
+        lineage.prepareFrame(frame);
 
-        auto stageStart = std::chrono::steady_clock::now();
         lineage.optimize(frame);
-        const double optimizeSeconds =
-            std::chrono::duration<double>(std::chrono::steady_clock::now() - stageStart).count();
 
-        if (showLineageTreeWindow)
-        {
-            lineageTree.update(args.firstFrame + frame,
-                               LineageTreeCreator::makeCellViz(lineage.getCells(frame)));
+        lineage.copyCellsForward(frame + 1);
+
+        lineage.saveImages(frame);
+
+        lineage.saveCells(frame);
+
+        if (config.simulation.release_analyzed_exported_frames) {
+            // Release image-heavy stacks after exported outputs and saved cells.
+            // Later frames use copied cells, checkpoints, and cached summaries.
+            lineage.releaseFrameImages(frame);
         }
 
-        stageStart = std::chrono::steady_clock::now();
-        lineage.saveImages(frame);
-        const double saveImagesSeconds =
-            std::chrono::duration<double>(std::chrono::steady_clock::now() - stageStart).count();
-
-        stageStart = std::chrono::steady_clock::now();
-        lineage.saveCells(frame);
-        const double saveCellsSeconds =
-            std::chrono::duration<double>(std::chrono::steady_clock::now() - stageStart).count();
-
-        stageStart = std::chrono::steady_clock::now();
-        lineage.copyCellsForward(frame + 1);
-        const double carrySeconds =
-            std::chrono::duration<double>(std::chrono::steady_clock::now() - stageStart).count();
-
-        const double frameWallSeconds =
-            std::chrono::duration<double>(std::chrono::steady_clock::now() - frameWallStart).count();
-        std::cout << "[Frame Wall Timing] frame=" << displayFrame
-                  << " wall_sec=" << frameWallSeconds
-                  << " optimize_sec=" << optimizeSeconds
-                  << " save_images_sec=" << saveImagesSeconds
-                  << " save_cells_sec=" << saveCellsSeconds
-                  << " carry_forward_sec=" << carrySeconds
-                  << std::endl;
+        // Checkpoint for potential future resume.
+        lineage.saveCheckpoint(frame);
     }
-    lineageTree.close();
     auto end = std::chrono::steady_clock::now(); // timer end
 
 

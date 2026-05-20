@@ -1,6 +1,6 @@
 #include "../includes/LineageTreeCreator.hpp"
 
-#include "../includes/Spheroid.hpp"
+#include "../includes/Ellipsoid.hpp"
 
 #include <opencv2/opencv.hpp>
 
@@ -566,7 +566,7 @@ void LineageTreeCreator::close()
     }
 }
 
-std::vector<LineageTreeCreator::CellViz> LineageTreeCreator::makeCellViz(const std::vector<Spheroid> &cells)
+std::vector<LineageTreeCreator::CellViz> LineageTreeCreator::makeCellViz(const std::vector<Ellipsoid> &cells)
 {
     std::vector<CellViz> viz;
     viz.reserve(cells.size());

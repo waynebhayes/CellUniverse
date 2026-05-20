@@ -2,7 +2,40 @@
 
 ## Overview
 
-CellUniverse tracks 3D cells across time-lapse microscopy frames. For each frame, it fits 3D spheroid models to real image data using Monte Carlo perturbation, then detects cell divisions (splits) using PCA on bright pixels + a stack of soft fake-guards. The pipeline runs frame-by-frame: load + preprocess → update per-cell brightness → optimize cell positions → copy cells forward → save results.
+CellUniverse tracks 3D cells across time-lapse microscopy frames. For each frame, it fits triaxial ellipsoid models to real image data. **Shape (rotation + 3 radii + centroid) is fit by an iterative PCA pass each frame**; stochastic perturbation refines position and rotation only. Splits are detected per cell via a phased pipeline with bio + cost gates.
+
+---
+
+## 0.3. 2026-04-16 Update Pointer (read this first)
+
+Canonical current pipeline: **`docs/pipeline.md`**. Active changelog: **`docs/changelogs/changelogv6.md`**.
+
+Key changes since 2026-04-15:
+
+- **Percentile-based radii** replace `radiusScale × sqrt(variance)`. Shape fit uses `95th percentile of |projection onto axis|` — no scale factor, no adaptive inflation needed for the main fit. `pcaShapeRadiusScale` retired from main fit path (still used in daughter refit).
+- **Birth-based mask** (`cellShapeBirth`): captured once at first appearance, NEVER updated. Mask = `birthRadii × maskScale`. Decoupled from bounded ref (`cellShapeReference`), preventing feedback loops. Bounded ref is used ONLY for fit-side growth cap.
+- **Two-pass candidate pre-filter**: per candidate after burn-in, BEFORE cost ranking — edge brightness check (3×3×3 neighborhood) + quick valley check. Candidates failing are excluded from cost competition. Full bridge runs again on winner (Pass 2).
+- **Partial z-slice render**: split candidate init and daughter refit only re-render z-slices touched by parent + daughters (~60-90 instead of 225). ~3x faster.
+- **Dead code removal**: `_sharedMasks` (Frame member) + `buildExclusionMask` call in split bbox init removed. Cost path uses empty mask. Saves ~100M distance computations per split.
+- **`refreshFullCostCache()` skip**: `regenerateSynthFrame()` skips full-image L2 cache when bbox cost is active. Saves ~32M pixel ops per call.
+- **Relative pCore**: adaptive exponent uses `fraction(pixels > 1.5 × cellMeanWeight)` instead of absolute `pcaShapeCoreBrightnessThreshold`. Scale-invariant.
+- **New member**: `CellUniverse::cellShapeBirth` (map<string, array<float,3>>).
+- **Removed members**: `Frame::_sharedMasks`, `Frame::setSharedMask/clearSharedMasks/hasSharedMask`.
+- **Config changes**: `bbox_margin_scale: 3.0 → 2.0`, `pcaShapeMaskScale: 1.6 → 1.8`, `bio_bridge_min_edge_brightness_absolute: 0.05 → 0.04`.
+
+---
+
+## 0.2. 2026-04-14 Update Pointer
+
+The shape-fitting machinery was overhauled on 2026-04-14. Everything below that references radius EMA, radius gradient, `size_reduction_penalty_weight`, `_birthFrame`, or `_birthVolume` is obsolete — those code paths and config fields were deleted.
+
+Key changes since 2026-04-13:
+
+- **New pipeline stage (between position calibration and pre-pass):** `Frame::calibrateCellShapeViaPca` iterates PCA on Voronoi-filtered bright pixels inside `maskScale × current ellipsoid` until rotation + radii + centroid converge.
+- **Axis assignment by eigenvalue rank** (`a ← λ₀`, `b ← λ₁`, `c ← λ₂`). Greedy `|dot|` matching was replaced because it caused period-3 oscillation.
+- **Deleted:** `measureRadiiFromImage`, `measureRadiusGradient`, `_birthFrame` + age-gate, `_birthVolume` + 85% ratchet, `computeSizeReductionPenalty`, `size_reduction_penalty_weight`, `min_frames_before_split`. Matching YAML keys removed; radius/brightness perturbation blocks optional.
+- **New config block (under `cell:`):** `pcaShapeMaxIters`, `pcaShapeRadiusScale`, `pcaShapeMinPixels`, `pcaShapeMaskScale`, `pcaShapeConvergeRadius`, `pcaShapeConvergeAngleDeg`, `pcaShapeUpdatePosition`, `pcaShapeMaxPosShiftFraction`.
+- **Changelogs:** `docs/changelogs/changelogv5.md` closes with the rewrite entry; `changelogv6.md` opens with the rank-assignment fix.
 
 ---
 
