@@ -1345,6 +1345,25 @@ ImageStack ImageHandler::processPreparedSequence(const ImageStack &sequence,
             << std::endl;
         bestSequence = cloneStack(prePostProcessSequence);
         clipStack(bestSequence);
+
+        const StackStats fallbackStats = computeStackStats(bestSequence);
+        const bool fallbackMeanOk =
+            candidateMaxMean <= 0.0f || fallbackStats.mean <= candidateMaxMean;
+        const bool fallbackSaturationOk =
+            candidateMaxSaturatedFraction <= 0.0f ||
+            fallbackStats.saturatedFraction <= candidateMaxSaturatedFraction;
+        if (!fallbackMeanOk || !fallbackSaturationOk || fallbackStats.nonFiniteCount > 0)
+        {
+            log << "[IterPreprocess] fallback=normalized_input_after_invalid_pre_postprocess"
+                << " mean=" << fallbackStats.mean
+                << " saturated_fraction=" << fallbackStats.saturatedFraction
+                << " nonfinite=" << fallbackStats.nonFiniteCount
+                << " max_mean=" << candidateMaxMean
+                << " max_saturated_fraction=" << candidateMaxSaturatedFraction
+                << std::endl;
+            bestSequence = cloneStack(sequence);
+            clipStack(bestSequence);
+        }
     }
     return bestSequence;
 }

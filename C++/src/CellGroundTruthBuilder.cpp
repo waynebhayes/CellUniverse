@@ -5,6 +5,7 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <chrono>
 #include <fstream>
 #include <iomanip>
 #include <limits>
@@ -46,6 +47,158 @@ float percentileFromValues(std::vector<float> values, float percentileFraction)
                      values.begin() + static_cast<std::ptrdiff_t>(index),
                      values.end());
     return values[index];
+}
+
+float stackPercentile(const std::vector<cv::Mat> &volume,
+                      float percentileFraction,
+                      bool excludeZeros)
+{
+    std::vector<float> values;
+    size_t totalCount = 0;
+    for (const auto &slice : volume)
+    {
+        if (!slice.empty())
+        {
+            totalCount += static_cast<size_t>(slice.total());
+        }
+    }
+    values.reserve(totalCount);
+
+    for (const auto &slice : volume)
+    {
+        if (slice.empty()) continue;
+        for (int y = 0; y < slice.rows; ++y)
+        {
+            const float *row = slice.ptr<float>(y);
+            for (int x = 0; x < slice.cols; ++x)
+            {
+                const float value = row[x];
+                if (!std::isfinite(value)) continue;
+                if (excludeZeros && value == 0.0f) continue;
+                values.push_back(value);
+            }
+        }
+    }
+
+    return percentileFromValues(std::move(values), percentileFraction);
+}
+
+float stackMaxValue(const std::vector<cv::Mat> &volume)
+{
+    float maxValue = 0.0f;
+    bool foundValue = false;
+    for (const auto &slice : volume)
+    {
+        if (slice.empty()) continue;
+        double sliceMin = 0.0;
+        double sliceMax = 0.0;
+        cv::minMaxLoc(slice, &sliceMin, &sliceMax);
+        if (!foundValue || static_cast<float>(sliceMax) > maxValue)
+        {
+            maxValue = static_cast<float>(sliceMax);
+            foundValue = true;
+        }
+    }
+    return foundValue ? maxValue : 0.0f;
+}
+
+float stackMeanValue(const std::vector<cv::Mat> &volume)
+{
+    double sum = 0.0;
+    size_t count = 0;
+    for (const auto &slice : volume)
+    {
+        if (slice.empty()) continue;
+        for (int y = 0; y < slice.rows; ++y)
+        {
+            const float *row = slice.ptr<float>(y);
+            for (int x = 0; x < slice.cols; ++x)
+            {
+                const float value = row[x];
+                if (!std::isfinite(value)) continue;
+                sum += value;
+                ++count;
+            }
+        }
+    }
+    if (count == 0) return 0.0f;
+    return static_cast<float>(sum / static_cast<double>(count));
+}
+
+std::vector<cv::Mat> loadGroundTruthRawStack(const fs::path &imageFile)
+{
+    std::vector<cv::Mat> rawSlices;
+    std::string extension = imageFile.extension().string();
+    std::transform(extension.begin(), extension.end(), extension.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+
+    if (extension == ".tif" || extension == ".tiff")
+    {
+        std::vector<cv::Mat> tiffImage;
+        cv::imreadmulti(imageFile.string(), tiffImage, cv::IMREAD_ANYDEPTH | cv::IMREAD_COLOR);
+        if (tiffImage.empty())
+        {
+            throw std::runtime_error("Ground-truth TIFF has 0 slices: " + imageFile.string());
+        }
+
+        rawSlices.resize(tiffImage.size());
+        for (size_t i = 0; i < tiffImage.size(); ++i)
+        {
+            cv::Mat slice = tiffImage[i];
+            if (slice.channels() == 3)
+            {
+                cv::cvtColor(slice, slice, cv::COLOR_BGR2GRAY);
+            }
+            slice.convertTo(rawSlices[i], CV_32F);
+        }
+    }
+    else
+    {
+        cv::Mat image = cv::imread(imageFile.string(), cv::IMREAD_ANYDEPTH | cv::IMREAD_COLOR);
+        if (image.empty())
+        {
+            throw std::runtime_error("Could not read ground-truth image: " + imageFile.string());
+        }
+        if (image.channels() == 3)
+        {
+            cv::cvtColor(image, image, cv::COLOR_BGR2GRAY);
+        }
+        cv::Mat raw;
+        image.convertTo(raw, CV_32F);
+        rawSlices.push_back(raw);
+    }
+
+    return rawSlices;
+}
+
+std::vector<cv::Mat> normalizeStackForPreview(const std::vector<cv::Mat> &volume)
+{
+    std::vector<cv::Mat> preview;
+    preview.reserve(volume.size());
+    if (volume.empty())
+    {
+        return preview;
+    }
+
+    float low = stackPercentile(volume, 0.01f, false);
+    float high = stackPercentile(volume, 0.995f, false);
+    if (high <= low + 1e-6f)
+    {
+        low = 0.0f;
+        high = std::max(1.0f, stackMaxValue(volume));
+    }
+
+    const float denom = high - low;
+    for (const auto &slice : volume)
+    {
+        cv::Mat normalized;
+        slice.convertTo(normalized, CV_32F, 1.0 / denom, -low / denom);
+        cv::max(normalized, 0.0f, normalized);
+        cv::min(normalized, 1.0f, normalized);
+        preview.push_back(normalized);
+    }
+    return preview;
 }
 
 float squaredDistance(const cv::Point3f &lhs, const cv::Point3f &rhs)
@@ -203,6 +356,7 @@ CellGroundTruthBuilder::DetectedCell CellGroundTruthBuilder::makeDetectedCellFro
 {
     DetectedCell cell;
     cell.centerScaled = component.center();
+    cell.centerScaled.z *= effectiveZScaling();
     estimateAdaptiveRadii(component, cell.majorRadius, cell.bRadius, cell.minorRadius);
     cell.voxelCount = component.vox;
     cell.meanIntensity = component.meanI();
@@ -217,7 +371,7 @@ void CellGroundTruthBuilder::estimateAdaptiveRadii(const EmbryoBrightTracker::Co
 {
     const float dx = static_cast<float>(component.x1 - component.x0 + 1);
     const float dy = static_cast<float>(component.y1 - component.y0 + 1);
-    const float dz = static_cast<float>(component.z1 - component.z0 + 1);
+    const float dz = static_cast<float>(component.z1 - component.z0 + 1) * effectiveZScaling();
     const float xyMaxRadius = 0.5f * std::max(dx, dy);
     const float xyMinRadius = 0.5f * std::min(dx, dy);
     const float zRadius = 0.5f * dz;
@@ -308,7 +462,10 @@ std::optional<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::dete
     }
 
     DetectedCell cell = makeDetectedCellFromComponent(localComponents[bestIndex]);
-    cell.centerScaled = tracked.center;
+    cell.centerScaled = cv::Point3f(
+        tracked.center.x,
+        tracked.center.y,
+        tracked.center.z * effectiveZScaling());
     cell.voxelCount = tracked.voxelCount;
     cell.meanIntensity = tracked.meanIntensity;
     return cell;
@@ -426,10 +583,23 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::detect
     const int X = volume[0].cols;
 
     float thresholdHigh = tracker.percentileThresholdForAnalysis(volume, percentileHigh);
-    thresholdHigh = clampf(thresholdHigh, 0.05f, 0.95f);
-    const float thresholdLow = clampf(thresholdHigh * 0.50f, 0.02f, 0.95f);
+    const float maxValue = stackMaxValue(volume);
+    const bool unitScaleInput = maxValue <= 1.5f;
+    if (unitScaleInput)
+    {
+        thresholdHigh = clampf(thresholdHigh, 0.05f, 0.95f);
+    }
+    else
+    {
+        thresholdHigh = std::clamp(thresholdHigh, 0.0f, maxValue);
+    }
+    const float thresholdLow = unitScaleInput
+        ? clampf(thresholdHigh * 0.50f, 0.02f, 0.95f)
+        : std::clamp(thresholdHigh * 0.50f, 0.0f, maxValue);
 
     std::cout << "[GroundTruth Detect] percentileHigh=" << percentileHigh
+              << " input_scale=" << (unitScaleInput ? "unit" : "raw")
+              << " maxValue=" << maxValue
               << " thresholdHigh=" << thresholdHigh
               << " thresholdLow=" << thresholdLow
               << std::endl;
@@ -892,14 +1062,26 @@ void CellGroundTruthBuilder::saveFrameOutputs(const fs::path &imageFile,
                                               const std::vector<cv::Mat> &realFrame,
                                               const std::vector<DetectedCell> &cells) const
 {
-    std::vector<Ellipsoid> ellipsoids = makeEllipsoids(cells);
+    std::vector<DetectedCell> displayCells = cells;
+    const float zScale = effectiveZScaling();
+    for (auto &cell : displayCells)
+    {
+        cell.centerScaled.z = cell.zForCsv;
+        if (zScale > 1e-6f)
+        {
+            cell.minorRadius = std::max(1.0f, cell.minorRadius / zScale);
+        }
+    }
 
-    Frame frame(realFrame,
+    std::vector<cv::Mat> displayFrame = normalizeStackForPreview(realFrame);
+    std::vector<Ellipsoid> ellipsoids = makeEllipsoids(displayCells);
+
+    Frame frame(displayFrame,
                 config.simulation,
                 ellipsoids,
                 outputDir.string(),
                 imageFile.filename().string());
-    frame.setBackgroundColor(estimateBackgroundValue(realFrame));
+    frame.setBackgroundColor(estimateBackgroundValue(displayFrame));
     frame.regenerateSynthFrame();
 
     std::vector<cv::Mat> realImages = frame.generateOutputFrame();
@@ -926,6 +1108,24 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::buildI
     const fs::path &imageFile,
     const fs::path &csvOutputPath)
 {
+    using Clock = std::chrono::steady_clock;
+    const auto totalStart = Clock::now();
+    auto lastMark = totalStart;
+    auto logElapsed = [&](const std::string &stage) {
+        const auto now = Clock::now();
+        const double stageSeconds =
+            std::chrono::duration<double>(now - lastMark).count();
+        const double totalSeconds =
+            std::chrono::duration<double>(now - totalStart).count();
+        std::cout << "[GroundTruth Timing] frame=" << imageFile.filename().string()
+                  << " stage=" << stage
+                  << " stage_sec=" << std::fixed << std::setprecision(6) << stageSeconds
+                  << " total_sec=" << totalSeconds
+                  << std::defaultfloat
+                  << std::endl;
+        lastMark = now;
+    };
+
     if (!fs::exists(imageFile))
     {
         throw std::runtime_error("Ground-truth frame file not found: " + imageFile.string());
@@ -946,9 +1146,18 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::buildI
     {
         throw std::runtime_error("Ground-truth input discovery returned no files.");
     }
+    logElapsed("input_discovery");
 
-    std::vector<cv::Mat> realFrame = ImageHandler::loadFrame(discoveredInput.front().string(), config);
+    std::vector<cv::Mat> realFrame = loadGroundTruthRawStack(discoveredInput.front());
+    std::cout << "[GroundTruth RawInput] frame=" << imageFile.filename().string()
+              << " mode=no_preprocess"
+              << " slices=" << realFrame.size()
+              << " min=" << stackPercentile(realFrame, 0.0f, false)
+              << " max=" << stackMaxValue(realFrame)
+              << " mean=" << stackMeanValue(realFrame)
+              << std::endl;
     config.simulation.z_slices = static_cast<int>(realFrame.size());
+    logElapsed("load_raw_frame_no_preprocess");
 
     if (config.cell)
     {
@@ -958,6 +1167,7 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::buildI
 
     const std::string frameStem = imageFile.stem().string();
     std::vector<DetectedCell> cells = detectCellsInVolume(realFrame, frameStem);
+    logElapsed("detect_cells");
 
     std::cout << "[GroundTruth Result] frame=" << imageFile.filename().string()
               << " detected_cells=" << cells.size()
@@ -976,5 +1186,12 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::buildI
 
     saveInitialCsv(csvOutputPath, imageFile.filename().string(), cells);
     saveFrameOutputs(imageFile, realFrame, cells);
+    logElapsed("save_csv_and_preview_images");
+    std::cout << "[GroundTruth Timing Summary] frame=" << imageFile.filename().string()
+              << " detected_cells=" << cells.size()
+              << " total_sec=" << std::fixed << std::setprecision(6)
+              << std::chrono::duration<double>(Clock::now() - totalStart).count()
+              << std::defaultfloat
+              << std::endl;
     return cells;
 }
