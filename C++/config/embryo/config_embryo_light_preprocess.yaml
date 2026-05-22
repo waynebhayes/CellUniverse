@@ -1,0 +1,74 @@
+# Light preprocessing preset for C. elegans embryo resume tests.
+#
+# This file intentionally inherits the merged branch default config instead of
+# duplicating it. C++/config/config.yaml remains the heavy iterative
+# preprocessing preset, including the split gate thresholds tuned for that
+# binary-like image scale. Only the overrides below are active when this file is
+# passed as the config argument.
+
+base_config: ../config.yaml
+
+simulation:
+  # Keep the original voxel values after percentile normalization and z
+  # interpolation. This avoids blacking out dim but real cells in later embryo
+  # frames.
+  preprocess_mode: light
+  # Gamma > 1 suppresses dim background speckles smoothly. Unlike hard
+  # thresholding, it does not erase weak cell signal; a voxel at 0.2 becomes
+  # 0.04, while a voxel at 0.8 remains 0.64.
+  light_preprocess_gamma: 2.0
+  # Disable the first blur for this high signal dataset so adjacent cells do
+  # not bleed into each other before split detection.
+  blur_sigma: 0.0
+  # These cleanup steps are skipped by light mode in code, but keeping the
+  # values disabled here makes the printed config match the preset intent.
+  post_alignment_black_threshold: 0.0
+  post_alignment_black_percentile: 0.0
+  post_alignment_chunk_blackoff_enabled: false
+  post_alignment_tiny_particle_removal_enabled: false
+  post_alignment_final_blur_sigma: 0.0
+  # A stronger additive territory penalty reduces the failure mode where one
+  # large ellipsoid grows into a neighbor and explains two real cells as one.
+  voronoi_bleed_penalty_weight: 2.0
+
+prob:
+  # The heavy preset uses split_cost=2000 because the iterative preprocessor
+  # creates a high contrast, almost binary cost scale. Under light
+  # preprocessing, true split candidates can be spatially correct while only
+  # improving bbox cost by tens or hundreds. Keep this small and disable the
+  # proportional floor so light mode does not reject correct daughters.
+  split_cost: 15
+  split_cost_fraction: 0.0
+  # Correct light-mode splits can have a strong bridge and accurate daughter
+  # centers but still become slightly worse after daughter PCA refit because
+  # the softer image keeps dim halos. Rescue only small positive cost deltas
+  # when the bridge evidence is still strong.
+  split_bridge_cost_rescue_max_positive_fraction: 0.01
+  split_bridge_cost_rescue_max_valley_ratio: 0.65
+  split_bridge_cost_rescue_max_gap_density: 0.30
+  # Light mode keeps more dim halo signal, so one side of a false bridge can
+  # look bright enough to pass a one-sided valley test. Require both daughter
+  # sides to show a valley before rescuing a split that failed the cost gate.
+  split_bridge_cost_rescue_require_two_sided_valley: true
+  # Re-introduce the original separation sanity check only for light mode.
+  # This rejects parent-sized false splits whose two daughters remain too
+  # close together, while true 85-frame embryo divisions separate by roughly
+  # 2x the parent max radius.
+  bio_min_daughter_separation_parent_fraction: 1.70
+  # Light preprocessing leaves real division valleys as dim nonzero signal
+  # rather than pure black. The heavy preset's 0.8 valley gate is therefore too
+  # strict and rejects true split candidates as NO_VALLEY.
+  bio_bridge_max_valley_ratio: 0.95
+  # PCA bridge discovery also needs a softer definition of "dark" under light
+  # preprocessing. These values keep the bridge proposal path usable without
+  # changing the default heavy preprocessing behavior.
+  pca_bridge_black_threshold: 0.12
+  pca_bridge_min_black_fraction: 0.45
+  # The image-grounded pre-pass already sees some near-round real divisions
+  # clearly, but the stochastic split scheduler can still miss them for a full
+  # frame. In light mode, force one normal split attempt when the pre-pass
+  # daughters are separated enough. The normal bio, bridge, and cost gates
+  # still decide whether the split is accepted.
+  expected_daughter_force_split_enabled: true
+  expected_daughter_force_min_separation_parent_fraction: 1.70
+  expected_daughter_force_min_kept_pixels: 20000

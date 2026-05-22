@@ -52,7 +52,7 @@ public:
 // helper function to load the config
 void loadConfig(const std::string &path, BaseConfig &config)
 {
-    YAML::Node node = YAML::LoadFile(path);
+    YAML::Node node = CellUniverseConfig::loadConfigYamlNode(path);
     config.explodeConfig(node);
 }
 

@@ -575,6 +575,30 @@ void clipStack(ImageStack &sequence)
         }
     }
 }
+
+void applyGammaToStack(ImageStack &sequence, float gamma)
+{
+    if (sequence.empty() || std::abs(gamma - 1.0f) <= 1e-6f) {
+        return;
+    }
+
+    const float safeGamma = std::max(0.01f, gamma);
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < static_cast<int>(sequence.size()); ++i)
+    {
+        auto &slice = sequence[static_cast<std::size_t>(i)];
+        CV_Assert(slice.type() == CV_32F);
+        for (int y = 0; y < slice.rows; ++y)
+        {
+            float *row = slice.ptr<float>(y);
+            for (int x = 0; x < slice.cols; ++x)
+            {
+                const float value = std::clamp(row[x], 0.0f, 1.0f);
+                row[x] = std::pow(value, safeGamma);
+            }
+        }
+    }
+}
 } // namespace
 
 Image ImageHandler::processImage(const Image &image, const BaseConfig &config)
@@ -1401,7 +1425,19 @@ std::vector<cv::Mat> ImageHandler::preprocessLoadedFrame(const std::vector<cv::M
     std::vector<cv::Mat> processedZSlices = cloneStack(normalizedSlices);
     std::vector<cv::Mat> interpolatedZSlices;
 
-    processedZSlices = processPreparedSequence(processedZSlices, config, log, imageFile);
+    if (config.simulation.preprocess_mode == "iterative") {
+        processedZSlices = processPreparedSequence(processedZSlices, config, log, imageFile);
+    } else {
+        log << "[PreprocessMode] file=" << fs::path(imageFile).filename().string()
+            << " mode=" << config.simulation.preprocess_mode
+            << " iterative_sequence=0"
+            << " gamma=" << config.simulation.light_preprocess_gamma
+            << std::endl;
+        if (config.simulation.preprocess_mode == "light") {
+            applyGammaToStack(processedZSlices, config.simulation.light_preprocess_gamma);
+            clipStack(processedZSlices);
+        }
+    }
 
     const float localScore = evaluateBestWindowContrastScore(processedZSlices, config);
     log << "[PreprocessScores] file=" << fs::path(imageFile).filename().string()

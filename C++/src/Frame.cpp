@@ -2094,6 +2094,7 @@ bool bioCheckDaughters(
     const Ellipsoid &daughter1,
     const Ellipsoid &daughter2,
     double refParentVolume,
+    float refParentMaxRadius,
     const std::vector<Ellipsoid> &allCells,
     size_t d1Idx,
     size_t d2Idx,
@@ -2187,6 +2188,17 @@ bool bioCheckDaughters(
     const cv::Point3f d1Pos(daughter1.getX(), daughter1.getY(), daughter1.getZ());
     const cv::Point3f d2Pos(daughter2.getX(), daughter2.getY(), daughter2.getZ());
     const float siblingDist = static_cast<float>(cv::norm(d2Pos - d1Pos));
+    const float minSeparationFraction =
+        std::max(0.0f, probConfig.bio_min_daughter_separation_parent_fraction);
+    if (minSeparationFraction > 0.0f && refParentMaxRadius > 1e-3f) {
+        const float minSeparation = minSeparationFraction * refParentMaxRadius;
+        if (siblingDist < minSeparation) {
+            reasonOut = "daughter_separation_" + std::to_string(siblingDist) +
+                        "_min_" + std::to_string(minSeparation);
+            return false;
+        }
+    }
+
     for (size_t i = 0; i < allCells.size(); ++i) {
         if (i == d1Idx || i == d2Idx) continue;
         const Ellipsoid &other = allCells[i];
@@ -4506,6 +4518,7 @@ CostCallbackPair Frame::trySplitCellPhased(
     // inside each daughter, away from the gap.
     bool bridgeCostRescueEligible = false;
     float bridgeCostRescueValleyFromBright = 1.0f;
+    float bridgeCostRescueWorstValleyRatio = 1.0f;
     float bridgeCostRescueGapDensity = 1.0f;
     float bridgeCostRescueEdgeBright = 0.0f;
     {
@@ -4798,11 +4811,16 @@ CostCallbackPair Frame::trySplitCellPhased(
                 0.0f, probConfig.split_bridge_cost_rescue_max_valley_ratio);
             const float rescueGapDensityLimit = std::max(
                 0.0f, probConfig.split_bridge_cost_rescue_max_gap_density);
+            const float rescueValleyRatio =
+                probConfig.split_bridge_cost_rescue_require_two_sided_valley
+                    ? worstValleyRatio
+                    : valleyFromBright;
             bridgeCostRescueEligible =
                 edgeCount > 0 &&
-                valleyFromBright <= rescueValleyLimit &&
+                rescueValleyRatio <= rescueValleyLimit &&
                 gapDensity <= rescueGapDensityLimit;
             bridgeCostRescueValleyFromBright = valleyFromBright;
+            bridgeCostRescueWorstValleyRatio = worstValleyRatio;
             bridgeCostRescueGapDensity = gapDensity;
             bridgeCostRescueEdgeBright = edgeBright;
         }
@@ -4810,7 +4828,8 @@ CostCallbackPair Frame::trySplitCellPhased(
 
     // 5b. Size ratio, volume fraction, and buried checks.
     std::string bioReason;
-    if (!bioCheckDaughters(bestD1, bestD2, refParentVolume, bestCells, d1IdxBest, d2IdxBest,
+    if (!bioCheckDaughters(bestD1, bestD2, refParentVolume, srcMaxR,
+                           bestCells, d1IdxBest, d2IdxBest,
                            probConfig, bioReason)) {
         std::cout << "[Split Reject bio] " << parentName
                   << " reason=" << bioReason
@@ -4860,6 +4879,7 @@ CostCallbackPair Frame::trySplitCellPhased(
                   << " maxPositive=" << bridgeRescueLimit
                   << " baselineImageCost=" << baselineImageCost
                   << " valleyFromBright=" << bridgeCostRescueValleyFromBright
+                  << " worstValleyRatio=" << bridgeCostRescueWorstValleyRatio
                   << " maxValley=" << probConfig.split_bridge_cost_rescue_max_valley_ratio
                   << " gapDensity=" << bridgeCostRescueGapDensity
                   << " maxGapDensity=" << probConfig.split_bridge_cost_rescue_max_gap_density

@@ -314,7 +314,7 @@ static std::vector<std::string> splitCsvRow(const std::string& line)
 
 static void loadConfig(const std::string& path, BaseConfig& config)
 {
-    const YAML::Node node = YAML::LoadFile(path);
+    const YAML::Node node = CellUniverseConfig::loadConfigYamlNode(path);
     config.explodeConfig(node);
 }
 

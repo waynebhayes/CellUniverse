@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <limits>
 #include <stdexcept>
+#include <filesystem>
 #include "yaml-cpp/yaml.h"
 #include <iostream>
 
@@ -29,6 +30,47 @@ inline std::mt19937 &cellUniverseRandomGenerator()
     return gen;
 }
 
+namespace CellUniverseConfig {
+
+inline YAML::Node mergeYamlNodes(const YAML::Node &base, const YAML::Node &overrides)
+{
+    if (!base || !base.IsMap() || !overrides || !overrides.IsMap()) {
+        return overrides ? YAML::Clone(overrides) : YAML::Clone(base);
+    }
+
+    YAML::Node merged = YAML::Clone(base);
+    for (const auto &entry : overrides) {
+        const std::string key = entry.first.as<std::string>();
+        if (key == "base_config") {
+            continue;
+        }
+
+        if (merged[key] && merged[key].IsMap() && entry.second.IsMap()) {
+            merged[key] = mergeYamlNodes(merged[key], entry.second);
+        } else {
+            merged[key] = YAML::Clone(entry.second);
+        }
+    }
+    return merged;
+}
+
+inline YAML::Node loadConfigYamlNode(const std::string &path)
+{
+    const YAML::Node node = YAML::LoadFile(path);
+    if (!node["base_config"]) {
+        return node;
+    }
+
+    std::filesystem::path basePath(node["base_config"].as<std::string>());
+    if (basePath.is_relative()) {
+        basePath = std::filesystem::path(path).parent_path() / basePath;
+    }
+
+    return mergeYamlNodes(loadConfigYamlNode(basePath.string()), node);
+}
+
+} // namespace CellUniverseConfig
+
 class SimulationConfig {
 public:
     int iterations_per_cell;
@@ -37,6 +79,12 @@ public:
     float z_scaling;
     float blur_sigma;
     int z_slices;
+    // Preprocessing mode:
+    // iterative = existing contrast optimization plus post alignment cleanup.
+    // light = percentile normalization, optional gamma, and z interpolation.
+    // none = percentile normalization and z interpolation only.
+    std::string preprocess_mode = "iterative";
+    float light_preprocess_gamma = 1.0f;
     float iterative_penalty = 0.1f;
     float iterative_penalty_range = 0.9f;
     float iterative_reward_gate = 1.0f;
@@ -250,6 +298,8 @@ public:
         if (node["random_iterations_per_cell"]) random_iterations_per_cell = node["random_iterations_per_cell"].as<int>();
         z_scaling = node["z_scaling"].as<float>();
         blur_sigma = node["blur_sigma"].as<float>();
+        if (node["preprocess_mode"]) preprocess_mode = node["preprocess_mode"].as<std::string>();
+        if (node["light_preprocess_gamma"]) light_preprocess_gamma = node["light_preprocess_gamma"].as<float>();
         if (node["iterative_penalty"]) iterative_penalty = node["iterative_penalty"].as<float>();
         if (node["iterative_penalty_range"]) iterative_penalty_range = node["iterative_penalty_range"].as<float>();
         if (node["iterative_reward_gate"]) iterative_reward_gate = node["iterative_reward_gate"].as<float>();
@@ -378,6 +428,12 @@ public:
             initial_z_space != "scaled") {
             throw std::invalid_argument("simulation.initial_z_space must be one of: auto, raw, scaled");
         }
+        if (preprocess_mode != "iterative" &&
+            preprocess_mode != "light" &&
+            preprocess_mode != "none") {
+            throw std::invalid_argument("simulation.preprocess_mode must be one of: iterative, light, none");
+        }
+        light_preprocess_gamma = std::max(0.01f, light_preprocess_gamma);
     }
     void printConfig() const {
         std::cout << "Simulation Config\n";
@@ -386,6 +442,8 @@ public:
         std::cout << "random_iterations_per_cell: " << random_iterations_per_cell << '\n';
         std::cout << "z_scaling: " << z_scaling << '\n';
         std::cout << "blur_sigma: " << blur_sigma << '\n';
+        std::cout << "preprocess_mode: " << preprocess_mode << '\n';
+        std::cout << "light_preprocess_gamma: " << light_preprocess_gamma << '\n';
         std::cout << "iterative_penalty: " << iterative_penalty << '\n';
         std::cout << "iterative_penalty_range: " << iterative_penalty_range << '\n';
         std::cout << "iterative_reward_gate: " << iterative_reward_gate << '\n';
@@ -517,6 +575,11 @@ public:
     float split_bridge_cost_rescue_max_positive_fraction = 0.20f;
     float split_bridge_cost_rescue_max_valley_ratio = 0.40f;
     float split_bridge_cost_rescue_max_gap_density = 0.05f;
+    // false keeps the original one-sided bridge rescue behavior, where the
+    // bridge only needs to be darker than the brighter daughter edge. Light
+    // preprocessing can enable this stricter check so both daughter sides must
+    // show a real valley before a positive cost split is rescued.
+    bool split_bridge_cost_rescue_require_two_sided_valley = false;
     // Quadratic position prior weight for perturbCell.
     // penalty = weight × ||cell.pos - snap.pos||²
     // Temporal anchor independent of image evidence. Prevents drift
@@ -571,6 +634,15 @@ public:
     float birth_growth_cap_elong_threshold = 1.8f;
 
     int expected_daughter_pre_pass_iterations = 1;
+    // Optional deterministic split scheduling from the image-grounded
+    // pre-pass. When enabled, cells whose pre-pass daughter centers are
+    // already well separated get exactly one split attempt before the random
+    // perturb loop starts. Acceptance still goes through the normal bio,
+    // bridge, and cost gates, so this only prevents probability scheduling
+    // from missing a strong candidate.
+    bool expected_daughter_force_split_enabled = false;
+    float expected_daughter_force_min_separation_parent_fraction = 0.0f;
+    int expected_daughter_force_min_kept_pixels = 0;
 
     // Number of candidate placements per split attempt. With two midpoint
     // options (PCA and snapshot) each generating 5 variants (primary + 2
@@ -613,6 +685,11 @@ public:
     float bio_daughter_size_ratio_max = 1.5f;
     float bio_combined_volume_min_fraction = 0.6f;
     float bio_combined_volume_max_fraction = 1.3f;
+    // Optional minimum daughter separation, normalized by the snapshot parent
+    // max radius. Disabled at 0.0. This blocks false splits where two
+    // daughters sit inside the same parent-sized blob, while allowing true
+    // divisions whose daughter centers separate across the parent body.
+    float bio_min_daughter_separation_parent_fraction = 0.0f;
 
     // Single-daughter volume gate. Reject when either daughter's volume
     // exceeds `bio_max_single_daughter_volume_fraction * refParentVolume`.
@@ -748,6 +825,7 @@ public:
         if (node["split_bridge_cost_rescue_max_positive_fraction"]) split_bridge_cost_rescue_max_positive_fraction = node["split_bridge_cost_rescue_max_positive_fraction"].as<float>();
         if (node["split_bridge_cost_rescue_max_valley_ratio"]) split_bridge_cost_rescue_max_valley_ratio = node["split_bridge_cost_rescue_max_valley_ratio"].as<float>();
         if (node["split_bridge_cost_rescue_max_gap_density"]) split_bridge_cost_rescue_max_gap_density = node["split_bridge_cost_rescue_max_gap_density"].as<float>();
+        if (node["split_bridge_cost_rescue_require_two_sided_valley"]) split_bridge_cost_rescue_require_two_sided_valley = node["split_bridge_cost_rescue_require_two_sided_valley"].as<bool>();
         if (node["position_prior_weight"]) position_prior_weight = node["position_prior_weight"].as<float>();
         if (node["position_prior_threshold"]) position_prior_threshold = node["position_prior_threshold"].as<float>();
         if (node["max_perturb_drift_xy"]) max_perturb_drift_xy = node["max_perturb_drift_xy"].as<float>();
@@ -755,6 +833,9 @@ public:
         if (node["birth_growth_cap_factor"]) birth_growth_cap_factor = node["birth_growth_cap_factor"].as<float>();
         if (node["birth_growth_cap_elong_threshold"]) birth_growth_cap_elong_threshold = node["birth_growth_cap_elong_threshold"].as<float>();
         if (node["expected_daughter_pre_pass_iterations"]) expected_daughter_pre_pass_iterations = node["expected_daughter_pre_pass_iterations"].as<int>();
+        if (node["expected_daughter_force_split_enabled"]) expected_daughter_force_split_enabled = node["expected_daughter_force_split_enabled"].as<bool>();
+        if (node["expected_daughter_force_min_separation_parent_fraction"]) expected_daughter_force_min_separation_parent_fraction = node["expected_daughter_force_min_separation_parent_fraction"].as<float>();
+        if (node["expected_daughter_force_min_kept_pixels"]) expected_daughter_force_min_kept_pixels = node["expected_daughter_force_min_kept_pixels"].as<int>();
         if (node["split_candidates_per_attempt"]) split_candidates_per_attempt = node["split_candidates_per_attempt"].as<int>();
         if (node["split_candidate_burn_in_iterations"]) split_candidate_burn_in_iterations = node["split_candidate_burn_in_iterations"].as<int>();
         if (node["split_final_refine_iterations"]) split_final_refine_iterations = node["split_final_refine_iterations"].as<int>();
@@ -777,6 +858,7 @@ public:
         if (node["bio_daughter_size_ratio_max"]) bio_daughter_size_ratio_max = node["bio_daughter_size_ratio_max"].as<float>();
         if (node["bio_combined_volume_min_fraction"]) bio_combined_volume_min_fraction = node["bio_combined_volume_min_fraction"].as<float>();
         if (node["bio_combined_volume_max_fraction"]) bio_combined_volume_max_fraction = node["bio_combined_volume_max_fraction"].as<float>();
+        if (node["bio_min_daughter_separation_parent_fraction"]) bio_min_daughter_separation_parent_fraction = node["bio_min_daughter_separation_parent_fraction"].as<float>();
         if (node["bio_max_single_daughter_volume_fraction"]) bio_max_single_daughter_volume_fraction = node["bio_max_single_daughter_volume_fraction"].as<float>();
         if (node["bio_bridge_max_gap_density"]) bio_bridge_max_gap_density = node["bio_bridge_max_gap_density"].as<float>();
         if (node["bio_bridge_max_valley_ratio"]) bio_bridge_max_valley_ratio = node["bio_bridge_max_valley_ratio"].as<float>();
@@ -820,7 +902,11 @@ public:
         std::cout << "split_bridge_cost_rescue_max_positive_fraction: " << split_bridge_cost_rescue_max_positive_fraction << '\n';
         std::cout << "split_bridge_cost_rescue_max_valley_ratio: " << split_bridge_cost_rescue_max_valley_ratio << '\n';
         std::cout << "split_bridge_cost_rescue_max_gap_density: " << split_bridge_cost_rescue_max_gap_density << '\n';
+        std::cout << "split_bridge_cost_rescue_require_two_sided_valley: " << split_bridge_cost_rescue_require_two_sided_valley << '\n';
         std::cout << "overlap_penalty_weight: " << overlap_penalty_weight << '\n';
+        std::cout << "expected_daughter_force_split_enabled: " << expected_daughter_force_split_enabled << '\n';
+        std::cout << "expected_daughter_force_min_separation_parent_fraction: " << expected_daughter_force_min_separation_parent_fraction << '\n';
+        std::cout << "expected_daughter_force_min_kept_pixels: " << expected_daughter_force_min_kept_pixels << '\n';
         std::cout << "split_candidates_per_attempt: " << split_candidates_per_attempt << '\n';
         std::cout << "split_candidate_burn_in_iterations: " << split_candidate_burn_in_iterations << '\n';
         std::cout << "split_geometry_gate_enabled: " << split_geometry_gate_enabled << '\n';
@@ -834,6 +920,7 @@ public:
         std::cout << "split_max_daughter_overlap_fraction: " << split_max_daughter_overlap_fraction << '\n';
         std::cout << "split_daughter_overlap_scale: " << split_daughter_overlap_scale << '\n';
         std::cout << "bio_daughter_size_ratio_max: " << bio_daughter_size_ratio_max << std::endl;
+        std::cout << "bio_min_daughter_separation_parent_fraction: " << bio_min_daughter_separation_parent_fraction << '\n';
         std::cout << "pca_bridge_split_enabled: " << pca_bridge_split_enabled << '\n';
         std::cout << "pca_bridge_elongation_ratio: " << pca_bridge_elongation_ratio << '\n';
         std::cout << "pca_bridge_min_long_mid_ratio: " << pca_bridge_min_long_mid_ratio << '\n';

@@ -1842,6 +1842,11 @@ static float blackVoxelFractionInsideCell(const Frame &frame,
     return static_cast<float>(black) / static_cast<float>(inside);
 }
 
+static bool usesIterativePostPreprocessing(const SimulationConfig &config)
+{
+    return config.preprocess_mode == "iterative";
+}
+
 // Preprocessing moved to ImageHandler. Single preprocessed stack via
 // ImageHandler::loadFrame.
 CellUniverse::CellUniverse(std::map<std::string, std::vector<Ellipsoid>> initialCells,
@@ -1962,42 +1967,49 @@ void CellUniverse::prepareFrame(int frameIndex)
         imagePaths[static_cast<size_t>(frameIndex)].string(),
         config, &preprocessLog);
     std::cout << preprocessLog.str();
-    if (config.simulation.edge_brightness_alignment_enabled &&
-        !edgeBrightnessAlignmentTargetInitialized) {
-        edgeBrightnessAlignmentTarget =
-            computeEdgeBrightnessMean(real_frame, config.simulation);
-        edgeBrightnessAlignmentTargetInitialized = true;
-        std::cout << "[EdgeBrightnessAlignment] target_initialized_from="
+    if (usesIterativePostPreprocessing(config.simulation)) {
+        if (config.simulation.edge_brightness_alignment_enabled &&
+            !edgeBrightnessAlignmentTargetInitialized) {
+            edgeBrightnessAlignmentTarget =
+                computeEdgeBrightnessMean(real_frame, config.simulation);
+            edgeBrightnessAlignmentTargetInitialized = true;
+            std::cout << "[EdgeBrightnessAlignment] target_initialized_from="
+                      << imagePaths[static_cast<size_t>(frameIndex)].filename().string()
+                      << " target=" << edgeBrightnessAlignmentTarget << '\n';
+        }
+        alignStackToEdgeBrightness(real_frame,
+                                   config.simulation,
+                                   edgeBrightnessAlignmentTarget,
+                                   imagePaths[static_cast<size_t>(frameIndex)],
+                                   std::cout);
+        blackThresholdStackAfterAlignment(real_frame,
+                                          config.simulation,
+                                          imagePaths[static_cast<size_t>(frameIndex)],
+                                          std::cout);
+        const std::vector<cv::Mat> unblackoffedFrame = cloneMatStack(real_frame);
+        blackPercentileStackAfterAlignment(real_frame,
+                                           config.simulation,
+                                           imagePaths[static_cast<size_t>(frameIndex)],
+                                           std::cout);
+        adaptBlackPercentileToChunkCount(real_frame,
+                                         unblackoffedFrame,
+                                         config.simulation,
+                                         imagePaths[static_cast<size_t>(frameIndex)],
+                                         std::cout);
+        removeTinyIsolatedParticles(real_frame,
+                                    config,
+                                    imagePaths[static_cast<size_t>(frameIndex)],
+                                    std::cout);
+        applyFinalPreprocessingBlur(real_frame,
+                                    config.simulation,
+                                    imagePaths[static_cast<size_t>(frameIndex)],
+                                    std::cout);
+    } else {
+        std::cout << "[PostPreprocess] frame="
                   << imagePaths[static_cast<size_t>(frameIndex)].filename().string()
-                  << " target=" << edgeBrightnessAlignmentTarget << '\n';
+                  << " skipped_for_mode=" << config.simulation.preprocess_mode
+                  << '\n';
     }
-    alignStackToEdgeBrightness(real_frame,
-                               config.simulation,
-                               edgeBrightnessAlignmentTarget,
-                               imagePaths[static_cast<size_t>(frameIndex)],
-                               std::cout);
-    blackThresholdStackAfterAlignment(real_frame,
-                                      config.simulation,
-                                      imagePaths[static_cast<size_t>(frameIndex)],
-                                      std::cout);
-    const std::vector<cv::Mat> unblackoffedFrame = cloneMatStack(real_frame);
-    blackPercentileStackAfterAlignment(real_frame,
-                                       config.simulation,
-                                       imagePaths[static_cast<size_t>(frameIndex)],
-                                       std::cout);
-    adaptBlackPercentileToChunkCount(real_frame,
-                                     unblackoffedFrame,
-                                     config.simulation,
-                                     imagePaths[static_cast<size_t>(frameIndex)],
-                                     std::cout);
-    removeTinyIsolatedParticles(real_frame,
-                                config,
-                                imagePaths[static_cast<size_t>(frameIndex)],
-                                std::cout);
-    applyFinalPreprocessingBlur(real_frame,
-                                config.simulation,
-                                imagePaths[static_cast<size_t>(frameIndex)],
-                                std::cout);
     std::vector<cv::Mat> signalMap = buildSignalMapStack(
         real_frame,
         config.simulation,
@@ -2069,7 +2081,9 @@ void CellUniverse::preprocessAllFramesAlignedToMinimumBackground(bool loadIntoFr
     std::vector<PreprocessedFrame> preprocessedFrames(imagePaths.size());
     float minimumSampledBackground = std::numeric_limits<float>::infinity();
     const int frameCount = static_cast<int>(imagePaths.size());
-    const bool alignmentEnabled = config.simulation.edge_brightness_alignment_enabled;
+    const bool heavyPostPreprocessing = usesIterativePostPreprocessing(config.simulation);
+    const bool alignmentEnabled =
+        heavyPostPreprocessing && config.simulation.edge_brightness_alignment_enabled;
 
     for (int frameIndex = 0; frameIndex < frameCount; ++frameIndex)
     {
@@ -2106,28 +2120,35 @@ void CellUniverse::preprocessAllFramesAlignedToMinimumBackground(bool loadIntoFr
         std::cout << preprocessLog.str();
 
         if (!alignmentEnabled) {
-            blackThresholdStackAfterAlignment(realFrame,
-                                              config.simulation,
-                                              imagePaths[static_cast<size_t>(frameIndex)],
-                                              std::cout);
-            const std::vector<cv::Mat> unblackoffedFrame = cloneMatStack(realFrame);
-            blackPercentileStackAfterAlignment(realFrame,
-                                               config.simulation,
-                                               imagePaths[static_cast<size_t>(frameIndex)],
-                                               std::cout);
-            adaptBlackPercentileToChunkCount(realFrame,
-                                             unblackoffedFrame,
-                                             config.simulation,
-                                             imagePaths[static_cast<size_t>(frameIndex)],
-                                             std::cout);
-            removeTinyIsolatedParticles(realFrame,
-                                        config,
-                                        imagePaths[static_cast<size_t>(frameIndex)],
-                                        std::cout);
-            applyFinalPreprocessingBlur(realFrame,
-                                        config.simulation,
-                                        imagePaths[static_cast<size_t>(frameIndex)],
-                                        std::cout);
+            if (heavyPostPreprocessing) {
+                blackThresholdStackAfterAlignment(realFrame,
+                                                  config.simulation,
+                                                  imagePaths[static_cast<size_t>(frameIndex)],
+                                                  std::cout);
+                const std::vector<cv::Mat> unblackoffedFrame = cloneMatStack(realFrame);
+                blackPercentileStackAfterAlignment(realFrame,
+                                                   config.simulation,
+                                                   imagePaths[static_cast<size_t>(frameIndex)],
+                                                   std::cout);
+                adaptBlackPercentileToChunkCount(realFrame,
+                                                 unblackoffedFrame,
+                                                 config.simulation,
+                                                 imagePaths[static_cast<size_t>(frameIndex)],
+                                                 std::cout);
+                removeTinyIsolatedParticles(realFrame,
+                                            config,
+                                            imagePaths[static_cast<size_t>(frameIndex)],
+                                            std::cout);
+                applyFinalPreprocessingBlur(realFrame,
+                                            config.simulation,
+                                            imagePaths[static_cast<size_t>(frameIndex)],
+                                            std::cout);
+            } else {
+                std::cout << "[PostPreprocess] frame="
+                          << imagePaths[static_cast<size_t>(frameIndex)].filename().string()
+                          << " skipped_for_mode=" << config.simulation.preprocess_mode
+                          << '\n';
+            }
             std::vector<cv::Mat> signalMap = buildSignalMapStack(
                 realFrame,
                 config.simulation,
@@ -2376,8 +2397,40 @@ void CellUniverse::optimize(int frameIndex)
     const float overlapWeight = config.prob.overlap_penalty_weight;
     const float baseSplitProb = config.prob.P_split_base;
 
-    // No splits on the first frame — cells can't divide before any time has passed
-    bool allowSplits = (frameIndex > 0);
+    // Resume CSVs are usually the validated state from the previous frame
+    // copied onto the first requested image. Treat those cells as snapshots so
+    // the first resumed frame can split. A fresh run from frame 0 still starts
+    // with no split attempts because no previous biological time step exists.
+    if (frameIndex == 0 && firstFrame > 0 && previousSnapshots.empty()) {
+        std::cout << "[Snapshot Bootstrap] frame " << displayFrame
+                  << " source=initial_cells cells=" << frame.cells.size()
+                  << std::endl;
+        for (const auto &cell : frame.cells) {
+            auto p = cell.getCellParams();
+            cv::Point3f fitSplitAxisDir;
+            float fitSplitAxisLength = 0.0f;
+            cell.worldSplitAxis(fitSplitAxisDir, fitSplitAxisLength);
+
+            PreviousFrameSnapshot snap;
+            snap.valid = true;
+            snap.shapeElongation = cell.shapeElongation();
+            snap.splitAxisDir = fitSplitAxisDir;
+            snap.splitAxisLength = fitSplitAxisLength;
+            snap.position = cv::Point3f(p.x, p.y, p.z);
+            snap.aRadius = p.aRadius;
+            snap.bRadius = p.bRadius;
+            snap.cRadius = p.cRadius;
+            snap.thetaX = p.theta_x;
+            snap.thetaY = p.theta_y;
+            snap.thetaZ = p.theta_z;
+            snap.brightness = p.brightness;
+            previousSnapshots[p.name] = snap;
+        }
+    }
+
+    const bool allowSplits =
+        frameIndex > 0 ||
+        (frameIndex == 0 && firstFrame > 0 && !previousSnapshots.empty());
 
     // Cells that already failed a burn-in this frame — skip all further split attempts.
     std::set<std::string> splitBlacklist;
@@ -2466,7 +2519,11 @@ void CellUniverse::optimize(int frameIndex)
     // motion happen in the unified perturb+split loop, where each move
     // is gated by `costDiff < 0`.
     const int calibrationIters = std::max(0, config.prob.split_calibration_iterations_per_cell);
-    const bool runCalibration = (frameIndex == 0) && (calibrationIters > 0) && !frame.cells.empty();
+    const bool runCalibration =
+        (frameIndex == 0) &&
+        previousSnapshots.empty() &&
+        (calibrationIters > 0) &&
+        !frame.cells.empty();
     if (runCalibration) {
         const float posScale = std::max(0.0f, config.prob.split_burn_in_pos_sigma_scale);
 
@@ -2965,6 +3022,7 @@ void CellUniverse::optimize(int frameIndex)
     // cells also need image-grounded midpoints when they attempt splits,
     // because snap axis is unreliable for near-round cells.
     std::map<std::string, std::pair<cv::Point3f, cv::Point3f>> expectedDaughters;
+    std::map<std::string, int> expectedDaughterKeptPixels;
     for (const auto &cell : frame.cells) {
         const std::string &name = cell.getName();
         auto snapIt = previousSnapshots.find(name);
@@ -3116,9 +3174,68 @@ void CellUniverse::optimize(int frameIndex)
             if (results[ci].ok) {
                 const std::string &name = frame.cells[ci].getName();
                 expectedDaughters[name] = {results[ci].groundedD1, results[ci].groundedD2};
+                expectedDaughterKeptPixels[name] = results[ci].keptPixels;
             }
             std::cout << results[ci].claimsLog << results[ci].resultLog;
         }
+    }
+
+    std::set<std::string> forcedSplitNames;
+    if (allowSplits && config.prob.expected_daughter_force_split_enabled) {
+        const float configuredMinFraction =
+            config.prob.expected_daughter_force_min_separation_parent_fraction;
+        const float minSepFraction = configuredMinFraction > 0.0f
+            ? configuredMinFraction
+            : config.prob.bio_min_daughter_separation_parent_fraction;
+        const int minKeptPixels =
+            std::max(0, config.prob.expected_daughter_force_min_kept_pixels);
+
+        int candidatesChecked = 0;
+        for (const auto &cell : frame.cells) {
+            const std::string &name = cell.getName();
+            if (cell.isTrash()) continue;
+
+            auto snapIt = previousSnapshots.find(name);
+            auto dIt = expectedDaughters.find(name);
+            auto keptIt = expectedDaughterKeptPixels.find(name);
+            if (snapIt == previousSnapshots.end() || !snapIt->second.valid ||
+                dIt == expectedDaughters.end() || keptIt == expectedDaughterKeptPixels.end()) {
+                continue;
+            }
+            ++candidatesChecked;
+            if (keptIt->second < minKeptPixels) continue;
+
+            const auto &snap = snapIt->second;
+            const cv::Point3f delta = dIt->second.second - dIt->second.first;
+            const float separation = static_cast<float>(cv::norm(delta));
+            const float parentMaxRadius = std::max({snap.aRadius, snap.bRadius, snap.cRadius});
+            if (parentMaxRadius <= 1e-3f) continue;
+
+            const float minSeparation = parentMaxRadius * minSepFraction;
+            if (separation < minSeparation) continue;
+
+            forcedSplitNames.insert(name);
+            const float ratio = separation / parentMaxRadius;
+            const float pSplit = splitProbabilities.count(name) > 0
+                ? splitProbabilities[name]
+                : 0.0f;
+            std::cout << "[Pre-Pass Force Split] frame " << displayFrame
+                      << " cell=" << name
+                      << " separation=" << separation
+                      << " parentMaxR=" << parentMaxRadius
+                      << " ratio=" << ratio
+                      << " minRatio=" << minSepFraction
+                      << " kept=" << keptIt->second
+                      << " P(split)=" << pSplit
+                      << std::endl;
+        }
+
+        std::cout << "[Pre-Pass Force Split] frame " << displayFrame
+                  << " checked=" << candidatesChecked
+                  << " forced=" << forcedSplitNames.size()
+                  << " minRatio=" << minSepFraction
+                  << " minKept=" << minKeptPixels
+                  << std::endl;
     }
 
     // ---- Helper: build claim-set for other cells during a split attempt ----
@@ -3397,6 +3514,166 @@ void CellUniverse::optimize(int frameIndex)
                       << std::endl;
         };
 
+        auto attemptSplitAtIndex = [&](size_t cellIdx,
+                                       const std::string &cellName,
+                                       const std::string &scheduleReason) {
+            ++splitAttempted;
+            std::cout << "[Split Schedule] frame " << displayFrame
+                      << " cell=" << cellName
+                      << " reason=" << scheduleReason
+                      << std::endl;
+
+            auto snapIt = previousSnapshots.find(cellName);
+            if (snapIt == previousSnapshots.end() || !snapIt->second.valid) {
+                splitBlacklist.insert(cellName);
+                std::cout << "[Split Schedule Reject] frame " << displayFrame
+                          << " cell=" << cellName
+                          << " reason=no_valid_snapshot"
+                          << std::endl;
+                return;
+            }
+
+            // useSnapDir=true adds snapshot-axis candidates alongside
+            // image-PCA candidates inside trySplitCellPhased — cost picks
+            // the winner. Always true now so every split attempt tries
+            // both direction sources.
+            const bool useSnapDir = true;
+
+            Frame::ClaimSet others = buildOtherClaimSet(
+                cellName,
+                splitAcceptedInPhase,
+                splitRejectedInPhase,
+                phaseB);
+
+            // Pass pre-pass direction + length via splitSnapshot so
+            // trySplitCellPhased can add it as an extra primary axis
+            // (labeled "imgPca"). We KEEP splitSnapshot.position at
+            // the snap center so the split attempt tries BOTH midpoints:
+            //   - snap_* candidates: midpoint = true snap center
+            //   - data_* candidates: midpoint = pixel-projection centroid
+            //     (which for the imgPca axis equals the pre-pass midpoint)
+            // Snap radii preserved for daughter sizing.
+            PreviousFrameSnapshot splitSnapshot = snapIt->second;
+            auto itD = expectedDaughters.find(cellName);
+            if (itD != expectedDaughters.end()) {
+                const cv::Point3f &gd1 = itD->second.first;
+                const cv::Point3f &gd2 = itD->second.second;
+                const cv::Point3f delta = gd2 - gd1;
+                const float len = static_cast<float>(cv::norm(delta));
+                if (len > 1e-3f) {
+                    splitSnapshot.splitAxisDir = cv::Point3f(
+                        delta.x / len, delta.y / len, delta.z / len);
+                    splitSnapshot.splitAxisLength = len;
+                }
+            }
+
+            // If the post-PCA pass produced a bridge proposal for this
+            // cell, hand it to trySplitCellPhased so it competes as
+            // "bridge_primary" alongside data_/snap_ candidates.
+            const BridgeSplitProposal *bridgeForCell = nullptr;
+            if (!bridgeProposals.empty()) {
+                auto bIt = bridgeProposals.find(cellName);
+                if (bIt != bridgeProposals.end()) {
+                    bridgeForCell = &bIt->second;
+                }
+            }
+
+            auto result = frame.trySplitCellPhased(
+                cellIdx, splitSnapshot, others, useSnapDir, config.prob,
+                exportPerturbDebug ? &splitPerturbDebugPlacements : nullptr,
+                exportPerturbDebug ? &splitPerturbDebugPlacementCount : nullptr,
+                config.simulation.perturb_debug_cell_brightness,
+                bridgeForCell);
+
+            double costDiff = result.first;
+            auto callback = result.second;
+
+            const bool accept = (costDiff < 0.0);
+            callback(accept);
+            if (accept) {
+                ++splitAccepted;
+                splitAcceptedInPhase.insert(cellName);
+                previousSnapshots.erase(cellName);
+                // Add daughter names to phaseNames so they become eligible
+                // for perturbation during the rest of this frame. Without
+                // this, rebuildEligible skips daughters (their names weren't
+                // in phaseNames at frame start) and they get zero perturbation
+                // iterations — only the split burn-in + refine positioning.
+                phaseNames.insert(cellName + "0");
+                phaseNames.insert(cellName + "1");
+                // Rebuild eligible: the parent cell at cellIdx was replaced
+                // by two daughters appended to the cells vector.
+                rebuildEligible();
+                // Recompute mean brightness — cell count changed.
+                {
+                    float bSum = 0.0f;
+                    for (const auto &c : frame.cells) bSum += c.getBrightness();
+                    frame.setMeanCellBrightness(
+                        bSum / static_cast<float>(frame.cells.size()));
+                }
+                // Rebuild Voronoi territory — cell count and positions
+                // changed (parent replaced, two daughters appended).
+                // Daughters don't have a snap entry yet, so their live
+                // positions become their Voronoi anchors going forward.
+                if (voronoiMapNeeded) {
+                    frame.rebuildVoronoiMap();
+                }
+                return;
+            }
+
+            splitBlacklist.insert(cellName);
+            splitRejectedInPhase.insert(cellName);
+
+            // Compensation perturb. The revert left cells[cellIdx] as the
+            // parent, so no find_if is needed as long as cellIdx still points
+            // at the same parent after the rejected split callback.
+            auto compResult = frame.perturbCell(
+                cellIdx, overlapWeight, useSignalGuidanceThisFrame,
+                randomPerturbRadiusRatio,
+                /*pcaRefitWellFilledMove=*/false,
+                /*useSignalMapGuidance=*/false);
+            const bool compAccept = compResult.first < 0.0;
+            if (exportPerturbDebug) {
+                accumulateDebugCellPlacement(
+                    splitPerturbDebugPlacements,
+                    frame.cells[cellIdx],
+                    config.simulation,
+                    config.simulation.perturb_debug_cell_brightness);
+                ++splitPerturbDebugPlacementCount;
+            }
+            compResult.second(compAccept);
+            if (compAccept) {
+                ++perturbAccepted;
+                residSum += compResult.first;
+                absResidSum += std::abs(compResult.first);
+                ++residCount;
+            }
+        };
+
+        // Image-grounded pre-pass can identify an obvious two-blob split
+        // even when snapshot elongation is close to round. Try those
+        // candidates once up front so correctness does not depend on random
+        // scheduling. Acceptance still uses the same gates as every normal
+        // random split attempt.
+        if (allowSplits && !forcedSplitNames.empty()) {
+            for (const auto &forcedName : forcedSplitNames) {
+                if (phaseNames.count(forcedName) == 0 ||
+                    splitBlacklist.count(forcedName) > 0) {
+                    continue;
+                }
+                auto it = std::find_if(
+                    frame.cells.begin(), frame.cells.end(),
+                    [&](const Ellipsoid &cell) {
+                        return cell.getName() == forcedName;
+                    });
+                if (it == frame.cells.end()) continue;
+                const size_t cellIdx = static_cast<size_t>(
+                    std::distance(frame.cells.begin(), it));
+                attemptSplitAtIndex(cellIdx, forcedName, "prepass_force");
+            }
+            rebuildEligible();
+        }
+
         for (size_t i = 0; i < totalPhaseIters; ++i) {
             if (eligible.empty()) break;
 
@@ -3422,128 +3699,7 @@ void CellUniverse::optimize(int frameIndex)
                                && splitBlacklist.count(cellName) == 0;
 
             if (canSplit && uniform01(gen) < pSplit) {
-                // --- Split attempt ---
-                splitAttempted++;
-                auto snapIt = previousSnapshots.find(cellName);
-                if (snapIt == previousSnapshots.end() || !snapIt->second.valid) {
-                    splitBlacklist.insert(cellName);
-                    continue;
-                }
-
-                // useSnapDir=true adds snapshot-axis candidates alongside
-                // image-PCA candidates inside trySplitCellPhased — cost picks
-                // the winner. Always true now so every split attempt tries
-                // both direction sources.
-                const bool useSnapDir = true;
-
-                Frame::ClaimSet others = buildOtherClaimSet(
-                    cellName,
-                    splitAcceptedInPhase,
-                    splitRejectedInPhase,
-                    phaseB);
-
-                // Pass pre-pass direction + length via splitSnapshot so
-                // trySplitCellPhased can add it as an extra primary axis
-                // (labeled "imgPca"). We KEEP splitSnapshot.position at
-                // the snap center so the split attempt tries BOTH midpoints:
-                //   - snap_* candidates: midpoint = true snap center
-                //   - data_* candidates: midpoint = pixel-projection centroid
-                //     (which for the imgPca axis equals the pre-pass midpoint)
-                // Snap radii preserved for daughter sizing.
-                PreviousFrameSnapshot splitSnapshot = snapIt->second;
-                auto itD = expectedDaughters.find(cellName);
-                if (itD != expectedDaughters.end()) {
-                    const cv::Point3f &gd1 = itD->second.first;
-                    const cv::Point3f &gd2 = itD->second.second;
-                    const cv::Point3f delta = gd2 - gd1;
-                    const float len = static_cast<float>(cv::norm(delta));
-                    if (len > 1e-3f) {
-                        splitSnapshot.splitAxisDir = cv::Point3f(
-                            delta.x / len, delta.y / len, delta.z / len);
-                        splitSnapshot.splitAxisLength = len;
-                    }
-                }
-
-                // If the post-PCA pass produced a bridge proposal for this
-                // cell, hand it to trySplitCellPhased so it competes as
-                // "bridge_primary" alongside data_/snap_ candidates.
-                const BridgeSplitProposal *bridgeForCell = nullptr;
-                if (!bridgeProposals.empty()) {
-                    auto bIt = bridgeProposals.find(cellName);
-                    if (bIt != bridgeProposals.end()) {
-                        bridgeForCell = &bIt->second;
-                    }
-                }
-                auto result = frame.trySplitCellPhased(
-                    cellIdx, splitSnapshot, others, useSnapDir, config.prob,
-                    exportPerturbDebug ? &splitPerturbDebugPlacements : nullptr,
-                    exportPerturbDebug ? &splitPerturbDebugPlacementCount : nullptr,
-                    config.simulation.perturb_debug_cell_brightness,
-                    bridgeForCell);
-
-                double costDiff = result.first;
-                auto callback = result.second;
-
-                const bool accept = (costDiff < 0.0);
-                callback(accept);
-                if (accept) {
-                    splitAccepted++;
-                    splitAcceptedInPhase.insert(cellName);
-                    previousSnapshots.erase(cellName);
-                    // Add daughter names to phaseNames so they become eligible
-                    // for perturbation during the rest of this frame. Without
-                    // this, rebuildEligible skips daughters (their names weren't
-                    // in phaseNames at frame start) and they get zero perturbation
-                    // iterations — only the split burn-in + refine positioning.
-                    phaseNames.insert(cellName + "0");
-                    phaseNames.insert(cellName + "1");
-                    // Rebuild eligible: the parent cell at cellIdx was replaced
-                    // by two daughters appended to the cells vector.
-                    rebuildEligible();
-                    // Recompute mean brightness — cell count changed.
-                    {
-                        float bSum = 0.0f;
-                        for (const auto &c : frame.cells) bSum += c.getBrightness();
-                        frame.setMeanCellBrightness(bSum / static_cast<float>(frame.cells.size()));
-                    }
-                    // Rebuild Voronoi territory — cell count and positions
-                    // changed (parent replaced, two daughters appended).
-                    // Daughters don't have a snap entry yet, so their
-                    // live positions become their Voronoi anchors going
-                    // forward. Without a rebuild, subsequent perturbations
-                    // of the daughters would be scored against the parent's
-                    // stale claim-set.
-                    if (voronoiMapNeeded) {
-                        frame.rebuildVoronoiMap();
-                    }
-                } else {
-                    splitBlacklist.insert(cellName);
-                    splitRejectedInPhase.insert(cellName);
-
-                    // Compensation perturb. The revert left cells[cellIdx]
-                    // as the parent (in place), so no find_if needed.
-                    auto compResult = frame.perturbCell(
-                        cellIdx, overlapWeight, useSignalGuidanceThisFrame,
-                        randomPerturbRadiusRatio,
-                        /*pcaRefitWellFilledMove=*/false,
-                        /*useSignalMapGuidance=*/false);
-                    const bool compAccept = compResult.first < 0.0;
-                    if (exportPerturbDebug) {
-                        accumulateDebugCellPlacement(
-                            splitPerturbDebugPlacements,
-                            frame.cells[cellIdx],
-                            config.simulation,
-                            config.simulation.perturb_debug_cell_brightness);
-                        ++splitPerturbDebugPlacementCount;
-                    }
-                    compResult.second(compAccept);
-                    if (compAccept) {
-                        perturbAccepted++;
-                        residSum += compResult.first;
-                        absResidSum += std::abs(compResult.first);
-                        residCount++;
-                    }
-                }
+                attemptSplitAtIndex(cellIdx, cellName, "random");
             } else {
                 // --- Perturbation ---
                 const float effectivePerturbRadiusRatio = perturbRatioFor(cellName);
