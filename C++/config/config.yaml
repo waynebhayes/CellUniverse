@@ -235,14 +235,16 @@ simulation:
   export_signal_debug_images: false
   # Debug normal perturb proposals. Draws every proposed cell placement during
   # normal perturbation onto black; overlaps accumulate brightness.
-  export_perturb_debug_images: true
+  # Keep this off for production runs to avoid per-iteration image write churn.
+  export_perturb_debug_images: false
   # Extra perturb debug export: black background with a small cube at each
   # current cell center and the cell name drawn next to that cube.
-  export_perturb_cell_center_debug_images: true
+  # Keep this off for production runs; turn on manually when diagnosing.
+  export_perturb_cell_center_debug_images: false
   export_frame_png: false
   export_frame_tiff: true
   quit_after_preprocessing: false
-  prepare_analyze_one_frame: true
+  prepare_analyze_one_frame: false
   # When true, after a frame has been optimized and exported, release its
   # image-heavy stacks from memory while keeping cells, cached summaries,
   # checkpoints, and other state needed by later frames.

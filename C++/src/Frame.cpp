@@ -5,9 +5,41 @@
 #include <limits>
 #include <sstream>
 
+namespace {
+template <typename Fn>
+void forEachSliceIndex(const SimulationConfig &config, int count, const Fn &fn)
+{
+    if (count <= 0) {
+        return;
+    }
+
+    const bool useParallel = config.parallel_threads > 1 &&
+                            count >= config.parallel_min_slices;
+    if (!useParallel) {
+        for (int i = 0; i < count; ++i) {
+            fn(i);
+        }
+        return;
+    }
+
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static)
+    for (int i = 0; i < count; ++i) {
+        fn(i);
+    }
+#else
+    cv::parallel_for_(cv::Range(0, count), [&](const cv::Range &range) {
+        for (int i = range.start; i < range.end; ++i) {
+            fn(i);
+        }
+    });
+#endif
+}
+
 // OpenMP pragmas are parsed by the compiler when -fopenmp is passed;
 // no header include needed unless runtime functions (omp_get_thread_num, etc.)
 // are used. The #pragma directives below become no-ops without -fopenmp.
+} // namespace
 
 // Asymmetric-L2 per-slice cost (Fix E).
 // Returns sqrt(sum(w_i * (synth_i - real_i)^2)) where w_i = k when synth>real
@@ -526,8 +558,8 @@ void Frame::refreshFullCostCache()
     #pragma omp parallel for reduction(+:totalCost) schedule(static)
     for (int i = 0; i < nSlices; ++i)
     {
-        const double sliceCost = asymmetricL2Slice(_realFrame[i], _synthFrame[i], asymK);
-        _currentCostPerSlice[i] = sliceCost;
+        const double sliceCost = asymmetricL2Slice(_realFrame[static_cast<size_t>(i)], _synthFrame[static_cast<size_t>(i)], asymK);
+        _currentCostPerSlice[static_cast<size_t>(i)] = sliceCost;
         totalCost += sliceCost;
     }
     _currentCost = totalCost;
@@ -553,11 +585,15 @@ double Frame::calculateIncrementalCost(const std::vector<cv::Mat> &newSynthFrame
         const int nSlices = static_cast<int>(_realFrame.size());
         const int zMin = std::max(0, affectedZMin);
         const int zMax = std::min(nSlices - 1, affectedZMax);
+        const int affectedCount = zMax - zMin + 1;
         const float asymK = simulationConfig.asymmetric_cost_weight;
-        for (int i = zMin; i <= zMax; ++i)
-        {
-            outNewPerSlice[i] = asymmetricL2Slice(_realFrame[i], newSynthFrame[i], asymK);
-        }
+        forEachSliceIndex(simulationConfig, affectedCount, [&](int localIndex) {
+            const int i = zMin + localIndex;
+            outNewPerSlice[static_cast<size_t>(i)] =
+                asymmetricL2Slice(_realFrame[static_cast<size_t>(i)],
+                                  newSynthFrame[static_cast<size_t>(i)],
+                                  asymK);
+        });
     }
 
     // Always sum in slice-index order so the result is bit-identical to
@@ -574,7 +610,7 @@ double Frame::calculateIncrementalCost(const std::vector<cv::Mat> &newSynthFrame
 std::vector<cv::Mat> Frame::generateSynthFrame()
 {
     cv::Size shape = getImageShape();
-    std::vector<cv::Mat> frame;
+    std::vector<cv::Mat> frame(z_slices.size());
 
     // Pre-compute per-cell rotation matrix + inv-radii-squared once per
     // render pass (A4 optimization; mirrors generateSynthFrameFast).
@@ -595,8 +631,8 @@ std::vector<cv::Mat> Frame::generateSynthFrame()
         cellZ[c] = cells[c].getZ();
     }
 
-    for (double z : z_slices)
-    {
+    forEachSliceIndex(simulationConfig, static_cast<int>(z_slices.size()), [&](int i) {
+        const double z = z_slices[static_cast<size_t>(i)];
         Image synthImage = cv::Mat(shape, CV_32F, cv::Scalar(_backgroundValue));
         const float zf = static_cast<float>(z);
         for (size_t c = 0; c < nCells; ++c)
@@ -607,8 +643,8 @@ std::vector<cv::Mat> Frame::generateSynthFrame()
                                       cellInvR2[c][0], cellInvR2[c][1], cellInvR2[c][2],
                                       zf);
         }
-        frame.push_back(synthImage);
-    }
+        frame[static_cast<size_t>(i)] = synthImage;
+    });
     return frame;
 }
 
@@ -987,7 +1023,7 @@ std::vector<cv::Mat> Frame::generateSynthFrameFast(Ellipsoid &oldCell, Ellipsoid
     }
 
     cv::Size shape = getImageShape(); // Assuming getImageShape() returns a cv::Size
-    std::vector<cv::Mat> synthFrame;
+    std::vector<cv::Mat> synthFrame = _synthFrame;
 
     // Calculate the smallest box that contains both the old and new cell
     MinBox minBox = oldCell.calculateMinimumBox(newCell);
@@ -1022,38 +1058,41 @@ std::vector<cv::Mat> Frame::generateSynthFrameFast(Ellipsoid &oldCell, Ellipsoid
         cellZ[c] = cells[c].getZ();
     }
 
-    // preallocate space to avoid reallocation
-    synthFrame.reserve(z_slices.size());
+    // If this candidate touches a contiguous z region, rerender only
+    // that range and keep the untouched synthetic slices from the cache.
     for (size_t i = 0; i < z_slices.size(); ++i)
     {
-        double z = z_slices[i];
-        // If the z-slice is outside the min/max box, append the existing synthetic image to the stack
-        // index 2 is representing the z parameter
-        if (z < minCorner[2] || z > maxCorner[2])
-        {
-            synthFrame.push_back(_synthFrame[i]);
+        const double z = z_slices[i];
+        if (z < minCorner[2] || z > maxCorner[2]) {
             continue;
         }
-
         if (affectedMin < 0) affectedMin = static_cast<int>(i);
         affectedMax = static_cast<int>(i);
+    }
 
-        cv::Mat synthImage = cv::Mat(shape, CV_32F, cv::Scalar(_backgroundValue));
+    if (affectedMin >= 0 && affectedMax >= affectedMin)
+    {
+        const int affectedCount = affectedMax - affectedMin + 1;
+        forEachSliceIndex(simulationConfig, affectedCount, [&](int localIndex) {
+            const int sliceIndex = affectedMin + localIndex;
+            const double z = z_slices[static_cast<size_t>(sliceIndex)];
+            cv::Mat synthImage = cv::Mat(shape, CV_32F, cv::Scalar(_backgroundValue));
 
-        for (size_t c = 0; c < nCells; ++c)
-        {
-            // Skip cells that can't contribute to this z-slice.
-            // A cell at z=100 with maxR=25 only affects slices 75-125.
-            // Without this check, ALL cells are drawn on every affected
-            // slice — 80%+ of draw calls produce zero pixels.
-            if (std::abs(static_cast<float>(z) - cellZ[c]) > cellMaxR[c]) continue;
-            cells[c].drawWithRotation(synthImage, simulationConfig,
-                                      cellRotations[c],
-                                      cellInvR2[c][0], cellInvR2[c][1], cellInvR2[c][2],
-                                      static_cast<float>(z));
-        }
+            for (size_t c = 0; c < nCells; ++c)
+            {
+                // Skip cells that can't contribute to this z-slice.
+                // A cell at z=100 with maxR=25 only affects slices 75-125.
+                // Without this check, ALL cells are drawn on every affected
+                // slice — 80%+ of draw calls produce zero pixels.
+                if (std::abs(static_cast<float>(z) - cellZ[c]) > cellMaxR[c]) continue;
+                cells[c].drawWithRotation(synthImage, simulationConfig,
+                                          cellRotations[c],
+                                          cellInvR2[c][0], cellInvR2[c][1], cellInvR2[c][2],
+                                          static_cast<float>(z));
+            }
 
-        synthFrame.push_back(synthImage);
+            synthFrame[static_cast<size_t>(sliceIndex)] = synthImage;
+        });
     }
 
     if (outAffectedZMin) *outAffectedZMin = affectedMin;
@@ -1064,12 +1103,11 @@ std::vector<cv::Mat> Frame::generateSynthFrameFast(Ellipsoid &oldCell, Ellipsoid
 
 std::vector<cv::Mat> Frame::generateOutputFrame()
 {
-    std::vector<cv::Mat> realFrameWithOutlines;
+    std::vector<cv::Mat> realFrameWithOutlines(_realFrame.size());
 
-    for (size_t i = 0; i < _realFrame.size(); ++i)
-    {
-        const cv::Mat &realImage = _realFrame[i];
-        double z = z_slices[i];
+    forEachSliceIndex(simulationConfig, static_cast<int>(_realFrame.size()), [&](int i) {
+        const cv::Mat &realImage = _realFrame[static_cast<size_t>(i)];
+        const double z = z_slices[static_cast<size_t>(i)];
         const float outlineIntensity = std::min(1.0f, _backgroundValue * 1.6f);
 
         cv::Mat outputFrame = realImage.clone();
@@ -1086,18 +1124,18 @@ std::vector<cv::Mat> Frame::generateOutputFrame()
             outputFrame.convertTo(outputFrame, CV_8U, 255.0);
         }
 
-        realFrameWithOutlines.push_back(outputFrame);
-    }
+        realFrameWithOutlines[static_cast<size_t>(i)] = outputFrame;
+    });
 
     return realFrameWithOutlines;
 }
 
 std::vector<cv::Mat> Frame::generateOutputSynthFrame()
 {
-    std::vector<cv::Mat> outputSynthFrame;
+    std::vector<cv::Mat> outputSynthFrame(_synthFrame.size());
 
-    for (const auto &synthImage : _synthFrame)
-    {
+    forEachSliceIndex(simulationConfig, static_cast<int>(_synthFrame.size()), [&](int i) {
+        const auto &synthImage = _synthFrame[static_cast<size_t>(i)];
         cv::Mat outputImage;
         if (synthImage.depth() != CV_8U)
         {
@@ -1109,8 +1147,8 @@ std::vector<cv::Mat> Frame::generateOutputSynthFrame()
             outputImage = synthImage.clone();
         }
 
-        outputSynthFrame.push_back(outputImage);
-    }
+        outputSynthFrame[static_cast<size_t>(i)] = outputImage;
+    });
 
     return outputSynthFrame;
 }
