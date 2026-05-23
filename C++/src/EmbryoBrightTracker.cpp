@@ -404,6 +404,9 @@ std::vector<EmbryoBrightTracker::Comp3DStat> EmbryoBrightTracker::extractConnect
                     st.sx += w * p.x;
                     st.sy += w * p.y;
                     st.sz += w * p.z;
+                    st.ux += p.x;
+                    st.uy += p.y;
+                    st.uz += p.z;
                     st.sumI += v;
 
                     st.z0 = std::min(st.z0, p.z);

@@ -71,11 +71,17 @@ public:
         int vox = 0;
         double sumW = 0.0;
         double sx = 0.0, sy = 0.0, sz = 0.0;
+        double ux = 0.0, uy = 0.0, uz = 0.0;
         double sumI = 0.0;
         int z0=0,z1=0,y0=0,y1=0,x0=0,x1=0;
         cv::Point3f center() const {
             if (sumW <= 1e-9) return cv::Point3f(0,0,0);
             return cv::Point3f((float)(sx/sumW),(float)(sy/sumW),(float)(sz/sumW));
+        }
+
+        cv::Point3f voxelCenter() const {
+            if (vox <= 0) return center();
+            return cv::Point3f((float)(ux/(double)vox),(float)(uy/(double)vox),(float)(uz/(double)vox));
         }
 
         float meanI() const {

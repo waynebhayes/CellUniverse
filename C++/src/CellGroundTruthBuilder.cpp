@@ -6,9 +6,11 @@
 #include <cctype>
 #include <cmath>
 #include <chrono>
+#include <cstdlib>
 #include <fstream>
 #include <iomanip>
 #include <limits>
+#include <map>
 #include <sstream>
 
 namespace
@@ -201,6 +203,171 @@ std::vector<cv::Mat> normalizeStackForPreview(const std::vector<cv::Mat> &volume
     return preview;
 }
 
+std::vector<float> groundTruthPercentiles()
+{
+    const char *overrideValue = std::getenv("CELLUNIVERSE_GT_PERCENTILES");
+    if (overrideValue == nullptr || std::string(overrideValue).empty())
+    {
+        return {99.3f, 99.0f, 98.7f, 98.5f, 98.3f, 98.0f, 97.7f};
+    }
+
+    std::vector<float> percentiles;
+    std::stringstream stream(overrideValue);
+    std::string token;
+    while (std::getline(stream, token, ','))
+    {
+        try
+        {
+            const float percentile = std::stof(token);
+            if (percentile > 0.0f && percentile < 100.0f)
+            {
+                percentiles.push_back(percentile);
+            }
+        }
+        catch (const std::exception &)
+        {
+        }
+    }
+    if (percentiles.empty())
+    {
+        return {99.3f, 99.0f, 98.7f, 98.5f, 98.3f, 98.0f, 97.7f};
+    }
+    return percentiles;
+}
+
+bool shouldUseTraMaskWhenAvailable()
+{
+    const char *value = std::getenv("CELLUNIVERSE_GT_USE_TRA_MASK");
+    return value != nullptr && std::string(value) == "1";
+}
+
+bool shouldSkipGroundTruthTiffOutput()
+{
+    const char *value = std::getenv("CELLUNIVERSE_GT_SKIP_TIFF");
+    return value != nullptr && std::string(value) == "1";
+}
+
+bool shouldDisableGroundTruthFragmentMerge()
+{
+    const char *value = std::getenv("CELLUNIVERSE_GT_DISABLE_FRAGMENT_MERGE");
+    return value != nullptr && std::string(value) == "1";
+}
+
+float groundTruthGeometricCenterBlend(const std::string &profileLabel)
+{
+    const char *value = std::getenv("CELLUNIVERSE_GT_GEOMETRIC_CENTER_BLEND");
+    if (value != nullptr && std::string(value).size() > 0)
+    {
+        try
+        {
+            return std::clamp(std::stof(value), 0.0f, 1.0f);
+        }
+        catch (const std::exception &)
+        {
+        }
+    }
+
+    return profileLabel == "celegans_embryo" ? 0.35f : 0.15f;
+}
+
+int frameNumberFromPath(const fs::path &imageFile)
+{
+    std::string digits;
+    for (char ch : imageFile.stem().string())
+    {
+        if (std::isdigit(static_cast<unsigned char>(ch)))
+        {
+            digits.push_back(ch);
+        }
+    }
+    if (digits.empty())
+    {
+        return -1;
+    }
+    return std::stoi(digits);
+}
+
+std::string formatFrameNumber3(int frameNumber)
+{
+    std::ostringstream stream;
+    stream << std::setfill('0') << std::setw(3) << frameNumber;
+    return stream.str();
+}
+
+std::optional<fs::path> findPairedTraMask(const fs::path &imageFile)
+{
+    if (!shouldUseTraMaskWhenAvailable())
+    {
+        return std::nullopt;
+    }
+
+    const int frameNumber = frameNumberFromPath(imageFile);
+    if (frameNumber < 0)
+    {
+        return std::nullopt;
+    }
+
+    const std::string frameText = formatFrameNumber3(frameNumber);
+    const fs::path maskName = "man_track" + frameText + ".tif";
+    if (imageFile.filename() == maskName)
+    {
+        return imageFile;
+    }
+
+    std::vector<fs::path> candidates;
+    const fs::path sequenceDir = imageFile.parent_path();
+    const fs::path datasetRoot = sequenceDir.parent_path();
+    candidates.push_back(datasetRoot / "GroundTruth_Embryo" / "TRA" / maskName);
+    candidates.push_back(datasetRoot / (sequenceDir.filename().string() + "_GT") / "TRA" / maskName);
+    candidates.push_back(datasetRoot / "TRA" / maskName);
+
+    for (const auto &candidate : candidates)
+    {
+        if (fs::exists(candidate))
+        {
+            return candidate;
+        }
+    }
+    return std::nullopt;
+}
+
+int labelValueAt(const cv::Mat &slice, int y, int x)
+{
+    if (slice.channels() != 1)
+    {
+        throw std::runtime_error("TRA mask must be a single-channel label image.");
+    }
+
+    switch (slice.depth())
+    {
+        case CV_8U:
+            return static_cast<int>(slice.at<unsigned char>(y, x));
+        case CV_16U:
+            return static_cast<int>(slice.at<unsigned short>(y, x));
+        case CV_16S:
+            return static_cast<int>(slice.at<short>(y, x));
+        case CV_32S:
+            return slice.at<int>(y, x);
+        case CV_32F:
+            return static_cast<int>(std::lround(slice.at<float>(y, x)));
+        case CV_64F:
+            return static_cast<int>(std::lround(slice.at<double>(y, x)));
+        default:
+            throw std::runtime_error("Unsupported TRA mask pixel depth.");
+    }
+}
+
+std::vector<cv::Mat> loadTraMaskStack(const fs::path &maskFile)
+{
+    std::vector<cv::Mat> slices;
+    cv::imreadmulti(maskFile.string(), slices, cv::IMREAD_UNCHANGED);
+    if (slices.empty())
+    {
+        throw std::runtime_error("TRA mask has 0 slices: " + maskFile.string());
+    }
+    return slices;
+}
+
 std::vector<cv::Mat> interpolateStackForPreview(const std::vector<cv::Mat> &volume, int zScale)
 {
     if (volume.empty())
@@ -339,6 +506,26 @@ float absoluteDistanceZ(const cv::Point3f &lhs, const cv::Point3f &rhs)
 {
     return std::abs(lhs.z - rhs.z);
 }
+
+int findRoot(std::vector<int> &parent, int index)
+{
+    while (parent[index] != index)
+    {
+        parent[index] = parent[parent[index]];
+        index = parent[index];
+    }
+    return index;
+}
+
+void unionRoots(std::vector<int> &parent, int a, int b)
+{
+    a = findRoot(parent, a);
+    b = findRoot(parent, b);
+    if (a != b)
+    {
+        parent[b] = a;
+    }
+}
 } // namespace
 
 CellGroundTruthBuilder::CellGroundTruthBuilder(BaseConfig config, const fs::path &outputDir)
@@ -474,7 +661,10 @@ CellGroundTruthBuilder::DetectedCell CellGroundTruthBuilder::makeDetectedCellFro
     const EmbryoBrightTracker::Comp3DStat &component) const
 {
     DetectedCell cell;
-    cell.centerScaled = component.center();
+    const cv::Point3f weightedCenter = component.center();
+    const cv::Point3f geometricCenter = component.voxelCenter();
+    const float geometricBlend = groundTruthGeometricCenterBlend(activeProfile.label);
+    cell.centerScaled = weightedCenter * (1.0f - geometricBlend) + geometricCenter * geometricBlend;
     cell.centerScaled.z *= effectiveZScaling();
     estimateAdaptiveRadii(component, cell.majorRadius, cell.bRadius, cell.minorRadius);
     cell.voxelCount = component.vox;
@@ -588,6 +778,212 @@ std::optional<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::dete
     cell.voxelCount = tracked.voxelCount;
     cell.meanIntensity = tracked.meanIntensity;
     return cell;
+}
+
+std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::detectCellsFromTraMask(
+    const fs::path &traMaskFile,
+    const std::vector<cv::Mat> &rawVolume,
+    const std::string &frameStem) const
+{
+    const std::vector<cv::Mat> labelSlices = loadTraMaskStack(traMaskFile);
+    if (rawVolume.empty())
+    {
+        throw std::runtime_error("TRA mask mode requires the matching raw frame volume.");
+    }
+
+    const bool rawMatchesMask =
+        rawVolume.size() == labelSlices.size() &&
+        !rawVolume.front().empty() &&
+        rawVolume.front().size() == labelSlices.front().size();
+    if (!rawMatchesMask)
+    {
+        std::cout << "[GroundTruth TRA] warning=raw_mask_size_mismatch"
+                  << " raw_slices=" << rawVolume.size()
+                  << " mask_slices=" << labelSlices.size()
+                  << std::endl;
+    }
+
+    std::map<int, EmbryoBrightTracker::Comp3DStat> labelStats;
+    for (int z = 0; z < static_cast<int>(labelSlices.size()); ++z)
+    {
+        const cv::Mat &maskSlice = labelSlices[static_cast<size_t>(z)];
+        for (int y = 0; y < maskSlice.rows; ++y)
+        {
+            for (int x = 0; x < maskSlice.cols; ++x)
+            {
+                const int label = labelValueAt(maskSlice, y, x);
+                if (label <= 0)
+                {
+                    continue;
+                }
+
+                auto [it, inserted] = labelStats.try_emplace(label);
+                auto &stat = it->second;
+                if (inserted)
+                {
+                    stat.x0 = stat.x1 = x;
+                    stat.y0 = stat.y1 = y;
+                    stat.z0 = stat.z1 = z;
+                }
+
+                stat.vox++;
+                stat.sumW += 1.0;
+                stat.sx += static_cast<double>(x);
+                stat.sy += static_cast<double>(y);
+                stat.sz += static_cast<double>(z);
+                stat.ux += static_cast<double>(x);
+                stat.uy += static_cast<double>(y);
+                stat.uz += static_cast<double>(z);
+                stat.x0 = std::min(stat.x0, x);
+                stat.x1 = std::max(stat.x1, x);
+                stat.y0 = std::min(stat.y0, y);
+                stat.y1 = std::max(stat.y1, y);
+                stat.z0 = std::min(stat.z0, z);
+                stat.z1 = std::max(stat.z1, z);
+
+                if (rawMatchesMask)
+                {
+                    stat.sumI += rawVolume[static_cast<size_t>(z)].ptr<float>(y)[x];
+                }
+            }
+        }
+    }
+
+    const float minMajor = config.cell ? static_cast<float>(config.cell->minARadius) : 6.0f;
+    const float maxMajor = config.cell ? static_cast<float>(config.cell->maxARadius) : 35.0f;
+    const float minMinor = config.cell ? static_cast<float>(config.cell->minCRadius) : 4.0f;
+    const float maxMinor = config.cell ? static_cast<float>(config.cell->maxCRadius) : 25.0f;
+    const float minB = (config.cell && config.cell->maxBRadius > 0.0f)
+        ? static_cast<float>(config.cell->minBRadius)
+        : minMajor;
+    const float maxB = (config.cell && config.cell->maxBRadius > 0.0f)
+        ? static_cast<float>(config.cell->maxBRadius)
+        : maxMajor;
+    const float zScale = effectiveZScaling();
+
+    auto estimateRadiiFromRawNeighborhood = [&](const cv::Point3f &centerRaw,
+                                                float &major,
+                                                float &bRadius,
+                                                float &minor) {
+        major = std::max(minMajor, 12.0f);
+        bRadius = std::max(minB, 10.0f);
+        minor = std::max(minMinor, 8.0f);
+        if (!rawMatchesMask)
+        {
+            return;
+        }
+
+        const float searchXY = std::clamp(std::max(minMajor * 4.8f, 22.0f), 18.0f, 34.0f);
+        const int rx = static_cast<int>(std::ceil(searchXY));
+        const int ry = rx;
+        const int rz = std::max(2, static_cast<int>(std::ceil((searchXY / zScale) * 1.35f)));
+        const int cz = static_cast<int>(std::lround(centerRaw.z));
+        const int cy = static_cast<int>(std::lround(centerRaw.y));
+        const int cx = static_cast<int>(std::lround(centerRaw.x));
+
+        std::vector<float> neighborhoodValues;
+        for (int z = std::max(0, cz - rz); z <= std::min(static_cast<int>(rawVolume.size()) - 1, cz + rz); ++z)
+        {
+            const cv::Mat &slice = rawVolume[static_cast<size_t>(z)];
+            for (int y = std::max(0, cy - ry); y <= std::min(slice.rows - 1, cy + ry); ++y)
+            {
+                const float dy = static_cast<float>(y) - centerRaw.y;
+                for (int x = std::max(0, cx - rx); x <= std::min(slice.cols - 1, cx + rx); ++x)
+                {
+                    const float dx = static_cast<float>(x) - centerRaw.x;
+                    const float dzScaled = (static_cast<float>(z) - centerRaw.z) * zScale;
+                    const float normalized = (dx * dx + dy * dy) / (searchXY * searchXY) +
+                                             (dzScaled * dzScaled) / (searchXY * searchXY);
+                    if (normalized > 1.0f)
+                    {
+                        continue;
+                    }
+                    const float value = slice.ptr<float>(y)[x];
+                    if (std::isfinite(value) && value > 0.0f)
+                    {
+                        neighborhoodValues.push_back(value);
+                    }
+                }
+            }
+        }
+
+        if (neighborhoodValues.size() < 16)
+        {
+            return;
+        }
+
+        const float threshold = percentileFromValues(neighborhoodValues, 0.72f);
+        double sumW = 0.0;
+        double sumDx2 = 0.0;
+        double sumDy2 = 0.0;
+        double sumDz2 = 0.0;
+        for (int z = std::max(0, cz - rz); z <= std::min(static_cast<int>(rawVolume.size()) - 1, cz + rz); ++z)
+        {
+            const cv::Mat &slice = rawVolume[static_cast<size_t>(z)];
+            for (int y = std::max(0, cy - ry); y <= std::min(slice.rows - 1, cy + ry); ++y)
+            {
+                const float dy = static_cast<float>(y) - centerRaw.y;
+                for (int x = std::max(0, cx - rx); x <= std::min(slice.cols - 1, cx + rx); ++x)
+                {
+                    const float dx = static_cast<float>(x) - centerRaw.x;
+                    const float dzScaled = (static_cast<float>(z) - centerRaw.z) * zScale;
+                    const float normalized = (dx * dx + dy * dy) / (searchXY * searchXY) +
+                                             (dzScaled * dzScaled) / (searchXY * searchXY);
+                    if (normalized > 1.0f)
+                    {
+                        continue;
+                    }
+
+                    const float value = slice.ptr<float>(y)[x];
+                    const float signal = value - threshold;
+                    if (signal <= 0.0f)
+                    {
+                        continue;
+                    }
+                    const double weight = static_cast<double>(signal) * static_cast<double>(signal);
+                    sumW += weight;
+                    sumDx2 += weight * static_cast<double>(dx * dx);
+                    sumDy2 += weight * static_cast<double>(dy * dy);
+                    sumDz2 += weight * static_cast<double>(dzScaled * dzScaled);
+                }
+            }
+        }
+
+        if (sumW <= 1e-6)
+        {
+            return;
+        }
+
+        const float radiusScale = 2.55f;
+        const float rxMoment = radiusScale * std::sqrt(static_cast<float>(sumDx2 / sumW));
+        const float ryMoment = radiusScale * std::sqrt(static_cast<float>(sumDy2 / sumW));
+        const float rzMoment = radiusScale * std::sqrt(static_cast<float>(sumDz2 / sumW));
+        major = clampf(std::max(rxMoment, ryMoment), minMajor, maxMajor);
+        bRadius = clampf(std::min(rxMoment, ryMoment), minB, std::min(maxB, major));
+        minor = clampf(rzMoment, minMinor, std::min(maxMinor, major));
+    };
+
+    std::vector<DetectedCell> cells;
+    cells.reserve(labelStats.size());
+    for (const auto &[label, stat] : labelStats)
+    {
+        DetectedCell cell = makeDetectedCellFromComponent(stat);
+        const cv::Point3f centerRaw = stat.center();
+        cell.centerScaled = cv::Point3f(centerRaw.x, centerRaw.y, centerRaw.z * zScale);
+        cell.zForCsv = centerRaw.z;
+        estimateRadiiFromRawNeighborhood(centerRaw, cell.majorRadius, cell.bRadius, cell.minorRadius);
+        std::ostringstream name;
+        name << frameStem << "_label_" << label;
+        cell.name = name.str();
+        cells.push_back(cell);
+    }
+
+    std::cout << "[GroundTruth TRA] mask=" << traMaskFile
+              << " labels=" << cells.size()
+              << " raw_radius_estimate=" << (rawMatchesMask ? 1 : 0)
+              << std::endl;
+
+    return cells;
 }
 
 std::vector<EmbryoBrightTracker::Comp3DStat> CellGroundTruthBuilder::collapseNearbySeeds(
@@ -742,16 +1138,24 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::detect
     const int minComponentVoxels = computeMinComponentVoxels();
     std::vector<DetectedCell> cells;
     cells.reserve(lowComponents.size());
+    int skippedSmallComponents = 0;
+    int skippedNoSeedComponents = 0;
+    int splitComponents = 0;
+    int refinedSplitCells = 0;
+    const bool sparseSeedField =
+        activeProfile.label == "celegans_embryo" && strongHighComponents.size() < 80;
 
     for (const auto &component : lowComponents)
     {
         if (component.vox < minComponentVoxels)
         {
+            skippedSmallComponents++;
             continue;
         }
 
         if (!componentContainsBrightSeed(component, strongHighComponents))
         {
+            skippedNoSeedComponents++;
             continue;
         }
 
@@ -769,16 +1173,19 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::detect
         containedSeeds = collapseNearbySeeds(containedSeeds, activeProfile.seedMergeDistance);
 
         DetectedCell coarseCell = makeDetectedCellFromComponent(component);
-        const bool needsSeededSplit = shouldSplitCoarseComponent(coarseCell, containedSeeds);
+        const bool needsSeededSplit =
+            !sparseSeedField && shouldSplitCoarseComponent(coarseCell, containedSeeds);
 
         if (needsSeededSplit)
         {
+            splitComponents++;
             for (const auto &seed : containedSeeds)
             {
                 std::optional<DetectedCell> refined = detectLocalSeededCell(volume, seed, thresholdLow);
                 if (refined)
                 {
                     cells.push_back(*refined);
+                    refinedSplitCells++;
                 }
             }
             continue;
@@ -801,6 +1208,7 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::detect
         cells[i].zForCsv = cells[i].centerScaled.z / effectiveZScaling();
     }
 
+    const size_t beforeDedupCount = cells.size();
     std::vector<DetectedCell> deduped;
     for (const auto &cell : cells)
     {
@@ -827,7 +1235,25 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::detect
         }
     }
 
+    const size_t beforePruneCount = deduped.size();
     deduped = pruneLikelySatelliteCells(deduped);
+    const size_t beforeFragmentMergeCount = deduped.size();
+    deduped = mergeLikelySameCellFragments(deduped, volume, thresholdLow, thresholdHigh);
+    std::cout << "[GroundTruth CCStats] percentileHigh=" << percentileHigh
+              << " low_components=" << lowComponents.size()
+              << " high_components=" << highComponents.size()
+              << " strong_high=" << strongHighComponents.size()
+              << " min_component_voxels=" << minComponentVoxels
+              << " skipped_small=" << skippedSmallComponents
+              << " skipped_no_seed=" << skippedNoSeedComponents
+              << " sparse_seed_field=" << (sparseSeedField ? 1 : 0)
+              << " split_components=" << splitComponents
+              << " refined_split_cells=" << refinedSplitCells
+              << " before_dedup=" << beforeDedupCount
+              << " after_dedup=" << beforePruneCount
+              << " after_prune=" << beforeFragmentMergeCount
+              << " after_fragment_merge=" << deduped.size()
+              << std::endl;
 
     for (size_t i = 0; i < deduped.size(); ++i)
     {
@@ -981,6 +1407,232 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::pruneL
     return filtered;
 }
 
+std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::mergeLikelySameCellFragments(
+    const std::vector<DetectedCell> &cells,
+    const std::vector<cv::Mat> &volume,
+    float thresholdLow,
+    float thresholdHigh) const
+{
+    if (cells.size() < 2 || volume.empty())
+    {
+        return cells;
+    }
+
+    std::vector<float> majorRadii;
+    majorRadii.reserve(cells.size());
+    for (const auto &cell : cells)
+    {
+        majorRadii.push_back(cell.majorRadius);
+    }
+    std::sort(majorRadii.begin(), majorRadii.end());
+    const float medianMajor = majorRadii[majorRadii.size() / 2];
+    const float zScale = effectiveZScaling();
+    if (shouldDisableGroundTruthFragmentMerge())
+    {
+        std::cout << "[GroundTruth FragmentMerge]"
+                  << " before=" << cells.size()
+                  << " after=" << cells.size()
+                  << " merged_pairs=0"
+                  << " median_major=" << medianMajor
+                  << " mode=disabled_by_env"
+                  << std::endl;
+        return cells;
+    }
+
+    if (activeProfile.label == "celegans_embryo" && cells.size() >= 245)
+    {
+        std::cout << "[GroundTruth FragmentMerge]"
+                  << " before=" << cells.size()
+                  << " after=" << cells.size()
+                  << " merged_pairs=0"
+                  << " median_major=" << medianMajor
+                  << " mode=dense_skip"
+                  << std::endl;
+        return cells;
+    }
+
+    const bool sparseMode = activeProfile.label == "celegans_embryo" && cells.size() < 90;
+    const bool moderateMode = activeProfile.label == "celegans_embryo" && cells.size() < 170;
+
+    auto bridgeLooksContinuous = [&](const DetectedCell &lhs, const DetectedCell &rhs) {
+        const cv::Point3f a(lhs.centerScaled.x, lhs.centerScaled.y, lhs.zForCsv);
+        const cv::Point3f b(rhs.centerScaled.x, rhs.centerScaled.y, rhs.zForCsv);
+        const float dx = b.x - a.x;
+        const float dy = b.y - a.y;
+        const float dzScaled = (b.z - a.z) * zScale;
+        const float distance = std::sqrt(dx * dx + dy * dy + dzScaled * dzScaled);
+        const int steps = std::clamp(static_cast<int>(std::ceil(distance / 1.5f)), 8, 48);
+
+        std::vector<float> samples;
+        samples.reserve(static_cast<size_t>(steps + 1));
+        for (int s = 0; s <= steps; ++s)
+        {
+            const float t = static_cast<float>(s) / static_cast<float>(steps);
+            const int x = static_cast<int>(std::lround(a.x + t * dx));
+            const int y = static_cast<int>(std::lround(a.y + t * dy));
+            const int z = static_cast<int>(std::lround(a.z + t * (b.z - a.z)));
+            if (z < 0 || z >= static_cast<int>(volume.size()))
+            {
+                continue;
+            }
+            const cv::Mat &slice = volume[static_cast<size_t>(z)];
+            if (y < 0 || y >= slice.rows || x < 0 || x >= slice.cols)
+            {
+                continue;
+            }
+            const float value = slice.ptr<float>(y)[x];
+            if (std::isfinite(value))
+            {
+                samples.push_back(value);
+            }
+        }
+
+        if (samples.size() < 5)
+        {
+            return false;
+        }
+        std::sort(samples.begin(), samples.end());
+        const float q20 = samples[static_cast<size_t>(0.20f * static_cast<float>(samples.size() - 1))];
+        const float q50 = samples[samples.size() / 2];
+        const float localSignal = std::max(1.0f, std::min(lhs.meanIntensity, rhs.meanIntensity) - thresholdLow);
+        const float bridgeSignal = q20 - thresholdLow;
+        const bool highContinuousBridge = q20 >= thresholdHigh * 0.58f;
+        const bool lowContinuousBridge = bridgeSignal >= localSignal * 0.30f && q50 >= thresholdLow * 1.12f;
+        const bool sparseContinuousBridge =
+            sparseMode && q20 >= thresholdLow * 0.52f && q50 >= thresholdLow * 0.82f;
+        const bool moderateContinuousBridge =
+            moderateMode && q20 >= thresholdLow * 0.70f && q50 >= thresholdLow * 0.95f;
+        return highContinuousBridge || lowContinuousBridge ||
+               sparseContinuousBridge || moderateContinuousBridge;
+    };
+
+    std::vector<int> parent(cells.size());
+    for (size_t i = 0; i < parent.size(); ++i)
+    {
+        parent[i] = static_cast<int>(i);
+    }
+
+    int mergedPairs = 0;
+    for (size_t i = 0; i < cells.size(); ++i)
+    {
+        for (size_t j = i + 1; j < cells.size(); ++j)
+        {
+            const float dzScaled = (cells[i].zForCsv - cells[j].zForCsv) * zScale;
+            const float dx = cells[i].centerScaled.x - cells[j].centerScaled.x;
+            const float dy = cells[i].centerScaled.y - cells[j].centerScaled.y;
+            const float distance = std::sqrt(dx * dx + dy * dy + dzScaled * dzScaled);
+            float mergeDistance = std::max({
+                13.0f,
+                medianMajor * 0.92f,
+                0.62f * std::max(cells[i].majorRadius, cells[j].majorRadius)
+            });
+            if (sparseMode)
+            {
+                mergeDistance = std::max(mergeDistance, std::max(30.0f, medianMajor * 3.1f));
+            }
+            else if (moderateMode)
+            {
+                mergeDistance = std::max(mergeDistance, std::max(20.0f, medianMajor * 1.8f));
+            }
+            if (distance > mergeDistance)
+            {
+                continue;
+            }
+
+            if (bridgeLooksContinuous(cells[i], cells[j]))
+            {
+                unionRoots(parent, static_cast<int>(i), static_cast<int>(j));
+                mergedPairs++;
+            }
+        }
+    }
+
+    std::map<int, std::vector<int>> groups;
+    for (size_t i = 0; i < cells.size(); ++i)
+    {
+        groups[findRoot(parent, static_cast<int>(i))].push_back(static_cast<int>(i));
+    }
+
+    std::vector<DetectedCell> merged;
+    merged.reserve(groups.size());
+    for (const auto &[root, members] : groups)
+    {
+        if (members.size() == 1)
+        {
+            merged.push_back(cells[static_cast<size_t>(members.front())]);
+            continue;
+        }
+
+        DetectedCell cell;
+        double totalWeight = 0.0;
+        double totalVoxelWeight = 0.0;
+        int x0 = std::numeric_limits<int>::max();
+        int y0 = std::numeric_limits<int>::max();
+        int z0 = std::numeric_limits<int>::max();
+        int x1 = std::numeric_limits<int>::min();
+        int y1 = std::numeric_limits<int>::min();
+        int z1 = std::numeric_limits<int>::min();
+        for (int index : members)
+        {
+            const DetectedCell &part = cells[static_cast<size_t>(index)];
+            const double weight = std::max(1.0, static_cast<double>(part.voxelCount) *
+                                                  std::max(1.0f, part.meanIntensity));
+            totalWeight += weight;
+            totalVoxelWeight += static_cast<double>(part.voxelCount);
+            cell.centerScaled.x += static_cast<float>(weight * part.centerScaled.x);
+            cell.centerScaled.y += static_cast<float>(weight * part.centerScaled.y);
+            cell.zForCsv += static_cast<float>(weight * part.zForCsv);
+            cell.majorRadius = std::max(cell.majorRadius, part.majorRadius);
+            cell.bRadius = std::max(cell.bRadius, part.bRadius);
+            cell.minorRadius = std::max(cell.minorRadius, part.minorRadius);
+            cell.meanIntensity += static_cast<float>(weight * part.meanIntensity);
+            x0 = std::min(x0, part.component.x0);
+            x1 = std::max(x1, part.component.x1);
+            y0 = std::min(y0, part.component.y0);
+            y1 = std::max(y1, part.component.y1);
+            z0 = std::min(z0, part.component.z0);
+            z1 = std::max(z1, part.component.z1);
+        }
+
+        cell.centerScaled.x = static_cast<float>(cell.centerScaled.x / totalWeight);
+        cell.centerScaled.y = static_cast<float>(cell.centerScaled.y / totalWeight);
+        cell.zForCsv = static_cast<float>(cell.zForCsv / totalWeight);
+        cell.centerScaled.z = cell.zForCsv * zScale;
+        cell.voxelCount = static_cast<int>(std::lround(totalVoxelWeight));
+        cell.meanIntensity = static_cast<float>(cell.meanIntensity / totalWeight);
+        cell.component.x0 = x0;
+        cell.component.x1 = x1;
+        cell.component.y0 = y0;
+        cell.component.y1 = y1;
+        cell.component.z0 = z0;
+        cell.component.z1 = z1;
+        cell.component.vox = cell.voxelCount;
+        cell.component.sumW = totalVoxelWeight;
+        cell.component.sx = static_cast<double>(cell.centerScaled.x) * totalVoxelWeight;
+        cell.component.sy = static_cast<double>(cell.centerScaled.y) * totalVoxelWeight;
+        cell.component.sz = static_cast<double>(cell.zForCsv) * totalVoxelWeight;
+        cell.component.sumI = static_cast<double>(cell.meanIntensity) * totalVoxelWeight;
+        merged.push_back(cell);
+    }
+
+    std::sort(merged.begin(), merged.end(), [](const DetectedCell &lhs, const DetectedCell &rhs) {
+        if (std::abs(lhs.centerScaled.y - rhs.centerScaled.y) > 1e-3f)
+        {
+            return lhs.centerScaled.y < rhs.centerScaled.y;
+        }
+        return lhs.centerScaled.x < rhs.centerScaled.x;
+    });
+
+    std::cout << "[GroundTruth FragmentMerge]"
+              << " before=" << cells.size()
+              << " after=" << merged.size()
+              << " merged_pairs=" << mergedPairs
+              << " median_major=" << medianMajor
+              << std::endl;
+
+    return merged;
+}
+
 float CellGroundTruthBuilder::scoreCandidateCells(const std::vector<DetectedCell> &cells,
                                                   int &totalVoxels,
                                                   int &clampedMinorCount,
@@ -1063,7 +1715,8 @@ float CellGroundTruthBuilder::scoreCandidateCells(const std::vector<DetectedCell
         }
     }
 
-    return 0.028f * meanVoxelCount
+    return 0.010f * meanVoxelCount
+           + 0.16f * static_cast<float>(cells.size())
            + 0.20f * medianMajor
            - 2.50f * static_cast<float>(clampedMinorCount)
            - 1.25f * static_cast<float>(verySmallCount)
@@ -1077,7 +1730,7 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::detect
     const std::vector<cv::Mat> &volume,
     const std::string &frameStem)
 {
-    const std::array<float, 4> percentiles = {99.3f, 99.0f, 98.7f, 98.5f};
+    const std::vector<float> percentiles = groundTruthPercentiles();
 
     std::vector<DetectedCell> bestCells;
     float bestScore = -std::numeric_limits<float>::max();
@@ -1181,6 +1834,14 @@ void CellGroundTruthBuilder::saveFrameOutputs(const fs::path &imageFile,
                                               const std::vector<cv::Mat> &realFrame,
                                               const std::vector<DetectedCell> &cells) const
 {
+    if (shouldSkipGroundTruthTiffOutput())
+    {
+        std::cout << "[GroundTruth Output] skip_tiff=1 frame=" << imageFile.filename().string()
+                  << " reason=CELLUNIVERSE_GT_SKIP_TIFF"
+                  << std::endl;
+        return;
+    }
+
     std::vector<DetectedCell> displayCells = cells;
     const float zScale = effectiveZScaling();
     for (auto &cell : displayCells)
@@ -1200,7 +1861,7 @@ void CellGroundTruthBuilder::saveFrameOutputs(const fs::path &imageFile,
                 ellipsoids,
                 outputDir.string(),
                 imageFile.filename().string());
-    frame.setBackgroundColor(estimateBackgroundValue(displayFrame));
+    frame.setBackgroundColor(0.0f);
     frame.regenerateSynthFrame();
 
     std::vector<cv::Mat> realImages = frame.generateOutputFrame();
@@ -1279,7 +1940,15 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::buildI
     }
 
     const std::string frameStem = imageFile.stem().string();
-    std::vector<DetectedCell> cells = detectCellsInVolume(realFrame, frameStem);
+    std::vector<DetectedCell> cells;
+    if (const std::optional<fs::path> traMask = findPairedTraMask(imageFile))
+    {
+        cells = detectCellsFromTraMask(*traMask, realFrame, frameStem);
+    }
+    else
+    {
+        cells = detectCellsInVolume(realFrame, frameStem);
+    }
     logElapsed("detect_cells");
 
     std::cout << "[GroundTruth Result] frame=" << imageFile.filename().string()

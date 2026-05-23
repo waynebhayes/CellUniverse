@@ -59,6 +59,9 @@ private:
     int computeMinComponentVoxels() const;
     std::vector<DetectedCell> detectCellsInVolume(const std::vector<cv::Mat> &volume,
                                                   const std::string &frameStem);
+    std::vector<DetectedCell> detectCellsFromTraMask(const fs::path &traMaskFile,
+                                                     const std::vector<cv::Mat> &rawVolume,
+                                                     const std::string &frameStem) const;
     std::vector<DetectedCell> detectCellsAtPercentile(const std::vector<cv::Mat> &volume,
                                                       const std::string &frameStem,
                                                       float percentileHigh) const;
@@ -76,6 +79,10 @@ private:
     bool shouldSplitCoarseComponent(const DetectedCell &coarseCell,
                                     const std::vector<EmbryoBrightTracker::Comp3DStat> &containedSeeds) const;
     std::vector<DetectedCell> pruneLikelySatelliteCells(const std::vector<DetectedCell> &cells) const;
+    std::vector<DetectedCell> mergeLikelySameCellFragments(const std::vector<DetectedCell> &cells,
+                                                           const std::vector<cv::Mat> &volume,
+                                                           float thresholdLow,
+                                                           float thresholdHigh) const;
     float scoreCandidateCells(const std::vector<DetectedCell> &cells,
                               int &totalVoxels,
                               int &clampedMinorCount,
