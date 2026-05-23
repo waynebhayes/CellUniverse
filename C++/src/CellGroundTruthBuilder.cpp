@@ -201,6 +201,43 @@ std::vector<cv::Mat> normalizeStackForPreview(const std::vector<cv::Mat> &volume
     return preview;
 }
 
+std::vector<cv::Mat> interpolateStackForPreview(const std::vector<cv::Mat> &volume, int zScale)
+{
+    if (volume.empty())
+    {
+        return {};
+    }
+    if (volume.size() == 1 || zScale <= 1)
+    {
+        return volume;
+    }
+
+    const int outputSlices = zScale * (static_cast<int>(volume.size()) - 1) + 1;
+    std::vector<cv::Mat> interpolated(static_cast<size_t>(outputSlices));
+    for (int outputZ = 0; outputZ < outputSlices; ++outputZ)
+    {
+        const int sourceZ = outputZ / zScale;
+        const int offset = outputZ % zScale;
+        if (offset == 0)
+        {
+            interpolated[static_cast<size_t>(outputZ)] =
+                volume[static_cast<size_t>(sourceZ)].clone();
+            continue;
+        }
+
+        const float alpha = static_cast<float>(offset) / static_cast<float>(zScale);
+        cv::Mat blended;
+        cv::addWeighted(volume[static_cast<size_t>(sourceZ)],
+                        1.0f - alpha,
+                        volume[static_cast<size_t>(sourceZ + 1)],
+                        alpha,
+                        0.0,
+                        blended);
+        interpolated[static_cast<size_t>(outputZ)] = blended;
+    }
+    return interpolated;
+}
+
 cv::Mat makeTiffReadySlice(const cv::Mat &slice)
 {
     if (slice.empty())
@@ -1148,18 +1185,18 @@ void CellGroundTruthBuilder::saveFrameOutputs(const fs::path &imageFile,
     const float zScale = effectiveZScaling();
     for (auto &cell : displayCells)
     {
-        cell.centerScaled.z = cell.zForCsv;
-        if (zScale > 1e-6f)
-        {
-            cell.minorRadius = std::max(1.0f, cell.minorRadius / zScale);
-        }
+        cell.centerScaled.z = cell.zForCsv * zScale;
     }
 
-    std::vector<cv::Mat> displayFrame = normalizeStackForPreview(realFrame);
+    std::vector<cv::Mat> displayFrame = interpolateStackForPreview(
+        normalizeStackForPreview(realFrame),
+        static_cast<int>(std::lround(zScale)));
     std::vector<Ellipsoid> ellipsoids = makeEllipsoids(displayCells);
+    SimulationConfig displayConfig = config.simulation;
+    displayConfig.z_slices = static_cast<int>(displayFrame.size());
 
     Frame frame(displayFrame,
-                config.simulation,
+                displayConfig,
                 ellipsoids,
                 outputDir.string(),
                 imageFile.filename().string());
