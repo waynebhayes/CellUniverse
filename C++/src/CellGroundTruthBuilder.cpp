@@ -1178,21 +1178,6 @@ void CellGroundTruthBuilder::saveFrameOutputs(const fs::path &imageFile,
     std::cout << "[GroundTruth Output] real_tif=" << realTiffPath
               << " synth_tif=" << synthTiffPath
               << std::endl;
-
-    const fs::path realOutputDir = outputDir / "real" / frameDirName;
-    const fs::path synthOutputDir = outputDir / "synth" / frameDirName;
-    fs::create_directories(realOutputDir);
-    fs::create_directories(synthOutputDir);
-
-    for (size_t i = 0; i < realImages.size(); ++i)
-    {
-        cv::imwrite((realOutputDir / (std::to_string(i) + ".png")).string(), realImages[i]);
-    }
-
-    for (size_t i = 0; i < synthImages.size(); ++i)
-    {
-        cv::imwrite((synthOutputDir / (std::to_string(i) + ".png")).string(), synthImages[i]);
-    }
 }
 
 std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::buildInitialCsvForFrame(
