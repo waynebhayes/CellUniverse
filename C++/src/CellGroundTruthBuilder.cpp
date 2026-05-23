@@ -1852,7 +1852,16 @@ void CellGroundTruthBuilder::saveFrameOutputs(const fs::path &imageFile,
     std::vector<cv::Mat> displayFrame = interpolateStackForPreview(
         normalizeStackForPreview(realFrame),
         static_cast<int>(std::lround(zScale)));
+
+    const EllipsoidConfig previousCellConfig = Ellipsoid::cellConfig;
+    if (config.cell)
+    {
+        Ellipsoid::cellConfig = *config.cell;
+        Ellipsoid::cellConfig.maxZ = static_cast<float>(displayFrame.size()) - 1.0f;
+    }
     std::vector<Ellipsoid> ellipsoids = makeEllipsoids(displayCells);
+    Ellipsoid::cellConfig = previousCellConfig;
+
     SimulationConfig displayConfig = config.simulation;
     displayConfig.z_slices = static_cast<int>(displayFrame.size());
 
