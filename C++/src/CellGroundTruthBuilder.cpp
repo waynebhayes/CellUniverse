@@ -201,6 +201,88 @@ std::vector<cv::Mat> normalizeStackForPreview(const std::vector<cv::Mat> &volume
     return preview;
 }
 
+cv::Mat makeTiffReadySlice(const cv::Mat &slice)
+{
+    if (slice.empty())
+    {
+        return {};
+    }
+
+    cv::Mat gray;
+    if (slice.channels() == 1)
+    {
+        gray = slice;
+    }
+    else if (slice.channels() == 3)
+    {
+        cv::cvtColor(slice, gray, cv::COLOR_BGR2GRAY);
+    }
+    else if (slice.channels() == 4)
+    {
+        cv::cvtColor(slice, gray, cv::COLOR_BGRA2GRAY);
+    }
+    else
+    {
+        throw std::runtime_error("Unsupported channel count for ground-truth TIFF export: " +
+                                 std::to_string(slice.channels()));
+    }
+
+    cv::Mat output;
+    if (gray.depth() == CV_8U)
+    {
+        output = gray.clone();
+    }
+    else
+    {
+        cv::Mat clipped = gray.clone();
+        cv::patchNaNs(clipped, 0.0);
+        cv::min(clipped, 1.0f, clipped);
+        cv::max(clipped, 0.0f, clipped);
+        clipped.convertTo(output, CV_8U, 255.0);
+    }
+    return output;
+}
+
+void writeGroundTruthTiffStack(const fs::path &path, const std::vector<cv::Mat> &stack)
+{
+    std::vector<cv::Mat> output;
+    output.reserve(stack.size());
+
+    cv::Size expectedSize;
+    for (const auto &slice : stack)
+    {
+        cv::Mat converted = makeTiffReadySlice(slice);
+        if (converted.empty())
+        {
+            continue;
+        }
+        if (expectedSize.empty())
+        {
+            expectedSize = converted.size();
+        }
+        else if (converted.size() != expectedSize)
+        {
+            throw std::runtime_error("Ground-truth TIFF export requires same-size slices: " +
+                                     path.string());
+        }
+        output.push_back(std::move(converted));
+    }
+
+    if (output.empty())
+    {
+        throw std::runtime_error("Ground-truth TIFF export received an empty stack: " +
+                                 path.string());
+    }
+
+    const std::vector<int> params = {
+        cv::IMWRITE_TIFF_COMPRESSION, 1
+    };
+    if (!cv::imwritemulti(path.string(), output, params))
+    {
+        throw std::runtime_error("Failed to write ground-truth TIFF stack: " + path.string());
+    }
+}
+
 float squaredDistance(const cv::Point3f &lhs, const cv::Point3f &rhs)
 {
     const float dx = lhs.x - rhs.x;
@@ -1088,6 +1170,15 @@ void CellGroundTruthBuilder::saveFrameOutputs(const fs::path &imageFile,
     std::vector<cv::Mat> synthImages = frame.generateOutputSynthFrame();
 
     const std::string frameDirName = extractFrameFolderName(imageFile);
+    fs::create_directories(outputDir);
+    const fs::path realTiffPath = outputDir / (frameDirName + "_real.tif");
+    const fs::path synthTiffPath = outputDir / (frameDirName + "_synth.tif");
+    writeGroundTruthTiffStack(realTiffPath, realImages);
+    writeGroundTruthTiffStack(synthTiffPath, synthImages);
+    std::cout << "[GroundTruth Output] real_tif=" << realTiffPath
+              << " synth_tif=" << synthTiffPath
+              << std::endl;
+
     const fs::path realOutputDir = outputDir / "real" / frameDirName;
     const fs::path synthOutputDir = outputDir / "synth" / frameDirName;
     fs::create_directories(realOutputDir);
