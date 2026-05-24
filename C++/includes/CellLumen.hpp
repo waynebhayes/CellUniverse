@@ -1,5 +1,5 @@
-#ifndef CELL_GROUND_TRUTH_BUILDER_HPP
-#define CELL_GROUND_TRUTH_BUILDER_HPP
+#ifndef CELL_LUMEN_HPP
+#define CELL_LUMEN_HPP
 
 #include "ConfigTypes.hpp"
 #include "Ellipsoid.hpp"
@@ -11,7 +11,7 @@
 #include <string>
 #include <vector>
 
-class CellGroundTruthBuilder
+class CellLumen
 {
 public:
     struct DetectedCell
@@ -32,7 +32,7 @@ public:
         EmbryoBrightTracker::Comp3DStat component{};
     };
 
-    CellGroundTruthBuilder(BaseConfig config, const fs::path &outputDir);
+    CellLumen(BaseConfig config, const fs::path &outputDir);
 
     std::vector<DetectedCell> buildInitialCsvForFrame(const fs::path &imageFile,
                                                       const fs::path &csvOutputPath);
@@ -96,6 +96,10 @@ private:
     std::vector<DetectedCell> applyBiologicalPriors(const std::vector<DetectedCell> &cells,
                                                     const std::vector<cv::Mat> &volume,
                                                     const std::string &stage) const;
+    std::vector<DetectedCell> filterWeakSatelliteCells(const std::vector<cv::Mat> &volume,
+                                                       const std::vector<DetectedCell> &cells) const;
+    void refineCentersByZColumn(const std::vector<cv::Mat> &volume,
+                                std::vector<DetectedCell> &cells) const;
     std::vector<DetectedCell> mergeLikelySameCellFragments(const std::vector<DetectedCell> &cells,
                                                            const std::vector<cv::Mat> &volume,
                                                            float thresholdLow,

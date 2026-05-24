@@ -10,7 +10,7 @@
 #include "yaml-cpp/yaml.h"
 #include "Ellipsoid.hpp"
 #include "CellUniverse.hpp"
-#include "CellGroundTruthBuilder.hpp"
+#include "CellLumen.hpp"
 #include "ImageHandler.hpp"
 #include "LineageTreeCreator.hpp"
 #include <chrono>
@@ -40,7 +40,7 @@ public:
     std::string resumeSourceDir{};
 };
 
-class GroundTruthArgs
+class CellLumenArgs
 {
 public:
     std::string inputFile{};
@@ -162,15 +162,15 @@ Args initArgs(int argc, char *argv[]) {
     return args;
 }
 
-GroundTruthArgs initGroundTruthArgs(char *argv[])
+CellLumenArgs initCellLumenArgs(char *argv[])
 {
-    GroundTruthArgs args;
+    CellLumenArgs args;
     args.inputFile = argv[2];
     args.output = argv[3];
     args.config = argv[4];
     args.csvOutput = argv[5];
 
-    std::cout << "Loading ground-truth builder args:\n";
+    std::cout << "Loading CellLumen args:\n";
     std::cout << "Input frame: " << args.inputFile << '\n' << std::flush;
     std::cout << "Output folder: " << args.output << '\n' << std::flush;
     std::cout << "Config file: " << args.config << '\n' << std::flush;
@@ -233,23 +233,24 @@ int main(int argc, char *argv[])
         return ok ? 0 : 1;
     }
 
-    if (argc >= 2 && std::string(argv[1]) == "--build-ground-truth")
+    const std::string command = argc >= 2 ? std::string(argv[1]) : std::string();
+    if (command == "--cell-lumen" || command == "--CellLumen")
     {
         if (argc < 6)
         {
-            std::cerr << "Usage: celluniverse --build-ground-truth <input_frame.tif> <output_dir> <config.yaml> <csv_output>\n";
+            std::cerr << "Usage: celluniverse --cell-lumen <input_frame.tif> <output_dir> <config.yaml> <csv_output>\n";
             return 1;
         }
 
-        GroundTruthArgs args = initGroundTruthArgs(argv);
+        CellLumenArgs args = initCellLumenArgs(argv);
         BaseConfig config;
         loadConfig(args.config, config);
         applyRuntimeOverrides(config);
         config.printConfig();
 
         fs::create_directories(args.output);
-        CellGroundTruthBuilder builder(config, fs::path(args.output));
-        builder.buildInitialCsvForFrame(fs::path(args.inputFile), fs::path(args.csvOutput));
+        CellLumen cellLumen(config, fs::path(args.output));
+        cellLumen.buildInitialCsvForFrame(fs::path(args.inputFile), fs::path(args.csvOutput));
         return 0;
     }
 

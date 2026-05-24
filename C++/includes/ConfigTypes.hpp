@@ -1265,9 +1265,9 @@ public:
     }
 };
 
-class GroundTruthConfig {
+class CellLumenConfig {
 public:
-    // Dataset-specific controls for CellGroundTruthBuilder only. These values
+    // Dataset-specific controls for CellLumen only. These values
     // are intentionally separated from the main optimizer so raw connected
     // component initialization can use biological priors without changing the
     // Cell Universe tracking loop.
@@ -1339,7 +1339,7 @@ public:
     bool useHighSeedCenterForSplitCells = false;
 
     // Experimental raw intensity seed segmentation path. This keeps the old
-    // percentile connected component method available, but lets the builder
+    // percentile connected component method available, but lets CellLumen
     // try a marker controlled region grow that is closer to seeded watershed:
     // local background subtraction finds markers, then each marker claims only
     // nearby permissive mask voxels. It is intended for dim or bridged embryo
@@ -1365,6 +1365,9 @@ public:
     float seededWatershedSeedDistancePenaltyWeight = 0.01f;
     float seededWatershedCenterSeedBlend = 0.0f;
     int seededWatershedMinVoxels = 350;
+    bool seededWatershedAdaptiveMinVoxelsEnabled = false;
+    int seededWatershedAdaptiveMinVoxelsCellCount = 0;
+    int seededWatershedAdaptiveDenseMinVoxels = 350;
     int seededWatershedMaxSeeds = 650;
     float seededWatershedRescueMinDistance = 24.0f;
     float seededWatershedRescueMaxAddedFraction = 0.12f;
@@ -1387,7 +1390,22 @@ public:
     bool finalLocalRefineEnabled = false;
     float finalLocalRefineRadius = 24.0f;
     float finalLocalRefineQuantile = 0.75f;
+    float finalLocalRefineBlend = 1.0f;
+    bool finalZColumnRefineEnabled = false;
+    float finalZColumnRefineRadiusXY = 10.0f;
+    float finalZColumnRefineHalfWindowScaled = 28.0f;
+    float finalZColumnRefineQuantile = 0.75f;
+    float finalZColumnRefineMinScoreFraction = 0.65f;
+    float finalZColumnRefineMaxMoveScaled = 24.0f;
+    float finalZColumnRefineBlend = 1.0f;
     float finalPostRefineDuplicateMergeDistance = -1.0f;
+    bool finalWeakSatelliteFilterEnabled = false;
+    float finalWeakSatelliteNeighborDistance = 30.0f;
+    int finalWeakSatelliteMaxVoxels = 1300;
+    float finalWeakSatelliteMaxTop10MinusShell = 100.0f;
+    float finalWeakSatelliteMaxMinorRadius = 14.5f;
+    int finalWeakSatelliteNeighborMinVoxels = 2400;
+    float finalWeakSatelliteNeighborVoxelRatio = 1.25f;
 
     float maxCandidateMeanVoxelCount = -1.0f;
     float candidateCellCountWeight = 0.30f;
@@ -1493,6 +1511,9 @@ public:
         if (node["seededWatershedSeedDistancePenaltyWeight"]) seededWatershedSeedDistancePenaltyWeight = node["seededWatershedSeedDistancePenaltyWeight"].as<float>();
         if (node["seededWatershedCenterSeedBlend"]) seededWatershedCenterSeedBlend = node["seededWatershedCenterSeedBlend"].as<float>();
         if (node["seededWatershedMinVoxels"]) seededWatershedMinVoxels = node["seededWatershedMinVoxels"].as<int>();
+        if (node["seededWatershedAdaptiveMinVoxelsEnabled"]) seededWatershedAdaptiveMinVoxelsEnabled = node["seededWatershedAdaptiveMinVoxelsEnabled"].as<bool>();
+        if (node["seededWatershedAdaptiveMinVoxelsCellCount"]) seededWatershedAdaptiveMinVoxelsCellCount = node["seededWatershedAdaptiveMinVoxelsCellCount"].as<int>();
+        if (node["seededWatershedAdaptiveDenseMinVoxels"]) seededWatershedAdaptiveDenseMinVoxels = node["seededWatershedAdaptiveDenseMinVoxels"].as<int>();
         if (node["seededWatershedMaxSeeds"]) seededWatershedMaxSeeds = node["seededWatershedMaxSeeds"].as<int>();
         if (node["seededWatershedRescueMinDistance"]) seededWatershedRescueMinDistance = node["seededWatershedRescueMinDistance"].as<float>();
         if (node["seededWatershedRescueMaxAddedFraction"]) seededWatershedRescueMaxAddedFraction = node["seededWatershedRescueMaxAddedFraction"].as<float>();
@@ -1515,7 +1536,22 @@ public:
         if (node["finalLocalRefineEnabled"]) finalLocalRefineEnabled = node["finalLocalRefineEnabled"].as<bool>();
         if (node["finalLocalRefineRadius"]) finalLocalRefineRadius = node["finalLocalRefineRadius"].as<float>();
         if (node["finalLocalRefineQuantile"]) finalLocalRefineQuantile = node["finalLocalRefineQuantile"].as<float>();
+        if (node["finalLocalRefineBlend"]) finalLocalRefineBlend = node["finalLocalRefineBlend"].as<float>();
+        if (node["finalZColumnRefineEnabled"]) finalZColumnRefineEnabled = node["finalZColumnRefineEnabled"].as<bool>();
+        if (node["finalZColumnRefineRadiusXY"]) finalZColumnRefineRadiusXY = node["finalZColumnRefineRadiusXY"].as<float>();
+        if (node["finalZColumnRefineHalfWindowScaled"]) finalZColumnRefineHalfWindowScaled = node["finalZColumnRefineHalfWindowScaled"].as<float>();
+        if (node["finalZColumnRefineQuantile"]) finalZColumnRefineQuantile = node["finalZColumnRefineQuantile"].as<float>();
+        if (node["finalZColumnRefineMinScoreFraction"]) finalZColumnRefineMinScoreFraction = node["finalZColumnRefineMinScoreFraction"].as<float>();
+        if (node["finalZColumnRefineMaxMoveScaled"]) finalZColumnRefineMaxMoveScaled = node["finalZColumnRefineMaxMoveScaled"].as<float>();
+        if (node["finalZColumnRefineBlend"]) finalZColumnRefineBlend = node["finalZColumnRefineBlend"].as<float>();
         if (node["finalPostRefineDuplicateMergeDistance"]) finalPostRefineDuplicateMergeDistance = node["finalPostRefineDuplicateMergeDistance"].as<float>();
+        if (node["finalWeakSatelliteFilterEnabled"]) finalWeakSatelliteFilterEnabled = node["finalWeakSatelliteFilterEnabled"].as<bool>();
+        if (node["finalWeakSatelliteNeighborDistance"]) finalWeakSatelliteNeighborDistance = node["finalWeakSatelliteNeighborDistance"].as<float>();
+        if (node["finalWeakSatelliteMaxVoxels"]) finalWeakSatelliteMaxVoxels = node["finalWeakSatelliteMaxVoxels"].as<int>();
+        if (node["finalWeakSatelliteMaxTop10MinusShell"]) finalWeakSatelliteMaxTop10MinusShell = node["finalWeakSatelliteMaxTop10MinusShell"].as<float>();
+        if (node["finalWeakSatelliteMaxMinorRadius"]) finalWeakSatelliteMaxMinorRadius = node["finalWeakSatelliteMaxMinorRadius"].as<float>();
+        if (node["finalWeakSatelliteNeighborMinVoxels"]) finalWeakSatelliteNeighborMinVoxels = node["finalWeakSatelliteNeighborMinVoxels"].as<int>();
+        if (node["finalWeakSatelliteNeighborVoxelRatio"]) finalWeakSatelliteNeighborVoxelRatio = node["finalWeakSatelliteNeighborVoxelRatio"].as<float>();
         if (node["maxCandidateMeanVoxelCount"]) maxCandidateMeanVoxelCount = node["maxCandidateMeanVoxelCount"].as<float>();
         if (node["candidateCellCountWeight"]) candidateCellCountWeight = node["candidateCellCountWeight"].as<float>();
         if (node["candidateMeanVoxelPenaltyWeight"]) candidateMeanVoxelPenaltyWeight = node["candidateMeanVoxelPenaltyWeight"].as<float>();
@@ -1528,7 +1564,7 @@ public:
     }
 
     void printConfig() const {
-        std::cout << "GroundTruth Config\n";
+        std::cout << "CellLumen Config\n";
         std::cout << "enabled: " << enabled << '\n';
         std::cout << "minComponentVoxels: " << minComponentVoxels << '\n';
         std::cout << "minHighSeedVoxels: " << minHighSeedVoxels << '\n';
@@ -1557,7 +1593,7 @@ public:
     std::unique_ptr<EllipsoidConfig> cell;
     SimulationConfig simulation;
     ProbabilityConfig prob;
-    GroundTruthConfig groundTruth;
+    CellLumenConfig cellLumen;
 
     BaseConfig() = default;
     ~BaseConfig() = default;
@@ -1568,7 +1604,7 @@ public:
           cell(other.cell ? std::make_unique<EllipsoidConfig>(*other.cell) : nullptr),
           simulation(other.simulation),
           prob(other.prob),
-          groundTruth(other.groundTruth) {}
+          cellLumen(other.cellLumen) {}
 
     BaseConfig& operator=(const BaseConfig& other) {
         if (this != &other) {
@@ -1576,7 +1612,7 @@ public:
             cell = other.cell ? std::make_unique<EllipsoidConfig>(*other.cell) : nullptr;
             simulation = other.simulation;
             prob = other.prob;
-            groundTruth = other.groundTruth;
+            cellLumen = other.cellLumen;
         }
         return *this;
     }
@@ -1591,13 +1627,13 @@ public:
         cell->explodeConfig(node["cell"]);
         simulation.explodeConfig(node["simulation"]);
         prob.explodeConfig(node["prob"]);
-        if (node["ground_truth"]) groundTruth.explodeConfig(node["ground_truth"]);
+        if (node["cell_lumen"]) cellLumen.explodeConfig(node["cell_lumen"]);
     }
 
     void printConfig() const {
         simulation.printConfig();
         prob.printConfig();
-        groundTruth.printConfig();
+        cellLumen.printConfig();
     }
 };
 

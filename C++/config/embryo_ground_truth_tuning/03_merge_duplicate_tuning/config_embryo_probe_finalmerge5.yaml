@@ -117,10 +117,6 @@ cell_lumen:
   finalLocalRefineEnabled: true
   finalLocalRefineRadius: 24.0
   finalLocalRefineQuantile: 0.75
-  # Keep the post refine duplicate cleanup, but do not move centers toward
-  # a local brightness centroid in dense embryo frames. The local centroid can
-  # be pulled by a neighboring bright edge, which hurts center matching.
-  finalLocalRefineBlend: 0.5
   # Z only local correction. The remaining embryo errors after marker
   # watershed are mostly good x/y centers whose z coordinate is pulled toward
   # a bright edge. This pass samples only a small x/y disk around each accepted
@@ -133,18 +129,7 @@ cell_lumen:
   finalZColumnRefineMinScoreFraction: 0.65
   finalZColumnRefineMaxMoveScaled: 24.0
   finalZColumnRefineBlend: 1.0
-  finalPostRefineDuplicateMergeDistance: 5.0
-  # Final cleanup for low rescue satellites. A rescued small weak blob is
-  # removed only when it sits close to a much larger neighbor. This targets
-  # edge fragments without using GT labels and avoids the center loss caused
-  # by a stronger global duplicate merge.
-  finalWeakSatelliteFilterEnabled: true
-  finalWeakSatelliteNeighborDistance: 30.0
-  finalWeakSatelliteMaxVoxels: 1400
-  finalWeakSatelliteMaxTop10MinusShell: 105.0
-  finalWeakSatelliteMaxMinorRadius: 14.8
-  finalWeakSatelliteNeighborMinVoxels: 2400
-  finalWeakSatelliteNeighborVoxelRatio: 1.25
+  finalPostRefineDuplicateMergeDistance: 9.5
 
   # Dense frames often have one connected bright bridge that contains several
   # real cell centers. In that case connected component centroids alone cluster
@@ -179,7 +164,7 @@ cell_lumen:
   # H minima style seed suppression: nearby peaks are kept only when the line
   # between them has a real contrast valley. This lets touching cells split
   # while suppressing several marker peaks inside the same bright cell body.
-  seededWatershedMinSeedDistance: 20.0
+  seededWatershedMinSeedDistance: 26.0
   seededWatershedCloseSeedMinDistance: 10.0
   seededWatershedMinValleyDrop: 1.0
   seededWatershedMaxGrowDistance: 30.0
@@ -191,16 +176,8 @@ cell_lumen:
   seededWatershedDistancePriorityWeight: 0.10
   seededWatershedContrastPriorityWeight: 1.0
   seededWatershedSeedDistancePenaltyWeight: 0.01
-  seededWatershedCenterSeedBlend: 0.10
+  seededWatershedCenterSeedBlend: 0.0
   seededWatershedMinVoxels: 2600
-  # Dense embryo frames contain many real cells whose marker watershed region
-  # is smaller than mature early cells. Keep the stricter 2600 voxel floor for
-  # sparse frames, then relax it only when the default pass already sees a
-  # dense cell field. This recovered 130 to 150 frame centers without adding
-  # early frame duplicate cells.
-  seededWatershedAdaptiveMinVoxelsEnabled: true
-  seededWatershedAdaptiveMinVoxelsCellCount: 150
-  seededWatershedAdaptiveDenseMinVoxels: 1100
   seededWatershedMaxSeeds: 650
   seededWatershedRescueMinDistance: 32.0
   seededWatershedRescueMaxAddedFraction: 0.08

@@ -126,25 +126,14 @@ cell_lumen:
   # a bright edge. This pass samples only a small x/y disk around each accepted
   # center and moves z toward the strongest nearby slice, without changing
   # cell count or x/y position.
-  finalZColumnRefineEnabled: false
+  finalZColumnRefineEnabled: true
   finalZColumnRefineRadiusXY: 10.0
   finalZColumnRefineHalfWindowScaled: 28.0
   finalZColumnRefineQuantile: 0.75
   finalZColumnRefineMinScoreFraction: 0.65
-  finalZColumnRefineMaxMoveScaled: 24.0
-  finalZColumnRefineBlend: 1.0
+  finalZColumnRefineMaxMoveScaled: 14.0
+  finalZColumnRefineBlend: 0.5
   finalPostRefineDuplicateMergeDistance: 5.0
-  # Final cleanup for low rescue satellites. A rescued small weak blob is
-  # removed only when it sits close to a much larger neighbor. This targets
-  # edge fragments without using GT labels and avoids the center loss caused
-  # by a stronger global duplicate merge.
-  finalWeakSatelliteFilterEnabled: true
-  finalWeakSatelliteNeighborDistance: 30.0
-  finalWeakSatelliteMaxVoxels: 1400
-  finalWeakSatelliteMaxTop10MinusShell: 105.0
-  finalWeakSatelliteMaxMinorRadius: 14.8
-  finalWeakSatelliteNeighborMinVoxels: 2400
-  finalWeakSatelliteNeighborVoxelRatio: 1.25
 
   # Dense frames often have one connected bright bridge that contains several
   # real cell centers. In that case connected component centroids alone cluster
@@ -191,7 +180,7 @@ cell_lumen:
   seededWatershedDistancePriorityWeight: 0.10
   seededWatershedContrastPriorityWeight: 1.0
   seededWatershedSeedDistancePenaltyWeight: 0.01
-  seededWatershedCenterSeedBlend: 0.10
+  seededWatershedCenterSeedBlend: 0.0
   seededWatershedMinVoxels: 2600
   # Dense embryo frames contain many real cells whose marker watershed region
   # is smaller than mature early cells. Keep the stricter 2600 voxel floor for

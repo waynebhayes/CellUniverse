@@ -134,17 +134,6 @@ cell_lumen:
   finalZColumnRefineMaxMoveScaled: 24.0
   finalZColumnRefineBlend: 1.0
   finalPostRefineDuplicateMergeDistance: 5.0
-  # Final cleanup for low rescue satellites. A rescued small weak blob is
-  # removed only when it sits close to a much larger neighbor. This targets
-  # edge fragments without using GT labels and avoids the center loss caused
-  # by a stronger global duplicate merge.
-  finalWeakSatelliteFilterEnabled: true
-  finalWeakSatelliteNeighborDistance: 30.0
-  finalWeakSatelliteMaxVoxels: 1400
-  finalWeakSatelliteMaxTop10MinusShell: 105.0
-  finalWeakSatelliteMaxMinorRadius: 14.8
-  finalWeakSatelliteNeighborMinVoxels: 2400
-  finalWeakSatelliteNeighborVoxelRatio: 1.25
 
   # Dense frames often have one connected bright bridge that contains several
   # real cell centers. In that case connected component centroids alone cluster
@@ -191,7 +180,7 @@ cell_lumen:
   seededWatershedDistancePriorityWeight: 0.10
   seededWatershedContrastPriorityWeight: 1.0
   seededWatershedSeedDistancePenaltyWeight: 0.01
-  seededWatershedCenterSeedBlend: 0.10
+  seededWatershedCenterSeedBlend: 0.1
   seededWatershedMinVoxels: 2600
   # Dense embryo frames contain many real cells whose marker watershed region
   # is smaller than mature early cells. Keep the stricter 2600 voxel floor for
@@ -224,7 +213,7 @@ cell_lumen:
   # available local evidence instead of keeping the strongest fragment only.
   seededWatershedLowRescueClusterDistance: 20.0
   seededWatershedLowRescueSortByDistance: true
-  seededWatershedLowRescueMinDistance: 28.0
+  seededWatershedLowRescueMinDistance: 36.0
   seededWatershedLowRescueMinCandidateVoxels: 1000
   seededWatershedLowRescueMinTop10MinusShell: 65.0
   seededWatershedLowRescueMaxAdded: 20
