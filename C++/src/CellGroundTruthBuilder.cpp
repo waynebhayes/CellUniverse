@@ -11,6 +11,7 @@
 #include <iomanip>
 #include <limits>
 #include <map>
+#include <queue>
 #include <sstream>
 
 namespace
@@ -235,6 +236,28 @@ std::vector<float> groundTruthPercentiles()
     return percentiles;
 }
 
+std::vector<float> groundTruthPercentiles(const GroundTruthConfig &config)
+{
+    const std::vector<float> envPercentiles = groundTruthPercentiles();
+    if (!config.percentiles.empty())
+    {
+        std::vector<float> cleaned;
+        cleaned.reserve(config.percentiles.size());
+        for (float percentile : config.percentiles)
+        {
+            if (percentile > 0.0f && percentile < 100.0f)
+            {
+                cleaned.push_back(percentile);
+            }
+        }
+        if (!cleaned.empty())
+        {
+            return cleaned;
+        }
+    }
+    return envPercentiles;
+}
+
 bool shouldUseTraMaskWhenAvailable()
 {
     const char *value = std::getenv("CELLUNIVERSE_GT_USE_TRA_MASK");
@@ -268,6 +291,50 @@ float groundTruthGeometricCenterBlend(const std::string &profileLabel)
     }
 
     return profileLabel == "celegans_embryo" ? 0.35f : 0.15f;
+}
+
+float groundTruthGeometricCenterBlend(const BaseConfig &config,
+                                      const std::string &profileLabel)
+{
+    if (config.groundTruth.geometricCenterBlend >= 0.0f)
+    {
+        return std::clamp(config.groundTruth.geometricCenterBlend, 0.0f, 1.0f);
+    }
+    return groundTruthGeometricCenterBlend(profileLabel);
+}
+
+float continuousEllipsoidVolume(float aRadius, float bRadius, float cRadius)
+{
+    return static_cast<float>((4.0 / 3.0) * M_PI *
+                              std::max(aRadius, 1e-3f) *
+                              std::max(bRadius, 1e-3f) *
+                              std::max(cRadius, 1e-3f));
+}
+
+float meanOfTopFraction(std::vector<float> values, float fraction)
+{
+    if (values.empty())
+    {
+        return 0.0f;
+    }
+    const float clamped = std::clamp(fraction, 0.0f, 1.0f);
+    if (clamped <= 0.0f)
+    {
+        return 0.0f;
+    }
+    const size_t keep = std::max<size_t>(
+        1,
+        static_cast<size_t>(std::ceil(clamped * static_cast<float>(values.size()))));
+    const size_t index = values.size() - keep;
+    std::nth_element(values.begin(),
+                     values.begin() + static_cast<std::ptrdiff_t>(index),
+                     values.end());
+    double sum = 0.0;
+    for (size_t i = index; i < values.size(); ++i)
+    {
+        sum += values[i];
+    }
+    return static_cast<float>(sum / static_cast<double>(keep));
 }
 
 int frameNumberFromPath(const fs::path &imageFile)
@@ -605,12 +672,27 @@ CellGroundTruthBuilder::DatasetProfile CellGroundTruthBuilder::inferDatasetProfi
         profile.seedMergeDistance = std::max(profile.seedMergeDistance, minMajor * 1.20f);
         profile.seedSplitSeparation = std::max(profile.seedSplitSeparation, minMajor * 1.50f);
         profile.dedupDistance = std::max(profile.dedupDistance, minMajor * 1.20f);
-        return profile;
     }
-
-    if (imagePath.find("original_data") != std::string::npos)
+    else if (imagePath.find("original_data") != std::string::npos)
     {
         profile.label = "original_data";
+    }
+
+    if (config.groundTruth.minHighSeedVoxels > 0)
+    {
+        profile.minHighSeedVoxels = config.groundTruth.minHighSeedVoxels;
+    }
+    if (config.groundTruth.seedMergeDistance > 0.0f)
+    {
+        profile.seedMergeDistance = config.groundTruth.seedMergeDistance;
+    }
+    if (config.groundTruth.seedSplitSeparation > 0.0f)
+    {
+        profile.seedSplitSeparation = config.groundTruth.seedSplitSeparation;
+    }
+    if (config.groundTruth.dedupDistance > 0.0f)
+    {
+        profile.dedupDistance = config.groundTruth.dedupDistance;
     }
 
     return profile;
@@ -629,6 +711,11 @@ float CellGroundTruthBuilder::estimateBackgroundValue(const std::vector<cv::Mat>
 
 int CellGroundTruthBuilder::computeMinComponentVoxels() const
 {
+    if (config.groundTruth.minComponentVoxels > 0)
+    {
+        return config.groundTruth.minComponentVoxels;
+    }
+
     if (!config.cell)
     {
         return 80;
@@ -663,7 +750,7 @@ CellGroundTruthBuilder::DetectedCell CellGroundTruthBuilder::makeDetectedCellFro
     DetectedCell cell;
     const cv::Point3f weightedCenter = component.center();
     const cv::Point3f geometricCenter = component.voxelCenter();
-    const float geometricBlend = groundTruthGeometricCenterBlend(activeProfile.label);
+    const float geometricBlend = groundTruthGeometricCenterBlend(config, activeProfile.label);
     cell.centerScaled = weightedCenter * (1.0f - geometricBlend) + geometricCenter * geometricBlend;
     cell.centerScaled.z *= effectiveZScaling();
     estimateAdaptiveRadii(component, cell.majorRadius, cell.bRadius, cell.minorRadius);
@@ -684,7 +771,10 @@ void CellGroundTruthBuilder::estimateAdaptiveRadii(const EmbryoBrightTracker::Co
     const float xyMaxRadius = 0.5f * std::max(dx, dy);
     const float xyMinRadius = 0.5f * std::min(dx, dy);
     const float zRadius = 0.5f * dz;
-    const float componentVolume = std::max(1.0f, static_cast<float>(component.vox));
+    const float volumeScale = config.groundTruth.useScaledVoxelVolumeForRadius
+        ? effectiveZScaling()
+        : 1.0f;
+    const float componentVolume = std::max(1.0f, static_cast<float>(component.vox) * volumeScale);
     const float equivalentRadius = std::cbrt((3.0f * componentVolume) / (4.0f * static_cast<float>(M_PI)));
     const float bboxVolume = std::max(1.0f, dx * dy * dz);
     const float fillRatio = clampf(componentVolume / bboxVolume, 0.0f, 1.0f);
@@ -711,9 +801,33 @@ void CellGroundTruthBuilder::estimateAdaptiveRadii(const EmbryoBrightTracker::Co
     const float xySupport = clampf(xyMinRadius / std::max(equivalentRadius, 1e-3f), 0.35f, 1.0f);
     const float zSupport = clampf(zRadius / std::max(equivalentRadius, 1e-3f), 0.10f, 1.0f);
 
-    majorRadius = clampf(std::max(equivalentRadius, blendTowardAxis(xyMaxRadius, 1.0f)), minMajor, maxMajor);
-    bRadius = clampf(blendTowardAxis(xyMinRadius, xySupport), minB, majorRadius);
-    minorRadius = clampf(blendTowardAxis(zRadius, zSupport * zSupport), minMinor, std::min(maxMinor, majorRadius));
+    const float radiusScale = std::max(0.1f, config.groundTruth.radiusInflationScale);
+    const float outputMinMajor = config.groundTruth.minOutputMajorRadius > 0.0f
+        ? config.groundTruth.minOutputMajorRadius
+        : minMajor;
+    const float outputMinB = config.groundTruth.minOutputBRadius > 0.0f
+        ? config.groundTruth.minOutputBRadius
+        : minB;
+    const float outputMinMinor = config.groundTruth.minOutputMinorRadius > 0.0f
+        ? config.groundTruth.minOutputMinorRadius
+        : minMinor;
+    const float outputMaxMajor = config.groundTruth.maxOutputMajorRadius > 0.0f
+        ? config.groundTruth.maxOutputMajorRadius
+        : maxMajor;
+    const float outputMaxB = config.groundTruth.maxOutputBRadius > 0.0f
+        ? config.groundTruth.maxOutputBRadius
+        : maxB;
+    const float outputMaxMinor = config.groundTruth.maxOutputMinorRadius > 0.0f
+        ? config.groundTruth.maxOutputMinorRadius
+        : maxMinor;
+
+    majorRadius = radiusScale * std::max(equivalentRadius, blendTowardAxis(xyMaxRadius, 1.0f));
+    bRadius = radiusScale * blendTowardAxis(xyMinRadius, xySupport);
+    minorRadius = radiusScale * blendTowardAxis(zRadius, zSupport * zSupport);
+
+    majorRadius = clampf(majorRadius, outputMinMajor, outputMaxMajor);
+    bRadius = clampf(bRadius, outputMinB, std::min(outputMaxB, majorRadius));
+    minorRadius = clampf(minorRadius, outputMinMinor, std::min(outputMaxMinor, majorRadius));
 }
 
 std::optional<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::detectLocalSeededCell(
@@ -778,6 +892,523 @@ std::optional<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::dete
     cell.voxelCount = tracked.voxelCount;
     cell.meanIntensity = tracked.meanIntensity;
     return cell;
+}
+
+std::vector<EmbryoBrightTracker::Comp3DStat> CellGroundTruthBuilder::extractLocalMaximumSeeds(
+    const std::vector<cv::Mat> &volume,
+    float thresholdHigh,
+    const std::vector<EmbryoBrightTracker::Comp3DStat> &componentSeeds) const
+{
+    if (!config.groundTruth.localMaxSeedEnabled || volume.empty())
+    {
+        return componentSeeds;
+    }
+
+    if (config.groundTruth.localMaxSeedMinStrongSeedCount > 0 &&
+        static_cast<int>(componentSeeds.size()) < config.groundTruth.localMaxSeedMinStrongSeedCount)
+    {
+        return componentSeeds;
+    }
+
+    struct Peak
+    {
+        float value = 0.0f;
+        int x = 0;
+        int y = 0;
+        int z = 0;
+    };
+
+    const int Z = static_cast<int>(volume.size());
+    const int Y = volume.front().rows;
+    const int X = volume.front().cols;
+    std::vector<Peak> peaks;
+    peaks.reserve(componentSeeds.size() * 2 + 64);
+
+    for (int z = 1; z + 1 < Z; ++z)
+    {
+        for (int y = 1; y + 1 < Y; ++y)
+        {
+            const float *row = volume[static_cast<size_t>(z)].ptr<float>(y);
+            for (int x = 1; x + 1 < X; ++x)
+            {
+                const float value = row[x];
+                if (value < thresholdHigh)
+                {
+                    continue;
+                }
+
+                bool isLocalMax = true;
+                for (int dz = -1; dz <= 1 && isLocalMax; ++dz)
+                {
+                    const cv::Mat &slice = volume[static_cast<size_t>(z + dz)];
+                    for (int dy = -1; dy <= 1 && isLocalMax; ++dy)
+                    {
+                        const float *neighborRow = slice.ptr<float>(y + dy);
+                        for (int dx = -1; dx <= 1; ++dx)
+                        {
+                            if (dx == 0 && dy == 0 && dz == 0)
+                            {
+                                continue;
+                            }
+                            if (neighborRow[x + dx] > value)
+                            {
+                                isLocalMax = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (isLocalMax)
+                {
+                    peaks.push_back(Peak{value, x, y, z});
+                }
+            }
+        }
+    }
+
+    std::sort(peaks.begin(), peaks.end(), [](const Peak &lhs, const Peak &rhs) {
+        return lhs.value > rhs.value;
+    });
+
+    const float minDistance = std::max(1.0f, config.groundTruth.localMaxSeedMinDistance);
+    const float minDistanceSq = minDistance * minDistance;
+    const float zScale = effectiveZScaling();
+    const size_t maxSeeds = config.groundTruth.localMaxSeedMaxPerFrameFactor > 0.0f
+        ? static_cast<size_t>(std::ceil(config.groundTruth.localMaxSeedMaxPerFrameFactor *
+                                        static_cast<float>(std::max<size_t>(componentSeeds.size(), 1))))
+        : std::numeric_limits<size_t>::max();
+
+    std::vector<EmbryoBrightTracker::Comp3DStat> seeds;
+    seeds.reserve(std::min(peaks.size(), maxSeeds));
+    for (const Peak &peak : peaks)
+    {
+        bool duplicate = false;
+        for (const auto &existing : seeds)
+        {
+            const cv::Point3f center = existing.center();
+            const float dx = static_cast<float>(peak.x) - center.x;
+            const float dy = static_cast<float>(peak.y) - center.y;
+            const float dz = (static_cast<float>(peak.z) - center.z) * zScale;
+            if (dx * dx + dy * dy + dz * dz <= minDistanceSq)
+            {
+                duplicate = true;
+                break;
+            }
+        }
+        if (duplicate)
+        {
+            continue;
+        }
+
+        EmbryoBrightTracker::Comp3DStat seed;
+        seed.vox = 1;
+        seed.sumW = std::max(1.0f, peak.value);
+        seed.sx = static_cast<double>(peak.x) * seed.sumW;
+        seed.sy = static_cast<double>(peak.y) * seed.sumW;
+        seed.sz = static_cast<double>(peak.z) * seed.sumW;
+        seed.ux = static_cast<double>(peak.x);
+        seed.uy = static_cast<double>(peak.y);
+        seed.uz = static_cast<double>(peak.z);
+        seed.sumI = peak.value;
+        seed.x0 = seed.x1 = peak.x;
+        seed.y0 = seed.y1 = peak.y;
+        seed.z0 = seed.z1 = peak.z;
+        seeds.push_back(seed);
+
+        if (seeds.size() >= maxSeeds)
+        {
+            break;
+        }
+    }
+
+    std::cout << "[GroundTruth LocalMaxSeeds]"
+              << " component_seeds=" << componentSeeds.size()
+              << " local_peaks=" << peaks.size()
+              << " kept=" << seeds.size()
+              << " min_distance=" << minDistance
+              << " threshold_high=" << thresholdHigh
+              << std::endl;
+
+    return seeds.empty() ? componentSeeds : seeds;
+}
+
+std::vector<cv::Mat> CellGroundTruthBuilder::buildLocalContrastVolume(
+    const std::vector<cv::Mat> &volume) const
+{
+    std::vector<cv::Mat> contrast;
+    contrast.reserve(volume.size());
+    if (volume.empty())
+    {
+        return contrast;
+    }
+
+    const double signalSigma = std::max(0.0f, config.groundTruth.seededWatershedSignalSigma);
+    const double backgroundSigma = std::max(
+        signalSigma + 0.5,
+        static_cast<double>(std::max(1.0f, config.groundTruth.seededWatershedBackgroundSigma)));
+
+    for (const auto &slice : volume)
+    {
+        cv::Mat signal;
+        if (signalSigma > 0.0)
+        {
+            cv::GaussianBlur(slice, signal, cv::Size(0, 0), signalSigma, signalSigma, cv::BORDER_REPLICATE);
+        }
+        else
+        {
+            signal = slice.clone();
+        }
+
+        cv::Mat background;
+        cv::GaussianBlur(slice, background, cv::Size(0, 0), backgroundSigma, backgroundSigma, cv::BORDER_REPLICATE);
+
+        cv::Mat local = signal - background;
+        cv::max(local, 0.0f, local);
+        contrast.push_back(local);
+    }
+
+    float normalizer = stackPercentile(contrast, 0.995f, true);
+    if (normalizer <= 1e-6f)
+    {
+        normalizer = std::max(1.0f, stackMaxValue(contrast));
+    }
+
+    for (auto &slice : contrast)
+    {
+        slice.convertTo(slice, CV_32F, 1.0f / normalizer);
+        cv::min(slice, 1.0f, slice);
+        cv::max(slice, 0.0f, slice);
+    }
+
+    std::cout << "[GroundTruth SeededWatershed Contrast]"
+              << " signal_sigma=" << signalSigma
+              << " background_sigma=" << backgroundSigma
+              << " normalizer=" << normalizer
+              << std::endl;
+    return contrast;
+}
+
+std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::detectCellsBySeededWatershed(
+    const std::vector<cv::Mat> &volume,
+    const std::string &frameStem) const
+{
+    if (!config.groundTruth.seededWatershedEnabled || volume.empty())
+    {
+        return {};
+    }
+
+    const std::vector<cv::Mat> contrast = buildLocalContrastVolume(volume);
+    if (contrast.empty())
+    {
+        return {};
+    }
+
+    const int Z = static_cast<int>(contrast.size());
+    const int Y = contrast[0].rows;
+    const int X = contrast[0].cols;
+    const float zScale = effectiveZScaling();
+
+    const float seedThreshold = std::max(
+        config.groundTruth.seededWatershedSeedThresholdFloor,
+        stackPercentile(contrast,
+                        clampf(config.groundTruth.seededWatershedSeedPercentile / 100.0f, 0.0f, 1.0f),
+                        true));
+    float maskThreshold = std::max(
+        config.groundTruth.seededWatershedMaskThresholdFloor,
+        stackPercentile(contrast,
+                        clampf(config.groundTruth.seededWatershedMaskPercentile / 100.0f, 0.0f, 1.0f),
+                        true));
+    maskThreshold = std::min(maskThreshold, seedThreshold * 0.95f);
+
+    struct Peak
+    {
+        float value = 0.0f;
+        int x = 0;
+        int y = 0;
+        int z = 0;
+    };
+
+    std::vector<Peak> peaks;
+    peaks.reserve(512);
+    for (int z = 1; z + 1 < Z; ++z)
+    {
+        for (int y = 1; y + 1 < Y; ++y)
+        {
+            const float *row = contrast[static_cast<size_t>(z)].ptr<float>(y);
+            for (int x = 1; x + 1 < X; ++x)
+            {
+                const float value = row[x];
+                if (value < seedThreshold)
+                {
+                    continue;
+                }
+
+                bool isLocalMaximum = true;
+                for (int dz = -1; dz <= 1 && isLocalMaximum; ++dz)
+                {
+                    const cv::Mat &neighborSlice = contrast[static_cast<size_t>(z + dz)];
+                    for (int dy = -1; dy <= 1 && isLocalMaximum; ++dy)
+                    {
+                        const float *neighborRow = neighborSlice.ptr<float>(y + dy);
+                        for (int dx = -1; dx <= 1; ++dx)
+                        {
+                            if (dx == 0 && dy == 0 && dz == 0)
+                            {
+                                continue;
+                            }
+                            if (neighborRow[x + dx] > value)
+                            {
+                                isLocalMaximum = false;
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (isLocalMaximum)
+                {
+                    peaks.push_back(Peak{value, x, y, z});
+                }
+            }
+        }
+    }
+
+    std::sort(peaks.begin(), peaks.end(), [](const Peak &lhs, const Peak &rhs) {
+        return lhs.value > rhs.value;
+    });
+
+    const float minSeedDistance = std::max(1.0f, config.groundTruth.seededWatershedMinSeedDistance);
+    const float minSeedDistanceSq = minSeedDistance * minSeedDistance;
+    const size_t maxSeeds = config.groundTruth.seededWatershedMaxSeeds > 0
+        ? static_cast<size_t>(config.groundTruth.seededWatershedMaxSeeds)
+        : std::numeric_limits<size_t>::max();
+    std::vector<Peak> seeds;
+    seeds.reserve(std::min(peaks.size(), maxSeeds));
+
+    for (const Peak &peak : peaks)
+    {
+        bool tooClose = false;
+        for (const Peak &seed : seeds)
+        {
+            const float dx = static_cast<float>(peak.x - seed.x);
+            const float dy = static_cast<float>(peak.y - seed.y);
+            const float dz = static_cast<float>(peak.z - seed.z) * zScale;
+            if (dx * dx + dy * dy + dz * dz <= minSeedDistanceSq)
+            {
+                tooClose = true;
+                break;
+            }
+        }
+        if (!tooClose)
+        {
+            seeds.push_back(peak);
+            if (seeds.size() >= maxSeeds)
+            {
+                break;
+            }
+        }
+    }
+
+    if (seeds.empty())
+    {
+        std::cout << "[GroundTruth SeededWatershed] no_seeds=1"
+                  << " peaks=" << peaks.size()
+                  << " seed_threshold=" << seedThreshold
+                  << " mask_threshold=" << maskThreshold
+                  << std::endl;
+        return {};
+    }
+
+    const auto lin = [Y, X](int z, int y, int x) -> size_t {
+        return (static_cast<size_t>(z) * static_cast<size_t>(Y) + static_cast<size_t>(y)) *
+               static_cast<size_t>(X) + static_cast<size_t>(x);
+    };
+
+    struct GrowNode
+    {
+        float priority = 0.0f;
+        int seedIndex = 0;
+        int x = 0;
+        int y = 0;
+        int z = 0;
+    };
+    struct GrowNodeCompare
+    {
+        bool operator()(const GrowNode &lhs, const GrowNode &rhs) const
+        {
+            return lhs.priority < rhs.priority;
+        }
+    };
+
+    std::priority_queue<GrowNode, std::vector<GrowNode>, GrowNodeCompare> frontier;
+    std::vector<int> labels(static_cast<size_t>(Z) * static_cast<size_t>(Y) * static_cast<size_t>(X), 0);
+    std::vector<EmbryoBrightTracker::Comp3DStat> stats(seeds.size());
+    for (auto &stat : stats)
+    {
+        stat.x0 = X;
+        stat.y0 = Y;
+        stat.z0 = Z;
+        stat.x1 = 0;
+        stat.y1 = 0;
+        stat.z1 = 0;
+    }
+
+    for (int i = 0; i < static_cast<int>(seeds.size()); ++i)
+    {
+        const Peak &seed = seeds[static_cast<size_t>(i)];
+        frontier.push(GrowNode{seed.value, i, seed.x, seed.y, seed.z});
+    }
+
+    const float maxGrowDistance = std::max(1.0f, config.groundTruth.seededWatershedMaxGrowDistance);
+    const float maxGrowDistanceSq = maxGrowDistance * maxGrowDistance;
+    const std::array<cv::Point3i, 26> neighbors = {
+        cv::Point3i{-1, -1, -1}, cv::Point3i{0, -1, -1}, cv::Point3i{1, -1, -1},
+        cv::Point3i{-1, 0, -1}, cv::Point3i{0, 0, -1}, cv::Point3i{1, 0, -1},
+        cv::Point3i{-1, 1, -1}, cv::Point3i{0, 1, -1}, cv::Point3i{1, 1, -1},
+        cv::Point3i{-1, -1, 0}, cv::Point3i{0, -1, 0}, cv::Point3i{1, -1, 0},
+        cv::Point3i{-1, 0, 0}, cv::Point3i{1, 0, 0},
+        cv::Point3i{-1, 1, 0}, cv::Point3i{0, 1, 0}, cv::Point3i{1, 1, 0},
+        cv::Point3i{-1, -1, 1}, cv::Point3i{0, -1, 1}, cv::Point3i{1, -1, 1},
+        cv::Point3i{-1, 0, 1}, cv::Point3i{0, 0, 1}, cv::Point3i{1, 0, 1},
+        cv::Point3i{-1, 1, 1}, cv::Point3i{0, 1, 1}, cv::Point3i{1, 1, 1}
+    };
+
+    size_t assignedVoxels = 0;
+    while (!frontier.empty())
+    {
+        GrowNode node = frontier.top();
+        frontier.pop();
+
+        if (node.x < 0 || node.x >= X || node.y < 0 || node.y >= Y || node.z < 0 || node.z >= Z)
+        {
+            continue;
+        }
+
+        const size_t index = lin(node.z, node.y, node.x);
+        if (labels[index] != 0)
+        {
+            continue;
+        }
+
+        const float value = contrast[static_cast<size_t>(node.z)].ptr<float>(node.y)[node.x];
+        if (value < maskThreshold)
+        {
+            continue;
+        }
+
+        const Peak &seed = seeds[static_cast<size_t>(node.seedIndex)];
+        const float dxSeed = static_cast<float>(node.x - seed.x);
+        const float dySeed = static_cast<float>(node.y - seed.y);
+        const float dzSeed = static_cast<float>(node.z - seed.z) * zScale;
+        const float distSeedSq = dxSeed * dxSeed + dySeed * dySeed + dzSeed * dzSeed;
+        if (distSeedSq > maxGrowDistanceSq)
+        {
+            continue;
+        }
+
+        labels[index] = node.seedIndex + 1;
+        ++assignedVoxels;
+
+        EmbryoBrightTracker::Comp3DStat &stat = stats[static_cast<size_t>(node.seedIndex)];
+        const float rawValue = volume[static_cast<size_t>(node.z)].ptr<float>(node.y)[node.x];
+        const double weight = static_cast<double>(std::max(1e-4f, value - maskThreshold));
+        stat.vox++;
+        stat.sumW += weight;
+        stat.sx += weight * static_cast<double>(node.x);
+        stat.sy += weight * static_cast<double>(node.y);
+        stat.sz += weight * static_cast<double>(node.z);
+        stat.ux += node.x;
+        stat.uy += node.y;
+        stat.uz += node.z;
+        stat.sumI += rawValue;
+        stat.x0 = std::min(stat.x0, node.x);
+        stat.x1 = std::max(stat.x1, node.x);
+        stat.y0 = std::min(stat.y0, node.y);
+        stat.y1 = std::max(stat.y1, node.y);
+        stat.z0 = std::min(stat.z0, node.z);
+        stat.z1 = std::max(stat.z1, node.z);
+
+        for (const auto &delta : neighbors)
+        {
+            const int nx = node.x + delta.x;
+            const int ny = node.y + delta.y;
+            const int nz = node.z + delta.z;
+            if (nx < 0 || nx >= X || ny < 0 || ny >= Y || nz < 0 || nz >= Z)
+            {
+                continue;
+            }
+            const size_t neighborIndex = lin(nz, ny, nx);
+            if (labels[neighborIndex] != 0)
+            {
+                continue;
+            }
+            const float neighborValue = contrast[static_cast<size_t>(nz)].ptr<float>(ny)[nx];
+            if (neighborValue < maskThreshold)
+            {
+                continue;
+            }
+
+            const float ndx = static_cast<float>(nx - seed.x);
+            const float ndy = static_cast<float>(ny - seed.y);
+            const float ndz = static_cast<float>(nz - seed.z) * zScale;
+            const float ndistSq = ndx * ndx + ndy * ndy + ndz * ndz;
+            if (ndistSq > maxGrowDistanceSq)
+            {
+                continue;
+            }
+
+            const float distancePenalty = 0.01f * std::sqrt(ndistSq) / maxGrowDistance;
+            frontier.push(GrowNode{neighborValue - distancePenalty, node.seedIndex, nx, ny, nz});
+        }
+    }
+
+    const int minVoxels = config.groundTruth.seededWatershedMinVoxels > 0
+        ? config.groundTruth.seededWatershedMinVoxels
+        : computeMinComponentVoxels();
+    std::vector<DetectedCell> cells;
+    cells.reserve(stats.size());
+    int skippedSmall = 0;
+    for (const auto &stat : stats)
+    {
+        if (stat.vox < minVoxels || stat.sumW <= 1e-9)
+        {
+            skippedSmall++;
+            continue;
+        }
+        cells.push_back(makeDetectedCellFromComponent(stat));
+    }
+
+    cells = applyBiologicalPriors(cells, volume, "seeded_watershed");
+
+    std::sort(cells.begin(), cells.end(), [](const DetectedCell &lhs, const DetectedCell &rhs) {
+        if (std::abs(lhs.centerScaled.y - rhs.centerScaled.y) > 1e-3f)
+        {
+            return lhs.centerScaled.y < rhs.centerScaled.y;
+        }
+        return lhs.centerScaled.x < rhs.centerScaled.x;
+    });
+
+    for (size_t i = 0; i < cells.size(); ++i)
+    {
+        cells[i].name = makeCellName(frameStem, static_cast<int>(i + 1));
+        cells[i].zForCsv = cells[i].centerScaled.z / effectiveZScaling();
+    }
+
+    std::cout << "[GroundTruth SeededWatershed]"
+              << " peaks=" << peaks.size()
+              << " seeds=" << seeds.size()
+              << " seed_threshold=" << seedThreshold
+              << " mask_threshold=" << maskThreshold
+              << " min_seed_distance=" << minSeedDistance
+              << " max_grow_distance=" << maxGrowDistance
+              << " assigned_voxels=" << assignedVoxels
+              << " min_voxels=" << minVoxels
+              << " skipped_small=" << skippedSmall
+              << " cells=" << cells.size()
+              << std::endl;
+
+    return cells;
 }
 
 std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::detectCellsFromTraMask(
@@ -1047,7 +1678,9 @@ bool CellGroundTruthBuilder::shouldSplitCoarseComponent(
     const DetectedCell &coarseCell,
     const std::vector<EmbryoBrightTracker::Comp3DStat> &containedSeeds) const
 {
-    const float maxAllowedMajor = config.cell ? static_cast<float>(config.cell->maxARadius) * 1.15f : 46.0f;
+    const float maxAllowedMajor = config.groundTruth.seededSplitMaxMajorRadius > 0.0f
+        ? config.groundTruth.seededSplitMaxMajorRadius
+        : (config.cell ? static_cast<float>(config.cell->maxARadius) * 1.15f : 46.0f);
     if (coarseCell.majorRadius > maxAllowedMajor && !containedSeeds.empty())
     {
         return true;
@@ -1074,12 +1707,16 @@ bool CellGroundTruthBuilder::shouldSplitCoarseComponent(
     const float balance = secondSeedVox / std::max(dominantSeedVox, 1.0f);
 
     const float softSplitThreshold = std::max(4.0f, coarseCell.majorRadius * 0.45f);
-    if (balance >= 0.28f && maxSeedSeparationXY >= softSplitThreshold)
+    const float minSeedBalance = config.groundTruth.seededSplitMinSeedBalance;
+    if (balance >= minSeedBalance && maxSeedSeparationXY >= softSplitThreshold)
     {
         return true;
     }
 
-    const float hardSplitThreshold = std::max(activeProfile.seedSplitSeparation, coarseCell.majorRadius * 0.75f);
+    const float configuredHardSplit = config.groundTruth.seededSplitMinSeedSeparation > 0.0f
+        ? config.groundTruth.seededSplitMinSeedSeparation
+        : activeProfile.seedSplitSeparation;
+    const float hardSplitThreshold = std::max(configuredHardSplit, coarseCell.majorRadius * 0.75f);
     return maxSeedSeparationXY >= hardSplitThreshold;
 }
 
@@ -1134,6 +1771,7 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::detect
             strongHighComponents.push_back(component);
         }
     }
+    strongHighComponents = extractLocalMaximumSeeds(volume, thresholdHigh, strongHighComponents);
 
     const int minComponentVoxels = computeMinComponentVoxels();
     std::vector<DetectedCell> cells;
@@ -1144,6 +1782,28 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::detect
     int refinedSplitCells = 0;
     const bool sparseSeedField =
         activeProfile.label == "celegans_embryo" && strongHighComponents.size() < 80;
+    float effectiveSeedMergeDistance = activeProfile.seedMergeDistance;
+    if (config.groundTruth.adaptiveSeedMergeEnabled &&
+        activeProfile.label == "celegans_embryo")
+    {
+        const int strongSeedCount = static_cast<int>(strongHighComponents.size());
+        if (config.groundTruth.adaptiveSeedMergeDenseHighSeedCount > 0 &&
+            strongSeedCount >= config.groundTruth.adaptiveSeedMergeDenseHighSeedCount)
+        {
+            if (config.groundTruth.adaptiveSeedMergeDenseDistance > 0.0f)
+            {
+                effectiveSeedMergeDistance = config.groundTruth.adaptiveSeedMergeDenseDistance;
+            }
+        }
+        else if (config.groundTruth.adaptiveSeedMergeModerateHighSeedCount > 0 &&
+                 strongSeedCount >= config.groundTruth.adaptiveSeedMergeModerateHighSeedCount)
+        {
+            if (config.groundTruth.adaptiveSeedMergeModerateDistance > 0.0f)
+            {
+                effectiveSeedMergeDistance = config.groundTruth.adaptiveSeedMergeModerateDistance;
+            }
+        }
+    }
 
     for (const auto &component : lowComponents)
     {
@@ -1170,22 +1830,32 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::detect
                 containedSeeds.push_back(high);
             }
         }
-        containedSeeds = collapseNearbySeeds(containedSeeds, activeProfile.seedMergeDistance);
+        containedSeeds = collapseNearbySeeds(containedSeeds, effectiveSeedMergeDistance);
 
         DetectedCell coarseCell = makeDetectedCellFromComponent(component);
         const bool needsSeededSplit =
-            !sparseSeedField && shouldSplitCoarseComponent(coarseCell, containedSeeds);
+            (!sparseSeedField || config.groundTruth.allowSeededSplitInSparseField) &&
+            shouldSplitCoarseComponent(coarseCell, containedSeeds);
 
         if (needsSeededSplit)
         {
             splitComponents++;
             for (const auto &seed : containedSeeds)
             {
-                std::optional<DetectedCell> refined = detectLocalSeededCell(volume, seed, thresholdLow);
-                if (refined)
+                if (config.groundTruth.useHighSeedCenterForSplitCells)
                 {
-                    cells.push_back(*refined);
+                    DetectedCell seedCell = makeDetectedCellFromComponent(seed);
+                    cells.push_back(seedCell);
                     refinedSplitCells++;
+                }
+                else
+                {
+                    std::optional<DetectedCell> refined = detectLocalSeededCell(volume, seed, thresholdLow);
+                    if (refined)
+                    {
+                        cells.push_back(*refined);
+                        refinedSplitCells++;
+                    }
                 }
             }
             continue;
@@ -1208,6 +1878,38 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::detect
         cells[i].zForCsv = cells[i].centerScaled.z / effectiveZScaling();
     }
 
+    float effectiveDedupDistance = activeProfile.dedupDistance;
+    float effectiveDedupRadiusScale = config.groundTruth.dedupRadiusScale;
+    if (config.groundTruth.adaptiveDedupEnabled &&
+        activeProfile.label == "celegans_embryo")
+    {
+        const int strongSeedCount = static_cast<int>(strongHighComponents.size());
+        if (config.groundTruth.adaptiveDedupDenseHighSeedCount > 0 &&
+            strongSeedCount >= config.groundTruth.adaptiveDedupDenseHighSeedCount)
+        {
+            if (config.groundTruth.adaptiveDedupDenseDistance > 0.0f)
+            {
+                effectiveDedupDistance = config.groundTruth.adaptiveDedupDenseDistance;
+            }
+            if (config.groundTruth.adaptiveDedupDenseRadiusScale > 0.0f)
+            {
+                effectiveDedupRadiusScale = config.groundTruth.adaptiveDedupDenseRadiusScale;
+            }
+        }
+        else if (config.groundTruth.adaptiveDedupModerateHighSeedCount > 0 &&
+                 strongSeedCount >= config.groundTruth.adaptiveDedupModerateHighSeedCount)
+        {
+            if (config.groundTruth.adaptiveDedupModerateDistance > 0.0f)
+            {
+                effectiveDedupDistance = config.groundTruth.adaptiveDedupModerateDistance;
+            }
+            if (config.groundTruth.adaptiveDedupModerateRadiusScale > 0.0f)
+            {
+                effectiveDedupRadiusScale = config.groundTruth.adaptiveDedupModerateRadiusScale;
+            }
+        }
+    }
+
     const size_t beforeDedupCount = cells.size();
     std::vector<DetectedCell> deduped;
     for (const auto &cell : cells)
@@ -1215,8 +1917,8 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::detect
         bool merged = false;
         for (auto &existing : deduped)
         {
-            const float mergeRadius = std::max(activeProfile.dedupDistance,
-                                               0.60f * std::min(existing.majorRadius, cell.majorRadius));
+            const float mergeRadius = std::max(effectiveDedupDistance,
+                                               effectiveDedupRadiusScale * std::min(existing.majorRadius, cell.majorRadius));
             if (squaredDistanceXY(existing.centerScaled, cell.centerScaled) <= mergeRadius * mergeRadius &&
                 absoluteDistanceZ(existing.centerScaled, cell.centerScaled) <= std::max(10.0f, mergeRadius * 2.0f))
             {
@@ -1239,11 +1941,16 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::detect
     deduped = pruneLikelySatelliteCells(deduped);
     const size_t beforeFragmentMergeCount = deduped.size();
     deduped = mergeLikelySameCellFragments(deduped, volume, thresholdLow, thresholdHigh);
+    const size_t beforeBiologicalPriorsCount = deduped.size();
+    deduped = applyBiologicalPriors(deduped, volume, "post_fragment_merge");
     std::cout << "[GroundTruth CCStats] percentileHigh=" << percentileHigh
               << " low_components=" << lowComponents.size()
               << " high_components=" << highComponents.size()
               << " strong_high=" << strongHighComponents.size()
               << " min_component_voxels=" << minComponentVoxels
+              << " seed_merge_distance=" << effectiveSeedMergeDistance
+              << " dedup_distance=" << effectiveDedupDistance
+              << " dedup_radius_scale=" << effectiveDedupRadiusScale
               << " skipped_small=" << skippedSmallComponents
               << " skipped_no_seed=" << skippedNoSeedComponents
               << " sparse_seed_field=" << (sparseSeedField ? 1 : 0)
@@ -1252,7 +1959,9 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::detect
               << " before_dedup=" << beforeDedupCount
               << " after_dedup=" << beforePruneCount
               << " after_prune=" << beforeFragmentMergeCount
-              << " after_fragment_merge=" << deduped.size()
+              << " after_fragment_merge=" << beforeBiologicalPriorsCount
+              << " before_bio_priors=" << beforeBiologicalPriorsCount
+              << " after_bio_priors=" << deduped.size()
               << std::endl;
 
     for (size_t i = 0; i < deduped.size(); ++i)
@@ -1407,6 +2116,281 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::pruneL
     return filtered;
 }
 
+void CellGroundTruthBuilder::annotateSignalStats(const std::vector<cv::Mat> &volume,
+                                                 DetectedCell &cell) const
+{
+    cell.shellVoxelCount = 0;
+    cell.top10Intensity = cell.meanIntensity;
+    cell.shellMeanIntensity = 0.0f;
+    cell.meanMinusShell = 0.0f;
+    cell.top10MinusShell = 0.0f;
+    if (!config.groundTruth.signalStatsEnabled || volume.empty())
+    {
+        return;
+    }
+
+    const float zScale = effectiveZScaling();
+    const float innerScale = std::max(1.0f, config.groundTruth.shellInnerScale);
+    const float outerScale = std::max(innerScale + 0.01f, config.groundTruth.shellOuterScale);
+    const float a = std::max(cell.majorRadius, 1e-3f);
+    const float b = std::max(cell.bRadius, 1e-3f);
+    const float c = std::max(cell.minorRadius, 1e-3f);
+    const float maxR = std::max({a, b, c}) * outerScale;
+
+    const int Z = static_cast<int>(volume.size());
+    const int Y = volume[0].rows;
+    const int X = volume[0].cols;
+    const int minX = std::max(0, static_cast<int>(std::floor(cell.centerScaled.x - maxR)));
+    const int maxX = std::min(X - 1, static_cast<int>(std::ceil(cell.centerScaled.x + maxR)));
+    const int minY = std::max(0, static_cast<int>(std::floor(cell.centerScaled.y - maxR)));
+    const int maxY = std::min(Y - 1, static_cast<int>(std::ceil(cell.centerScaled.y + maxR)));
+    const int minZ = std::max(0, static_cast<int>(std::floor((cell.centerScaled.z - maxR) / zScale)));
+    const int maxZ = std::min(Z - 1, static_cast<int>(std::ceil((cell.centerScaled.z + maxR) / zScale)));
+    if (minX > maxX || minY > maxY || minZ > maxZ)
+    {
+        return;
+    }
+
+    std::vector<float> cellValues;
+    std::vector<float> shellValues;
+    const float invA2 = 1.0f / (a * a);
+    const float invB2 = 1.0f / (b * b);
+    const float invC2 = 1.0f / (c * c);
+    const float inner2 = innerScale * innerScale;
+    const float outer2 = outerScale * outerScale;
+    for (int z = minZ; z <= maxZ; ++z)
+    {
+        const float dz = static_cast<float>(z) * zScale - cell.centerScaled.z;
+        const cv::Mat &slice = volume[static_cast<size_t>(z)];
+        for (int y = minY; y <= maxY; ++y)
+        {
+            const float dy = static_cast<float>(y) - cell.centerScaled.y;
+            const float *row = slice.ptr<float>(y);
+            for (int x = minX; x <= maxX; ++x)
+            {
+                const float dx = static_cast<float>(x) - cell.centerScaled.x;
+                const float value = (dx * dx) * invA2 +
+                                    (dy * dy) * invB2 +
+                                    (dz * dz) * invC2;
+                const float pixel = row[x];
+                if (!std::isfinite(pixel))
+                {
+                    continue;
+                }
+                if (value <= 1.0f)
+                {
+                    cellValues.push_back(pixel);
+                }
+                else if (value > inner2 && value <= outer2)
+                {
+                    shellValues.push_back(pixel);
+                }
+            }
+        }
+    }
+
+    if (!cellValues.empty())
+    {
+        cell.top10Intensity = meanOfTopFraction(cellValues, 0.10f);
+        double sum = 0.0;
+        for (float value : cellValues)
+        {
+            sum += value;
+        }
+        cell.meanIntensity = static_cast<float>(sum / static_cast<double>(cellValues.size()));
+    }
+    if (!shellValues.empty())
+    {
+        cell.shellVoxelCount = static_cast<int>(shellValues.size());
+        double sum = 0.0;
+        for (float value : shellValues)
+        {
+            sum += value;
+        }
+        cell.shellMeanIntensity = static_cast<float>(sum / static_cast<double>(shellValues.size()));
+    }
+    cell.meanMinusShell = cell.meanIntensity - cell.shellMeanIntensity;
+    cell.top10MinusShell = cell.top10Intensity - cell.shellMeanIntensity;
+}
+
+std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::applyBiologicalPriors(
+    const std::vector<DetectedCell> &cells,
+    const std::vector<cv::Mat> &volume,
+    const std::string &stage) const
+{
+    if (cells.empty())
+    {
+        return {};
+    }
+
+    std::vector<DetectedCell> filtered;
+    filtered.reserve(cells.size());
+    int rejectedTiny = 0;
+    int rejectedContrast = 0;
+    for (DetectedCell cell : cells)
+    {
+        annotateSignalStats(volume, cell);
+        const float componentDx = static_cast<float>(cell.component.x1 - cell.component.x0 + 1);
+        const float componentDy = static_cast<float>(cell.component.y1 - cell.component.y0 + 1);
+        const float componentDz = static_cast<float>(cell.component.z1 - cell.component.z0 + 1) * effectiveZScaling();
+        const float componentSpanRadius = 0.5f * std::max({componentDx, componentDy, componentDz});
+
+        bool reject = false;
+        if (config.groundTruth.rejectTinyBrightArtifacts)
+        {
+            const bool biologicallyTinyByVoxel =
+                config.groundTruth.minBiologicalVoxelCount > 0 &&
+                cell.voxelCount < config.groundTruth.minBiologicalVoxelCount;
+            const bool biologicallyTinyBySpan =
+                config.groundTruth.minBiologicalMajorRadius > 0.0f &&
+                componentSpanRadius < config.groundTruth.minBiologicalMajorRadius * 0.70f;
+            const bool allowSparseArtifactRule =
+                config.groundTruth.smallArtifactSparseMaxCells <= 0 ||
+                static_cast<int>(cells.size()) <= config.groundTruth.smallArtifactSparseMaxCells;
+            const bool tinyArtifactByConfig =
+                allowSparseArtifactRule &&
+                config.groundTruth.smallArtifactMaxVoxels > 0 &&
+                cell.voxelCount <= config.groundTruth.smallArtifactMaxVoxels &&
+                (config.groundTruth.smallArtifactMaxTop10Intensity < 0.0f ||
+                 cell.top10Intensity <= config.groundTruth.smallArtifactMaxTop10Intensity) &&
+                (config.groundTruth.smallArtifactMaxMeanIntensity < 0.0f ||
+                 cell.meanIntensity <= config.groundTruth.smallArtifactMaxMeanIntensity);
+            if ((biologicallyTinyByVoxel && biologicallyTinyBySpan) || tinyArtifactByConfig)
+            {
+                reject = true;
+                rejectedTiny++;
+            }
+        }
+
+        if (!reject && config.groundTruth.signalStatsEnabled)
+        {
+            if (config.groundTruth.minTop10MinusShell >= 0.0f &&
+                cell.top10MinusShell < config.groundTruth.minTop10MinusShell)
+            {
+                reject = true;
+                rejectedContrast++;
+            }
+            if (!reject &&
+                config.groundTruth.minMeanMinusShell > -999999.0f &&
+                cell.meanMinusShell < config.groundTruth.minMeanMinusShell)
+            {
+                reject = true;
+                rejectedContrast++;
+            }
+        }
+
+        if (!reject)
+        {
+            filtered.push_back(cell);
+        }
+    }
+
+    int mergedPairs = 0;
+    float effectiveMinCenterDistance = config.groundTruth.minBiologicalCenterDistance;
+    if (config.groundTruth.adaptiveNearDuplicateMergeEnabled &&
+        config.groundTruth.adaptiveNearDuplicateDistance > 0.0f)
+    {
+        const int cellCount = static_cast<int>(filtered.size());
+        const bool aboveMin = config.groundTruth.adaptiveNearDuplicateMinCells <= 0 ||
+                              cellCount >= config.groundTruth.adaptiveNearDuplicateMinCells;
+        const bool belowMax = config.groundTruth.adaptiveNearDuplicateMaxCells <= 0 ||
+                              cellCount <= config.groundTruth.adaptiveNearDuplicateMaxCells;
+        bool pairRatioOk = true;
+        if (config.groundTruth.adaptiveNearDuplicateMinPairRatio > 0.0f)
+        {
+            int nearPairs = 0;
+            for (size_t i = 0; i < filtered.size(); ++i)
+            {
+                for (size_t j = i + 1; j < filtered.size(); ++j)
+                {
+                    const float nearThreshold = std::max(
+                        4.0f,
+                        0.55f * std::min(filtered[i].majorRadius, filtered[j].majorRadius));
+                    if (squaredDistanceXY(filtered[i].centerScaled, filtered[j].centerScaled) <=
+                            nearThreshold * nearThreshold &&
+                        absoluteDistanceZ(filtered[i].centerScaled, filtered[j].centerScaled) <=
+                            std::max(10.0f, nearThreshold * 2.0f))
+                    {
+                        nearPairs++;
+                    }
+                }
+            }
+            const float pairRatio = static_cast<float>(nearPairs) /
+                                    static_cast<float>(std::max<int>(1, cellCount));
+            pairRatioOk = pairRatio >= config.groundTruth.adaptiveNearDuplicateMinPairRatio;
+        }
+        if (aboveMin && belowMax && pairRatioOk)
+        {
+            effectiveMinCenterDistance = std::max(
+                effectiveMinCenterDistance,
+                config.groundTruth.adaptiveNearDuplicateDistance);
+        }
+    }
+    if (config.groundTruth.biologicalNearDuplicateMergeEnabled &&
+        effectiveMinCenterDistance > 0.0f &&
+        filtered.size() >= 2)
+    {
+        std::vector<DetectedCell> merged;
+        merged.reserve(filtered.size());
+        for (DetectedCell cell : filtered)
+        {
+            bool absorbed = false;
+            for (auto &existing : merged)
+            {
+                const float dz = cell.centerScaled.z - existing.centerScaled.z;
+                const float dx = cell.centerScaled.x - existing.centerScaled.x;
+                const float dy = cell.centerScaled.y - existing.centerScaled.y;
+                const float distance = std::sqrt(dx * dx + dy * dy + dz * dz);
+                if (distance > effectiveMinCenterDistance)
+                {
+                    continue;
+                }
+
+                const float leftWeight = std::max(1.0f, static_cast<float>(existing.voxelCount));
+                const float rightWeight = std::max(1.0f, static_cast<float>(cell.voxelCount));
+                const float totalWeight = leftWeight + rightWeight;
+                existing.centerScaled.x = (existing.centerScaled.x * leftWeight + cell.centerScaled.x * rightWeight) / totalWeight;
+                existing.centerScaled.y = (existing.centerScaled.y * leftWeight + cell.centerScaled.y * rightWeight) / totalWeight;
+                existing.centerScaled.z = (existing.centerScaled.z * leftWeight + cell.centerScaled.z * rightWeight) / totalWeight;
+                existing.zForCsv = existing.centerScaled.z / effectiveZScaling();
+                existing.majorRadius = std::max(existing.majorRadius, cell.majorRadius);
+                existing.bRadius = std::max(existing.bRadius, cell.bRadius);
+                existing.minorRadius = std::max(existing.minorRadius, cell.minorRadius);
+                existing.voxelCount += cell.voxelCount;
+                existing.meanIntensity = (existing.meanIntensity * leftWeight + cell.meanIntensity * rightWeight) / totalWeight;
+                existing.component.x0 = std::min(existing.component.x0, cell.component.x0);
+                existing.component.x1 = std::max(existing.component.x1, cell.component.x1);
+                existing.component.y0 = std::min(existing.component.y0, cell.component.y0);
+                existing.component.y1 = std::max(existing.component.y1, cell.component.y1);
+                existing.component.z0 = std::min(existing.component.z0, cell.component.z0);
+                existing.component.z1 = std::max(existing.component.z1, cell.component.z1);
+                annotateSignalStats(volume, existing);
+                absorbed = true;
+                mergedPairs++;
+                break;
+            }
+            if (!absorbed)
+            {
+                merged.push_back(cell);
+            }
+        }
+        filtered = std::move(merged);
+    }
+
+    std::cout << "[GroundTruth BioPriors]"
+              << " stage=" << stage
+              << " before=" << cells.size()
+              << " after=" << filtered.size()
+              << " rejected_tiny=" << rejectedTiny
+              << " rejected_contrast=" << rejectedContrast
+              << " merged_near_duplicates=" << mergedPairs
+              << " min_component_voxels=" << config.groundTruth.minComponentVoxels
+              << " min_top10_minus_shell=" << config.groundTruth.minTop10MinusShell
+              << " min_center_distance=" << effectiveMinCenterDistance
+              << std::endl;
+    return filtered;
+}
+
 std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::mergeLikelySameCellFragments(
     const std::vector<DetectedCell> &cells,
     const std::vector<cv::Mat> &volume,
@@ -1427,14 +2411,22 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::mergeL
     std::sort(majorRadii.begin(), majorRadii.end());
     const float medianMajor = majorRadii[majorRadii.size() / 2];
     const float zScale = effectiveZScaling();
-    if (shouldDisableGroundTruthFragmentMerge())
+    const bool disabledByCellCount =
+        config.groundTruth.fragmentMergeMaxInputCells > 0 &&
+        static_cast<int>(cells.size()) > config.groundTruth.fragmentMergeMaxInputCells;
+    if (shouldDisableGroundTruthFragmentMerge() ||
+        !config.groundTruth.fragmentMergeEnabled ||
+        disabledByCellCount)
     {
         std::cout << "[GroundTruth FragmentMerge]"
                   << " before=" << cells.size()
                   << " after=" << cells.size()
                   << " merged_pairs=0"
                   << " median_major=" << medianMajor
-                  << " mode=disabled_by_env"
+                  << " mode="
+                  << (shouldDisableGroundTruthFragmentMerge()
+                          ? "disabled_by_env"
+                          : (!config.groundTruth.fragmentMergeEnabled ? "disabled_by_config" : "disabled_by_cell_count"))
                   << std::endl;
         return cells;
     }
@@ -1660,13 +2652,19 @@ float CellGroundTruthBuilder::scoreCandidateCells(const std::vector<DetectedCell
     const float maxMajor = config.cell ? static_cast<float>(config.cell->maxARadius) : 40.0f;
 
     std::vector<float> majorRadii;
+    std::vector<float> top10MinusShellValues;
+    std::vector<float> meanMinusShellValues;
     std::vector<int> voxelCounts;
     majorRadii.reserve(cells.size());
+    top10MinusShellValues.reserve(cells.size());
+    meanMinusShellValues.reserve(cells.size());
     voxelCounts.reserve(cells.size());
     for (const auto &cell : cells)
     {
         totalVoxels += cell.voxelCount;
         majorRadii.push_back(cell.majorRadius);
+        top10MinusShellValues.push_back(cell.top10MinusShell);
+        meanMinusShellValues.push_back(cell.meanMinusShell);
         voxelCounts.push_back(cell.voxelCount);
         if (cell.minorRadius <= minMinor + 0.25f)
         {
@@ -1683,6 +2681,10 @@ float CellGroundTruthBuilder::scoreCandidateCells(const std::vector<DetectedCell
     }
 
     std::sort(voxelCounts.begin(), voxelCounts.end());
+    std::sort(top10MinusShellValues.begin(), top10MinusShellValues.end());
+    std::sort(meanMinusShellValues.begin(), meanMinusShellValues.end());
+    const float medianTop10MinusShell = top10MinusShellValues[top10MinusShellValues.size() / 2];
+    const float medianMeanMinusShell = meanMinusShellValues[meanMinusShellValues.size() / 2];
     for (size_t i = 0; i < cells.size(); ++i)
     {
         for (size_t j = i + 1; j < cells.size(); ++j)
@@ -1700,6 +2702,17 @@ float CellGroundTruthBuilder::scoreCandidateCells(const std::vector<DetectedCell
     const float medianMajor = majorRadii[majorRadii.size() / 2];
     const float medianVoxelCount = static_cast<float>(voxelCounts[voxelCounts.size() / 2]);
     const float meanVoxelCount = static_cast<float>(totalVoxels) / static_cast<float>(cells.size());
+    const float meanVoxelPenalty =
+        config.groundTruth.maxCandidateMeanVoxelCount > 0.0f && meanVoxelCount > config.groundTruth.maxCandidateMeanVoxelCount
+            ? (meanVoxelCount - config.groundTruth.maxCandidateMeanVoxelCount) /
+                  std::max(1.0f, config.groundTruth.maxCandidateMeanVoxelCount)
+            : 0.0f;
+    const float cellCountWeight = config.groundTruth.candidateCellCountWeight > 0.0f
+                                      ? config.groundTruth.candidateCellCountWeight
+                                      : 0.16f;
+    const float meanVoxelPenaltyWeight = config.groundTruth.candidateMeanVoxelPenaltyWeight > 0.0f
+                                             ? config.groundTruth.candidateMeanVoxelPenaltyWeight
+                                             : 1.0f;
 
     for (const auto &cell : cells)
     {
@@ -1715,28 +2728,78 @@ float CellGroundTruthBuilder::scoreCandidateCells(const std::vector<DetectedCell
         }
     }
 
-    return 0.010f * meanVoxelCount
-           + 0.16f * static_cast<float>(cells.size())
+    return cellCountWeight * static_cast<float>(cells.size())
            + 0.20f * medianMajor
+           + 0.020f * medianTop10MinusShell
+           + 0.010f * medianMeanMinusShell
            - 2.50f * static_cast<float>(clampedMinorCount)
            - 1.25f * static_cast<float>(verySmallCount)
            - 3.00f * static_cast<float>(veryLargeCount)
-           - 1.50f * static_cast<float>(nearDuplicatePairs)
+           - config.groundTruth.candidateNearPairPenaltyWeight * static_cast<float>(nearDuplicatePairs)
            - 1.75f * static_cast<float>(flattenedCount)
-           - 1.25f * static_cast<float>(tinyFragmentCount);
+           - 1.25f * static_cast<float>(tinyFragmentCount)
+           - meanVoxelPenaltyWeight * meanVoxelPenalty;
 }
 
 std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::detectCellsInVolume(
     const std::vector<cv::Mat> &volume,
     const std::string &frameStem)
 {
-    const std::vector<float> percentiles = groundTruthPercentiles();
+    const std::vector<float> percentiles = groundTruthPercentiles(config.groundTruth);
 
     std::vector<DetectedCell> bestCells;
     float bestScore = -std::numeric_limits<float>::max();
+    std::vector<DetectedCell> watershedRescueCandidates;
+    if (config.groundTruth.seededWatershedEnabled)
+    {
+        std::vector<DetectedCell> watershedCells = detectCellsBySeededWatershed(volume, frameStem);
+        if (!watershedCells.empty())
+        {
+            int totalVoxels = 0;
+            int clampedMinorCount = 0;
+            int verySmallCount = 0;
+            int veryLargeCount = 0;
+            int nearDuplicatePairs = 0;
+            int flattenedCount = 0;
+            int tinyFragmentCount = 0;
+            const float watershedScore = scoreCandidateCells(
+                watershedCells,
+                totalVoxels,
+                clampedMinorCount,
+                verySmallCount,
+                veryLargeCount,
+                nearDuplicatePairs,
+                flattenedCount,
+                tinyFragmentCount);
+            std::cout << "[GroundTruth Candidate] method=seeded_watershed"
+                      << " cells=" << watershedCells.size()
+                      << " total_voxels=" << totalVoxels
+                      << " minor_floor=" << clampedMinorCount
+                      << " very_small=" << verySmallCount
+                      << " very_large=" << veryLargeCount
+                      << " near_pairs=" << nearDuplicatePairs
+                      << " flattened=" << flattenedCount
+                      << " tiny_fragments=" << tinyFragmentCount
+                      << " score=" << watershedScore
+                      << std::endl;
+
+            if (config.groundTruth.seededWatershedPreferOverPercentile)
+            {
+                return watershedCells;
+            }
+
+            watershedRescueCandidates = std::move(watershedCells);
+        }
+    }
+
+    int firstCandidateCellCount = -1;
     for (float percentile : percentiles)
     {
         std::vector<DetectedCell> cells = detectCellsAtPercentile(volume, frameStem, percentile);
+        if (firstCandidateCellCount < 0)
+        {
+            firstCandidateCellCount = static_cast<int>(cells.size());
+        }
         int totalVoxels = 0;
         int clampedMinorCount = 0;
         int verySmallCount = 0;
@@ -1744,7 +2807,7 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::detect
         int nearDuplicatePairs = 0;
         int flattenedCount = 0;
         int tinyFragmentCount = 0;
-        const float score = scoreCandidateCells(
+        float score = scoreCandidateCells(
             cells,
             totalVoxels,
             clampedMinorCount,
@@ -1753,6 +2816,33 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::detect
             nearDuplicatePairs,
             flattenedCount,
             tinyFragmentCount);
+        // Prefer the highest threshold when candidates are otherwise close. This
+        // keeps the raw-only detector from expanding into dim halo signal just
+        // because the lower threshold produces slightly larger connected
+        // components.
+        score += config.groundTruth.candidatePercentilePreferenceWeight * (percentile - 99.0f);
+        const bool protectEarlySparseFrame =
+            config.groundTruth.candidateOvergrowthAlwaysBelowFirstCount > 0 &&
+            firstCandidateCellCount > 0 &&
+            firstCandidateCellCount <= config.groundTruth.candidateOvergrowthAlwaysBelowFirstCount;
+        const bool protectNormalFrame =
+            config.groundTruth.candidateOvergrowthMinFirstCount <= 0 ||
+            firstCandidateCellCount >= config.groundTruth.candidateOvergrowthMinFirstCount;
+        if (config.groundTruth.maxCandidateCountGrowthFromFirst > 1.0f &&
+            config.groundTruth.candidateOvergrowthPenaltyWeight > 0.0f &&
+            firstCandidateCellCount > 0 &&
+            (protectEarlySparseFrame || protectNormalFrame))
+        {
+            const float growth = static_cast<float>(cells.size()) /
+                                 static_cast<float>(std::max(1, firstCandidateCellCount));
+            if (growth > config.groundTruth.maxCandidateCountGrowthFromFirst)
+            {
+                const float excess = growth - config.groundTruth.maxCandidateCountGrowthFromFirst;
+                score -= config.groundTruth.candidateOvergrowthPenaltyWeight *
+                         excess * excess *
+                         static_cast<float>(firstCandidateCellCount);
+            }
+        }
 
         std::cout << "[GroundTruth Candidate] percentile=" << percentile
                   << " cells=" << cells.size()
@@ -1776,6 +2866,120 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::detect
     if (bestCells.empty())
     {
         throw std::runtime_error("CellGroundTruthBuilder found no valid connected components after preprocessing.");
+    }
+
+    if (!watershedRescueCandidates.empty() &&
+        config.groundTruth.seededWatershedPreferBaseCountMin > 0 &&
+        config.groundTruth.seededWatershedPreferBaseCountMax >= config.groundTruth.seededWatershedPreferBaseCountMin)
+    {
+        const int baseCount = static_cast<int>(bestCells.size());
+        const bool baseCountInRange =
+            baseCount >= config.groundTruth.seededWatershedPreferBaseCountMin &&
+            baseCount <= config.groundTruth.seededWatershedPreferBaseCountMax;
+        if (baseCountInRange)
+        {
+            std::cout << "[GroundTruth SeededWatershed DensitySwitch]"
+                      << " base_cells=" << baseCount
+                      << " watershed_cells=" << watershedRescueCandidates.size()
+                      << " min_base_count=" << config.groundTruth.seededWatershedPreferBaseCountMin
+                      << " max_base_count=" << config.groundTruth.seededWatershedPreferBaseCountMax
+                      << " selected=seeded_watershed"
+                      << std::endl;
+            return watershedRescueCandidates;
+        }
+        std::cout << "[GroundTruth SeededWatershed DensitySwitch]"
+                  << " base_cells=" << baseCount
+                  << " watershed_cells=" << watershedRescueCandidates.size()
+                  << " min_base_count=" << config.groundTruth.seededWatershedPreferBaseCountMin
+                  << " max_base_count=" << config.groundTruth.seededWatershedPreferBaseCountMax
+                  << " selected=percentile_cc"
+                  << std::endl;
+    }
+
+    if (config.groundTruth.seededWatershedRescueEnabled && !watershedRescueCandidates.empty())
+    {
+        std::sort(watershedRescueCandidates.begin(),
+                  watershedRescueCandidates.end(),
+                  [](const DetectedCell &lhs, const DetectedCell &rhs) {
+                      if (std::abs(lhs.top10MinusShell - rhs.top10MinusShell) > 1e-3f)
+                      {
+                          return lhs.top10MinusShell > rhs.top10MinusShell;
+                      }
+                      return lhs.voxelCount > rhs.voxelCount;
+                  });
+
+        const float rescueDistance = std::max(1.0f, config.groundTruth.seededWatershedRescueMinDistance);
+        const float rescueDistanceSq = rescueDistance * rescueDistance;
+        const int fractionCap = config.groundTruth.seededWatershedRescueMaxAddedFraction > 0.0f
+            ? static_cast<int>(std::ceil(config.groundTruth.seededWatershedRescueMaxAddedFraction *
+                                         static_cast<float>(bestCells.size())))
+            : std::numeric_limits<int>::max();
+        const int absoluteCap = config.groundTruth.seededWatershedRescueMaxAdded > 0
+            ? config.groundTruth.seededWatershedRescueMaxAdded
+            : std::numeric_limits<int>::max();
+        const int maxAdded = std::max(0, std::min(fractionCap, absoluteCap));
+
+        int considered = 0;
+        int rejectedNearExisting = 0;
+        int rejectedWeakSignal = 0;
+        int added = 0;
+        for (const DetectedCell &candidate : watershedRescueCandidates)
+        {
+            if (added >= maxAdded)
+            {
+                break;
+            }
+            ++considered;
+
+            if (config.groundTruth.minTop10MinusShell > 0.0f &&
+                candidate.top10MinusShell < config.groundTruth.minTop10MinusShell)
+            {
+                ++rejectedWeakSignal;
+                continue;
+            }
+
+            bool nearExisting = false;
+            for (const DetectedCell &existing : bestCells)
+            {
+                if (squaredDistance(candidate.centerScaled, existing.centerScaled) <= rescueDistanceSq)
+                {
+                    nearExisting = true;
+                    break;
+                }
+            }
+            if (nearExisting)
+            {
+                ++rejectedNearExisting;
+                continue;
+            }
+
+            bestCells.push_back(candidate);
+            ++added;
+        }
+
+        std::sort(bestCells.begin(), bestCells.end(), [](const DetectedCell &lhs, const DetectedCell &rhs) {
+            if (std::abs(lhs.centerScaled.y - rhs.centerScaled.y) > 1e-3f)
+            {
+                return lhs.centerScaled.y < rhs.centerScaled.y;
+            }
+            return lhs.centerScaled.x < rhs.centerScaled.x;
+        });
+        for (size_t i = 0; i < bestCells.size(); ++i)
+        {
+            bestCells[i].name = makeCellName(frameStem, static_cast<int>(i + 1));
+            bestCells[i].zForCsv = bestCells[i].centerScaled.z / effectiveZScaling();
+        }
+
+        std::cout << "[GroundTruth SeededWatershed Rescue]"
+                  << " candidates=" << watershedRescueCandidates.size()
+                  << " considered=" << considered
+                  << " added=" << added
+                  << " max_added=" << maxAdded
+                  << " rescue_distance=" << rescueDistance
+                  << " rejected_near_existing=" << rejectedNearExisting
+                  << " rejected_weak_signal=" << rejectedWeakSignal
+                  << " final_cells=" << bestCells.size()
+                  << std::endl;
     }
 
     return bestCells;
@@ -1972,6 +3176,9 @@ std::vector<CellGroundTruthBuilder::DetectedCell> CellGroundTruthBuilder::buildI
                   << " minor=" << cell.minorRadius
                   << " vox=" << cell.voxelCount
                   << " meanI=" << cell.meanIntensity
+                  << " top10I=" << cell.top10Intensity
+                  << " shellMeanI=" << cell.shellMeanIntensity
+                  << " top10MinusShell=" << cell.top10MinusShell
                   << std::endl;
     }
 

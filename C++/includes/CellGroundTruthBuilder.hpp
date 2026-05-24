@@ -24,6 +24,11 @@ public:
         float minorRadius = 0.0f;
         int voxelCount = 0;
         float meanIntensity = 0.0f;
+        int shellVoxelCount = 0;
+        float top10Intensity = 0.0f;
+        float shellMeanIntensity = 0.0f;
+        float meanMinusShell = 0.0f;
+        float top10MinusShell = 0.0f;
         EmbryoBrightTracker::Comp3DStat component{};
     };
 
@@ -65,6 +70,9 @@ private:
     std::vector<DetectedCell> detectCellsAtPercentile(const std::vector<cv::Mat> &volume,
                                                       const std::string &frameStem,
                                                       float percentileHigh) const;
+    std::vector<DetectedCell> detectCellsBySeededWatershed(const std::vector<cv::Mat> &volume,
+                                                           const std::string &frameStem) const;
+    std::vector<cv::Mat> buildLocalContrastVolume(const std::vector<cv::Mat> &volume) const;
     DetectedCell makeDetectedCellFromComponent(const EmbryoBrightTracker::Comp3DStat &component) const;
     void estimateAdaptiveRadii(const EmbryoBrightTracker::Comp3DStat &component,
                                float &majorRadius,
@@ -73,12 +81,21 @@ private:
     std::optional<DetectedCell> detectLocalSeededCell(const std::vector<cv::Mat> &volume,
                                                       const EmbryoBrightTracker::Comp3DStat &seedComponent,
                                                       float thresholdLow) const;
+    std::vector<EmbryoBrightTracker::Comp3DStat> extractLocalMaximumSeeds(
+        const std::vector<cv::Mat> &volume,
+        float thresholdHigh,
+        const std::vector<EmbryoBrightTracker::Comp3DStat> &componentSeeds) const;
     std::vector<EmbryoBrightTracker::Comp3DStat> collapseNearbySeeds(
         const std::vector<EmbryoBrightTracker::Comp3DStat> &seeds,
         float mergeDistance) const;
     bool shouldSplitCoarseComponent(const DetectedCell &coarseCell,
                                     const std::vector<EmbryoBrightTracker::Comp3DStat> &containedSeeds) const;
     std::vector<DetectedCell> pruneLikelySatelliteCells(const std::vector<DetectedCell> &cells) const;
+    void annotateSignalStats(const std::vector<cv::Mat> &volume,
+                             DetectedCell &cell) const;
+    std::vector<DetectedCell> applyBiologicalPriors(const std::vector<DetectedCell> &cells,
+                                                    const std::vector<cv::Mat> &volume,
+                                                    const std::string &stage) const;
     std::vector<DetectedCell> mergeLikelySameCellFragments(const std::vector<DetectedCell> &cells,
                                                            const std::vector<cv::Mat> &volume,
                                                            float thresholdLow,

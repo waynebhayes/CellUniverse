@@ -1,0 +1,148 @@
+base_config: config.yaml
+
+# Embryo specific settings for the raw CellGroundTruthBuilder path.
+# These priors come from the verified Cell Universe output for embryo frames
+# 1 to 84. They are used only by `--build-ground-truth`; the main Cell Universe
+# optimizer keeps using the normal config unless this file is explicitly passed.
+
+ground_truth:
+  enabled: true
+
+  # Try a slightly wider threshold sweep than the generic builder. The lower
+  # percentiles help recover dim large cells, while the biological gates below
+  # remove tiny bright noise components.
+  percentiles: [99.2, 99.15, 99.1, 99.05, 99.0, 98.95, 98.9, 98.6, 98.3, 98.0, 97.7, 97.4]
+
+  # Cell Universe output stores z in scaled coordinates. Keep the center closer
+  # to the weighted brightness center, but blend in geometry so hollow or uneven
+  # cells do not pull too far toward one bright edge.
+  geometricCenterBlend: 0.30
+
+  # Reject tiny connected components that cannot be embryo cells. Verified
+  # embryo cells have roughly 1000+ raw ellipsoid voxels after fitting, so a
+  # 500 component floor removes isolated bright specks without blocking dim
+  # large cells that still have a real local shell contrast.
+  minComponentVoxels: 500
+  minHighSeedVoxels: 18
+
+  # Collapse multiple bright peaks inside the same real cell, but still allow
+  # real daughter or neighbor seeds to split a large connected bridge. Verified
+  # new daughter center distance is usually near 57 scaled pixels and rarely
+  # below 41, so seed merging below about 22 is conservative.
+  seedMergeDistance: 22.0
+  adaptiveSeedMergeEnabled: true
+  adaptiveSeedMergeModerateHighSeedCount: 180
+  adaptiveSeedMergeDenseHighSeedCount: 300
+  adaptiveSeedMergeModerateDistance: 16.0
+  adaptiveSeedMergeDenseDistance: 7.0
+  seedSplitSeparation: 32.0
+  dedupDistance: 18.0
+  dedupRadiusScale: 0.60
+  adaptiveDedupEnabled: true
+  adaptiveDedupModerateHighSeedCount: 180
+  adaptiveDedupDenseHighSeedCount: 300
+  adaptiveDedupModerateDistance: 5.8
+  adaptiveDedupModerateRadiusScale: 0.30
+  adaptiveDedupDenseDistance: 1.2
+  adaptiveDedupDenseRadiusScale: 0.06
+
+  # Fragment merge is useful only in very sparse early frames, where one true
+  # bright cell can be split into several high threshold pieces. In dense
+  # embryo frames it can absorb real neighboring cells through bright bridges,
+  # so it is capped by the number of candidate cells before merging.
+  fragmentMergeEnabled: true
+  fragmentMergeMaxInputCells: 40
+  allowSeededSplitInSparseField: true
+  seededSplitMaxMajorRadius: 38.0
+  seededSplitMinSeedBalance: 0.28
+  seededSplitMinSeedSeparation: 32.0
+
+  # Radius fitting. The raw TIFF has only 35 z slices, while output ellipsoids
+  # are in z scaled coordinates. Counting raw voxels without z scaling makes
+  # the ellipsoid too small, so the builder treats each raw z voxel as z_scaling
+  # units of volume before estimating the radius.
+  useScaledVoxelVolumeForRadius: true
+  radiusInflationScale: 1.05
+  minOutputMajorRadius: 18.0
+  minOutputBRadius: 17.0
+  minOutputMinorRadius: 14.0
+  maxOutputMajorRadius: 52.0
+  maxOutputBRadius: 52.0
+  maxOutputMinorRadius: 46.0
+
+  # Local contrast priors. Top 10% brightness minus local shell background was
+  # the most stable signal in the verified frames. It stays above about 40 even
+  # for new daughters and dim pre split parents, while small noise spots do not
+  # have a consistent biological size plus shell contrast.
+  signalStatsEnabled: true
+  shellInnerScale: 1.05
+  shellOuterScale: 1.35
+  minTop10MinusShell: 35.0
+  minMeanMinusShell: -5.0
+  minBiologicalVoxelCount: 500
+  minBiologicalMajorRadius: 16.0
+  smallArtifactSparseMaxCells: 20
+  smallArtifactMaxVoxels: 1800
+  smallArtifactMaxTop10Intensity: 125.0
+  smallArtifactMaxMeanIntensity: 55.0
+  rejectTinyBrightArtifacts: true
+
+  # Prevent one real cell from becoming two touching small synth cells. The
+  # base distance is intentionally tiny so dense late frames are not collapsed.
+  # For middle-density frames, an adaptive merge removes duplicate peaks that
+  # sit only a few raw pixels apart while leaving very dense frame 194 alone.
+  biologicalNearDuplicateMergeEnabled: true
+  minBiologicalCenterDistance: 1.0
+  adaptiveNearDuplicateMergeEnabled: true
+  adaptiveNearDuplicateMinCells: 125
+  adaptiveNearDuplicateMaxCells: 160
+  adaptiveNearDuplicateDistance: 10.5
+  adaptiveNearDuplicateMinPairRatio: 0.32
+
+  # Dense frames often have one connected bright bridge that contains several
+  # real cell centers. In that case connected component centroids alone cluster
+  # around the bridge. Local maxima seeds give the splitter extra candidate
+  # centers before final biological filtering.
+  localMaxSeedEnabled: false
+  localMaxSeedMinStrongSeedCount: 80
+  localMaxSeedMinDistance: 8.0
+  localMaxSeedMaxPerFrameFactor: 2.5
+  useHighSeedCenterForSplitCells: false
+
+  # Experimental marker guided raw intensity segmentation. This follows the
+  # same high level idea as marker controlled watershed papers: first subtract
+  # local background to find reliable cell center markers, then let each marker
+  # claim only nearby permissive mask voxels. It should handle dim cells and
+  # bright bridges better than a single connected component threshold.
+  seededWatershedEnabled: true
+  seededWatershedPreferOverPercentile: false
+  seededWatershedRescueEnabled: false
+  seededWatershedPreferBaseCountMin: 110
+  seededWatershedPreferBaseCountMax: 190
+  seededWatershedSignalSigma: 4.0
+  seededWatershedBackgroundSigma: 14.0
+  seededWatershedSeedPercentile: 96.5
+  seededWatershedMaskPercentile: 94.0
+  seededWatershedSeedThresholdFloor: 0.08
+  seededWatershedMaskThresholdFloor: 0.025
+  seededWatershedMinSeedDistance: 26.0
+  seededWatershedMaxGrowDistance: 30.0
+  seededWatershedMinVoxels: 350
+  seededWatershedMaxSeeds: 650
+  seededWatershedRescueMinDistance: 32.0
+  seededWatershedRescueMaxAddedFraction: 0.08
+  seededWatershedRescueMaxAdded: 40
+
+  # Candidate selection should not prefer a low threshold that turns several
+  # cells into a few huge connected blobs. The verified mature cell median
+  # scaled volume is about 46k, so a raw component mean far above this usually
+  # means over merging rather than better detection.
+  maxCandidateMeanVoxelCount: 14000.0
+  candidateCellCountWeight: 0.42
+  candidateMeanVoxelPenaltyWeight: 22.0
+  candidateNearPairPenaltyWeight: 0.05
+  candidatePercentilePreferenceWeight: 10.25
+  candidateOvergrowthAlwaysBelowFirstCount: 20
+  candidateOvergrowthMinFirstCount: 100
+  maxCandidateCountGrowthFromFirst: 1.03
+  candidateOvergrowthPenaltyWeight: 500.0

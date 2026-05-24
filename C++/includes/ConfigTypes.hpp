@@ -1265,12 +1265,241 @@ public:
     }
 };
 
+class GroundTruthConfig {
+public:
+    // Dataset-specific controls for CellGroundTruthBuilder only. These values
+    // are intentionally separated from the main optimizer so raw connected
+    // component initialization can use biological priors without changing the
+    // Cell Universe tracking loop.
+    bool enabled = false;
+    std::vector<float> percentiles{};
+    float geometricCenterBlend = -1.0f;
+
+    int minComponentVoxels = -1;
+    int minHighSeedVoxels = -1;
+    float seedMergeDistance = -1.0f;
+    bool adaptiveSeedMergeEnabled = false;
+    int adaptiveSeedMergeModerateHighSeedCount = -1;
+    int adaptiveSeedMergeDenseHighSeedCount = -1;
+    float adaptiveSeedMergeModerateDistance = -1.0f;
+    float adaptiveSeedMergeDenseDistance = -1.0f;
+    float seedSplitSeparation = -1.0f;
+    float dedupDistance = -1.0f;
+    float dedupRadiusScale = 0.60f;
+    bool adaptiveDedupEnabled = false;
+    int adaptiveDedupModerateHighSeedCount = -1;
+    int adaptiveDedupDenseHighSeedCount = -1;
+    float adaptiveDedupModerateDistance = -1.0f;
+    float adaptiveDedupModerateRadiusScale = -1.0f;
+    float adaptiveDedupDenseDistance = -1.0f;
+    float adaptiveDedupDenseRadiusScale = -1.0f;
+    bool fragmentMergeEnabled = true;
+    int fragmentMergeMaxInputCells = -1;
+    bool allowSeededSplitInSparseField = false;
+    float seededSplitMaxMajorRadius = -1.0f;
+    float seededSplitMinSeedBalance = 0.28f;
+    float seededSplitMinSeedSeparation = -1.0f;
+
+    bool useScaledVoxelVolumeForRadius = true;
+    float radiusInflationScale = 1.0f;
+    float minOutputMajorRadius = -1.0f;
+    float minOutputBRadius = -1.0f;
+    float minOutputMinorRadius = -1.0f;
+    float maxOutputMajorRadius = -1.0f;
+    float maxOutputBRadius = -1.0f;
+    float maxOutputMinorRadius = -1.0f;
+
+    bool signalStatsEnabled = false;
+    float shellInnerScale = 1.05f;
+    float shellOuterScale = 1.35f;
+    float minTop10MinusShell = -1.0f;
+    float minMeanMinusShell = -1000000.0f;
+    int minBiologicalVoxelCount = -1;
+    float minBiologicalMajorRadius = -1.0f;
+    int smallArtifactSparseMaxCells = -1;
+    int smallArtifactMaxVoxels = -1;
+    float smallArtifactMaxTop10Intensity = -1.0f;
+    float smallArtifactMaxMeanIntensity = -1.0f;
+    bool rejectTinyBrightArtifacts = false;
+
+    bool biologicalNearDuplicateMergeEnabled = false;
+    float minBiologicalCenterDistance = -1.0f;
+    bool adaptiveNearDuplicateMergeEnabled = false;
+    int adaptiveNearDuplicateMinCells = -1;
+    int adaptiveNearDuplicateMaxCells = -1;
+    float adaptiveNearDuplicateDistance = -1.0f;
+    float adaptiveNearDuplicateMinPairRatio = -1.0f;
+    bool localMaxSeedEnabled = false;
+    int localMaxSeedMinStrongSeedCount = -1;
+    float localMaxSeedMinDistance = 8.0f;
+    float localMaxSeedMaxPerFrameFactor = 2.5f;
+    bool useHighSeedCenterForSplitCells = false;
+
+    // Experimental raw intensity seed segmentation path. This keeps the old
+    // percentile connected component method available, but lets the builder
+    // try a marker controlled region grow that is closer to seeded watershed:
+    // local background subtraction finds markers, then each marker claims only
+    // nearby permissive mask voxels. It is intended for dim or bridged embryo
+    // frames where one global threshold either loses cells or merges them.
+    bool seededWatershedEnabled = false;
+    bool seededWatershedPreferOverPercentile = false;
+    bool seededWatershedRescueEnabled = false;
+    int seededWatershedPreferBaseCountMin = -1;
+    int seededWatershedPreferBaseCountMax = -1;
+    float seededWatershedSignalSigma = 1.0f;
+    float seededWatershedBackgroundSigma = 12.0f;
+    float seededWatershedSeedPercentile = 99.25f;
+    float seededWatershedMaskPercentile = 94.0f;
+    float seededWatershedSeedThresholdFloor = 0.08f;
+    float seededWatershedMaskThresholdFloor = 0.025f;
+    float seededWatershedMinSeedDistance = 18.0f;
+    float seededWatershedMaxGrowDistance = 30.0f;
+    int seededWatershedMinVoxels = 350;
+    int seededWatershedMaxSeeds = 650;
+    float seededWatershedRescueMinDistance = 24.0f;
+    float seededWatershedRescueMaxAddedFraction = 0.12f;
+    int seededWatershedRescueMaxAdded = 40;
+
+    float maxCandidateMeanVoxelCount = -1.0f;
+    float candidateCellCountWeight = 0.30f;
+    float candidateMeanVoxelPenaltyWeight = 1.0f;
+    float candidateNearPairPenaltyWeight = 1.50f;
+    float candidatePercentilePreferenceWeight = 0.0f;
+    int candidateOvergrowthAlwaysBelowFirstCount = -1;
+    int candidateOvergrowthMinFirstCount = -1;
+    float maxCandidateCountGrowthFromFirst = -1.0f;
+    float candidateOvergrowthPenaltyWeight = 0.0f;
+
+    void explodeConfig(const YAML::Node& node) {
+        if (!node) return;
+        if (node["enabled"]) enabled = node["enabled"].as<bool>();
+        if (node["percentiles"] && node["percentiles"].IsSequence()) {
+            percentiles.clear();
+            for (const auto &value : node["percentiles"]) {
+                percentiles.push_back(value.as<float>());
+            }
+        }
+        if (node["geometricCenterBlend"]) geometricCenterBlend = node["geometricCenterBlend"].as<float>();
+
+        if (node["minComponentVoxels"]) minComponentVoxels = node["minComponentVoxels"].as<int>();
+        if (node["minHighSeedVoxels"]) minHighSeedVoxels = node["minHighSeedVoxels"].as<int>();
+        if (node["seedMergeDistance"]) seedMergeDistance = node["seedMergeDistance"].as<float>();
+        if (node["adaptiveSeedMergeEnabled"]) adaptiveSeedMergeEnabled = node["adaptiveSeedMergeEnabled"].as<bool>();
+        if (node["adaptiveSeedMergeModerateHighSeedCount"]) adaptiveSeedMergeModerateHighSeedCount = node["adaptiveSeedMergeModerateHighSeedCount"].as<int>();
+        if (node["adaptiveSeedMergeDenseHighSeedCount"]) adaptiveSeedMergeDenseHighSeedCount = node["adaptiveSeedMergeDenseHighSeedCount"].as<int>();
+        if (node["adaptiveSeedMergeModerateDistance"]) adaptiveSeedMergeModerateDistance = node["adaptiveSeedMergeModerateDistance"].as<float>();
+        if (node["adaptiveSeedMergeDenseDistance"]) adaptiveSeedMergeDenseDistance = node["adaptiveSeedMergeDenseDistance"].as<float>();
+        if (node["seedSplitSeparation"]) seedSplitSeparation = node["seedSplitSeparation"].as<float>();
+        if (node["dedupDistance"]) dedupDistance = node["dedupDistance"].as<float>();
+        if (node["dedupRadiusScale"]) dedupRadiusScale = node["dedupRadiusScale"].as<float>();
+        if (node["adaptiveDedupEnabled"]) adaptiveDedupEnabled = node["adaptiveDedupEnabled"].as<bool>();
+        if (node["adaptiveDedupModerateHighSeedCount"]) adaptiveDedupModerateHighSeedCount = node["adaptiveDedupModerateHighSeedCount"].as<int>();
+        if (node["adaptiveDedupDenseHighSeedCount"]) adaptiveDedupDenseHighSeedCount = node["adaptiveDedupDenseHighSeedCount"].as<int>();
+        if (node["adaptiveDedupModerateDistance"]) adaptiveDedupModerateDistance = node["adaptiveDedupModerateDistance"].as<float>();
+        if (node["adaptiveDedupModerateRadiusScale"]) adaptiveDedupModerateRadiusScale = node["adaptiveDedupModerateRadiusScale"].as<float>();
+        if (node["adaptiveDedupDenseDistance"]) adaptiveDedupDenseDistance = node["adaptiveDedupDenseDistance"].as<float>();
+        if (node["adaptiveDedupDenseRadiusScale"]) adaptiveDedupDenseRadiusScale = node["adaptiveDedupDenseRadiusScale"].as<float>();
+        if (node["fragmentMergeEnabled"]) fragmentMergeEnabled = node["fragmentMergeEnabled"].as<bool>();
+        if (node["fragmentMergeMaxInputCells"]) fragmentMergeMaxInputCells = node["fragmentMergeMaxInputCells"].as<int>();
+        if (node["allowSeededSplitInSparseField"]) allowSeededSplitInSparseField = node["allowSeededSplitInSparseField"].as<bool>();
+        if (node["seededSplitMaxMajorRadius"]) seededSplitMaxMajorRadius = node["seededSplitMaxMajorRadius"].as<float>();
+        if (node["seededSplitMinSeedBalance"]) seededSplitMinSeedBalance = node["seededSplitMinSeedBalance"].as<float>();
+        if (node["seededSplitMinSeedSeparation"]) seededSplitMinSeedSeparation = node["seededSplitMinSeedSeparation"].as<float>();
+
+        if (node["useScaledVoxelVolumeForRadius"]) useScaledVoxelVolumeForRadius = node["useScaledVoxelVolumeForRadius"].as<bool>();
+        if (node["radiusInflationScale"]) radiusInflationScale = node["radiusInflationScale"].as<float>();
+        if (node["minOutputMajorRadius"]) minOutputMajorRadius = node["minOutputMajorRadius"].as<float>();
+        if (node["minOutputBRadius"]) minOutputBRadius = node["minOutputBRadius"].as<float>();
+        if (node["minOutputMinorRadius"]) minOutputMinorRadius = node["minOutputMinorRadius"].as<float>();
+        if (node["maxOutputMajorRadius"]) maxOutputMajorRadius = node["maxOutputMajorRadius"].as<float>();
+        if (node["maxOutputBRadius"]) maxOutputBRadius = node["maxOutputBRadius"].as<float>();
+        if (node["maxOutputMinorRadius"]) maxOutputMinorRadius = node["maxOutputMinorRadius"].as<float>();
+
+        if (node["signalStatsEnabled"]) signalStatsEnabled = node["signalStatsEnabled"].as<bool>();
+        if (node["shellInnerScale"]) shellInnerScale = node["shellInnerScale"].as<float>();
+        if (node["shellOuterScale"]) shellOuterScale = node["shellOuterScale"].as<float>();
+        if (node["minTop10MinusShell"]) minTop10MinusShell = node["minTop10MinusShell"].as<float>();
+        if (node["minMeanMinusShell"]) minMeanMinusShell = node["minMeanMinusShell"].as<float>();
+        if (node["minBiologicalVoxelCount"]) minBiologicalVoxelCount = node["minBiologicalVoxelCount"].as<int>();
+        if (node["minBiologicalMajorRadius"]) minBiologicalMajorRadius = node["minBiologicalMajorRadius"].as<float>();
+        if (node["smallArtifactSparseMaxCells"]) smallArtifactSparseMaxCells = node["smallArtifactSparseMaxCells"].as<int>();
+        if (node["smallArtifactMaxVoxels"]) smallArtifactMaxVoxels = node["smallArtifactMaxVoxels"].as<int>();
+        if (node["smallArtifactMaxTop10Intensity"]) smallArtifactMaxTop10Intensity = node["smallArtifactMaxTop10Intensity"].as<float>();
+        if (node["smallArtifactMaxMeanIntensity"]) smallArtifactMaxMeanIntensity = node["smallArtifactMaxMeanIntensity"].as<float>();
+        if (node["rejectTinyBrightArtifacts"]) rejectTinyBrightArtifacts = node["rejectTinyBrightArtifacts"].as<bool>();
+
+        if (node["biologicalNearDuplicateMergeEnabled"]) biologicalNearDuplicateMergeEnabled = node["biologicalNearDuplicateMergeEnabled"].as<bool>();
+        if (node["minBiologicalCenterDistance"]) minBiologicalCenterDistance = node["minBiologicalCenterDistance"].as<float>();
+        if (node["adaptiveNearDuplicateMergeEnabled"]) adaptiveNearDuplicateMergeEnabled = node["adaptiveNearDuplicateMergeEnabled"].as<bool>();
+        if (node["adaptiveNearDuplicateMinCells"]) adaptiveNearDuplicateMinCells = node["adaptiveNearDuplicateMinCells"].as<int>();
+        if (node["adaptiveNearDuplicateMaxCells"]) adaptiveNearDuplicateMaxCells = node["adaptiveNearDuplicateMaxCells"].as<int>();
+        if (node["adaptiveNearDuplicateDistance"]) adaptiveNearDuplicateDistance = node["adaptiveNearDuplicateDistance"].as<float>();
+        if (node["adaptiveNearDuplicateMinPairRatio"]) adaptiveNearDuplicateMinPairRatio = node["adaptiveNearDuplicateMinPairRatio"].as<float>();
+        if (node["localMaxSeedEnabled"]) localMaxSeedEnabled = node["localMaxSeedEnabled"].as<bool>();
+        if (node["localMaxSeedMinStrongSeedCount"]) localMaxSeedMinStrongSeedCount = node["localMaxSeedMinStrongSeedCount"].as<int>();
+        if (node["localMaxSeedMinDistance"]) localMaxSeedMinDistance = node["localMaxSeedMinDistance"].as<float>();
+        if (node["localMaxSeedMaxPerFrameFactor"]) localMaxSeedMaxPerFrameFactor = node["localMaxSeedMaxPerFrameFactor"].as<float>();
+        if (node["useHighSeedCenterForSplitCells"]) useHighSeedCenterForSplitCells = node["useHighSeedCenterForSplitCells"].as<bool>();
+        if (node["seededWatershedEnabled"]) seededWatershedEnabled = node["seededWatershedEnabled"].as<bool>();
+        if (node["seededWatershedPreferOverPercentile"]) seededWatershedPreferOverPercentile = node["seededWatershedPreferOverPercentile"].as<bool>();
+        if (node["seededWatershedRescueEnabled"]) seededWatershedRescueEnabled = node["seededWatershedRescueEnabled"].as<bool>();
+        if (node["seededWatershedPreferBaseCountMin"]) seededWatershedPreferBaseCountMin = node["seededWatershedPreferBaseCountMin"].as<int>();
+        if (node["seededWatershedPreferBaseCountMax"]) seededWatershedPreferBaseCountMax = node["seededWatershedPreferBaseCountMax"].as<int>();
+        if (node["seededWatershedSignalSigma"]) seededWatershedSignalSigma = node["seededWatershedSignalSigma"].as<float>();
+        if (node["seededWatershedBackgroundSigma"]) seededWatershedBackgroundSigma = node["seededWatershedBackgroundSigma"].as<float>();
+        if (node["seededWatershedSeedPercentile"]) seededWatershedSeedPercentile = node["seededWatershedSeedPercentile"].as<float>();
+        if (node["seededWatershedMaskPercentile"]) seededWatershedMaskPercentile = node["seededWatershedMaskPercentile"].as<float>();
+        if (node["seededWatershedSeedThresholdFloor"]) seededWatershedSeedThresholdFloor = node["seededWatershedSeedThresholdFloor"].as<float>();
+        if (node["seededWatershedMaskThresholdFloor"]) seededWatershedMaskThresholdFloor = node["seededWatershedMaskThresholdFloor"].as<float>();
+        if (node["seededWatershedMinSeedDistance"]) seededWatershedMinSeedDistance = node["seededWatershedMinSeedDistance"].as<float>();
+        if (node["seededWatershedMaxGrowDistance"]) seededWatershedMaxGrowDistance = node["seededWatershedMaxGrowDistance"].as<float>();
+        if (node["seededWatershedMinVoxels"]) seededWatershedMinVoxels = node["seededWatershedMinVoxels"].as<int>();
+        if (node["seededWatershedMaxSeeds"]) seededWatershedMaxSeeds = node["seededWatershedMaxSeeds"].as<int>();
+        if (node["seededWatershedRescueMinDistance"]) seededWatershedRescueMinDistance = node["seededWatershedRescueMinDistance"].as<float>();
+        if (node["seededWatershedRescueMaxAddedFraction"]) seededWatershedRescueMaxAddedFraction = node["seededWatershedRescueMaxAddedFraction"].as<float>();
+        if (node["seededWatershedRescueMaxAdded"]) seededWatershedRescueMaxAdded = node["seededWatershedRescueMaxAdded"].as<int>();
+        if (node["maxCandidateMeanVoxelCount"]) maxCandidateMeanVoxelCount = node["maxCandidateMeanVoxelCount"].as<float>();
+        if (node["candidateCellCountWeight"]) candidateCellCountWeight = node["candidateCellCountWeight"].as<float>();
+        if (node["candidateMeanVoxelPenaltyWeight"]) candidateMeanVoxelPenaltyWeight = node["candidateMeanVoxelPenaltyWeight"].as<float>();
+        if (node["candidateNearPairPenaltyWeight"]) candidateNearPairPenaltyWeight = node["candidateNearPairPenaltyWeight"].as<float>();
+        if (node["candidatePercentilePreferenceWeight"]) candidatePercentilePreferenceWeight = node["candidatePercentilePreferenceWeight"].as<float>();
+        if (node["candidateOvergrowthAlwaysBelowFirstCount"]) candidateOvergrowthAlwaysBelowFirstCount = node["candidateOvergrowthAlwaysBelowFirstCount"].as<int>();
+        if (node["candidateOvergrowthMinFirstCount"]) candidateOvergrowthMinFirstCount = node["candidateOvergrowthMinFirstCount"].as<int>();
+        if (node["maxCandidateCountGrowthFromFirst"]) maxCandidateCountGrowthFromFirst = node["maxCandidateCountGrowthFromFirst"].as<float>();
+        if (node["candidateOvergrowthPenaltyWeight"]) candidateOvergrowthPenaltyWeight = node["candidateOvergrowthPenaltyWeight"].as<float>();
+    }
+
+    void printConfig() const {
+        std::cout << "GroundTruth Config\n";
+        std::cout << "enabled: " << enabled << '\n';
+        std::cout << "minComponentVoxels: " << minComponentVoxels << '\n';
+        std::cout << "minHighSeedVoxels: " << minHighSeedVoxels << '\n';
+        std::cout << "seedMergeDistance: " << seedMergeDistance << '\n';
+        std::cout << "adaptiveSeedMergeEnabled: " << adaptiveSeedMergeEnabled << '\n';
+        std::cout << "seedSplitSeparation: " << seedSplitSeparation << '\n';
+        std::cout << "dedupDistance: " << dedupDistance << '\n';
+        std::cout << "dedupRadiusScale: " << dedupRadiusScale << '\n';
+        std::cout << "adaptiveDedupEnabled: " << adaptiveDedupEnabled << '\n';
+        std::cout << "fragmentMergeEnabled: " << fragmentMergeEnabled << '\n';
+        std::cout << "fragmentMergeMaxInputCells: " << fragmentMergeMaxInputCells << '\n';
+        std::cout << "radiusInflationScale: " << radiusInflationScale << '\n';
+        std::cout << "signalStatsEnabled: " << signalStatsEnabled << '\n';
+        std::cout << "minTop10MinusShell: " << minTop10MinusShell << '\n';
+        std::cout << "smallArtifactMaxVoxels: " << smallArtifactMaxVoxels << '\n';
+        std::cout << "minBiologicalCenterDistance: " << minBiologicalCenterDistance << '\n';
+        std::cout << "seededWatershedEnabled: " << seededWatershedEnabled << '\n';
+        std::cout << "maxCandidateMeanVoxelCount: " << maxCandidateMeanVoxelCount << '\n';
+        std::cout << "maxCandidateCountGrowthFromFirst: " << maxCandidateCountGrowthFromFirst << '\n';
+    }
+};
+
 class BaseConfig {
 public:
     std::string cellType;
     std::unique_ptr<EllipsoidConfig> cell;
     SimulationConfig simulation;
     ProbabilityConfig prob;
+    GroundTruthConfig groundTruth;
 
     BaseConfig() = default;
     ~BaseConfig() = default;
@@ -1280,7 +1509,8 @@ public:
         : cellType(other.cellType),
           cell(other.cell ? std::make_unique<EllipsoidConfig>(*other.cell) : nullptr),
           simulation(other.simulation),
-          prob(other.prob) {}
+          prob(other.prob),
+          groundTruth(other.groundTruth) {}
 
     BaseConfig& operator=(const BaseConfig& other) {
         if (this != &other) {
@@ -1288,6 +1518,7 @@ public:
             cell = other.cell ? std::make_unique<EllipsoidConfig>(*other.cell) : nullptr;
             simulation = other.simulation;
             prob = other.prob;
+            groundTruth = other.groundTruth;
         }
         return *this;
     }
@@ -1302,11 +1533,13 @@ public:
         cell->explodeConfig(node["cell"]);
         simulation.explodeConfig(node["simulation"]);
         prob.explodeConfig(node["prob"]);
+        if (node["ground_truth"]) groundTruth.explodeConfig(node["ground_truth"]);
     }
 
     void printConfig() const {
         simulation.printConfig();
         prob.printConfig();
+        groundTruth.printConfig();
     }
 };
 
