@@ -1,0 +1,8 @@
+# Late dense CellLumen tuning candidate.
+# More aggressive geometry weighted center placement for late dense frames.
+base_config: config_embryo_late_dense_minvox1000_count100.yaml
+
+cell_lumen:
+  geometricCenterBlend: 0.65
+  finalWeakSatelliteFilterEnabled: false
+

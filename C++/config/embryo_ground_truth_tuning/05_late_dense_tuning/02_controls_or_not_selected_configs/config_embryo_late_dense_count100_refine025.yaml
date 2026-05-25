@@ -1,0 +1,10 @@
+base_config: config_embryo_late_dense_minvox1000_count100.yaml
+
+# Probe: keep final local refinement, but reduce the position pull. Full 0.5
+# blend helps some late dense cells but can pull others toward neighboring
+# bright edges; 0.25 is a compromise between no refinement and the current
+# default.
+cell_lumen:
+  finalLocalRefineEnabled: true
+  finalLocalRefineBlend: 0.25
+  finalZColumnRefineEnabled: false

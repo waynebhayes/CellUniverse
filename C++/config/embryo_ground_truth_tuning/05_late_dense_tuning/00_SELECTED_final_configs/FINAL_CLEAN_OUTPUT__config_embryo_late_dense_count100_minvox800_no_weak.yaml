@@ -1,0 +1,10 @@
+# Late dense CellLumen tuning candidate.
+# Lowers the dense watershed minimum voxel count so small late-frame cells can
+# survive as separate detections. This targets under-counting in 180 to 194.
+base_config: ../01_positive_reference_configs_not_final/config_embryo_late_dense_minvox1000_count100.yaml
+
+cell_lumen:
+  seededWatershedAdaptiveDenseMinVoxels: 800
+  seededWatershedLowRescueMinVoxels: 800
+  seededWatershedLowRescueMinCandidateVoxels: 800
+  finalWeakSatelliteFilterEnabled: false

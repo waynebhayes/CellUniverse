@@ -1,0 +1,9 @@
+# Late dense CellLumen tuning candidate.
+# Disables the final seed-center pull. This checks whether local intensity
+# peaks are shifting late-frame centers away from the object center.
+base_config: config_embryo_late_dense_minvox1000_count100.yaml
+
+cell_lumen:
+  seededWatershedCenterSeedBlend: 0.0
+  finalWeakSatelliteFilterEnabled: false
+

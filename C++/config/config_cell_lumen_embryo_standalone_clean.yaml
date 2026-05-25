@@ -1,0 +1,28 @@
+# Stable CellLumen embryo mode for direct standalone output.
+#
+# Use this when CellLumen itself is the result you want to inspect or export.
+# The goal is clean final centers: keep late dense dim cells, but avoid carrying
+# every duplicate candidate into the final output.
+#
+# This file intentionally stays separate from config_embryo.yaml so late dense
+# tuning does not overwrite the shared 85 to 150 embryo behavior.
+base_config: config_embryo.yaml
+
+cell_lumen:
+  # Late dense frames can start with fewer qualified watershed cells even when
+  # the permissive mask already contains valid dim cell regions. Trigger the
+  # dense frame voxel floor earlier so frames around 150 to 194 do not lose
+  # small valid cells.
+  seededWatershedAdaptiveMinVoxelsCellCount: 100
+  seededWatershedAdaptiveDenseMinVoxels: 800
+
+  # Keep rescue candidates that are biologically sized for late dense embryo
+  # frames. A stricter 1000 voxel floor missed small dim cells in 150 to 194.
+  seededWatershedLowRescueMinVoxels: 800
+  seededWatershedLowRescueMinCandidateVoxels: 800
+
+  # The weak satellite filter was useful against obvious noise, but in the
+  # late dense embryo interval it can remove real dim cells near larger bright
+  # neighbors. For standalone CellLumen output we keep duplicate cleanup, but
+  # turn off this late false-negative risk.
+  finalWeakSatelliteFilterEnabled: false

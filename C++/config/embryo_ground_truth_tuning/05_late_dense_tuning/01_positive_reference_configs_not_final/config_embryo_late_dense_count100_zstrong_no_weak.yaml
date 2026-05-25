@@ -1,0 +1,16 @@
+# Late dense CellLumen tuning candidate.
+# Keeps the best late dense recall settings and tests a stronger final z-only
+# refinement. The remaining late misses are mostly z offsets, so this variant
+# changes only the final z coordinate estimate instead of the seed detector.
+base_config: config_embryo_late_dense_minvox1000_count100.yaml
+
+cell_lumen:
+  finalWeakSatelliteFilterEnabled: false
+  finalZColumnRefineEnabled: true
+  finalZColumnRefineRadiusXY: 12.0
+  finalZColumnRefineHalfWindowScaled: 42.0
+  finalZColumnRefineQuantile: 0.80
+  finalZColumnRefineMinScoreFraction: 0.35
+  finalZColumnRefineMaxMoveScaled: 42.0
+  finalZColumnRefineBlend: 1.0
+

@@ -1,0 +1,10 @@
+# Late dense CellLumen tuning candidate.
+# More recall first than rescue24. It is meant for 170 to 194, where cells are
+# densely packed and a 28 px rescue spacing is too strict.
+base_config: config_embryo_late_dense_minvox1000_count100.yaml
+
+cell_lumen:
+  finalWeakSatelliteFilterEnabled: false
+  seededWatershedLowRescueMinDistance: 20.0
+  seededWatershedLowRescueMaxAdded: 80
+

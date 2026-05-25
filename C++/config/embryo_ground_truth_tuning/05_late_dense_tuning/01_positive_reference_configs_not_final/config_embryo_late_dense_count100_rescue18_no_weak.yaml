@@ -1,0 +1,11 @@
+# Late dense CellLumen tuning candidate.
+# Aggressive recall setting for very dense late frames. This checks whether the
+# remaining GT misses are mostly caused by rescue candidates being rejected as
+# too close to an existing center.
+base_config: config_embryo_late_dense_minvox1000_count100.yaml
+
+cell_lumen:
+  finalWeakSatelliteFilterEnabled: false
+  seededWatershedLowRescueMinDistance: 18.0
+  seededWatershedLowRescueMaxAdded: 100
+

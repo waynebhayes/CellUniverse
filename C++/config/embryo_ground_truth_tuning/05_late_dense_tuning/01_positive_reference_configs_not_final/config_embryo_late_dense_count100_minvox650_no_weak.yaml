@@ -1,0 +1,12 @@
+# Late dense CellLumen tuning candidate.
+# More recall-first dense voxel threshold for late frames. It may add extras,
+# but it checks whether remaining misses are mostly small valid cells being
+# filtered out by the 1000 voxel floor.
+base_config: config_embryo_late_dense_minvox1000_count100.yaml
+
+cell_lumen:
+  seededWatershedAdaptiveDenseMinVoxels: 650
+  seededWatershedLowRescueMinVoxels: 650
+  seededWatershedLowRescueMinCandidateVoxels: 650
+  finalWeakSatelliteFilterEnabled: false
+

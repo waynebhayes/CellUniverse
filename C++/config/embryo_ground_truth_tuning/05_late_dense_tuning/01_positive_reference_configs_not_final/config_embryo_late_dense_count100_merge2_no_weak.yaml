@@ -1,0 +1,10 @@
+# Late dense CellLumen tuning candidate.
+# Uses a very small final duplicate merge radius and disables weak satellite
+# filtering. This is intentionally recall first, for checking whether the
+# remaining late frame misses are caused by over merging.
+base_config: config_embryo_late_dense_minvox1000_count100.yaml
+
+cell_lumen:
+  finalDuplicateMergeDistance: 2.0
+  finalWeakSatelliteFilterEnabled: false
+

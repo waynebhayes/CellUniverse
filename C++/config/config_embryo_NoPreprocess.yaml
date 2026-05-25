@@ -1,0 +1,50 @@
+base_config: config_embryo.yaml
+
+# Embryo main optimizer experiment for raw information preservation.
+# This config disables the heavy iterative cleanup that can black out dim late
+# embryo cells. It still keeps linear frame intensity scaling, because the
+# Cell Universe cost model expects real voxels and synthetic brightness to live
+# on a comparable numeric scale. In practice this means:
+#   raw TIFF signal -> linear percentile scaling -> z interpolation
+# and no fixed black threshold, adaptive blackoff, morphology cleanup, or final
+# blur from the heavy preprocessing path.
+
+simulation:
+  preprocess_mode: none
+  frame_intensity_normalization_enabled: true
+  frame_intensity_percentile_exclude_zeros: true
+  frame_intensity_scale_low_percentile: 0.01
+  frame_intensity_scale_high_percentile: 0.995
+  frame_intensity_hard_max: 512.0
+  export_preprocessed_images: false
+  export_frame_png: false
+  export_frame_tiff: true
+  prepare_analyze_one_frame: true
+
+cell_lumen:
+  enabled: true
+
+  # Fusion mode uses CellLumen as a raw frame rescue detector inside the main
+  # Cell Universe run. It does not trust every CellLumen output point. A point
+  # becomes a real optimizer cell only when it is far from all existing cells
+  # and satisfies size plus local shell contrast gates.
+  fusionEnabled: true
+  fusionStartFrame: 85
+  fusionEveryNFrames: 1
+  fusionMinDistanceToExisting: 24.0
+  fusionMinVoxels: 1000
+  fusionMinTop10MinusShell: 65.0
+  fusionMaxAddedPerFrame: 12
+  fusionRadiusScale: 1.0
+  fusionBrightness: -1.0
+  fusionNamePrefix: CellLumen_rescue
+
+  # Close candidates are not added as duplicate cells. When the existing Cell
+  # Universe cell is already near the raw CellLumen center but has collapsed to
+  # a much smaller radius, use the raw CellLumen shape as a conservative radius
+  # repair before the normal optimizer starts.
+  fusionRepairCloseCellsEnabled: true
+  fusionRepairMaxDistance: 18.0
+  fusionRepairRadiusRatio: 0.75
+  fusionRepairPositionBlend: 0.20
+  fusionRepairRadiusBlend: 0.75

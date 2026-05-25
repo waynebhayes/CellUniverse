@@ -1,0 +1,10 @@
+# Late dense CellLumen tuning candidate.
+# Slightly stronger duplicate merge than merge2, still weaker than the old 5 px
+# setting that can collapse close late-frame daughters.
+base_config: config_embryo_late_dense_count100_minvox800_no_weak.yaml
+
+cell_lumen:
+  finalDuplicateMergeDistance: 3.0
+  finalPostRefineDuplicateMergeDistance: 3.0
+  finalWeakSatelliteFilterEnabled: false
+

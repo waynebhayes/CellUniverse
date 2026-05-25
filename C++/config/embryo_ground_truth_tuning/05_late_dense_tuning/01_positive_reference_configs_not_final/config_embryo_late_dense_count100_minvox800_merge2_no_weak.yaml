@@ -1,0 +1,11 @@
+# Late dense CellLumen tuning candidate.
+# Intermediate duplicate merge setting between no merge and the old 5 px merge.
+# It should keep close true cells separate while removing almost identical
+# duplicate detections.
+base_config: config_embryo_late_dense_count100_minvox800_no_weak.yaml
+
+cell_lumen:
+  finalDuplicateMergeDistance: 2.0
+  finalPostRefineDuplicateMergeDistance: 2.0
+  finalWeakSatelliteFilterEnabled: false
+

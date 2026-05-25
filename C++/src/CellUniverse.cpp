@@ -1,5 +1,6 @@
 #include "../includes/CellUniverse.hpp"
 #include "../includes/ImageHandler.hpp"
+#include "../includes/CellLumen.hpp"
 #include <set>
 #include <cmath>
 #include <algorithm>
@@ -67,6 +68,14 @@ static float computeStackMean(const std::vector<cv::Mat> &stack)
     }
 
     return (count > 0.0) ? static_cast<float>(sum / count) : 0.0f;
+}
+
+static float squaredDistance(const cv::Point3f &a, const cv::Point3f &b)
+{
+    const float dx = a.x - b.x;
+    const float dy = a.y - b.y;
+    const float dz = a.z - b.z;
+    return dx * dx + dy * dy + dz * dz;
 }
 
 static float computeMeanOfTopFraction(std::vector<float> values, float topFraction)
@@ -1889,7 +1898,14 @@ CellUniverse::CellUniverse(std::map<std::string, std::vector<Ellipsoid>> initial
     // TIFF depth * z_scaling roughly). Preprocess-only export does not need
     // cell z-bounds, so skip this expensive probe there to avoid processing
     // frame 1 twice.
-    if (!config.simulation.quit_after_preprocessing) {
+    if (!config.simulation.quit_after_preprocessing &&
+        config.simulation.z_slices > 0) {
+        Ellipsoid::cellConfig.maxZ =
+            static_cast<float>(config.simulation.z_slices) - 1.0f;
+        std::cout << "[M2 Probe] skipped explicit_z_slices="
+                  << config.simulation.z_slices
+                  << " maxZ=" << Ellipsoid::cellConfig.maxZ << '\n';
+    } else if (!config.simulation.quit_after_preprocessing) {
         std::ostringstream probeRaw, probePre;
         std::vector<cv::Mat> probe = ImageHandler::loadRawFrame(
             imagePaths.front().string(), config, &probeRaw);
@@ -1925,6 +1941,211 @@ CellUniverse::CellUniverse(std::map<std::string, std::vector<Ellipsoid>> initial
     }
     perFrameAdaptiveBackground.assign(imagePaths.size(), 0.0f);
     perFrameMeanBrightness.assign(imagePaths.size(), 0.0f);
+}
+
+void CellUniverse::applyCellLumenRescue(int frameIndex)
+{
+    const CellLumenConfig &lumenConfig = config.cellLumen;
+    if (!lumenConfig.enabled || !lumenConfig.fusionEnabled) {
+        return;
+    }
+    if (frameIndex < 0 || static_cast<size_t>(frameIndex) >= frames.size()) {
+        throw std::invalid_argument("applyCellLumenRescue: invalid frame index");
+    }
+
+    const int absoluteFrame = firstFrame + frameIndex;
+    if (absoluteFrame < lumenConfig.fusionStartFrame) {
+        return;
+    }
+    const int everyN = std::max(1, lumenConfig.fusionEveryNFrames);
+    if (((absoluteFrame - lumenConfig.fusionStartFrame) % everyN) != 0) {
+        return;
+    }
+    if (lumenConfig.fusionMaxAddedPerFrame == 0) {
+        return;
+    }
+
+    Frame &frame = frames[static_cast<size_t>(frameIndex)];
+    const fs::path framePath = imagePaths[static_cast<size_t>(frameIndex)];
+
+    EllipsoidConfig savedCellConfig = Ellipsoid::cellConfig;
+    std::vector<CellLumen::DetectedCell> candidates;
+    try {
+        CellLumen lumen(config, fs::path(outputPath) / "cell_lumen_fusion");
+        candidates = lumen.detectCellsForFrame(framePath, false, false);
+    } catch (const std::exception &ex) {
+        Ellipsoid::cellConfig = savedCellConfig;
+        std::cout << "[CellLumen Fusion] frame=" << absoluteFrame
+                  << " status=skipped error=\"" << ex.what() << "\""
+                  << std::endl;
+        return;
+    }
+    Ellipsoid::cellConfig = savedCellConfig;
+
+    std::sort(candidates.begin(), candidates.end(),
+              [](const CellLumen::DetectedCell &a, const CellLumen::DetectedCell &b) {
+                  if (a.top10MinusShell != b.top10MinusShell) {
+                      return a.top10MinusShell > b.top10MinusShell;
+                  }
+                  return a.voxelCount > b.voxelCount;
+              });
+
+    const float minDistance = std::max(0.0f, lumenConfig.fusionMinDistanceToExisting);
+    const float minDistanceSq = minDistance * minDistance;
+    const int maxAdded = lumenConfig.fusionMaxAddedPerFrame < 0
+                             ? std::numeric_limits<int>::max()
+                             : lumenConfig.fusionMaxAddedPerFrame;
+    const float radiusScale = std::max(0.05f, lumenConfig.fusionRadiusScale);
+    const float brightness = (lumenConfig.fusionBrightness >= 0.0f)
+                                 ? lumenConfig.fusionBrightness
+                                 : (config.cell ? config.cell->initialBrightness : 0.5f);
+
+    int rejectedSize = 0;
+    int rejectedSignal = 0;
+    int rejectedClose = 0;
+    int repairedClose = 0;
+    int added = 0;
+
+    for (const auto &candidate : candidates) {
+        if (added >= maxAdded) {
+            break;
+        }
+        if (candidate.voxelCount < lumenConfig.fusionMinVoxels) {
+            ++rejectedSize;
+            continue;
+        }
+        if (candidate.top10MinusShell < lumenConfig.fusionMinTop10MinusShell) {
+            ++rejectedSignal;
+            continue;
+        }
+
+        bool tooClose = false;
+        size_t nearestIndex = std::numeric_limits<size_t>::max();
+        float nearestDistanceSq = std::numeric_limits<float>::max();
+        for (size_t existingIdx = 0; existingIdx < frame.cells.size(); ++existingIdx) {
+            const cv::Point3f existingCenter(frame.cells[existingIdx].getX(),
+                                             frame.cells[existingIdx].getY(),
+                                             frame.cells[existingIdx].getZ());
+            const float d2 = squaredDistance(candidate.centerScaled, existingCenter);
+            if (d2 < nearestDistanceSq) {
+                nearestDistanceSq = d2;
+                nearestIndex = existingIdx;
+            }
+            if (d2 < minDistanceSq) {
+                tooClose = true;
+            }
+        }
+        if (tooClose) {
+            const float repairMaxDistance =
+                std::max(0.0f, lumenConfig.fusionRepairMaxDistance);
+            const float repairMaxDistanceSq = repairMaxDistance * repairMaxDistance;
+            if (lumenConfig.fusionRepairCloseCellsEnabled &&
+                nearestIndex != std::numeric_limits<size_t>::max() &&
+                nearestDistanceSq <= repairMaxDistanceSq) {
+                Ellipsoid &target = frame.cells[nearestIndex];
+                const float candidateA = std::max(1.0f, candidate.majorRadius * radiusScale);
+                const float candidateB = std::max(1.0f, candidate.bRadius * radiusScale);
+                const float candidateC = std::max(1.0f, candidate.minorRadius * radiusScale);
+                const float minCandidateRadius = std::min({candidateA, candidateB, candidateC});
+                const float repairRatio = std::clamp(lumenConfig.fusionRepairRadiusRatio,
+                                                     0.0f, 1.5f);
+                const bool radiusLooksCollapsed =
+                    target.getMinorRadius() < minCandidateRadius * repairRatio ||
+                    target.getARadius() < candidateA * repairRatio ||
+                    target.getBRadius() < candidateB * repairRatio ||
+                    target.getCRadius() < candidateC * repairRatio;
+                if (radiusLooksCollapsed) {
+                    const float posBlend = std::clamp(lumenConfig.fusionRepairPositionBlend,
+                                                      0.0f, 1.0f);
+                    const float radiusBlend = std::clamp(lumenConfig.fusionRepairRadiusBlend,
+                                                         0.0f, 1.0f);
+                    const float oldX = target.getX();
+                    const float oldY = target.getY();
+                    const float oldZ = target.getZ();
+                    target.setPosition(oldX * (1.0f - posBlend) +
+                                           candidate.centerScaled.x * posBlend,
+                                       oldY * (1.0f - posBlend) +
+                                           candidate.centerScaled.y * posBlend,
+                                       oldZ * (1.0f - posBlend) +
+                                           candidate.centerScaled.z * posBlend);
+                    const float newA = std::max(target.getARadius(),
+                                                target.getARadius() * (1.0f - radiusBlend) +
+                                                    candidateA * radiusBlend);
+                    const float newB = std::max(target.getBRadius(),
+                                                target.getBRadius() * (1.0f - radiusBlend) +
+                                                    candidateB * radiusBlend);
+                    const float newC = std::max(target.getCRadius(),
+                                                target.getCRadius() * (1.0f - radiusBlend) +
+                                                    candidateC * radiusBlend);
+                    target.setRadii(newA, newB, newC);
+
+                    const std::string &targetName = target.getName();
+                    const std::array<float, 3> repairedRadii{
+                        target.getARadius(), target.getBRadius(), target.getCRadius()};
+                    cellShapeBirth[targetName] = repairedRadii;
+                    cellShapeReference[targetName] = repairedRadii;
+                    ++repairedClose;
+                    std::cout << "[CellLumen Fusion Repair] frame=" << absoluteFrame
+                              << " target=" << targetName
+                              << " candidate_center=(" << candidate.centerScaled.x << ","
+                              << candidate.centerScaled.y << "," << candidate.centerScaled.z << ")"
+                              << " new_center=(" << target.getX() << ","
+                              << target.getY() << "," << target.getZ() << ")"
+                              << " new_radii=(" << target.getARadius() << ","
+                              << target.getBRadius() << "," << target.getCRadius() << ")"
+                              << " distance=" << std::sqrt(nearestDistanceSq)
+                              << " vox=" << candidate.voxelCount
+                              << " top10MinusShell=" << candidate.top10MinusShell
+                              << std::endl;
+                }
+            }
+            ++rejectedClose;
+            continue;
+        }
+
+        const std::string name = lumenConfig.fusionNamePrefix + "_" +
+                                 std::to_string(absoluteFrame) + "_" +
+                                 std::to_string(added + 1);
+        EllipsoidParams params(name,
+                               candidate.centerScaled.x,
+                               candidate.centerScaled.y,
+                               candidate.centerScaled.z,
+                               std::max(1.0f, candidate.majorRadius * radiusScale),
+                               std::max(1.0f, candidate.minorRadius * radiusScale),
+                               0.0f,
+                               0.0f,
+                               0.0f,
+                               brightness);
+        params.bRadius = std::max(1.0f, candidate.bRadius * radiusScale);
+
+        Ellipsoid rescuedCell(params);
+        frame.cells.push_back(rescuedCell);
+        cellShapeBirth[name] = {rescuedCell.getARadius(),
+                                rescuedCell.getBRadius(),
+                                rescuedCell.getCRadius()};
+        cellShapeReference[name] = cellShapeBirth[name];
+        ++added;
+
+        std::cout << "[CellLumen Fusion Add] frame=" << absoluteFrame
+                  << " name=" << name
+                  << " center=(" << candidate.centerScaled.x << ","
+                  << candidate.centerScaled.y << "," << candidate.centerScaled.z << ")"
+                  << " radii=(" << rescuedCell.getARadius() << ","
+                  << rescuedCell.getBRadius() << "," << rescuedCell.getCRadius() << ")"
+                  << " vox=" << candidate.voxelCount
+                  << " top10MinusShell=" << candidate.top10MinusShell
+                  << std::endl;
+    }
+
+    std::cout << "[CellLumen Fusion Summary] frame=" << absoluteFrame
+              << " candidates=" << candidates.size()
+              << " added=" << added
+              << " rejected_size=" << rejectedSize
+              << " rejected_signal=" << rejectedSignal
+              << " rejected_close=" << rejectedClose
+              << " repaired_close=" << repairedClose
+              << " existing_after=" << frame.cells.size()
+              << std::endl;
 }
 
 void CellUniverse::prepareFrame(int frameIndex)
@@ -2022,6 +2243,8 @@ void CellUniverse::prepareFrame(int frameIndex)
                                 config.simulation.export_frame_png,
                                 config.simulation.export_frame_tiff);
     }
+
+    applyCellLumenRescue(frameIndex);
 
     // loadImageStacks already generates _synthFrame + refreshes the full-image
     // cost cache. The previous `if (config.cell) regenerateSynthFrame()` was

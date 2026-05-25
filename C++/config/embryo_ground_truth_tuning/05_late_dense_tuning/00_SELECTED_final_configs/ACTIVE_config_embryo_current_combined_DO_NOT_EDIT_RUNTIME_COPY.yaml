@@ -1,0 +1,244 @@
+base_config: config.yaml
+
+# Embryo specific settings for the raw CellLumen path.
+# These priors come from the verified Cell Universe output for embryo frames
+# 1 to 84. They are used only by `--cell-lumen`; the main Cell Universe
+# optimizer keeps using the normal config unless this file is explicitly passed.
+
+cell_lumen:
+  enabled: true
+
+  # Try a slightly wider threshold sweep than the generic CellLumen pass. The lower
+  # percentiles help recover dim large cells, while the biological gates below
+  # remove tiny bright noise components.
+  percentiles: [99.2, 99.15, 99.1, 99.05, 99.0, 98.95, 98.9, 98.6, 98.3, 98.0, 97.7, 97.4]
+
+  # Cell Universe output stores z in scaled coordinates. Keep the center closer
+  # to the weighted brightness center, but blend in geometry so hollow or uneven
+  # cells do not pull too far toward one bright edge.
+  geometricCenterBlend: 0.30
+
+  # Reject tiny connected components that cannot be embryo cells. Verified
+  # embryo cells have roughly 1000+ raw ellipsoid voxels after fitting, so a
+  # 500 component floor removes isolated bright specks without blocking dim
+  # large cells that still have a real local shell contrast.
+  minComponentVoxels: 500
+  minHighSeedVoxels: 18
+
+  # Collapse multiple bright peaks inside the same real cell, but still allow
+  # real daughter or neighbor seeds to split a large connected bridge. Verified
+  # new daughter center distance is usually near 57 scaled pixels and rarely
+  # below 41, so seed merging below about 22 is conservative.
+  seedMergeDistance: 22.0
+  adaptiveSeedMergeEnabled: true
+  adaptiveSeedMergeModerateHighSeedCount: 180
+  adaptiveSeedMergeDenseHighSeedCount: 300
+  adaptiveSeedMergeModerateDistance: 16.0
+  adaptiveSeedMergeDenseDistance: 7.0
+  seedSplitSeparation: 32.0
+  dedupDistance: 18.0
+  dedupRadiusScale: 0.60
+  adaptiveDedupEnabled: true
+  adaptiveDedupModerateHighSeedCount: 180
+  adaptiveDedupDenseHighSeedCount: 300
+  adaptiveDedupModerateDistance: 5.8
+  adaptiveDedupModerateRadiusScale: 0.30
+  adaptiveDedupDenseDistance: 1.2
+  adaptiveDedupDenseRadiusScale: 0.06
+
+  # Fragment merge is useful only in very sparse early frames, where one true
+  # bright cell can be split into several high threshold pieces. In dense
+  # embryo frames it can absorb real neighboring cells through bright bridges,
+  # so it is capped by the number of candidate cells before merging.
+  fragmentMergeEnabled: true
+  fragmentMergeMaxInputCells: 40
+  allowSeededSplitInSparseField: true
+  seededSplitMaxMajorRadius: 38.0
+  seededSplitMinSeedBalance: 0.28
+  seededSplitMinSeedSeparation: 32.0
+
+  # Radius fitting. The raw TIFF has only 35 z slices, while output ellipsoids
+  # are in z scaled coordinates. Counting raw voxels without z scaling makes
+  # the ellipsoid too small, so CellLumen treats each raw z voxel as z_scaling
+  # units of volume before estimating the radius.
+  useScaledVoxelVolumeForRadius: true
+  radiusInflationScale: 1.05
+  # Raw brightness centroids sit slightly below the TRA mask centroids in z.
+  # Keep this as a config value so it can be retuned per dataset instead of
+  # being baked into the centroid math.
+  zCenterOffsetScaled: 3.0
+  minOutputMajorRadius: 18.0
+  minOutputBRadius: 17.0
+  minOutputMinorRadius: 14.0
+  maxOutputMajorRadius: 52.0
+  maxOutputBRadius: 52.0
+  maxOutputMinorRadius: 46.0
+  # The verified embryo nuclei stay inside this scaled z band through the
+  # usable bright part of the sequence. Keeping it configurable removes obvious
+  # top and bottom slice artifacts without touching x/y detection.
+  minOutputCenterZScaled: 45.0
+  maxOutputCenterZScaled: 195.0
+
+  # Local contrast priors. Top 10% brightness minus local shell background was
+  # the most stable signal in the verified frames. It stays above about 40 even
+  # for new daughters and dim pre split parents, while small noise spots do not
+  # have a consistent biological size plus shell contrast.
+  signalStatsEnabled: true
+  shellInnerScale: 1.05
+  shellOuterScale: 1.35
+  minTop10MinusShell: 35.0
+  minMeanMinusShell: -5.0
+  minBiologicalVoxelCount: 500
+  minBiologicalMajorRadius: 16.0
+  smallArtifactSparseMaxCells: 20
+  smallArtifactMaxVoxels: 1800
+  smallArtifactMaxTop10Intensity: 125.0
+  smallArtifactMaxMeanIntensity: 55.0
+  rejectTinyBrightArtifacts: true
+
+  # Prevent one real cell from becoming two touching small synth cells. The
+  # base distance is intentionally tiny so dense late frames are not collapsed.
+  # For middle-density frames, an adaptive merge removes duplicate peaks that
+  # sit only a few raw pixels apart while leaving very dense frame 194 alone.
+  biologicalNearDuplicateMergeEnabled: true
+  minBiologicalCenterDistance: 1.0
+  adaptiveNearDuplicateMergeEnabled: true
+  adaptiveNearDuplicateMinCells: 125
+  adaptiveNearDuplicateMaxCells: 160
+  adaptiveNearDuplicateDistance: 10.5
+  adaptiveNearDuplicateMinPairRatio: 0.32
+  # This final pass runs after all candidate scoring and low threshold rescue.
+  # It removes only almost overlapping output centers, so it cannot change
+  # which threshold candidate was selected for the frame.
+  finalDuplicateMergeDistance: 5.0
+  # A final small local brightness centroid correction. It uses only the local
+  # upper brightness quantile around each accepted center, so broad dim halos
+  # do not pull the center away from the visible cell body.
+  finalLocalRefineEnabled: true
+  finalLocalRefineRadius: 24.0
+  finalLocalRefineQuantile: 0.75
+  # Keep the post refine duplicate cleanup, but do not move centers toward
+  # a local brightness centroid in dense embryo frames. The local centroid can
+  # be pulled by a neighboring bright edge, which hurts center matching.
+  finalLocalRefineBlend: 0.5
+  # Z only local correction. The remaining embryo errors after marker
+  # watershed are mostly good x/y centers whose z coordinate is pulled toward
+  # a bright edge. This pass samples only a small x/y disk around each accepted
+  # center and moves z toward the strongest nearby slice, without changing
+  # cell count or x/y position.
+  finalZColumnRefineEnabled: false
+  finalZColumnRefineRadiusXY: 10.0
+  finalZColumnRefineHalfWindowScaled: 28.0
+  finalZColumnRefineQuantile: 0.75
+  finalZColumnRefineMinScoreFraction: 0.65
+  finalZColumnRefineMaxMoveScaled: 24.0
+  finalZColumnRefineBlend: 1.0
+  finalPostRefineDuplicateMergeDistance: 5.0
+  # Final cleanup for low rescue satellites. A rescued small weak blob is
+  # removed only when it sits close to a much larger neighbor. This targets
+  # edge fragments without using GT labels and avoids the center loss caused
+  # by a stronger global duplicate merge.
+  finalWeakSatelliteFilterEnabled: true
+  finalWeakSatelliteNeighborDistance: 30.0
+  finalWeakSatelliteMaxVoxels: 1400
+  finalWeakSatelliteMaxTop10MinusShell: 105.0
+  finalWeakSatelliteMaxMinorRadius: 14.8
+  finalWeakSatelliteNeighborMinVoxels: 2400
+  finalWeakSatelliteNeighborVoxelRatio: 1.25
+
+  # Dense frames often have one connected bright bridge that contains several
+  # real cell centers. In that case connected component centroids alone cluster
+  # around the bridge. Local maxima seeds give the splitter extra candidate
+  # centers before final biological filtering.
+  localMaxSeedEnabled: false
+  localMaxSeedMinStrongSeedCount: 80
+  localMaxSeedMinDistance: 8.0
+  localMaxSeedMaxPerFrameFactor: 2.5
+  useHighSeedCenterForSplitCells: false
+
+  # Experimental marker guided raw intensity segmentation. This follows the
+  # same high level idea as marker controlled watershed papers: first subtract
+  # local background to find reliable cell center markers, then let each marker
+  # claim only nearby permissive mask voxels. It should handle dim cells and
+  # bright bridges better than a single connected component threshold.
+  seededWatershedEnabled: true
+  seededWatershedPreferOverPercentile: false
+  seededWatershedRescueEnabled: false
+  # Prefer marker watershed as the main center source for embryo frames. The
+  # percentile connected component path is still useful as a fallback, but in
+  # dense frames it over fragments the bright foreground and then needs heavy
+  # duplicate merging, which can remove real nearby cells.
+  seededWatershedPreferBaseCountMin: 1
+  seededWatershedPreferBaseCountMax: 10000
+  seededWatershedSignalSigma: 4.0
+  seededWatershedBackgroundSigma: 14.0
+  seededWatershedSeedPercentile: 82.5
+  seededWatershedMaskPercentile: 94.0
+  seededWatershedSeedThresholdFloor: 0.08
+  seededWatershedMaskThresholdFloor: 0.025
+  # H minima style seed suppression: nearby peaks are kept only when the line
+  # between them has a real contrast valley. This lets touching cells split
+  # while suppressing several marker peaks inside the same bright cell body.
+  seededWatershedMinSeedDistance: 20.0
+  seededWatershedCloseSeedMinDistance: 10.0
+  seededWatershedMinValleyDrop: 1.0
+  seededWatershedMaxGrowDistance: 30.0
+  # Use a 3D foreground distance map during marker growth. Voxels closer to
+  # the center of a foreground object are claimed before boundary voxels, which
+  # makes the grow step closer to marker controlled watershed than simple
+  # brightness priority region growing.
+  seededWatershedUseDistanceTransform: true
+  seededWatershedDistancePriorityWeight: 0.10
+  seededWatershedContrastPriorityWeight: 1.0
+  seededWatershedSeedDistancePenaltyWeight: 0.01
+  seededWatershedCenterSeedBlend: 0.10
+  seededWatershedMinVoxels: 2600
+  # Dense embryo frames contain many real cells whose marker watershed region
+  # is smaller than mature early cells. Keep the stricter 2600 voxel floor for
+  # sparse frames, then relax it only when the default pass already sees a
+  # dense cell field. This recovered 130 to 150 frame centers without adding
+  # early frame duplicate cells.
+  seededWatershedAdaptiveMinVoxelsEnabled: true
+  seededWatershedAdaptiveMinVoxelsCellCount: 150
+  seededWatershedAdaptiveDenseMinVoxels: 1100
+  seededWatershedMaxSeeds: 650
+  seededWatershedRescueMinDistance: 32.0
+  seededWatershedRescueMaxAddedFraction: 0.08
+  seededWatershedRescueMaxAdded: 40
+  # Low threshold rescue is a second pass for very dim cells that never become
+  # markers in the main pass. It only adds candidates that are far from all
+  # existing cells and still satisfy a biological size plus shell contrast rule.
+  seededWatershedLowRescueEnabled: true
+  seededWatershedLowRescueSeedPercentile: 70.0
+  seededWatershedLowRescueMinVoxels: 1000
+  # The low rescue pass intentionally uses denser markers than the main pass.
+  # It is not trusted as final segmentation; it supplies local center evidence
+  # for dim cells and vertically split fragments.
+  seededWatershedLowRescueMinSeedDistance: 20.0
+  seededWatershedLowRescueCloseSeedMinDistance: 10.0
+  seededWatershedLowRescueMinValleyDrop: 1.0
+  seededWatershedLowRescueRefineEnabled: true
+  seededWatershedLowRescueRefineDistance: 24.0
+  # Rescue candidates can appear as two weak fragments around one true dim
+  # cell. Cluster them before final selection so the output center uses all
+  # available local evidence instead of keeping the strongest fragment only.
+  seededWatershedLowRescueClusterDistance: 20.0
+  seededWatershedLowRescueSortByDistance: true
+  seededWatershedLowRescueMinDistance: 28.0
+  seededWatershedLowRescueMinCandidateVoxels: 1000
+  seededWatershedLowRescueMinTop10MinusShell: 65.0
+  seededWatershedLowRescueMaxAdded: 20
+
+  # Candidate selection should not prefer a low threshold that turns several
+  # cells into a few huge connected blobs. The verified mature cell median
+  # scaled volume is about 46k, so a raw component mean far above this usually
+  # means over merging rather than better detection.
+  maxCandidateMeanVoxelCount: 14000.0
+  candidateCellCountWeight: 0.42
+  candidateMeanVoxelPenaltyWeight: 22.0
+  candidateNearPairPenaltyWeight: 0.05
+  candidatePercentilePreferenceWeight: 10.25
+  candidateOvergrowthAlwaysBelowFirstCount: 20
+  candidateOvergrowthMinFirstCount: 100
+  maxCandidateCountGrowthFromFirst: 1.03
+  candidateOvergrowthPenaltyWeight: 500.0

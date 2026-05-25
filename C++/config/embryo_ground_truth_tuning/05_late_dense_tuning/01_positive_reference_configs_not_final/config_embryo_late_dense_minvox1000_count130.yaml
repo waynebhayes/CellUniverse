@@ -1,0 +1,11 @@
+base_config: ../../config_embryo.yaml
+
+# Late dense embryo probe.
+# Frames after about 170 contain many dim, tightly packed cells. The current
+# dense switch misses them because the strict 2600 voxel floor leaves fewer
+# than 150 default qualified watershed regions, so the adaptive dense floor
+# never turns on. This variant lowers only the switch trigger and dense voxel
+# floor; it does not change threshold percentiles or duplicate filters.
+cell_lumen:
+  seededWatershedAdaptiveMinVoxelsCellCount: 130
+  seededWatershedAdaptiveDenseMinVoxels: 1000

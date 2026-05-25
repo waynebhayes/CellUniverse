@@ -1,0 +1,9 @@
+base_config: config_embryo_late_dense_minvox1000_count100.yaml
+
+# Probe: keep late dense recovery but disable final near duplicate and weak
+# satellite cleanup. The 170 to 194 frames contain true daughters that can be
+# very close; this checks whether the final cleanup is removing true centers.
+cell_lumen:
+  finalDuplicateMergeDistance: -1.0
+  finalWeakSatelliteFilterEnabled: false
+  finalPostRefineDuplicateMergeDistance: -1.0

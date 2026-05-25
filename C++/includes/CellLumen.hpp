@@ -34,6 +34,10 @@ public:
 
     CellLumen(BaseConfig config, const fs::path &outputDir);
 
+    std::vector<DetectedCell> detectCellsForFrame(const fs::path &imageFile,
+                                                  bool printCellDetails = false,
+                                                  bool allowTraMask = true);
+
     std::vector<DetectedCell> buildInitialCsvForFrame(const fs::path &imageFile,
                                                       const fs::path &csvOutputPath);
 

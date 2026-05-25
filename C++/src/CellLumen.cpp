@@ -4308,3 +4308,78 @@ std::vector<CellLumen::DetectedCell> CellLumen::buildInitialCsvForFrame(
               << std::endl;
     return cells;
 }
+
+std::vector<CellLumen::DetectedCell> CellLumen::detectCellsForFrame(
+    const fs::path &imageFile,
+    bool printCellDetails,
+    bool allowTraMask)
+{
+    using Clock = std::chrono::steady_clock;
+    const auto totalStart = Clock::now();
+
+    if (!fs::exists(imageFile))
+    {
+        throw std::runtime_error("CellLumen frame file not found: " + imageFile.string());
+    }
+
+    activeProfile = inferDatasetProfile(imageFile);
+    config.simulation.z_scaling = effectiveZScaling();
+    std::cout << "[CellLumen Fusion Dataset] profile=" << activeProfile.label
+              << " effective_z_scaling=" << effectiveZScaling()
+              << " frame=" << imageFile.filename().string()
+              << std::endl;
+
+    PathVec discoveredInput = ImageHandler::getImageFilePaths(imageFile.string(), 0, 0, config);
+    if (discoveredInput.empty())
+    {
+        throw std::runtime_error("CellLumen input discovery returned no files.");
+    }
+
+    std::vector<cv::Mat> realFrame = loadCellLumenRawStack(discoveredInput.front());
+    config.simulation.z_slices = static_cast<int>(realFrame.size());
+
+    if (config.cell)
+    {
+        Ellipsoid::cellConfig = *config.cell;
+        Ellipsoid::cellConfig.maxZ = static_cast<float>(realFrame.size()) - 1.0f;
+    }
+
+    const std::string frameStem = imageFile.stem().string();
+    std::vector<DetectedCell> cells;
+    if (allowTraMask)
+    {
+        if (const std::optional<fs::path> traMask = findPairedTraMask(imageFile))
+        {
+            cells = detectCellsFromTraMask(*traMask, realFrame, frameStem);
+        }
+    }
+    if (cells.empty())
+    {
+        cells = detectCellsInVolume(realFrame, frameStem);
+    }
+
+    std::cout << "[CellLumen Fusion Result] frame=" << imageFile.filename().string()
+              << " detected_cells=" << cells.size()
+              << " total_sec=" << std::fixed << std::setprecision(6)
+              << std::chrono::duration<double>(Clock::now() - totalStart).count()
+              << std::defaultfloat
+              << std::endl;
+
+    if (printCellDetails)
+    {
+        for (const auto &cell : cells)
+        {
+            std::cout << "  [CellLumen Fusion Cell] name=" << cell.name
+                      << " centerScaled=(" << cell.centerScaled.x << ","
+                      << cell.centerScaled.y << "," << cell.centerScaled.z << ")"
+                      << " major=" << cell.majorRadius
+                      << " b=" << cell.bRadius
+                      << " minor=" << cell.minorRadius
+                      << " vox=" << cell.voxelCount
+                      << " top10MinusShell=" << cell.top10MinusShell
+                      << std::endl;
+        }
+    }
+
+    return cells;
+}

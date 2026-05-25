@@ -1,0 +1,11 @@
+base_config: ../../config_embryo.yaml
+
+# Late dense embryo probe for frames 180 to 194.
+# The strict 2600 voxel floor leaves only about 108 to 116 default qualified
+# cells in these dim frames, even though the permissive watershed pass already
+# contains about 350 biologically sized regions. Lowering the adaptive trigger
+# to 100 lets CellLumen use the dense voxel floor before the low rescue cap
+# truncates the candidate set.
+cell_lumen:
+  seededWatershedAdaptiveMinVoxelsCellCount: 100
+  seededWatershedAdaptiveDenseMinVoxels: 1000

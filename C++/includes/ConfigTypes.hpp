@@ -1407,6 +1407,26 @@ public:
     int finalWeakSatelliteNeighborMinVoxels = 2400;
     float finalWeakSatelliteNeighborVoxelRatio = 1.25f;
 
+    // Optional fusion path for the main Cell Universe optimizer. CellLumen is
+    // used only as a raw frame center rescue source; candidates still have to
+    // pass distance, size, and shell contrast gates before becoming real
+    // optimizer cells.
+    bool fusionEnabled = false;
+    int fusionStartFrame = 0;
+    int fusionEveryNFrames = 1;
+    float fusionMinDistanceToExisting = 24.0f;
+    int fusionMinVoxels = 1000;
+    float fusionMinTop10MinusShell = 60.0f;
+    int fusionMaxAddedPerFrame = 12;
+    float fusionRadiusScale = 1.0f;
+    float fusionBrightness = -1.0f;
+    std::string fusionNamePrefix = "CellLumen_rescue";
+    bool fusionRepairCloseCellsEnabled = false;
+    float fusionRepairMaxDistance = 18.0f;
+    float fusionRepairRadiusRatio = 0.75f;
+    float fusionRepairPositionBlend = 0.20f;
+    float fusionRepairRadiusBlend = 0.75f;
+
     float maxCandidateMeanVoxelCount = -1.0f;
     float candidateCellCountWeight = 0.30f;
     float candidateMeanVoxelPenaltyWeight = 1.0f;
@@ -1552,6 +1572,21 @@ public:
         if (node["finalWeakSatelliteMaxMinorRadius"]) finalWeakSatelliteMaxMinorRadius = node["finalWeakSatelliteMaxMinorRadius"].as<float>();
         if (node["finalWeakSatelliteNeighborMinVoxels"]) finalWeakSatelliteNeighborMinVoxels = node["finalWeakSatelliteNeighborMinVoxels"].as<int>();
         if (node["finalWeakSatelliteNeighborVoxelRatio"]) finalWeakSatelliteNeighborVoxelRatio = node["finalWeakSatelliteNeighborVoxelRatio"].as<float>();
+        if (node["fusionEnabled"]) fusionEnabled = node["fusionEnabled"].as<bool>();
+        if (node["fusionStartFrame"]) fusionStartFrame = node["fusionStartFrame"].as<int>();
+        if (node["fusionEveryNFrames"]) fusionEveryNFrames = std::max(1, node["fusionEveryNFrames"].as<int>());
+        if (node["fusionMinDistanceToExisting"]) fusionMinDistanceToExisting = node["fusionMinDistanceToExisting"].as<float>();
+        if (node["fusionMinVoxels"]) fusionMinVoxels = node["fusionMinVoxels"].as<int>();
+        if (node["fusionMinTop10MinusShell"]) fusionMinTop10MinusShell = node["fusionMinTop10MinusShell"].as<float>();
+        if (node["fusionMaxAddedPerFrame"]) fusionMaxAddedPerFrame = node["fusionMaxAddedPerFrame"].as<int>();
+        if (node["fusionRadiusScale"]) fusionRadiusScale = node["fusionRadiusScale"].as<float>();
+        if (node["fusionBrightness"]) fusionBrightness = node["fusionBrightness"].as<float>();
+        if (node["fusionNamePrefix"]) fusionNamePrefix = node["fusionNamePrefix"].as<std::string>();
+        if (node["fusionRepairCloseCellsEnabled"]) fusionRepairCloseCellsEnabled = node["fusionRepairCloseCellsEnabled"].as<bool>();
+        if (node["fusionRepairMaxDistance"]) fusionRepairMaxDistance = node["fusionRepairMaxDistance"].as<float>();
+        if (node["fusionRepairRadiusRatio"]) fusionRepairRadiusRatio = node["fusionRepairRadiusRatio"].as<float>();
+        if (node["fusionRepairPositionBlend"]) fusionRepairPositionBlend = node["fusionRepairPositionBlend"].as<float>();
+        if (node["fusionRepairRadiusBlend"]) fusionRepairRadiusBlend = node["fusionRepairRadiusBlend"].as<float>();
         if (node["maxCandidateMeanVoxelCount"]) maxCandidateMeanVoxelCount = node["maxCandidateMeanVoxelCount"].as<float>();
         if (node["candidateCellCountWeight"]) candidateCellCountWeight = node["candidateCellCountWeight"].as<float>();
         if (node["candidateMeanVoxelPenaltyWeight"]) candidateMeanVoxelPenaltyWeight = node["candidateMeanVoxelPenaltyWeight"].as<float>();
@@ -1582,6 +1617,10 @@ public:
         std::cout << "smallArtifactMaxVoxels: " << smallArtifactMaxVoxels << '\n';
         std::cout << "minBiologicalCenterDistance: " << minBiologicalCenterDistance << '\n';
         std::cout << "seededWatershedEnabled: " << seededWatershedEnabled << '\n';
+        std::cout << "fusionEnabled: " << fusionEnabled << '\n';
+        std::cout << "fusionMinDistanceToExisting: " << fusionMinDistanceToExisting << '\n';
+        std::cout << "fusionMaxAddedPerFrame: " << fusionMaxAddedPerFrame << '\n';
+        std::cout << "fusionRepairCloseCellsEnabled: " << fusionRepairCloseCellsEnabled << '\n';
         std::cout << "maxCandidateMeanVoxelCount: " << maxCandidateMeanVoxelCount << '\n';
         std::cout << "maxCandidateCountGrowthFromFirst: " << maxCandidateCountGrowthFromFirst << '\n';
     }

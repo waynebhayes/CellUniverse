@@ -105,6 +105,7 @@ private:
    void prepareSignalCentersForFrame(int frameIndex,
                                      const std::vector<cv::Mat> &realFrame,
                                      bool keepLoaded);
+   void applyCellLumenRescue(int frameIndex);
 };
 
 #endif

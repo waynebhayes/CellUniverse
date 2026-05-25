@@ -1,0 +1,15 @@
+# Late dense CellLumen tuning candidate.
+# Makes the low rescue pass more sensitive to dim late-frame cells while keeping
+# the main detector stable. This is for checking whether persistent misses are
+# low-contrast cells that never entered the rescue candidate pool.
+base_config: config_embryo_late_dense_minvox1000_count100.yaml
+
+cell_lumen:
+  finalWeakSatelliteFilterEnabled: false
+  seededWatershedLowRescueSeedPercentile: 62.0
+  seededWatershedLowRescueMinVoxels: 650
+  seededWatershedLowRescueMinCandidateVoxels: 650
+  seededWatershedLowRescueMinTop10MinusShell: 45.0
+  seededWatershedLowRescueMinDistance: 24.0
+  seededWatershedLowRescueMaxAdded: 120
+

@@ -1,0 +1,10 @@
+# Late dense CellLumen tuning candidate.
+# Starts from the current recall best minvox800 setting, then disables the
+# final duplicate and weak satellite filters. This checks whether late frame
+# under-counting comes from over-merging nearby valid cells after detection.
+base_config: FINAL_CLEAN_OUTPUT__config_embryo_late_dense_count100_minvox800_no_weak.yaml
+
+cell_lumen:
+  finalDuplicateMergeDistance: -1.0
+  finalPostRefineDuplicateMergeDistance: -1.0
+  finalWeakSatelliteFilterEnabled: false

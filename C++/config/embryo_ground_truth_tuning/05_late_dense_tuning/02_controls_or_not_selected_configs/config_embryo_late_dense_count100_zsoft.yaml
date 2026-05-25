@@ -1,0 +1,14 @@
+base_config: config_embryo_late_dense_minvox1000_count100.yaml
+
+# Probe for the remaining late dense misses.
+# After the count100 dense switch, remaining failures are mostly good x/y
+# detections with z offset near 20 to 30 scaled pixels. This enables a soft
+# z-only correction while leaving x/y positions and cell count untouched.
+cell_lumen:
+  finalZColumnRefineEnabled: true
+  finalZColumnRefineRadiusXY: 10.0
+  finalZColumnRefineHalfWindowScaled: 28.0
+  finalZColumnRefineQuantile: 0.75
+  finalZColumnRefineMinScoreFraction: 0.65
+  finalZColumnRefineMaxMoveScaled: 14.0
+  finalZColumnRefineBlend: 0.5

@@ -1,0 +1,8 @@
+base_config: config_embryo_late_dense_minvox1000_count100.yaml
+
+# Probe: keep late dense candidate recovery but disable the final local
+# brightness center pull. Remaining late frame misses often have good local
+# evidence but are shifted toward neighboring bright edges.
+cell_lumen:
+  finalLocalRefineEnabled: false
+  finalZColumnRefineEnabled: false

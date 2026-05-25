@@ -313,11 +313,17 @@ int main(int argc, char *argv[])
     // create lineage
     CellUniverse lineage = CellUniverse(cells, imageFilePaths, config, args.output, args.firstFrame, args.continueFrom);
     const bool prepareAnalyzeOneFrame =
-        config.simulation.prepare_analyze_one_frame &&
+        (config.simulation.prepare_analyze_one_frame ||
+         (config.cellLumen.enabled && config.cellLumen.fusionEnabled)) &&
         !config.simulation.quit_after_preprocessing;
     if (prepareAnalyzeOneFrame) {
         std::cout << "[INFO] prepare_analyze_one_frame=true; each frame will be prepared immediately before optimize()."
                   << std::endl;
+        if (config.cellLumen.enabled && config.cellLumen.fusionEnabled &&
+            !config.simulation.prepare_analyze_one_frame) {
+            std::cout << "[INFO] cell_lumen.fusionEnabled=true; forcing per-frame prepare so raw CellLumen rescue runs before optimization."
+                      << std::endl;
+        }
     } else {
         lineage.preprocessAllFramesAlignedToMinimumBackground(true);
     }

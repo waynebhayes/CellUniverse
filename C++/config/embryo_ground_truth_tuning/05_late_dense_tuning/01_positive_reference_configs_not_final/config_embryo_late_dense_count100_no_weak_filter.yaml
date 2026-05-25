@@ -1,0 +1,9 @@
+# Late dense CellLumen tuning candidate.
+# Keeps the count100 dense trigger but disables only the final weak satellite
+# filter. This checks whether true dim cells are being removed as satellites
+# after the detector has already found their centers.
+base_config: config_embryo_late_dense_minvox1000_count100.yaml
+
+cell_lumen:
+  finalWeakSatelliteFilterEnabled: false
+
