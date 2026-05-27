@@ -17,10 +17,13 @@ from collections import deque
 from pathlib import Path
 
 
-def read_prediction(path: Path) -> list[dict[str, object]]:
+def read_prediction(path: Path, frame: int) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
+    expected_file = f"t{frame:03d}.tif"
     with path.open(newline="") as handle:
         for row in csv.DictReader(handle):
+            if row.get("file") != expected_file:
+                continue
             if str(row.get("isTrash", "0")).lower() in {"1", "true", "yes"}:
                 continue
             rows.append(
@@ -139,7 +142,7 @@ def main() -> int:
     parser.add_argument("--details", action="store_true")
     args = parser.parse_args()
 
-    pred = read_prediction(args.cells)
+    pred = read_prediction(args.cells, args.frame)
     gt = read_gt(args.gt, args.frame)
     pair_pred, pair_gt, matched = match_centers(pred, gt, args.threshold)
     matched_distances = [

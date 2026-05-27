@@ -139,7 +139,44 @@ cell_lumen:
   # continuing cells. Frame 129 valid rescues have neighborClaimPenalty=0, while
   # the frame 130 false split duplicates were 37.6 and 63.6.
   fusionSplitPriorElongatedParentMaxNeighborClaimPenalty: 30.0
-  fusionSplitPriorMaxPriorsPerFrame: 25
+  fusionSplitPriorMaxPriorsPerFrame: 35
+  # Look ahead a few raw frames before deciding which current split priors are
+  # worth scheduling. This does not copy future GT or future tracker results.
+  # It only asks whether CellLumen still sees two daughter-like centers in the
+  # next images. The optimizer still commits only the current frame.
+  fusionSplitPriorWindowEnabled: true
+  fusionSplitPriorWindowSize: 3
+  fusionSplitPriorWindowMatchDistance: 28.0
+  fusionSplitPriorWindowMatchDistancePerFrame: 4.0
+  fusionSplitPriorWindowDaughterSupportBonus: 4.0
+  fusionSplitPriorWindowMissingDaughterPenalty: 5.0
+  fusionSplitPriorWindowParentPersistencePenalty: 6.0
+  fusionSplitPriorWindowBalancedDaughterBonus: 25.0
+  fusionSplitPriorWindowBalancedMinParentDistanceBalance: 0.65
+  fusionSplitPriorWindowBalancedMinNearParentRadiusScale: 0.60
+  fusionSplitPriorWindowHighConfidenceMaxOverlapCostFraction: 1.0
+  # Prior ranking keeps impossible geometry as hard rejection, but turns near
+  # misses into score penalties. This lets a candidate that is barely outside a
+  # threshold survive long enough to compete with future-frame support.
+  fusionSplitPriorRankingSoftGateEnabled: true
+  fusionSplitPriorRankingSoftSeparationPenalty: 12.0
+  fusionSplitPriorRankingSoftMidpointPenalty: 10.0
+  fusionSplitPriorRankingSoftScorePenalty: 1.0
+  fusionSplitPriorRankingSoftNeighborPenalty: 1.0
+  # Global selection treats ordinary skip as zero cost. A low positive prior can
+  # still enter only when future CellLumen evidence keeps both daughters alive;
+  # bridge, image, overlap, and continuation ownership checks still decide if it
+  # is physically usable.
+  fusionSplitPriorGlobalSelectMaxCost: 50.0
+  # A split daughter is not allowed to consume a center that is already inside a
+  # strong neighboring continuation without paying extra cost. If the claimed
+  # daughter is also very close to the parent center, it is more likely to be an
+  # internal bright peak than a real daughter.
+  fusionSplitPriorContinuationClaimGuardEnabled: true
+  fusionSplitPriorContinuationClaimRadiusScale: 1.35
+  fusionSplitPriorContinuationClaimTieMargin: 4.0
+  fusionSplitPriorContinuationClaimCloseParentRadiusScale: 0.62
+  fusionSplitPriorContinuationClaimCloseParentPenalty: 6.0
   # Reject the most common false split pattern from frame 120 -> 121: the
   # original parent center is still present and only one nearby neighbor is
   # being stolen as a fake daughter. True divisions can be asymmetric, so these
@@ -303,7 +340,7 @@ cell_lumen:
   # Universe use its PCA split estimate when CellLumen gives one good center
   # and one z-shifted or merged center.
   fusionSplitPriorPrepassFallbackEnabled: true
-  fusionSplitPriorPrepassFallbackMaxPriors: 5
+  fusionSplitPriorPrepassFallbackMaxPriors: 12
   fusionSplitPriorPrepassFallbackMinKeptPixels: 50000
   fusionSplitPriorPrepassFallbackMinShape: 1.20
   fusionSplitPriorPrepassFallbackMinSeparationRadiusScale: 0.90

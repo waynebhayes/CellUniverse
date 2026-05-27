@@ -101,6 +101,21 @@ private:
    // fallback may not resurrect these parents, otherwise a weak Lumen pair can
    // be rejected in ranking and then re-enter through the fallback path.
    std::unordered_map<int, std::set<std::string>> cellLumenSplitPriorRejectedBadParents;
+   struct CellLumenCenterCandidate {
+       cv::Point3f position{0.0f, 0.0f, 0.0f};
+       float distance = 0.0f;
+       int voxelCount = 0;
+       float signal = 0.0f;
+       int candidateId = -1;
+   };
+   std::unordered_map<int, std::unordered_map<std::string, CellLumenCenterCandidate>> cellLumenCenterCandidates;
+   struct CellLumenLookaheadCandidate {
+       cv::Point3f position{0.0f, 0.0f, 0.0f};
+       int voxelCount = 0;
+       float signal = 0.0f;
+       int candidateId = -1;
+   };
+   std::unordered_map<int, std::vector<CellLumenLookaheadCandidate>> cellLumenLookaheadCandidates;
 
    // Per-frame cached summaries for adaptive background (computed at end of
    // optimize(N); consumed by optimize(N+1) without needing frames[N]'s
@@ -116,6 +131,7 @@ private:
                                      const std::vector<cv::Mat> &realFrame,
                                      bool keepLoaded);
    void applyCellLumenRescue(int frameIndex);
+   const std::vector<CellLumenLookaheadCandidate> &getCellLumenLookaheadCandidates(int frameIndex);
 };
 
 #endif

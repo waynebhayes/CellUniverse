@@ -50,6 +50,21 @@ struct BridgeSplitProposal
     float elongation = 0.0f;
     float parentShapeElongation = 1.0f;
     bool elongatedParentRescued = false;
+    int candidateIdA = -1;
+    int candidateIdB = -1;
+    int windowBothDaughtersSupported = 0;
+    int windowMissingDaughterCount = 0;
+    int windowParentPersists = 0;
+    float windowSupportScore = 0.0f;
+    float balancedWindowBonus = 0.0f;
+    float maxOverlapCostFractionOverride = -1.0f;
+    float parentDistanceBalance = 1.0f;
+    float parentPersistencePenalty = 0.0f;
+    float neighborClaimPenalty = 0.0f;
+    float continuationClaimSoftPenalty = 0.0f;
+    std::string continuationClaimBlockerNames;
+    bool futureContinuationConflictRescued = false;
+    bool parentAnchored = false;
     int gapStartBin = -1;
     int gapEndBin = -1;
     int leftPixelCount = 0;
@@ -108,7 +123,8 @@ public:
                                  bool useSignalGuidance = false,
                                  float randomPerturbRadiusRatio = 1.0f,
                                  bool pcaRefitWellFilledMove = false,
-                                 bool useSignalMapGuidance = true);
+                                 bool useSignalMapGuidance = true,
+                                 const cv::Point3f *forcedPosition = nullptr);
     double computeOverlapPenalty(float weight) const;
     double computeOverlapForCell(size_t cellIdx, float weight) const;
 
