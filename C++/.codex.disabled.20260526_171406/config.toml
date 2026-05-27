@@ -1,0 +1,47 @@
+# Project-local Codex permissions for CellUniverse C++.
+# This is high-trust mode for unattended local work.
+
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+
+# Keep this false unless Codex must download dependencies.
+web_search = "disabled"
+
+developer_instructions = """
+You are working inside /Users/wangyiding/CellUniverse/C++.
+
+High-trust local automation is allowed for this project.
+
+Allowed:
+- inspect local files and directories
+- edit files inside this project
+- run local build commands
+- run local test commands
+- run CellUniverse algorithms
+- inspect system processes with ps, pgrep, top, lsof, rg, grep, awk, sed
+- stop clearly matching CellUniverse-related runaway processes using kill/pkill
+- delete, move, or reorganize generated files under this project's output/, build/, logs/, tmp/, or cache-like folders
+
+Process safety rule:
+Only kill processes whose full command line clearly belongs to this project, such as:
+- /Users/wangyiding/CellUniverse/C++/build/celluniverse
+- cell_lumen_fusion
+- local validation/scoring scripts launched from /Users/wangyiding/CellUniverse/C++
+
+Never kill:
+- napari
+- browser
+- editor
+- terminal
+- notebooks
+- unrelated Python processes
+- system daemons
+- processes outside the CellUniverse project unless explicitly requested
+
+Git restriction:
+Never run git push, git push --force, git push --tags, or any command that publishes changes to a remote repository.
+If a remote push is needed, stop and leave the exact command for the user to run manually.
+
+Do not use sudo.
+Do not modify files outside /Users/wangyiding/CellUniverse/C++ unless explicitly requested.
+"""

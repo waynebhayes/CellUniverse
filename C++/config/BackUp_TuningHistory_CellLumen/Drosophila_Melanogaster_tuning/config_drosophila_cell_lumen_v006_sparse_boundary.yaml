@@ -1,0 +1,17 @@
+base_config: config_drosophila_cell_lumen_v005_compact_surface.yaml
+
+# v006: sparse boundary test.
+# Push seed spacing higher to find the point where GT center recall starts to
+# fall. If recall stays stable, this becomes the lower-noise candidate.
+
+cell_lumen:
+  seededWatershedMinSeedDistance: 10.5
+  seededWatershedCloseSeedMinDistance: 5.5
+  seededWatershedMinValleyDrop: 0.030
+  seededWatershedMinVoxels: 50
+
+  minComponentVoxels: 50
+  minBiologicalVoxelCount: 50
+  minBiologicalCenterDistance: 6.0
+  finalDuplicateMergeDistance: 6.0
+  finalPostRefineDuplicateMergeDistance: 6.0

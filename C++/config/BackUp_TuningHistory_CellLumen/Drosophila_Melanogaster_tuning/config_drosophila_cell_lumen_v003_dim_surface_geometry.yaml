@@ -1,0 +1,29 @@
+base_config: config_drosophila_cell_lumen_v002_high_recall_seedcap.yaml
+
+# v003: dim upper-surface recovery.
+# v002 improved recall but still missed dim GT markers on the upper embryo
+# surface. This version allows more lower-ranked seeds and reduces final
+# brightness-peak pulling so component geometry can stay closer to the marked
+# center of small irregular cells.
+
+cell_lumen:
+  geometricCenterBlend: 0.45
+
+  seededWatershedMaxSeeds: 16000
+  seededWatershedSeedPercentile: 96.0
+  seededWatershedMaskPercentile: 76.0
+  seededWatershedSeedThresholdFloor: 0.020
+  seededWatershedMaskThresholdFloor: 0.006
+  seededWatershedMinSeedDistance: 5.0
+  seededWatershedCloseSeedMinDistance: 2.2
+  seededWatershedMinValleyDrop: 0.015
+  seededWatershedMaxGrowDistance: 11.0
+  seededWatershedCenterSeedBlend: 0.0
+  seededWatershedMinVoxels: 18
+
+  minComponentVoxels: 18
+  minBiologicalVoxelCount: 18
+  minTop10MinusShell: 4.0
+  finalLocalRefineEnabled: false
+  finalDuplicateMergeDistance: 3.0
+  finalPostRefineDuplicateMergeDistance: 3.0

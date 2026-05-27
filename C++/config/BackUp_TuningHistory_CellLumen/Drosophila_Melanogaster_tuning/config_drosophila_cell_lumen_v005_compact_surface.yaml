@@ -1,0 +1,17 @@
+base_config: config_drosophila_cell_lumen_v004_balanced_dense_surface.yaml
+
+# v005: compactness test after v004.
+# Increase seed spacing and duplicate merge one more step to see whether the
+# high-recall GT coverage is robust or depends on dense duplicate candidates.
+
+cell_lumen:
+  seededWatershedMinSeedDistance: 9.0
+  seededWatershedCloseSeedMinDistance: 4.8
+  seededWatershedMinValleyDrop: 0.025
+  seededWatershedMinVoxels: 40
+
+  minComponentVoxels: 40
+  minBiologicalVoxelCount: 40
+  minBiologicalCenterDistance: 5.0
+  finalDuplicateMergeDistance: 5.0
+  finalPostRefineDuplicateMergeDistance: 5.0

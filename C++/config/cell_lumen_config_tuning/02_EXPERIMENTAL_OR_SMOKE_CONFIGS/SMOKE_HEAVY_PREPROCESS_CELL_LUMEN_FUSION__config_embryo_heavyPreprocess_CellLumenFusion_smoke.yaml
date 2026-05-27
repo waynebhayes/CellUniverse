@@ -1,0 +1,34 @@
+base_config: config_embryo.yaml
+
+# Local smoke config for checking whether CellLumen fusion can help while the
+# original heavy preprocessing path is still active. This keeps the heavy
+# preprocessing parameters from config.yaml and only lowers optimizer work so a
+# single frame can be inspected quickly on a laptop.
+
+simulation:
+  iterations_per_cell: 1
+  signal_guided_iterations_per_cell: 0
+  random_iterations_per_cell: 0
+  z_slices: 239
+  export_frame_png: false
+  export_frame_tiff: true
+  prepare_analyze_one_frame: true
+  release_analyzed_exported_frames: false
+
+cell_lumen:
+  enabled: true
+  fusionEnabled: true
+  fusionStartFrame: 115
+  fusionEveryNFrames: 1
+  fusionMinDistanceToExisting: 24.0
+  fusionMinVoxels: 1000
+  fusionMinTop10MinusShell: 65.0
+  fusionMaxAddedPerFrame: 12
+  fusionRadiusScale: 1.0
+  fusionBrightness: -1.0
+  fusionNamePrefix: CellLumen_rescue
+  fusionRepairCloseCellsEnabled: true
+  fusionRepairMaxDistance: 18.0
+  fusionRepairRadiusRatio: 0.75
+  fusionRepairPositionBlend: 0.20
+  fusionRepairRadiusBlend: 0.75

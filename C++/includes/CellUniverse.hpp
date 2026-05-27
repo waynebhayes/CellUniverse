@@ -16,6 +16,8 @@
 #include <algorithm>
 #include <fstream>
 #include <stdexcept>
+#include <set>
+#include <unordered_map>
 
 namespace fs = std::filesystem;
 
@@ -91,6 +93,14 @@ private:
    float edgeBrightnessAlignmentTarget = 0.0f;
    bool edgeBrightnessAlignmentTargetInitialized = false;
    int continueFrom = -1;
+   // Per-frame CellLumen split proposals. applyCellLumenRescue() builds these
+   // from raw current-frame CellLumen centers; optimize() consumes them before
+   // random split scheduling.
+   std::unordered_map<int, std::unordered_map<std::string, BridgeSplitProposal>> cellLumenSplitPriors;
+   // Parents whose best CellLumen split pair looked unsafe. The pre-pass
+   // fallback may not resurrect these parents, otherwise a weak Lumen pair can
+   // be rejected in ranking and then re-enter through the fallback path.
+   std::unordered_map<int, std::set<std::string>> cellLumenSplitPriorRejectedBadParents;
 
    // Per-frame cached summaries for adaptive background (computed at end of
    // optimize(N); consumed by optimize(N+1) without needing frames[N]'s

@@ -1,0 +1,21 @@
+base_config: config_drosophila_cell_lumen_v003_dim_surface_geometry.yaml
+
+# v004: balance v003 high recall against over-dense fragments.
+# Keep the dim-surface thresholds, but enforce a larger minimum seed spacing
+# and slightly stricter region size. This should merge repeated local maxima
+# inside one small cell while preserving upper-surface coverage.
+
+cell_lumen:
+  seededWatershedMaxSeeds: 14000
+  seededWatershedMinSeedDistance: 7.5
+  seededWatershedCloseSeedMinDistance: 4.0
+  seededWatershedMinValleyDrop: 0.020
+  seededWatershedMaxGrowDistance: 11.5
+  seededWatershedMinVoxels: 30
+
+  minComponentVoxels: 30
+  minBiologicalVoxelCount: 30
+  biologicalNearDuplicateMergeEnabled: true
+  minBiologicalCenterDistance: 4.0
+  finalDuplicateMergeDistance: 4.0
+  finalPostRefineDuplicateMergeDistance: 4.0

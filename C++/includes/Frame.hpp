@@ -48,6 +48,8 @@ struct BridgeSplitProposal
     cv::Point3f d1Pos{0.0f, 0.0f, 0.0f};   // weighted centroid of left  bright pixels
     cv::Point3f d2Pos{0.0f, 0.0f, 0.0f};   // weighted centroid of right bright pixels
     float elongation = 0.0f;
+    float parentShapeElongation = 1.0f;
+    bool elongatedParentRescued = false;
     int gapStartBin = -1;
     int gapEndBin = -1;
     int leftPixelCount = 0;
@@ -206,7 +208,52 @@ public:
         std::vector<cv::Mat> *splitPerturbDebugPlacements = nullptr,
         int *splitPerturbDebugPlacementCount = nullptr,
         float splitPerturbDebugBrightness = 0.0f,
-        const BridgeSplitProposal *bridgeProposal = nullptr);
+        const BridgeSplitProposal *bridgeProposal = nullptr,
+        const BridgeSplitProposal *lumenProposal = nullptr,
+        bool lumenProposalOnly = false,
+        int lumenBurnInIterations = -1,
+        int lumenRefineIterations = -1,
+        bool lumenUseDedicatedCostGate = false,
+        bool lumenUseImageCostGate = false,
+        float lumenSplitCost = 0.0f,
+        float lumenSplitCostFraction = 0.0f,
+        float lumenMaxPositiveCostFraction = 0.0f,
+        float lumenPositiveGateMinImageGain = 0.0f,
+        float lumenPositiveGateMinImageGainPenaltyRatio = 0.0f,
+        float lumenPositiveGateElongatedParentMinShape = -1.0f,
+        float lumenPositiveGateElongatedMaxRawWorsening = -1.0f,
+        float lumenPositiveGateElongatedMaxSoftPenaltyFraction = -1.0f,
+        float lumenPositiveGateElongatedMaxScore = -1.0f,
+        float lumenMaxOverlapCostFraction = -1.0f,
+        float lumenHighConfidenceMaxScore = -1.0f,
+        float lumenHighConfidenceMaxOverlapCostFraction = -1.0f,
+        float lumenHighConfidenceAxisAlignmentDegrees = -1.0f,
+        float lumenDaughterVolumeScale = -1.0f,
+        float lumenPrefilterMaxValleyRatio = -1.0f,
+        float lumenBridgeMaxValleyRatio = -1.0f,
+        float lumenMinBridgeGapWidth = -1.0f,
+        float lumenMinEdgeBrightness = -1.0f,
+        float lumenMaxDaughterOverlapFraction = -1.0f,
+        bool lumenSoftGateEnabled = false,
+        float lumenSoftAxisPenaltyFraction = 0.0f,
+        float lumenSoftDaughterOverlapPenaltyFraction = 0.0f,
+        float lumenSoftValleyPenaltyFraction = 0.0f,
+        float lumenSoftBridgeGapPenaltyFraction = 0.0f,
+        float lumenSoftOverlapCostPenaltyWeight = 0.0f,
+        bool lumenBridgeEvidenceWaivesOverlapSoftPenalty = false,
+        float lumenHardMaxDaughterOverlapFraction = 1.0f,
+        float lumenHardMaxValleyRatio = 2.0f,
+        float lumenHardMaxOverlapCostFraction = -1.0f,
+        float lumenMinPostRefitLateralSeparation = -1.0f,
+        float lumenMinPostRefitLateralSeparationRadiusScale = 0.0f,
+        float lumenMaxZDominanceForLowLateralSeparation = 0.85f,
+        bool lumenDynamicOverlapEnabled = false,
+        float lumenLocalDensityRadiusScale = 2.5f,
+        float lumenLocalDensityOverlapBonus = 0.0f,
+        float lumenMaxDynamicDaughterOverlapFraction = 1.0f,
+        float lumenSnapshotSeedMaxRefitDrift = -1.0f,
+        bool lumenSkipExistingCellBuriedCheck = false,
+        bool lumenSkipNeighborBridgeCheck = false);
 
     // PCA-bridge daughter discovery. Runs the long-axis dark-bridge bin
     // analysis on the current cell and, if a valid bridge is found, returns

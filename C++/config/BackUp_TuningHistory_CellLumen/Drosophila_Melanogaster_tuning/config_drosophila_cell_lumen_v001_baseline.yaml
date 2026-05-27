@@ -1,0 +1,115 @@
+base_config: ../../config.yaml
+
+# Drosophila Melanogaster embryo CellLumen tuning.
+# Scope: raw --cell-lumen initialization only. No C++ source changes are needed
+# for this dataset-specific pass.
+
+simulation:
+  # TIFF metadata: x/y resolution is 24630.6 px/cm and tag 65001 is 4923.688,
+  # giving an approximate z:xy physical spacing ratio of 5.0.
+  z_scaling: 5.0
+  blur_sigma: 0.0
+  parallel_threads: 4
+
+cell:
+  minARadius: 3
+  maxARadius: 26
+  minBRadius: 3
+  maxBRadius: 24
+  minCRadius: 3
+  maxCRadius: 22
+  pcaShapeMinPixels: 12
+  perturbSigmaReferenceRadius: 10.0
+
+cell_lumen:
+  enabled: true
+
+  # Fallback percentile connected components. The seeded watershed path below
+  # is preferred when it finds cells, but these percentiles remain useful if a
+  # frame has too few reliable markers.
+  percentiles: [99.8, 99.6, 99.4, 99.2, 99.0, 98.8, 98.5, 98.2, 98.0]
+
+  geometricCenterBlend: 0.20
+  minComponentVoxels: 35
+  minHighSeedVoxels: 5
+  seedMergeDistance: 6.0
+  adaptiveSeedMergeEnabled: false
+  seedSplitSeparation: 8.0
+  dedupDistance: 4.0
+  dedupRadiusScale: 0.30
+  adaptiveDedupEnabled: false
+  fragmentMergeEnabled: false
+  allowSeededSplitInSparseField: false
+
+  useScaledVoxelVolumeForRadius: true
+  radiusInflationScale: 1.05
+  zCenterOffsetScaled: 0.0
+  minOutputMajorRadius: 3.5
+  minOutputBRadius: 3.0
+  minOutputMinorRadius: 3.0
+  maxOutputMajorRadius: 26.0
+  maxOutputBRadius: 24.0
+  maxOutputMinorRadius: 22.0
+  minOutputCenterZScaled: 20.0
+  maxOutputCenterZScaled: 600.0
+
+  signalStatsEnabled: true
+  shellInnerScale: 1.05
+  shellOuterScale: 1.50
+  minTop10MinusShell: 12.0
+  minMeanMinusShell: -50.0
+  minBiologicalVoxelCount: 35
+  minBiologicalMajorRadius: 3.5
+  rejectTinyBrightArtifacts: false
+
+  biologicalNearDuplicateMergeEnabled: true
+  minBiologicalCenterDistance: 2.0
+  adaptiveNearDuplicateMergeEnabled: false
+  finalDuplicateMergeDistance: 3.0
+  finalLocalRefineEnabled: true
+  finalLocalRefineRadius: 8.0
+  finalLocalRefineQuantile: 0.75
+  finalLocalRefineBlend: 0.35
+  finalZColumnRefineEnabled: false
+  finalPostRefineDuplicateMergeDistance: 3.0
+  finalWeakSatelliteFilterEnabled: false
+  localMaxSeedEnabled: false
+
+  seededWatershedEnabled: true
+  seededWatershedPreferOverPercentile: false
+  seededWatershedRescueEnabled: false
+  seededWatershedPreferBaseCountMin: 1
+  seededWatershedPreferBaseCountMax: 10000
+  seededWatershedSignalSigma: 1.2
+  seededWatershedBackgroundSigma: 7.0
+  seededWatershedSeedPercentile: 99.2
+  seededWatershedMaskPercentile: 88.0
+  seededWatershedSeedThresholdFloor: 0.06
+  seededWatershedMaskThresholdFloor: 0.015
+  seededWatershedMinSeedDistance: 6.0
+  seededWatershedCloseSeedMinDistance: 3.0
+  seededWatershedMinValleyDrop: 0.04
+  seededWatershedMaxGrowDistance: 10.0
+  seededWatershedUseDistanceTransform: false
+  seededWatershedDistancePriorityWeight: 0.0
+  seededWatershedContrastPriorityWeight: 1.0
+  seededWatershedSeedDistancePenaltyWeight: 0.02
+  seededWatershedCenterSeedBlend: 0.20
+  seededWatershedMinVoxels: 35
+  seededWatershedAdaptiveMinVoxelsEnabled: false
+  seededWatershedMaxSeeds: 2500
+
+  seededWatershedLowRescueEnabled: false
+  seededWatershedLowRescueSeedPercentile: 96.5
+  seededWatershedLowRescueMinVoxels: 25
+  seededWatershedLowRescueMinSeedDistance: 8.0
+  seededWatershedLowRescueCloseSeedMinDistance: 4.0
+  seededWatershedLowRescueMinValleyDrop: 0.03
+  seededWatershedLowRescueRefineEnabled: true
+  seededWatershedLowRescueRefineDistance: 8.0
+  seededWatershedLowRescueClusterDistance: 8.0
+  seededWatershedLowRescueSortByDistance: true
+  seededWatershedLowRescueMinDistance: 10.0
+  seededWatershedLowRescueMinCandidateVoxels: 25
+  seededWatershedLowRescueMinTop10MinusShell: 10.0
+  seededWatershedLowRescueMaxAdded: 120

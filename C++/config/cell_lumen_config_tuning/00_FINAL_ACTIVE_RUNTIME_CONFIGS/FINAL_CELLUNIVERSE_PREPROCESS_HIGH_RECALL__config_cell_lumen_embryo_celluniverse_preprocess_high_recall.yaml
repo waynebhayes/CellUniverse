@@ -1,0 +1,24 @@
+# Stable CellLumen embryo mode for Cell Universe preprocessing.
+#
+# Use this when CellLumen is only a raw-signal mask or center-candidate provider
+# for the main Cell Universe optimizer. In that role, false negatives are much
+# worse than extra candidates because cleared raw voxels cannot be recovered by
+# later Cell Universe steps.
+#
+# This mode therefore keeps more late dense candidates than the standalone
+# clean mode. Cell Universe should do the later cost, shape, radius, and split
+# checks.
+base_config: config_cell_lumen_embryo_standalone_clean.yaml
+
+cell_lumen:
+  # Disable final near-duplicate merging for preprocessing. Nearby duplicate
+  # candidates can still protect raw signal around a real dim or newly split
+  # cell. Removing them too early risks blacking out true cell voxels before
+  # Cell Universe sees the frame.
+  finalDuplicateMergeDistance: -1.0
+  finalPostRefineDuplicateMergeDistance: -1.0
+
+  # Keep this disabled for the same reason as the standalone clean mode: in
+  # late dense frames, a weak region near a larger neighbor may still be a real
+  # cell that Cell Universe can later validate.
+  finalWeakSatelliteFilterEnabled: false

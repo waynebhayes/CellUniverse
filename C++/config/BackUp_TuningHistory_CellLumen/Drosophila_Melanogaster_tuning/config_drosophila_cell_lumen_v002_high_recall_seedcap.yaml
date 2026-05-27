@@ -1,0 +1,26 @@
+base_config: config_drosophila_cell_lumen_v001_baseline.yaml
+
+# v002: high-recall coverage test.
+# v001 was capped at 2500 bright watershed seeds and missed the dim upper
+# surface of 01/frame0. This version skips the percentile sweep for speed and
+# raises the watershed seed cap to test whether missing GT centers are present
+# among lower-ranked raw brightness peaks.
+
+cell_lumen:
+  seededWatershedPreferOverPercentile: true
+  seededWatershedMaxSeeds: 8000
+  seededWatershedSeedPercentile: 98.6
+  seededWatershedMaskPercentile: 84.0
+  seededWatershedSeedThresholdFloor: 0.04
+  seededWatershedMaskThresholdFloor: 0.010
+  seededWatershedMinSeedDistance: 5.5
+  seededWatershedCloseSeedMinDistance: 2.5
+  seededWatershedMinValleyDrop: 0.025
+  seededWatershedMaxGrowDistance: 9.0
+  seededWatershedMinVoxels: 25
+
+  minComponentVoxels: 25
+  minBiologicalVoxelCount: 25
+  minTop10MinusShell: 8.0
+  finalDuplicateMergeDistance: 2.5
+  finalPostRefineDuplicateMergeDistance: 2.5

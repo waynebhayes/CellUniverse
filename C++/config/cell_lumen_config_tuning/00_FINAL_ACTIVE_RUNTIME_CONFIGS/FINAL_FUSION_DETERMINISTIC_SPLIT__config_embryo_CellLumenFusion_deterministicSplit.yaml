@@ -1,0 +1,299 @@
+base_config: config_embryo_NoPreprocess.yaml
+
+# CellLumen plus Cell Universe speed path for embryo raw intensity runs.
+#
+# This mode keeps the raw information-preserving preprocessing from
+# config_embryo_NoPreprocess.yaml. CellLumen is used as a high recall current
+# frame detector. When two CellLumen centers sit near one copied-forward parent,
+# Cell Universe uses those two centers as the split candidate pair instead of
+# spending time on many random split axes. The normal Cell Universe cost and
+# biology gates still decide whether the split is accepted.
+
+simulation:
+  # CellLumen supplies current-frame raw-intensity centers before optimization,
+  # so Cell Universe no longer needs a large random perturb budget just to find
+  # the bright cell body. Keep a small local budget so cost can still correct
+  # CellLumen radius/shape errors and reject false centers.
+  iterations_per_cell: 12
+  random_iterations_per_cell: 12
+  signal_guided_iterations_per_cell: 12
+
+cell_lumen:
+  enabled: true
+  fusionEnabled: true
+
+  # Fusion mode must use the high recall CellLumen candidate policy, not the
+  # cleaner standalone policy. The main Cell Universe optimizer can reject extra
+  # centers later, but if CellLumen drops a real center here the downstream raw
+  # mask and deterministic split prior never get a chance to recover it. These
+  # values mirror config_cell_lumen_embryo_celluniverse_preprocess_high_recall.
+  seededWatershedAdaptiveMinVoxelsCellCount: 100
+  seededWatershedAdaptiveDenseMinVoxels: 800
+  seededWatershedLowRescueMinVoxels: 800
+  seededWatershedLowRescueMinCandidateVoxels: 800
+
+  # Do not merge away close candidates before Cell Universe sees them. A close
+  # pair is exactly the signal needed for a deterministic split proposal.
+  finalDuplicateMergeDistance: -1.0
+  finalPostRefineDuplicateMergeDistance: -1.0
+  finalWeakSatelliteFilterEnabled: false
+
+  # Existing cells are corrected toward nearby raw CellLumen centers before
+  # optimization. This fixes the collapsed small sphere pattern without adding
+  # duplicate cells.
+  fusionCenterPriorEnabled: true
+  fusionCenterPriorMaxDistance: 24.0
+  fusionCenterPriorPositionBlend: 0.35
+  fusionCenterPriorRadiusBlend: 0.25
+
+  # Deterministic split prior. A parent gets a proposal only when two CellLumen
+  # centers are both near that parent and their separation is biologically
+  # plausible. This is the speed-critical path: guidedOnly keeps only the
+  # CellLumen pair, and skipRandomSplits stops the old broad random split search
+  # for frames where CellLumen proposals are available.
+  fusionSplitPriorEnabled: true
+  fusionSplitPriorForceSchedule: true
+  fusionSplitPriorSkipRandomSplits: true
+  # First try only the CellLumen daughter pair. In this speed path, rejected
+  # Lumen priors should stop there. The old classic fallback is still available
+  # in code, but keeping it enabled here reintroduces the expensive random/PCA
+  # split search for every weak prior and made frame 121 take about 11 minutes.
+  fusionSplitPriorGuidedOnly: true
+  fusionSplitPriorMaxParentDistance: 42.0
+  fusionSplitPriorParentRadiusScale: 2.8
+  fusionSplitPriorMinSeparation: 8.0
+  fusionSplitPriorMinSeparationRadiusScale: 0.55
+  fusionSplitPriorMaxSeparation: 64.0
+  fusionSplitPriorMaxSeparationRadiusScale: 3.4
+  # The old random split search can test many directions per parent. CellLumen
+  # prior should do the opposite: score all plausible parent -> two center pairs
+  # and keep only the most division-like few. Frame 120 -> 121 has about a dozen
+  # new cells, so this cap should be near that order, not 60+ candidates.
+  # Allow asymmetric real divisions where one daughter remains close to the old
+  # parent center and the midpoint moves slightly farther than the old 18 px
+  # cutoff. This is needed for frame 120 -> 121 parent 451.
+  fusionSplitPriorMaxMidpointDistance: 28.0
+  fusionSplitPriorMaxMidpointRadiusScale: 0.80
+  # Keep the main score conservative. A broad weight change made unrelated
+  # parents over split, so ownership conflicts are handled by the targeted
+  # replacement rule below instead of globally changing all ranked pairs.
+  fusionSplitPriorMidpointWeight: 1.0
+  fusionSplitPriorSeparationPenaltyWeight: 0.20
+  fusionSplitPriorSignalBonusWeight: 0.001
+  # Dense-frame ownership fix. If a neighboring parent first claims one true
+  # daughter center with a long false pair, a later pair can replace it only
+  # when that later pair is clearly local to its parent and has a much shorter
+  # daughter separation. This targets the frame 120 -> 121 false parent
+  # t120_cell_009 without relaxing split gates for every parent.
+  fusionSplitPriorConflictReplacementEnabled: true
+  fusionSplitPriorConflictCloseParentRadiusScale: 0.45
+  fusionSplitPriorConflictMinNewSeparationRadiusScale: 1.40
+  fusionSplitPriorConflictMinSeparationDrop: 15.0
+  # Only allow a later local pair to steal a candidate from an already stored
+  # pair if the stored pair was itself weak. Frame 123 showed the failure mode:
+  # a strong parent pair for label 22/25 was replaced by a worse neighbor pair
+  # solely because the new separation was shorter, which then failed overlap
+  # validation and lost the true split.
+  fusionSplitPriorConflictMinOldScoreForReplacement: 10.0
+  # Do not zero out neighbor-claim penalties for asymmetric close pairs. Frame
+  # 123 showed that doing so lets one parent steal a lumen center that is
+  # visibly closer to a neighboring still-existing parent, leaving the neighbor
+  # as a duplicate extra cell. Keep the conflict replacement mechanism, but
+  # make it earn the split through the normal global score.
+  fusionSplitPriorSuppressConflictPenaltiesForAsymmetricClose: false
+  # Frame 120 -> 121 showed that accepting every plausible CellLumen pair can
+  # over split. Keep only the strongest division shaped pairs first; rejected or
+  # missed divisions can still fall back to the classic split path for that
+  # parent instead of letting weak Lumen pairs flood the frame.
+  fusionSplitPriorMaxScore: 22.0
+  # Dynamic rescue for parents that are already long ellipsoids after PCA.
+  # Frame 129 exposed the failure mode: two true dividing parents were not
+  # selected because their local candidate pairs had higher global score than
+  # round-cell pairs, even though the parent shape itself was strong split
+  # evidence. This rescue keeps only elongated-parent pairs under a wider score
+  # ceiling, then gives them a small score bonus so they can compete in the same
+  # global one-parent one-pair selection. Round mature cells still obey the
+  # normal max score above.
+  fusionSplitPriorElongatedParentRescueEnabled: true
+  fusionSplitPriorElongatedParentMinShape: 1.55
+  fusionSplitPriorElongatedParentMaxScore: 80.0
+  fusionSplitPriorElongatedParentScoreBonus: 10.0
+  # Elongated-parent rescue should save real long parents, not cases where the
+  # proposed daughter centers are already better explained by neighboring
+  # continuing cells. Frame 129 valid rescues have neighborClaimPenalty=0, while
+  # the frame 130 false split duplicates were 37.6 and 63.6.
+  fusionSplitPriorElongatedParentMaxNeighborClaimPenalty: 30.0
+  fusionSplitPriorMaxPriorsPerFrame: 25
+  # Reject the most common false split pattern from frame 120 -> 121: the
+  # original parent center is still present and only one nearby neighbor is
+  # being stolen as a fake daughter. True divisions can be asymmetric, so these
+  # terms are score penalties instead of hard gates.
+  fusionSplitPriorMinDaughterParentDistance: 6.0
+  fusionSplitPriorMinDaughterParentDistanceRadiusScale: 0.35
+  fusionSplitPriorMinParentDistanceBalance: 0.35
+  fusionSplitPriorParentPersistencePenalty: 8.0
+  fusionSplitPriorNeighborClaimPenalty: 3.0
+  fusionSplitPriorNeighborClaimMargin: 2.0
+  fusionSplitPriorDebugTopN: 35
+  fusionSplitPriorFallbackToClassicOnReject: false
+
+  # Dedicated raw-intensity cost gate for CellLumen prior splits. The default
+  # split_cost values were tuned for heavy preprocessing; raw/no-preprocess
+  # image cost can slightly increase even when the two raw centers are visually
+  # correct. This gate accepts a high-confidence CellLumen split when it is not
+  # worse than the parent by more than a small baseline fraction. Old non-Lumen
+  # splits still use the normal probability.split_cost gate.
+  fusionSplitPriorUseDedicatedCostGate: true
+  # For deterministic CellLumen split priors, judge the candidate by raw image
+  # reconstruction cost instead of total cost. Dense late embryo frames can
+  # produce large overlap penalties even when the two CellLumen centers are the
+  # correct current-frame daughters, so total cost is too strict for this path.
+  fusionSplitPriorUseImageCostGate: true
+  fusionSplitPriorCost: 0.0
+  fusionSplitPriorCostFraction: 0.0
+  fusionSplitPriorMaxPositiveCostFraction: 0.12
+  # Raw/no-preprocess CellUniverse cost still includes overlap cost. A true
+  # split can tolerate a small overlap increase in dense tissue, but a false
+  # split often explodes overlap because one fake daughter lands inside nearby
+  # existing ellipsoids. Keep this as a CellLumen-prior-only gate so classic
+  # split behavior is not changed.
+  fusionSplitPriorMaxOverlapCostFraction: 0.15
+  # A high-confidence CellLumen pair can still increase overlap in dense raw
+  # embryo data after daughter PCA refit, especially when both centers are
+  # bright and the raw image term improves. Permit a larger overlap budget only
+  # for those low-score, image-improving priors; weaker priors keep the normal
+  # 0.15 overlap fraction.
+  # Frame 124 exposed two true split pairs that CellLumen localized correctly
+  # within a few pixels, but the downstream CellUniverse gate rejected them.
+  # Keep this "high confidence" band narrow enough to exclude weak/noisy pairs,
+  # while covering clean Lumen priors whose score is slightly above 10 in dense
+  # tissue.
+  fusionSplitPriorHighConfidenceMaxScore: 12.0
+  # Dense embryo cells can legitimately increase the local ellipsoid overlap
+  # after PCA refit, because daughters are close and neighboring cells already
+  # occupy the same bright region. This wider budget is only used for high
+  # confidence CellLumen priors; classic split proposals keep the stricter gate.
+  fusionSplitPriorHighConfidenceMaxOverlapCostFraction: 0.50
+  # Frame 123 showed the exact failure mode this parameter is for: CellLumen
+  # found two correct raw centers and daughter PCA refit produced compact
+  # daughters, but the old random-split short-axis alignment gate rejected the
+  # split because the previous parent axis no longer described the newborn
+  # daughter shapes. Apply the wider angle only to low-score CellLumen priors;
+  # weaker priors and classic random split candidates keep the normal gate.
+  fusionSplitPriorHighConfidenceAxisAlignmentDegrees: 90.0
+  # Lumen prior centers come from a clean raw-intensity detector, so the
+  # daughter centers are more reliable than the old random split directions.
+  # Use a smaller starting daughter volume to avoid the previous failure mode
+  # where correct daughter centers were rejected as "buried" inside dense
+  # neighboring ellipsoids.
+  fusionSplitPriorDaughterVolumeScale: 0.68
+  # Heavy-preprocess valley gates were designed for black background and bright
+  # separated blobs. Raw embryo data often keeps real signal between newly
+  # split daughters, so CellLumen prior splits use a softer valley rule. Clean
+  # CellLumen centers still need both daughter locations to be bright.
+  fusionSplitPriorPrefilterMaxValleyRatio: 1.15
+  fusionSplitPriorBridgeMaxValleyRatio: 1.15
+  # Reject CellLumen split pairs whose fitted daughter ellipsoids overlap
+  # along the proposed split axis. Frame 122 false positives t120_cell_007 and
+  # t120_cell_015 had negative bridge gaps, while validated frame 121 splits
+  # and other frame 122 splits kept a positive gap.
+  fusionSplitPriorMinBridgeGapWidth: 0.0
+  fusionSplitPriorMinEdgeBrightness: 0.025
+  # Clean CellLumen centers may sit close together in dense frames. Let the
+  # dedicated path accept moderate daughter overlap while classic random
+  # candidates keep the stricter global overlap gate.
+  fusionSplitPriorMaxDaughterOverlapFraction: 0.22
+  # CellLumen fusion now treats most geometry tests as soft evidence instead of
+  # one-off rejection switches. A true split can have extra overlap or a weak
+  # valley in dense raw embryo data after PCA refit, so these terms add a small
+  # cost penalty and let the raw image support decide. The hard limits below
+  # still reject impossible cases such as nearly identical daughter centers or
+  # a candidate with no real valley at all.
+  fusionSplitPriorSoftGateEnabled: true
+  fusionSplitPriorSoftAxisPenaltyFraction: 0.03
+  fusionSplitPriorSoftDaughterOverlapPenaltyFraction: 0.12
+  fusionSplitPriorSoftValleyPenaltyFraction: 0.08
+  fusionSplitPriorSoftBridgeGapPenaltyFraction: 0.04
+  fusionSplitPriorSoftOverlapCostPenaltyWeight: 0.45
+  # CellLumen split priors sometimes produce correct daughter centers in a
+  # dense local neighborhood where the old synthetic overlap cost is inflated
+  # by nearby cells. If both daughters have raw signal support, the bridge gap
+  # is visibly darker than the daughter edges, the image cost does not get
+  # worse, and the parent was rescued because its shape is already elongated,
+  # treat overlap as a soft diagnostic instead of a veto.
+  fusionSplitPriorBridgeEvidenceWaivesOverlapSoftPenalty: true
+  fusionSplitPriorHardMaxDaughterOverlapFraction: 0.82
+  fusionSplitPriorHardMaxValleyRatio: 2.0
+  fusionSplitPriorHardMaxOverlapCostFraction: 1.25
+  # Dense local neighborhoods naturally have more ellipsoid contact. This only
+  # widens the CellLumen-prior overlap budget around crowded parents; it does
+  # not affect classic random split candidates.
+  fusionSplitPriorDynamicOverlapEnabled: true
+  fusionSplitPriorLocalDensityRadiusScale: 2.5
+  fusionSplitPriorLocalDensityOverlapBonus: 0.035
+  fusionSplitPriorMaxDynamicDaughterOverlapFraction: 0.68
+  # Existing-cell buried checks are too strict for Lumen prior splits because
+  # the previous frame still contains neighboring ellipsoids near the just
+  # divided daughter territory. Sibling buried and distance gates still remain.
+  fusionSplitPriorSkipExistingCellBuriedCheck: true
+  # Clean CellLumen centers are already selected from two current-frame raw
+  # intensity peaks. In dense embryo frames, a true newborn daughter can be
+  # closer to a nearby old cell than to its sibling, so the old neighbor bridge
+  # heuristic is not reliable for this path. Classic random split still keeps
+  # that gate.
+  fusionSplitPriorSkipNeighborBridgeCheck: true
+  # CellLumen centers are already current-frame raw intensity centers. Extra
+  # burn-in/refine under raw cost can pull correct daughter seeds toward a z
+  # boundary in dense frames, so the deterministic path keeps random refine at
+  # zero. The split daughter PCA refit below still runs, so gates see an
+  # intensity-fitted daughter shape instead of the first conservative built
+  # sphere/ellipsoid.
+  fusionSplitPriorBurnInIterations: 0
+  fusionSplitPriorRefineIterations: 0
+  split_daughter_refit_iterations: 3
+  split_daughter_refit_min_radius_fraction: 0.85
+  split_daughter_refit_max_radius_fraction: 1.05
+  # CellLumen already provides current-frame raw-intensity centers. Keep only a
+  # tiny post-split perturb budget for local cleanup; the old all-cell random
+  # perturb loop was the main reason frame 121 took about 36 minutes.
+  fusionReducePostSplitPerturbEnabled: true
+  fusionPostSplitPerturbItersPerCell: 1
+
+  # New rescue cells remain gated. For the preprocessing use case, false
+  # positives are less dangerous than missing real cells, but deterministic
+  # split testing must not add rescue cells before the split gate runs. Added
+  # rescue cells can occupy the same daughter territory and make a valid split
+  # look "buried." Keep additions off in this speed path; use CellLumen centers
+  # for center repair and split proposals instead.
+  fusionMinDistanceToExisting: 24.0
+  fusionMinVoxels: 1000
+  fusionMinTop10MinusShell: 65.0
+  fusionMaxAddedPerFrame: 0
+  fusionRepairCloseCellsEnabled: true
+  fusionRepairMaxDistance: 18.0
+  fusionRepairRadiusRatio: 0.75
+  fusionRepairPositionBlend: 0.20
+  fusionRepairRadiusBlend: 0.75
+
+cell:
+  # Raw embryo frames have a bright but sparse halo around cells. The default
+  # PCA shape fit was tuned for heavier preprocessing and can treat this halo as
+  # part of the cell body, which makes ellipsoids too large and causes dense
+  # frames to overlap. In the CellLumen fusion path, centers already come from
+  # the raw-intensity detector, so shape fitting should focus on the compact,
+  # high-density bright core instead of expanding into sparse shell signal.
+  pcaShapeMaxIters: 6
+  pcaShapeRadiusScale: 2.05
+  pcaShapeMaskScale: 1.45
+  pcaShapeWeightExponent: 2.2
+  pcaShapeAdaptiveExponent: false
+  pcaShapeRadiusInflationBright: 1.0
+  pcaShapeFitGrowthCapEnabled: true
+  pcaShapeFitGrowthCap: 0.20
+
+prob:
+  # CellLumen prior daughters are PCA-refit from raw intensity before the
+  # split-axis biology gate. A small angle slack keeps near-spherical daughter
+  # refits from being rejected by a 1-2 degree numerical orientation wobble,
+  # while still blocking clearly wrong axis flips in elongated false splits.
+  split_axis_alignment_sphere_angle_degrees: 124.0

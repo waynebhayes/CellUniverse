@@ -502,6 +502,9 @@ Frame::Frame(const std::vector<cv::Mat> &realFrame, const SimulationConfig &simu
       imageName(imageName),
       _realFrame(realFrame)
 {
+    if (!_realFrame.empty()) {
+        Ellipsoid::cellConfig.maxZ = static_cast<float>(_realFrame.size()) - 1.0f;
+    }
     // Calculate z_slices
     for (int i = 0; i < simulationConfig.z_slices; ++i)
     {
@@ -532,6 +535,10 @@ Frame::Frame(const SimulationConfig &simulationConfig,
 void Frame::loadImageStacks(const std::vector<cv::Mat> &realFrame)
 {
     _realFrame = realFrame;
+    if (!_realFrame.empty()) {
+        Ellipsoid::cellConfig.maxZ = static_cast<float>(_realFrame.size()) - 1.0f;
+        simulationConfig.z_slices = static_cast<int>(_realFrame.size());
+    }
     // Refresh z_slices in case the stack depth differs from config
     // (shouldn't, but guard against drift).
     if (static_cast<int>(realFrame.size()) != static_cast<int>(z_slices.size())) {
@@ -2099,7 +2106,9 @@ bool bioCheckDaughters(
     size_t d1Idx,
     size_t d2Idx,
     const ProbabilityConfig &probConfig,
-    std::string &reasonOut)
+    std::string &reasonOut,
+    bool skipExistingCellBuriedCheck = false,
+    bool skipNeighborBridgeCheck = false)
 {
     const auto cellVolume = [](const Ellipsoid &c) {
         return static_cast<double>(c.getARadius()) *
@@ -2154,18 +2163,20 @@ bool bioCheckDaughters(
     }
 
     // 3. Daughters not buried in each other or in any other cell.
-    for (size_t i = 0; i < allCells.size(); ++i) {
-        if (i == d1Idx || i == d2Idx) continue;
-        const Ellipsoid &other = allCells[i];
-        if (other.isPointInsideEllipsoid(cv::Point3f(
-                daughter1.getX(), daughter1.getY(), daughter1.getZ()), 1.0f)) {
-            reasonOut = "d1_buried_in_" + other.getName();
-            return false;
-        }
-        if (other.isPointInsideEllipsoid(cv::Point3f(
-                daughter2.getX(), daughter2.getY(), daughter2.getZ()), 1.0f)) {
-            reasonOut = "d2_buried_in_" + other.getName();
-            return false;
+    if (!skipExistingCellBuriedCheck) {
+        for (size_t i = 0; i < allCells.size(); ++i) {
+            if (i == d1Idx || i == d2Idx) continue;
+            const Ellipsoid &other = allCells[i];
+            if (other.isPointInsideEllipsoid(cv::Point3f(
+                    daughter1.getX(), daughter1.getY(), daughter1.getZ()), 1.0f)) {
+                reasonOut = "d1_buried_in_" + other.getName();
+                return false;
+            }
+            if (other.isPointInsideEllipsoid(cv::Point3f(
+                    daughter2.getX(), daughter2.getY(), daughter2.getZ()), 1.0f)) {
+                reasonOut = "d2_buried_in_" + other.getName();
+                return false;
+            }
         }
     }
     // Sibling buried check — treat the other daughter as "another cell".
@@ -2199,19 +2210,21 @@ bool bioCheckDaughters(
         }
     }
 
-    for (size_t i = 0; i < allCells.size(); ++i) {
-        if (i == d1Idx || i == d2Idx) continue;
-        const Ellipsoid &other = allCells[i];
-        const cv::Point3f oPos(other.getX(), other.getY(), other.getZ());
-        const float d1ToOther = static_cast<float>(cv::norm(oPos - d1Pos));
-        const float d2ToOther = static_cast<float>(cv::norm(oPos - d2Pos));
-        if (d1ToOther < siblingDist * 0.5f) {
-            reasonOut = "d1_bridging_to_" + other.getName();
-            return false;
-        }
-        if (d2ToOther < siblingDist * 0.5f) {
-            reasonOut = "d2_bridging_to_" + other.getName();
-            return false;
+    if (!skipNeighborBridgeCheck) {
+        for (size_t i = 0; i < allCells.size(); ++i) {
+            if (i == d1Idx || i == d2Idx) continue;
+            const Ellipsoid &other = allCells[i];
+            const cv::Point3f oPos(other.getX(), other.getY(), other.getZ());
+            const float d1ToOther = static_cast<float>(cv::norm(oPos - d1Pos));
+            const float d2ToOther = static_cast<float>(cv::norm(oPos - d2Pos));
+            if (d1ToOther < siblingDist * 0.5f) {
+                reasonOut = "d1_bridging_to_" + other.getName();
+                return false;
+            }
+            if (d2ToOther < siblingDist * 0.5f) {
+                reasonOut = "d2_bridging_to_" + other.getName();
+                return false;
+            }
         }
     }
 
@@ -3122,7 +3135,52 @@ CostCallbackPair Frame::trySplitCellPhased(
     std::vector<cv::Mat> *splitPerturbDebugPlacements,
     int *splitPerturbDebugPlacementCount,
     float splitPerturbDebugBrightness,
-    const BridgeSplitProposal *bridgeProposal)
+    const BridgeSplitProposal *bridgeProposal,
+    const BridgeSplitProposal *lumenProposal,
+    bool lumenProposalOnly,
+    int lumenBurnInIterations,
+    int lumenRefineIterations,
+    bool lumenUseDedicatedCostGate,
+    bool lumenUseImageCostGate,
+    float lumenSplitCost,
+    float lumenSplitCostFraction,
+    float lumenMaxPositiveCostFraction,
+    float lumenPositiveGateMinImageGain,
+    float lumenPositiveGateMinImageGainPenaltyRatio,
+    float lumenPositiveGateElongatedParentMinShape,
+    float lumenPositiveGateElongatedMaxRawWorsening,
+    float lumenPositiveGateElongatedMaxSoftPenaltyFraction,
+    float lumenPositiveGateElongatedMaxScore,
+    float lumenMaxOverlapCostFraction,
+    float lumenHighConfidenceMaxScore,
+    float lumenHighConfidenceMaxOverlapCostFraction,
+    float lumenHighConfidenceAxisAlignmentDegrees,
+    float lumenDaughterVolumeScale,
+    float lumenPrefilterMaxValleyRatio,
+    float lumenBridgeMaxValleyRatio,
+    float lumenMinBridgeGapWidth,
+    float lumenMinEdgeBrightness,
+    float lumenMaxDaughterOverlapFraction,
+    bool lumenSoftGateEnabled,
+    float lumenSoftAxisPenaltyFraction,
+    float lumenSoftDaughterOverlapPenaltyFraction,
+    float lumenSoftValleyPenaltyFraction,
+    float lumenSoftBridgeGapPenaltyFraction,
+    float lumenSoftOverlapCostPenaltyWeight,
+    bool lumenBridgeEvidenceWaivesOverlapSoftPenalty,
+    float lumenHardMaxDaughterOverlapFraction,
+    float lumenHardMaxValleyRatio,
+    float lumenHardMaxOverlapCostFraction,
+    float lumenMinPostRefitLateralSeparation,
+    float lumenMinPostRefitLateralSeparationRadiusScale,
+    float lumenMaxZDominanceForLowLateralSeparation,
+    bool lumenDynamicOverlapEnabled,
+    float lumenLocalDensityRadiusScale,
+    float lumenLocalDensityOverlapBonus,
+    float lumenMaxDynamicDaughterOverlapFraction,
+    float lumenSnapshotSeedMaxRefitDrift,
+    bool lumenSkipExistingCellBuriedCheck,
+    bool lumenSkipNeighborBridgeCheck)
 {
     const auto noop = [](bool) {};
     if (cellIndex >= cells.size()) return {0.0, noop};
@@ -3694,6 +3752,28 @@ CostCallbackPair Frame::trySplitCellPhased(
                   << std::endl;
     }
 
+    if (lumenProposal != nullptr) {
+        Candidate lumenCand;
+        lumenCand.d1Pos = lumenProposal->d1Pos;
+        lumenCand.d2Pos = lumenProposal->d2Pos;
+        lumenCand.label = "cell_lumen_primary";
+        if (lumenProposalOnly) {
+            candidates.clear();
+            candidates.push_back(lumenCand);
+        } else {
+            candidates.insert(candidates.begin(), lumenCand);
+        }
+        std::cout << "  [Split CellLumen Inject] " << parentName
+                  << " only=" << (lumenProposalOnly ? 1 : 0)
+                  << " d1=(" << lumenCand.d1Pos.x << "," << lumenCand.d1Pos.y
+                  << "," << lumenCand.d1Pos.z << ")"
+                  << " d2=(" << lumenCand.d2Pos.x << "," << lumenCand.d2Pos.y
+                  << "," << lumenCand.d2Pos.z << ")"
+                  << " sep=" << cv::norm(lumenCand.d1Pos - lumenCand.d2Pos)
+                  << " score=" << lumenProposal->elongation
+                  << std::endl;
+    }
+
     const int Kmax = std::max(1, probConfig.split_candidates_per_attempt);
     if (static_cast<int>(candidates.size()) > Kmax) {
         candidates.resize(Kmax);
@@ -3760,15 +3840,6 @@ CostCallbackPair Frame::trySplitCellPhased(
     const double savedCost = _currentCost;
     std::vector<Ellipsoid> savedCells = cells;
 
-    std::cout << "  [Split Baseline] " << parentName
-              << " imageCost=" << baselineImageCost
-              << " overlap=" << baselineOverlap
-              << " total=" << baselineTotal
-              << " threshold=" << -probConfig.split_cost
-              << " nCandidates=" << candidates.size()
-              << " burnIters=" << probConfig.split_candidate_burn_in_iterations
-              << std::endl;
-
     int bestIdx = -1;
     double bestTotal = std::numeric_limits<double>::infinity();
     std::vector<Ellipsoid> bestCells;
@@ -3779,7 +3850,19 @@ CostCallbackPair Frame::trySplitCellPhased(
     cv::Point3f bestSeedD2{0, 0, 0};
     std::string bestLabel;
 
-    const int burnIters = std::max(0, probConfig.split_candidate_burn_in_iterations);
+    int burnIters = std::max(0, probConfig.split_candidate_burn_in_iterations);
+    if (lumenProposal != nullptr && lumenBurnInIterations >= 0) {
+        burnIters = std::max(0, lumenBurnInIterations);
+    }
+    std::cout << "  [Split Baseline] " << parentName
+              << " imageCost=" << baselineImageCost
+              << " overlap=" << baselineOverlap
+              << " total=" << baselineTotal
+              << " threshold=" << -probConfig.split_cost
+              << " nCandidates=" << candidates.size()
+              << " burnIters=" << burnIters
+              << " lumenAttempt=" << (lumenProposal != nullptr ? 1 : 0)
+              << std::endl;
 
     // Install tight position sigmas for candidate burn-in.
     //
@@ -3811,10 +3894,16 @@ CostCallbackPair Frame::trySplitCellPhased(
 
     for (size_t ci = 0; ci < candidates.size(); ++ci) {
         const auto &cand = candidates[ci];
+        const bool candIsCellLumenPrior =
+            cand.label == "cell_lumen_primary" && lumenUseDedicatedCostGate;
+        const float activeDaughterVolumeScale =
+            (candIsCellLumenPrior && lumenDaughterVolumeScale > 0.0f)
+                ? lumenDaughterVolumeScale
+                : volumeScale;
         Ellipsoid child1 = buildDaughter(parentName + "0", cand.d1Pos, parent,
-                                         volumeScale, srcMajor, srcB, srcMinor);
+                                         activeDaughterVolumeScale, srcMajor, srcB, srcMinor);
         Ellipsoid child2 = buildDaughter(parentName + "1", cand.d2Pos, parent,
-                                         volumeScale, srcMajor, srcB, srcMinor);
+                                         activeDaughterVolumeScale, srcMajor, srcB, srcMinor);
 
         // Replace parent with daughters.
         cells.erase(cells.begin() + cellIndex);
@@ -3937,7 +4026,10 @@ CostCallbackPair Frame::trySplitCellPhased(
         //
         // Measure: average real-image brightness in a small 3D neighborhood
         // around each daughter center (3×3×3 voxels). Cheap and local.
-        const float kMinDaughterBright = probConfig.bio_bridge_min_edge_brightness_absolute;
+        const float kMinDaughterBright =
+            (candIsCellLumenPrior && lumenMinEdgeBrightness >= 0.0f)
+                ? lumenMinEdgeBrightness
+                : probConfig.bio_bridge_min_edge_brightness_absolute;
         auto measureLocalBrightness = [&](float cx, float cy, float cz) -> float {
             const int ix = static_cast<int>(std::round(cx));
             const int iy = static_cast<int>(std::round(cy));
@@ -4040,9 +4132,15 @@ CostCallbackPair Frame::trySplitCellPhased(
                 if (maxE > 1e-6f) candValleyFromBright = gB / maxE;
             }
         }
-        const float valleyLimit = probConfig.bio_bridge_max_valley_ratio;
+        const float valleyLimit =
+            (candIsCellLumenPrior && lumenPrefilterMaxValleyRatio >= 0.0f)
+                ? lumenPrefilterMaxValleyRatio
+                : probConfig.bio_bridge_max_valley_ratio;
+        const bool lumenPrefilterValleyIsSoft =
+            candIsCellLumenPrior && lumenUseDedicatedCostGate && lumenSoftGateEnabled;
         const bool candPassesPreFilter = bothDaughtersBright &&
-                                         (candValleyFromBright < valleyLimit);
+                                         (lumenPrefilterValleyIsSoft ||
+                                          candValleyFromBright < valleyLimit);
 
         if (!candPassesPreFilter) {
             std::cout << "  [Split Cand PreFilter] " << parentName
@@ -4051,7 +4149,10 @@ CostCallbackPair Frame::trySplitCellPhased(
                       << " d2Bright=" << d2LocalBright
                       << " valley=" << candValleyFromBright
                       << (bothDaughtersBright ? "" : " EDGE_DIM")
-                      << (candValleyFromBright >= valleyLimit ? " NO_VALLEY" : "")
+                      << (candValleyFromBright >= valleyLimit && !lumenPrefilterValleyIsSoft
+                              ? " NO_VALLEY" : "")
+                      << (candValleyFromBright >= valleyLimit && lumenPrefilterValleyIsSoft
+                              ? " SOFT_VALLEY" : "")
                       << std::endl;
         }
 
@@ -4104,8 +4205,12 @@ CostCallbackPair Frame::trySplitCellPhased(
     // daughters can settle before bio/cost gates fire. This runs on the
     // best candidate's state (reinstalled), and the post-refine state is
     // re-captured as bestCells / bestSynth / etc.
-    const int refineIters = std::max(0, probConfig.split_final_refine_iterations);
-    if (refineIters > 0) {
+    int refineIters = std::max(0, probConfig.split_final_refine_iterations);
+    if (lumenProposal != nullptr && lumenRefineIterations >= 0) {
+        refineIters = std::max(0, lumenRefineIterations);
+    }
+    const int daughterRefitIters = std::max(0, probConfig.split_daughter_refit_iterations);
+    if (refineIters > 0 || daughterRefitIters > 0) {
         // Reinstall the winning candidate's state.
         cells = bestCells;
         _synthFrame = bestSynth;
@@ -4163,7 +4268,6 @@ CostCallbackPair Frame::trySplitCellPhased(
         //   ceiling (max_fraction × built) — newborn daughter can't bloat
         //     past ~1.1× built due to immature sibling-Voronoi boundary
         //     absorbing neighbor/halo pixels during refit.
-        const int daughterRefitIters = std::max(0, probConfig.split_daughter_refit_iterations);
         if (daughterRefitIters > 0) {
             const float minFrac = std::max(0.0f, std::min(1.0f,
                 probConfig.split_daughter_refit_min_radius_fraction));
@@ -4340,6 +4444,49 @@ CostCallbackPair Frame::trySplitCellPhased(
 
     const cv::Point3f bestD1Pos(bestD1.getX(), bestD1.getY(), bestD1.getZ());
     const cv::Point3f bestD2Pos(bestD2.getX(), bestD2.getY(), bestD2.getZ());
+    const bool bestIsCellLumenPrior = (bestLabel == "cell_lumen_primary");
+    const bool bestIsCellLumenPrepassFallback =
+        bestIsCellLumenPrior && lumenProposal != nullptr &&
+        lumenProposal->gapStartBin <= -2 && lumenProposal->gapEndBin <= -2;
+    const bool bestIsCellLumenSnapshotSeedFallback =
+        bestIsCellLumenPrior && lumenProposal != nullptr &&
+        lumenProposal->gapStartBin == -3 && lumenProposal->gapEndBin == -3;
+    const bool useCellLumenGateParams = bestIsCellLumenPrior && lumenUseDedicatedCostGate;
+    const bool useCellLumenSoftGate = useCellLumenGateParams && lumenSoftGateEnabled;
+    double lumenSoftGatePenaltyCost = 0.0;
+    int lumenLocalNeighborCount = 0;
+    if (useCellLumenSoftGate && lumenDynamicOverlapEnabled) {
+        const cv::Point3f parentPos(parent.getX(), parent.getY(), parent.getZ());
+        const float densityRadius = std::max(0.0f, lumenLocalDensityRadiusScale) *
+                                    std::max(1.0f, srcMaxR);
+        for (size_t oi = 0; oi < cells.size(); ++oi) {
+            if (oi == cellIndex) continue;
+            const Ellipsoid &other = cells[oi];
+            const cv::Point3f otherPos(other.getX(), other.getY(), other.getZ());
+            if (cv::norm(otherPos - parentPos) <= densityRadius) {
+                ++lumenLocalNeighborCount;
+            }
+        }
+    }
+    auto addLumenSoftGatePenalty = [&](const std::string &reason,
+                                       double normalizedExcess,
+                                       double penaltyFraction) {
+        if (!useCellLumenSoftGate || normalizedExcess <= 0.0 || penaltyFraction <= 0.0) {
+            return;
+        }
+        const double penalty = baselineImageCost * normalizedExcess * penaltyFraction;
+        lumenSoftGatePenaltyCost += penalty;
+        std::cout << "[Split CellLumen Soft Gate] " << parentName
+                  << " reason=" << reason
+                  << " normalizedExcess=" << normalizedExcess
+                  << " penaltyFraction=" << penaltyFraction
+                  << " penaltyCost=" << penalty
+                  << " runningPenalty=" << lumenSoftGatePenaltyCost
+                  << " localNeighbors=" << lumenLocalNeighborCount
+                  << " baselineImageCost=" << baselineImageCost
+                  << " bestLabel=" << bestLabel
+                  << std::endl;
+    };
 
     // Drift from seed. A valid split is allowed to locally refine, but the
     // daughters should not explain the frame by walking far away from the
@@ -4350,6 +4497,66 @@ CostCallbackPair Frame::trySplitCellPhased(
         bestD2Pos - bestSeedD2));
     const float seedAxisLen = static_cast<float>(cv::norm(bestSeedD2 - bestSeedD1));
     const float finalAxisLen = static_cast<float>(cv::norm(bestD2Pos - bestD1Pos));
+
+    if (useCellLumenGateParams &&
+        bestIsCellLumenSnapshotSeedFallback &&
+        lumenSnapshotSeedMaxRefitDrift >= 0.0f &&
+        std::max(drift1, drift2) > lumenSnapshotSeedMaxRefitDrift) {
+        std::cout << "[Split Reject CellLumen snapshot refit drift] " << parentName
+                  << " drift1=" << drift1
+                  << " drift2=" << drift2
+                  << " maxRefitDrift=" << lumenSnapshotSeedMaxRefitDrift
+                  << " seedAxisLen=" << seedAxisLen
+                  << " finalAxisLen=" << finalAxisLen
+                  << " d1=(" << bestD1Pos.x << "," << bestD1Pos.y << "," << bestD1Pos.z << ")"
+                  << " d2=(" << bestD2Pos.x << "," << bestD2Pos.y << "," << bestD2Pos.z << ")"
+                  << " bestIdx=" << bestIdx
+                  << " bestLabel=" << bestLabel
+                  << std::endl;
+        restoreLiveParent();
+        return {0.0, noop};
+    }
+
+    // CellLumen centers are excellent for XY-localizing real daughter cells,
+    // but a single elongated nucleus can sometimes be over-segmented as two
+    // centers stacked almost perfectly along interpolated Z. After the daughter
+    // PCA refit, reject that pattern before the softer cost gates can rescue it.
+    if (useCellLumenGateParams) {
+        const float dx = bestD2Pos.x - bestD1Pos.x;
+        const float dy = bestD2Pos.y - bestD1Pos.y;
+        const float dz = bestD2Pos.z - bestD1Pos.z;
+        const float lateralSeparation = std::sqrt(dx * dx + dy * dy);
+        const float zDominance = finalAxisLen > 1e-3f
+            ? std::abs(dz) / finalAxisLen
+            : 0.0f;
+        const float minConfigured = std::max(0.0f, lumenMinPostRefitLateralSeparation);
+        const float minByRadius =
+            std::max(0.0f, lumenMinPostRefitLateralSeparationRadiusScale) *
+            std::max(1.0f, srcMaxR);
+        const float minLateralSeparation = std::max(minConfigured, minByRadius);
+        const float maxZDominance =
+            std::clamp(lumenMaxZDominanceForLowLateralSeparation, 0.0f, 1.0f);
+        if (minLateralSeparation > 0.0f &&
+            lateralSeparation < minLateralSeparation &&
+            zDominance > maxZDominance) {
+            std::cout << "[Split Reject CellLumen lateral] " << parentName
+                      << " reason=post_refit_z_stack_duplicate"
+                      << " lateralSeparation=" << lateralSeparation
+                      << " minLateralSeparation=" << minLateralSeparation
+                      << " configuredMin=" << minConfigured
+                      << " radiusScaleMin=" << minByRadius
+                      << " zDominance=" << zDominance
+                      << " maxZDominance=" << maxZDominance
+                      << " finalAxisLen=" << finalAxisLen
+                      << " d1=(" << bestD1Pos.x << "," << bestD1Pos.y << "," << bestD1Pos.z << ")"
+                      << " d2=(" << bestD2Pos.x << "," << bestD2Pos.y << "," << bestD2Pos.z << ")"
+                      << " bestIdx=" << bestIdx
+                      << " bestLabel=" << bestLabel
+                      << std::endl;
+            restoreLiveParent();
+            return {0.0, noop};
+        }
+    }
 
     if (probConfig.split_geometry_gate_enabled) {
         const float parentMaxRadius = std::max({srcMajor, srcB, srcMinor});
@@ -4425,14 +4632,38 @@ CostCallbackPair Frame::trySplitCellPhased(
         const float allowedAngle = std::max(
             minAngle,
             sphereAngle / (1.0f + shrink * std::max(0.0f, parentElongation - 1.0f)));
+        float effectiveAllowedAngle = allowedAngle;
+        const bool highConfidenceLumenAxisPrior =
+            bestIsCellLumenPrior &&
+            lumenProposal != nullptr &&
+            lumenHighConfidenceMaxScore >= 0.0f &&
+            lumenHighConfidenceAxisAlignmentDegrees >= 0.0f &&
+            lumenProposal->elongation <= lumenHighConfidenceMaxScore;
+        if (highConfidenceLumenAxisPrior) {
+            effectiveAllowedAngle = std::max(
+                effectiveAllowedAngle,
+                std::max(0.0f, lumenHighConfidenceAxisAlignmentDegrees));
+        }
         const float d1AxisAngle = foldedAxisAngleDeg(parentShortAxis, d1ShortAxis);
         const float d2AxisAngle = foldedAxisAngleDeg(parentShortAxis, d2ShortAxis);
 
-        if (d1AxisAngle > allowedAngle || d2AxisAngle > allowedAngle) {
+        if (d1AxisAngle > effectiveAllowedAngle || d2AxisAngle > effectiveAllowedAngle) {
+            if (useCellLumenSoftGate) {
+                const float worstAxisAngle = std::max(d1AxisAngle, d2AxisAngle);
+                const double normalizedExcess =
+                    static_cast<double>(std::max(0.0f, worstAxisAngle - effectiveAllowedAngle)) /
+                    std::max(1.0, 90.0 - static_cast<double>(effectiveAllowedAngle));
+                addLumenSoftGatePenalty(
+                    "daughter_short_axis_misaligned",
+                    normalizedExcess,
+                    static_cast<double>(lumenSoftAxisPenaltyFraction));
+            } else {
             std::cout << "[Split Reject bio] " << parentName
                       << " reason=daughter_short_axis_misaligned"
                       << " parentElongation=" << parentElongation
-                      << " allowedAngleDeg=" << allowedAngle
+                      << " allowedAngleDeg=" << effectiveAllowedAngle
+                      << " baseAllowedAngleDeg=" << allowedAngle
+                      << " highConfidenceLumenAxisPrior=" << (highConfidenceLumenAxisPrior ? 1 : 0)
                       << " sphereAngleDeg=" << sphereAngle
                       << " shrink=" << shrink
                       << " minAngleDeg=" << minAngle
@@ -4446,12 +4677,25 @@ CostCallbackPair Frame::trySplitCellPhased(
                       << std::endl;
             restoreLiveParent();
             return {0.0, noop};
+            }
         }
     }
 
     if (probConfig.split_daughter_overlap_gate_enabled) {
-        const float maxDaughterOverlap = std::clamp(
-            probConfig.split_max_daughter_overlap_fraction, 0.0f, 1.0f);
+        const float baseMaxDaughterOverlap = std::clamp(
+            (useCellLumenGateParams && lumenMaxDaughterOverlapFraction >= 0.0f)
+                ? lumenMaxDaughterOverlapFraction
+                : probConfig.split_max_daughter_overlap_fraction,
+            0.0f, 1.0f);
+        float maxDaughterOverlap = baseMaxDaughterOverlap;
+        if (useCellLumenSoftGate && lumenDynamicOverlapEnabled) {
+            const float dynamicBonus =
+                static_cast<float>(lumenLocalNeighborCount) *
+                std::max(0.0f, lumenLocalDensityOverlapBonus);
+            maxDaughterOverlap = std::min(
+                std::clamp(lumenMaxDynamicDaughterOverlapFraction, baseMaxDaughterOverlap, 1.0f),
+                baseMaxDaughterOverlap + dynamicBonus);
+        }
         const float daughterOverlapScale = std::max(
             1e-3f, probConfig.split_daughter_overlap_scale);
         const float d1InD2Overlap = ellipsoidOverlapFractionOfFirst(
@@ -4461,18 +4705,33 @@ CostCallbackPair Frame::trySplitCellPhased(
         const float daughterOverlap = std::max(d1InD2Overlap, d2InD1Overlap);
 
         if (daughterOverlap > maxDaughterOverlap) {
+            const bool impossibleOverlap =
+                !useCellLumenSoftGate ||
+                daughterOverlap > std::clamp(lumenHardMaxDaughterOverlapFraction, 0.0f, 1.0f);
+            if (!impossibleOverlap) {
+                const double normalizedExcess =
+                    static_cast<double>(daughterOverlap - maxDaughterOverlap) /
+                    std::max(0.05, 1.0 - static_cast<double>(maxDaughterOverlap));
+                addLumenSoftGatePenalty(
+                    "daughter_daughter_overlap",
+                    normalizedExcess,
+                    static_cast<double>(lumenSoftDaughterOverlapPenaltyFraction));
+            } else {
             std::cout << "[Split Reject bio] " << parentName
                       << " reason=daughter_daughter_overlap"
                       << " d1InD2Overlap=" << d1InD2Overlap
                       << " d2InD1Overlap=" << d2InD1Overlap
                       << " daughterOverlap=" << daughterOverlap
                       << " maxAllowed=" << maxDaughterOverlap
+                      << " baseMaxAllowed=" << baseMaxDaughterOverlap
+                      << " hardMaxAllowed=" << lumenHardMaxDaughterOverlapFraction
                       << " daughterScale=" << daughterOverlapScale
                       << " bestIdx=" << bestIdx
                       << " bestLabel=" << bestLabel
                       << std::endl;
             restoreLiveParent();
             return {0.0, noop};
+            }
         }
     }
 
@@ -4517,6 +4776,7 @@ CostCallbackPair Frame::trySplitCellPhased(
     // the region between those two surfaces. Edge zones are the regions
     // inside each daughter, away from the gap.
     bool bridgeCostRescueEligible = false;
+    bool lumenStrongBridgeEvidence = false;
     float bridgeCostRescueValleyFromBright = 1.0f;
     float bridgeCostRescueWorstValleyRatio = 1.0f;
     float bridgeCostRescueGapDensity = 1.0f;
@@ -4752,6 +5012,30 @@ CostCallbackPair Frame::trySplitCellPhased(
                       << " valleyFromBright=" << valleyFromBright
                       << std::endl;
 
+            if (useCellLumenGateParams && lumenMinBridgeGapWidth >= 0.0f &&
+                gapWidth < lumenMinBridgeGapWidth) {
+                if (useCellLumenSoftGate) {
+                    const double normalizedExcess =
+                        static_cast<double>(lumenMinBridgeGapWidth - gapWidth) /
+                        std::max(1.0, static_cast<double>(std::max(1.0f, srcMaxR)));
+                    addLumenSoftGatePenalty(
+                        "lumen_bridge_gap_too_small",
+                        normalizedExcess,
+                        static_cast<double>(lumenSoftBridgeGapPenaltyFraction));
+                } else {
+                std::cout << "[Split Reject bio] " << parentName
+                          << " reason=lumen_bridge_gap_too_small"
+                          << " gapWidth=" << gapWidth
+                          << " minBridgeGapWidth=" << lumenMinBridgeGapWidth
+                          << " axisLen=" << axisLen
+                          << " r1Along=" << r1Along
+                          << " r2Along=" << r2Along
+                          << std::endl;
+                restoreLiveParent();
+                return {0.0, noop};
+                }
+            }
+
             // Absolute edge-brightness gate: a daughter whose edge zone
             // is at or near background is sitting in empty space, even
             // if the other edge is bright enough to make a favorable
@@ -4760,7 +5044,9 @@ CostCallbackPair Frame::trySplitCellPhased(
             // background — well below any real cell body (~0.1-0.3).
             // Tunable via probConfig.bio_bridge_min_edge_brightness_absolute.
             const float kMinEdgeBrightAbsolute =
-                probConfig.bio_bridge_min_edge_brightness_absolute;
+                (useCellLumenGateParams && lumenMinEdgeBrightness >= 0.0f)
+                    ? lumenMinEdgeBrightness
+                    : probConfig.bio_bridge_min_edge_brightness_absolute;
             if (edge1Count > 0 && edge2Count > 0 &&
                 std::min(edge1Bright, edge2Bright) < kMinEdgeBrightAbsolute) {
                 std::cout << "[Split Reject bio] " << parentName
@@ -4788,9 +5074,25 @@ CostCallbackPair Frame::trySplitCellPhased(
             // metric punished legitimate asymmetric division because the
             // dimmer daughter's edge ≈ gap inflated its ratio. The new
             // metric ignores that side correctly.
-            const float valleyLimit = probConfig.bio_bridge_max_valley_ratio;
+            const float valleyLimit =
+                (useCellLumenGateParams && lumenBridgeMaxValleyRatio >= 0.0f)
+                    ? lumenBridgeMaxValleyRatio
+                    : probConfig.bio_bridge_max_valley_ratio;
             const bool bridgeFlat = valleyFromBright > valleyLimit;
             if (edgeCount > 0 && bridgeFlat) {
+                const bool impossibleValley =
+                    bestIsCellLumenPrepassFallback ||
+                    !useCellLumenSoftGate ||
+                    valleyFromBright > std::max(valleyLimit, lumenHardMaxValleyRatio);
+                if (!impossibleValley) {
+                    const double normalizedExcess =
+                        static_cast<double>(valleyFromBright - valleyLimit) /
+                        std::max(0.1, static_cast<double>(valleyLimit));
+                    addLumenSoftGatePenalty(
+                        "bridge_flat",
+                        normalizedExcess,
+                        static_cast<double>(lumenSoftValleyPenaltyFraction));
+                } else {
                 std::cout << "[Split Reject bio] " << parentName
                           << " reason=bridge_flat"
                           << " valleyFromBright=" << valleyFromBright
@@ -4805,6 +5107,7 @@ CostCallbackPair Frame::trySplitCellPhased(
                           << std::endl;
                 restoreLiveParent();
                 return {0.0, noop};
+                }
             }
 
             const float rescueValleyLimit = std::max(
@@ -4819,6 +5122,11 @@ CostCallbackPair Frame::trySplitCellPhased(
                 edgeCount > 0 &&
                 rescueValleyRatio <= rescueValleyLimit &&
                 gapDensity <= rescueGapDensityLimit;
+            lumenStrongBridgeEvidence =
+                useCellLumenGateParams &&
+                edgeCount > 0 &&
+                valleyFromBright <= valleyLimit &&
+                std::min(edge1Bright, edge2Bright) >= kMinEdgeBrightAbsolute;
             bridgeCostRescueValleyFromBright = valleyFromBright;
             bridgeCostRescueWorstValleyRatio = worstValleyRatio;
             bridgeCostRescueGapDensity = gapDensity;
@@ -4830,7 +5138,9 @@ CostCallbackPair Frame::trySplitCellPhased(
     std::string bioReason;
     if (!bioCheckDaughters(bestD1, bestD2, refParentVolume, srcMaxR,
                            bestCells, d1IdxBest, d2IdxBest,
-                           probConfig, bioReason)) {
+                           probConfig, bioReason,
+                           useCellLumenGateParams && lumenSkipExistingCellBuriedCheck,
+                           useCellLumenGateParams && lumenSkipNeighborBridgeCheck)) {
         std::cout << "[Split Reject bio] " << parentName
                   << " reason=" << bioReason
                   << " d1=(" << bestD1.getX() << "," << bestD1.getY() << "," << bestD1.getZ() << ")"
@@ -4850,6 +5160,8 @@ CostCallbackPair Frame::trySplitCellPhased(
     // Both baseline and candidate were measured on the same voxel set,
     // so this is an apples-to-apples comparison.
     const double costDiff = bestTotal - baselineTotal;
+    const double imageCostDiff = bestImageCost - baselineImageCost;
+    const double overlapCostDiff = (bestTotal - bestImageCost) - (baselineTotal - baselineImageCost);
 
     // Adaptive split cost threshold: the larger of:
     // (1) the fixed split_cost from config
@@ -4857,9 +5169,16 @@ CostCallbackPair Frame::trySplitCellPhased(
     // This prevents marginal splits on dim/small cells (low baseline cost)
     // from passing the fixed threshold while requiring the same fractional
     // improvement from bright/large cells.
+    const bool useCellLumenCostGate = useCellLumenGateParams;
+    const double activeSplitCost = useCellLumenCostGate
+                                       ? static_cast<double>(std::max(0.0f, lumenSplitCost))
+                                       : static_cast<double>(probConfig.split_cost);
+    const double activeSplitCostFraction = useCellLumenCostGate
+                                               ? static_cast<double>(std::max(0.0f, lumenSplitCostFraction))
+                                               : static_cast<double>(probConfig.split_cost_fraction);
     const double adaptiveThreshold = std::max(
-        static_cast<double>(probConfig.split_cost),
-        static_cast<double>(probConfig.split_cost_fraction) * baselineImageCost);
+        activeSplitCost,
+        activeSplitCostFraction * baselineImageCost);
 
     const double bridgeRescueLimit =
         static_cast<double>(std::max(
@@ -4889,13 +5208,230 @@ CostCallbackPair Frame::trySplitCellPhased(
                   << std::endl;
     }
 
-    if (!bridgeCostRescued && costDiff >= -adaptiveThreshold) {
+    const double lumenMaxPositiveCost =
+        useCellLumenCostGate
+            ? static_cast<double>(std::max(0.0f, lumenMaxPositiveCostFraction)) * baselineImageCost
+            : -adaptiveThreshold;
+    const bool useCellLumenImageGate =
+        useCellLumenCostGate && lumenUseImageCostGate;
+    double effectiveLumenMaxOverlapCostFraction = lumenMaxOverlapCostFraction;
+    const bool highConfidenceLumenPrior =
+        useCellLumenCostGate &&
+        lumenProposal != nullptr &&
+        lumenHighConfidenceMaxScore >= 0.0f &&
+        lumenHighConfidenceMaxOverlapCostFraction >= 0.0f &&
+        lumenProposal->elongation <= lumenHighConfidenceMaxScore &&
+        imageCostDiff <= 0.0;
+    if (highConfidenceLumenPrior) {
+        effectiveLumenMaxOverlapCostFraction = std::max(
+            effectiveLumenMaxOverlapCostFraction,
+            static_cast<double>(lumenHighConfidenceMaxOverlapCostFraction));
+    }
+    const double lumenMaxOverlapCost =
+        (useCellLumenCostGate && effectiveLumenMaxOverlapCostFraction >= 0.0f)
+            ? static_cast<double>(effectiveLumenMaxOverlapCostFraction) * baselineImageCost
+            : std::numeric_limits<double>::infinity();
+    if (useCellLumenCostGate &&
+        effectiveLumenMaxOverlapCostFraction >= 0.0f &&
+        overlapCostDiff > lumenMaxOverlapCost) {
+        const double hardOverlapCostLimit =
+            (useCellLumenSoftGate && lumenHardMaxOverlapCostFraction >= 0.0f)
+                ? static_cast<double>(lumenHardMaxOverlapCostFraction) * baselineImageCost
+                : lumenMaxOverlapCost;
+        const bool impossibleOverlapCost =
+            !useCellLumenSoftGate || overlapCostDiff > hardOverlapCostLimit;
+        if (!impossibleOverlapCost) {
+            const double excess = std::max(0.0, overlapCostDiff - lumenMaxOverlapCost);
+            const bool priorShapeRescued =
+                lumenProposal != nullptr && lumenProposal->elongatedParentRescued;
+            const bool bridgeEvidenceCanWaiveOverlap =
+                lumenBridgeEvidenceWaivesOverlapSoftPenalty &&
+                useCellLumenImageGate &&
+                lumenStrongBridgeEvidence &&
+                imageCostDiff <= lumenMaxPositiveCost &&
+                priorShapeRescued;
+            const double snapshotSeedMinImageGain =
+                static_cast<double>(std::max(0.0f, lumenPositiveGateMinImageGain));
+            const bool snapshotSeedFallbackCanWaiveOverlap =
+                bestIsCellLumenSnapshotSeedFallback &&
+                useCellLumenImageGate &&
+                imageCostDiff <= -snapshotSeedMinImageGain;
+            if (bridgeEvidenceCanWaiveOverlap || snapshotSeedFallbackCanWaiveOverlap) {
+                std::cout << "[Split CellLumen Soft Gate Waived] " << parentName
+                          << " reason=overlap_cost"
+                          << " overlapDiff=" << overlapCostDiff
+                          << " maxOverlap=" << lumenMaxOverlapCost
+                          << " hardMaxOverlap=" << hardOverlapCostLimit
+                          << " imageDiff=" << imageCostDiff
+                          << " bridgeEvidence=1"
+                          << " snapshotSeedFallback=" << (snapshotSeedFallbackCanWaiveOverlap ? 1 : 0)
+                          << " elongatedParentRescued=" << (priorShapeRescued ? 1 : 0)
+                          << " parentShapeElong="
+                          << (lumenProposal != nullptr ? lumenProposal->parentShapeElongation : 1.0f)
+                          << " baselineImageCost=" << baselineImageCost
+                          << " bestIdx=" << bestIdx
+                          << " bestLabel=" << bestLabel
+                          << std::endl;
+            } else {
+                const double penalty = excess * std::max(0.0f, lumenSoftOverlapCostPenaltyWeight);
+                lumenSoftGatePenaltyCost += penalty;
+                std::cout << "[Split CellLumen Soft Gate] " << parentName
+                          << " reason=overlap_cost"
+                          << " overlapDiff=" << overlapCostDiff
+                          << " maxOverlap=" << lumenMaxOverlapCost
+                          << " hardMaxOverlap=" << hardOverlapCostLimit
+                          << " penaltyWeight=" << lumenSoftOverlapCostPenaltyWeight
+                          << " penaltyCost=" << penalty
+                          << " runningPenalty=" << lumenSoftGatePenaltyCost
+                          << " baselineImageCost=" << baselineImageCost
+                          << " bestIdx=" << bestIdx
+                          << " bestLabel=" << bestLabel
+                          << std::endl;
+            }
+        } else {
+        std::cout << "[Split Reject CellLumen overlap] " << parentName
+                  << " overlapDiff=" << overlapCostDiff
+                  << " maxOverlap=" << lumenMaxOverlapCost
+                  << " hardMaxOverlap=" << hardOverlapCostLimit
+                  << " fraction=" << effectiveLumenMaxOverlapCostFraction
+                  << " baseFraction=" << lumenMaxOverlapCostFraction
+                  << " highConfidence=" << (highConfidenceLumenPrior ? 1 : 0)
+                  << " priorScore=" << (lumenProposal != nullptr ? lumenProposal->elongation : 0.0f)
+                  << " baselineImageCost=" << baselineImageCost
+                  << " totalDiff=" << costDiff
+                  << " imageDiff=" << imageCostDiff
+                  << " bestIdx=" << bestIdx
+                  << " bestLabel=" << bestLabel
+                  << std::endl;
+        restoreLiveParent();
+        return {0.0, noop};
+        }
+    }
+    const double rawLumenGateDiff =
+        useCellLumenImageGate ? imageCostDiff : costDiff;
+    const double lumenGateDiff = rawLumenGateDiff + lumenSoftGatePenaltyCost;
+    bool lumenPositiveGateHasImageSupport = true;
+    const double lumenPositiveGateRequiredImageGain =
+        std::max(static_cast<double>(std::max(0.0f, lumenPositiveGateMinImageGain)),
+                 lumenSoftGatePenaltyCost *
+                     static_cast<double>(std::max(0.0f, lumenPositiveGateMinImageGainPenaltyRatio)));
+    const double lumenPositiveGateSoftPenaltyFraction =
+        (baselineImageCost > 1e-9)
+            ? lumenSoftGatePenaltyCost / baselineImageCost
+            : std::numeric_limits<double>::infinity();
+    const float lumenParentShapeElongation =
+        (lumenProposal != nullptr) ? lumenProposal->parentShapeElongation : 1.0f;
+    const float lumenPriorScore =
+        (lumenProposal != nullptr) ? lumenProposal->elongation : std::numeric_limits<float>::infinity();
+    const bool lumenPositiveGateElongatedShapeOk =
+        lumenProposal != nullptr &&
+        lumenPositiveGateElongatedParentMinShape >= 0.0f &&
+        lumenParentShapeElongation >= lumenPositiveGateElongatedParentMinShape;
+    const bool lumenPositiveGateElongatedRawOk =
+        lumenPositiveGateElongatedMaxRawWorsening < 0.0f ||
+        imageCostDiff <= static_cast<double>(lumenPositiveGateElongatedMaxRawWorsening);
+    const bool lumenPositiveGateElongatedPenaltyOk =
+        lumenPositiveGateElongatedMaxSoftPenaltyFraction < 0.0f ||
+        lumenPositiveGateSoftPenaltyFraction <= static_cast<double>(lumenPositiveGateElongatedMaxSoftPenaltyFraction);
+    const bool lumenPositiveGateElongatedScoreOk =
+        lumenPositiveGateElongatedMaxScore < 0.0f ||
+        lumenPriorScore <= lumenPositiveGateElongatedMaxScore;
+    const bool lumenPositiveGateElongatedSupport =
+        useCellLumenImageGate &&
+        lumenPositiveGateElongatedShapeOk &&
+        lumenPositiveGateElongatedRawOk &&
+        lumenPositiveGateElongatedPenaltyOk &&
+        lumenPositiveGateElongatedScoreOk;
+    const char *lumenPositiveGateSupportReason = "normal_image_gain";
+    if (useCellLumenCostGate &&
+        useCellLumenImageGate &&
+        lumenGateDiff > 0.0 &&
+        lumenPositiveGateRequiredImageGain > 0.0) {
+        const bool rawImageGainSupport =
+            imageCostDiff <= -lumenPositiveGateRequiredImageGain;
+        lumenPositiveGateHasImageSupport =
+            rawImageGainSupport || lumenPositiveGateElongatedSupport;
+        if (!rawImageGainSupport && lumenPositiveGateElongatedSupport) {
+            lumenPositiveGateSupportReason = "elongated_parent_small_worsening";
+        }
+    }
+    // A negative gate diff is an actual reconstruction improvement. The
+    // Lumen path only needs to reject candidates that get worse by more than
+    // the configured positive allowance. For positive gate diffs, require
+    // enough raw image improvement to justify any soft geometry penalty; this
+    // avoids accepting duplicate splits that improve the image term only
+    // weakly while exploding overlap.
+    const bool lumenCostAccepted =
+        useCellLumenCostGate &&
+        lumenGateDiff <= lumenMaxPositiveCost &&
+        lumenPositiveGateHasImageSupport;
+    if (lumenCostAccepted) {
+        acceptedCostDiff = -std::max(1.0, adaptiveThreshold);
+        std::cout << "[Split CellLumen Cost Gate] " << parentName
+                  << " gateDiff=" << lumenGateDiff
+                  << " rawGateDiff=" << rawLumenGateDiff
+                  << " softPenalty=" << lumenSoftGatePenaltyCost
+                  << " gateMode=" << (useCellLumenImageGate ? "image" : "total")
+                  << " totalDiff=" << costDiff
+                  << " imageDiff=" << imageCostDiff
+                  << " overlapDiff=" << overlapCostDiff
+                  << " reportedDiff=" << acceptedCostDiff
+                  << " fixed=" << activeSplitCost
+                  << " fraction=" << activeSplitCostFraction
+                  << " maxPositive=" << lumenMaxPositiveCost
+                  << " positiveImageSupport=1"
+                  << " positiveSupportReason=" << lumenPositiveGateSupportReason
+                  << " requiredImageGain=" << lumenPositiveGateRequiredImageGain
+                  << " softPenaltyFraction=" << lumenPositiveGateSoftPenaltyFraction
+                  << " parentShapeElong=" << lumenParentShapeElongation
+                  << " priorScore=" << lumenPriorScore
+                  << " baselineImageCost=" << baselineImageCost
+                  << " bestIdx=" << bestIdx
+                  << " bestLabel=" << bestLabel
+                  << std::endl;
+    }
+    if (useCellLumenCostGate &&
+        lumenGateDiff <= lumenMaxPositiveCost &&
+        !lumenPositiveGateHasImageSupport) {
+        std::cout << "[Split Reject CellLumen positive gate weak image] " << parentName
+                  << " gateDiff=" << lumenGateDiff
+                  << " rawGateDiff=" << rawLumenGateDiff
+                  << " imageDiff=" << imageCostDiff
+                  << " requiredImageGain=" << lumenPositiveGateRequiredImageGain
+                  << " softPenaltyFraction=" << lumenPositiveGateSoftPenaltyFraction
+                  << " parentShapeElong=" << lumenParentShapeElongation
+                  << " priorScore=" << lumenPriorScore
+                  << " elongatedShapeOk=" << (lumenPositiveGateElongatedShapeOk ? 1 : 0)
+                  << " elongatedRawOk=" << (lumenPositiveGateElongatedRawOk ? 1 : 0)
+                  << " elongatedPenaltyOk=" << (lumenPositiveGateElongatedPenaltyOk ? 1 : 0)
+                  << " elongatedScoreOk=" << (lumenPositiveGateElongatedScoreOk ? 1 : 0)
+                  << " softPenalty=" << lumenSoftGatePenaltyCost
+                  << " totalDiff=" << costDiff
+                  << " overlapDiff=" << overlapCostDiff
+                  << " maxPositive=" << lumenMaxPositiveCost
+                  << " bestIdx=" << bestIdx
+                  << " bestLabel=" << bestLabel
+                  << std::endl;
+    }
+
+    const double rejectGateDiff = useCellLumenImageGate
+                                      ? lumenGateDiff
+                                      : costDiff + lumenSoftGatePenaltyCost;
+    if (!bridgeCostRescued && !lumenCostAccepted && rejectGateDiff >= -adaptiveThreshold) {
         std::cout << "[Split Reject cost] " << parentName
-                  << " diff=" << costDiff
+                  << " diff=" << rejectGateDiff
+                  << " rawGateDiff=" << rawLumenGateDiff
+                  << " softPenalty=" << lumenSoftGatePenaltyCost
+                  << " totalDiff=" << costDiff
+                  << " imageDiff=" << imageCostDiff
+                  << " overlapDiff=" << overlapCostDiff
+                  << " gateMode=" << (useCellLumenImageGate ? "image" : "total")
                   << " mode=" << (_useBboxCost ? "bbox" : "full")
                   << " threshold=" << -adaptiveThreshold
-                  << " (fixed=" << probConfig.split_cost
-                  << " frac=" << probConfig.split_cost_fraction << "×" << baselineImageCost << ")"
+                  << " (fixed=" << activeSplitCost
+                  << " frac=" << activeSplitCostFraction << "×" << baselineImageCost
+                  << " lumen_gate=" << (useCellLumenCostGate ? 1 : 0)
+                  << " lumen_max_positive=" << lumenMaxPositiveCost << ")"
                   << " bestIdx=" << bestIdx
                   << " bestLabel=" << bestLabel
                   << " d1=(" << bestD1.getX() << "," << bestD1.getY() << "," << bestD1.getZ() << ")"
