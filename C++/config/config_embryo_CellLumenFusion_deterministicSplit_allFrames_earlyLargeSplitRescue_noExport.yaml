@@ -1,0 +1,8 @@
+base_config: config_embryo_CellLumenFusion_deterministicSplit_allFrames_earlyLargeSplitRescue.yaml
+
+# Same algorithmic settings as the early-large-split rescue wrapper, but with
+# image export disabled so long validation runs can always write cells.csv
+# before disk-heavy TIFF visualization is generated separately.
+simulation:
+  export_frame_png: false
+  export_frame_tiff: false

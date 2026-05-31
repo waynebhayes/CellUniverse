@@ -23,6 +23,7 @@ from qtpy.QtCore import QTimer
 
 
 FRAME_RE = re.compile(r"^(?:t)?(\d+)$")
+FLAT_FRAME_RE = re.compile(r"^(?:t)?(\d+)_(real|synth)$")
 
 
 @dataclass(frozen=True)
@@ -32,14 +33,15 @@ class LayerSpec:
     opacity: float
     colormap: str
     z_offset_steps: int
+    flat_suffix: str | None = None
 
 
 # Bottom-to-top render order. The last layer is intentionally the top overlay.
 LAYER_SPECS = (
-    LayerSpec("real", Path("tiff/real"), 1.0, "gray", 0),
+    LayerSpec("real", Path("tiff/real"), 1.0, "gray", 0, "real"),
     LayerSpec("split_placements", Path("perturb_debug/split_placements"), 0.3, "bop purple", 1),
     LayerSpec("movement_placements", Path("perturb_debug/movement_placements"), 0.3, "cyan", 2),
-    LayerSpec("synth", Path("tiff/synth"), 0.7, "gray", 3),
+    LayerSpec("synth", Path("tiff/synth"), 0.7, "gray", 3, "synth"),
     LayerSpec("cell_centers", Path("perturb_debug/cell_centers"), 1.0, "bop orange", 4),
 )
 
@@ -78,24 +80,37 @@ def frame_id(path: Path) -> int | None:
     return int(match.group(1))
 
 
-def tif_paths_by_frame(folder: Path) -> dict[int, Path]:
-    frames: dict[int, Path] = {}
-    if not folder.is_dir():
-        return frames
+def flat_frame_id(path: Path, suffix: str) -> int | None:
+    match = FLAT_FRAME_RE.match(path.stem)
+    if not match or match.group(2) != suffix:
+        return None
+    return int(match.group(1))
 
-    for path in folder.iterdir():
-        if not path.is_file() or path.suffix.lower() not in {".tif", ".tiff"}:
-            continue
-        fid = frame_id(path)
-        if fid is not None:
-            frames[fid] = path
+
+def tif_paths_by_frame(folder: Path, root: Path | None = None, flat_suffix: str | None = None) -> dict[int, Path]:
+    frames: dict[int, Path] = {}
+    if folder.is_dir():
+        for path in folder.iterdir():
+            if not path.is_file() or path.suffix.lower() not in {".tif", ".tiff"}:
+                continue
+            fid = frame_id(path)
+            if fid is not None:
+                frames[fid] = path
+
+    if root is not None and flat_suffix is not None and root.is_dir():
+        for path in root.iterdir():
+            if not path.is_file() or path.suffix.lower() not in {".tif", ".tiff"}:
+                continue
+            fid = flat_frame_id(path, flat_suffix)
+            if fid is not None:
+                frames[fid] = path
     return frames
 
 
 def complete_frame_ids(root: Path) -> tuple[int, ...]:
     per_layer_ids: list[set[int]] = []
     for spec in LAYER_SPECS:
-        layer_frames = tif_paths_by_frame(root / spec.relative_dir)
+        layer_frames = tif_paths_by_frame(root / spec.relative_dir, root, spec.flat_suffix)
         per_layer_ids.append(set(layer_frames))
 
     if not per_layer_ids:
@@ -190,7 +205,9 @@ class LiveMonitor:
     def load_all_layers(self, frame_ids: tuple[int, ...]) -> list[tuple[LayerSpec, np.ndarray]]:
         loaded = []
         for spec in LAYER_SPECS:
-            layer_frames = tif_paths_by_frame(self.output_dir / spec.relative_dir)
+            layer_frames = tif_paths_by_frame(self.output_dir / spec.relative_dir,
+                                              self.output_dir,
+                                              spec.flat_suffix)
             paths = [layer_frames[fid] for fid in frame_ids]
             loaded.append((spec, read_layer_stack(paths)))
         return loaded
@@ -203,7 +220,11 @@ def main() -> int:
         print(f"Output directory does not exist: {output_dir}", file=sys.stderr)
         return 2
 
-    missing = [str(spec.relative_dir) for spec in LAYER_SPECS if not (output_dir / spec.relative_dir).is_dir()]
+    missing = [
+        str(spec.relative_dir)
+        for spec in LAYER_SPECS
+        if not tif_paths_by_frame(output_dir / spec.relative_dir, output_dir, spec.flat_suffix)
+    ]
     if missing:
         print(f"Output directory is missing required layer folders: {', '.join(missing)}", file=sys.stderr)
         return 2

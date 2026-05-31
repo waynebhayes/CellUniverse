@@ -4,12 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CPP_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUTPUT_ROOT="$CPP_ROOT/output"
-LOG_DIR="$OUTPUT_ROOT/logs"
-mkdir -p "$OUTPUT_ROOT" "$LOG_DIR"
-
-LOG_FILE="$LOG_DIR/origin_200_ground_truth_runLog_$(date +%Y%m%d_%H%M%S).txt"
-exec > >(tee -a "$LOG_FILE") 2>&1
-echo "[INFO] Logging to: $LOG_FILE"
+mkdir -p "$OUTPUT_ROOT"
 
 FRAME_INDEX="${1:-200}"
 FRAME_PADDED="$(printf "%03d" "$FRAME_INDEX")"
@@ -19,6 +14,10 @@ CONFIG_FILE="$CPP_ROOT/config/config.yaml"
 CSV_FILE_NAME="initial_origin_${FRAME_INDEX}.csv"
 OUT_DIR="$OUTPUT_ROOT/output_origin_${FRAME_INDEX}_$(date +%Y%m%d_%H%M%S)"
 CSV_OUTPUT="$OUT_DIR/$CSV_FILE_NAME"
+mkdir -p "$OUT_DIR"
+LOG_FILE="$OUT_DIR/run_f${FRAME_PADDED}_ground_truth.log"
+exec > >(tee -a "$LOG_FILE") 2>&1
+echo "[INFO] Logging to: $LOG_FILE"
 
 BUILD_DIR="$CPP_ROOT/build"
 FALLBACK_BUILD_DIR="$CPP_ROOT/cmake-build-debug"
@@ -32,6 +31,7 @@ echo "Input File      : $INPUT_FILE"
 echo "Config YAML     : $CONFIG_FILE"
 echo "CSV Output      : $CSV_OUTPUT"
 echo "Output Dir      : $OUT_DIR"
+echo "Run Log         : $LOG_FILE"
 echo "Skip Clean      : $SKIP_CLEAN"
 echo "======================================================================================================="
 
@@ -66,7 +66,6 @@ BIN="$BUILD_DIR/celluniverse"
 [ -x "$BIN" ] || { echo "[FATAL] build succeeded but binary not found/executable: $BIN"; exit 1; }
 
 echo "[STEP] Running ground-truth builder..."
-mkdir -p "$OUT_DIR"
 
 "$BIN" \
   --build-ground-truth \

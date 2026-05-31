@@ -11,7 +11,6 @@ INPUT_PATTERN="$INPUT_DIR/t%03d.tif"
 CONFIG_FILE="$CPP_ROOT/config/config.yaml"
 INITIAL_FILE="$CPP_ROOT/config/initial_HL60_0.csv"
 OUT_DIR="$OUTPUT_ROOT/output_HL60_$(date +%Y%m%d_%H%M%S)"
-LOG_FILE="$OUT_DIR/run_HL60_$(date +%Y%m%d_%H%M%S).txt"
 
 BUILD_DIR="$CPP_ROOT/build"
 FALLBACK_BUILD_DIR="$CPP_ROOT/cmake-build-debug"
@@ -44,7 +43,7 @@ if [ "$MODE" = "extract" ]; then
 
   CSV_FILE="$CPP_ROOT/config/initial_HL60_${FRAME_INDEX}.csv"
   OUT_DIR="$OUTPUT_ROOT/output_HL60_ground_truth_${FRAME_INDEX}_$(date +%Y%m%d_%H%M%S)"
-  LOG_FILE="$OUT_DIR/run_HL60_ground_truth_${FRAME_INDEX}_$(date +%Y%m%d_%H%M%S).txt"
+  LOG_FILE="$OUT_DIR/run_f${FRAME_INDEX}_ground_truth.log"
 
   mkdir -p "$OUT_DIR"
   exec > >(tee -a "$LOG_FILE") 2>&1
@@ -119,6 +118,7 @@ if [ "$FIRST_FRAME" -lt 0 ]; then
 fi
 
 mkdir -p "$OUT_DIR"
+LOG_FILE="$OUT_DIR/run_f${FIRST_FRAME}_to_f${LAST_FRAME}.log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
 echo "======================================================================================================="

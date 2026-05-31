@@ -49,9 +49,10 @@ public:
     void preprocessAllFramesAlignedToMinimumBackground(bool loadIntoFrames);
     // Checkpoint save/load (Approach 2 — full state serialization).
     // saveCheckpoint(N) writes all state needed to resume AT frame N+1
-    // to `{outputPath}/checkpoints/frame_{N:03d}.yaml`. Includes:
+    // to `{outputPath}/checkpoints/frame_{N:03d}.txt`. Includes:
     // cells of frame N+1 (already copied forward), previousSnapshots,
-    // cellShapeReference, cellShapeBirth, perFrameAdaptiveBackground[N],
+    // cellShapeReference, cellShapeBirth, firstSeen anti-cascade metadata,
+    // RNG state, edge-alignment state, perFrameAdaptiveBackground[N],
     // perFrameMeanBrightness[N], frame N+1 backgroundValue, z_slices/maxZ.
     // loadCheckpoint(N, targetFrameIndex) reads checkpoint N and populates
     // the local frame that should be optimized next. Call BEFORE the main
@@ -86,6 +87,11 @@ private:
    // feedback loops (neither upward bloat nor downward thinning).
    // The bounded ref is used ONLY for the fit-side growth cap.
    std::map<std::string, std::array<float, 3>> cellShapeBirth;
+   // Absolute frame where each live cell first appeared in this run. Initial
+   // or checkpoint-loaded cells are treated as old unless checkpoint metadata
+   // says otherwise. Used to block rescue/fallback cascades that immediately
+   // re-split newborn daughters.
+   std::map<std::string, int> cellFirstSeenFrame;
 
    // M2 state: per-frame paths retained for lazy load and initial-cells map.
    PathVec imagePaths;
@@ -97,6 +103,12 @@ private:
    // from raw current-frame CellLumen centers; optimize() consumes them before
    // random split scheduling.
    std::unordered_map<int, std::unordered_map<std::string, BridgeSplitProposal>> cellLumenSplitPriors;
+   // Strong one-real parent-anchor CellLumen centers that are allowed to
+   // reanchor an existing parent center during temporal center repair. These
+   // are intentionally separate from cellLumenSplitPriors: the global split
+   // selector may skip a split candidate for count/overlap reasons, while the
+   // same single real center can still be valid evidence to move the parent.
+   std::unordered_map<int, std::unordered_map<std::string, std::set<int>>> cellLumenCenterReanchorCandidateIds;
    // Parents whose best CellLumen split pair looked unsafe. The pre-pass
    // fallback may not resurrect these parents, otherwise a weak Lumen pair can
    // be rejected in ranking and then re-enter through the fallback path.

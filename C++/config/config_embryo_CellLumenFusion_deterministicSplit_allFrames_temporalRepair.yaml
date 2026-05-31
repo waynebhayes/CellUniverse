@@ -1,0 +1,26 @@
+base_config: config_embryo_CellLumenFusion_deterministicSplit_allFrames.yaml
+
+# Frame-agnostic temporal split repair test profile.
+#
+# This keeps the verified deterministic CellLumen-Fusion settings, but allows
+# a candidate pair to pass the split-prior ranking gates when the current frame
+# has two real CellLumen centers and the next frames keep supporting those two
+# daughter centers without preserving the old parent center. It does not use GT
+# and does not contain frame-number limits.
+
+cell_lumen:
+  fusionSplitPriorTemporalRepairEnabled: true
+  fusionSplitPriorTemporalRepairMinWindowBoth: 2
+  fusionSplitPriorTemporalRepairMaxWindowMissing: 0
+  fusionSplitPriorTemporalRepairMaxWindowParentPersists: 0
+  fusionSplitPriorTemporalRepairMinSeparation: 28.0
+  fusionSplitPriorTemporalRepairMinSeparationRadiusScale: 1.15
+  fusionSplitPriorTemporalRepairMaxCandidateSeparation: 90.0
+  fusionSplitPriorTemporalRepairMaxCandidateSeparationRadiusScale: 5.0
+  fusionSplitPriorTemporalRepairMinParentDistanceBalance: 0.25
+  fusionSplitPriorTemporalRepairMinNearParentDistance: 6.0
+  fusionSplitPriorTemporalRepairMaxScore: 95.0
+  fusionSplitPriorTemporalRepairSelectionBonus: 100.0
+  fusionSplitPriorTemporalRepairMaxNeighborClaimPenalty: 0.00001
+  fusionSplitPriorTemporalRepairMaxContinuationClaimSoftPenalty: 0.00001
+  fusionSplitPriorTemporalRepairRejectClaimBlockers: true

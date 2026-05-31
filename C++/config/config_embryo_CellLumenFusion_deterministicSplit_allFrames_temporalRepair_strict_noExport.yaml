@@ -1,0 +1,9 @@
+base_config: config_embryo_CellLumenFusion_deterministicSplit_allFrames_temporalRepair_noExport.yaml
+
+# Diagnostic strict temporal-repair profile that keeps the verified
+# pre-pass fallback path enabled, but makes temporal repair less eager.
+
+cell_lumen:
+  fusionSplitPriorTemporalRepairMinParentDistanceBalance: 0.28
+  fusionSplitPriorTemporalRepairMinNearParentDistance: 10.0
+  fusionSplitPriorTemporalRepairSelectionBonus: 70.0

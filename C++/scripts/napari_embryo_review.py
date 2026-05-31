@@ -43,6 +43,13 @@ def read_gt(gt_csv: Path, frame: int) -> list[dict[str, str]]:
     return rows
 
 
+def frame_tif_path(run: Path, frame: int, kind: str) -> Path:
+    flat = run / f"{frame}_{kind}.tif"
+    if flat.is_file():
+        return flat
+    return run / "tiff" / kind / f"{frame}.tif"
+
+
 def float_value(row: dict[str, str], key: str, fallback: float) -> float:
     try:
         return float(row.get(key, fallback))
@@ -611,8 +618,8 @@ def main() -> int:
     run = args.run.expanduser().resolve()
     frame = args.frame
     cells_csv = run / "cells.csv"
-    real_tif = run / "tiff" / "real" / f"{frame}.tif"
-    synth_tif = run / "tiff" / "synth" / f"{frame}.tif"
+    real_tif = frame_tif_path(run, frame, "real")
+    synth_tif = frame_tif_path(run, frame, "synth")
 
     pred = read_prediction(cells_csv, frame)
     gt = read_gt(args.gt, frame)

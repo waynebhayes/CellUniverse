@@ -1,0 +1,24 @@
+base_config: config_embryo_CellLumenFusion_deterministicSplit_allFrames.yaml
+
+# Early embryo wrapper for dense, synchronous large-separation divisions.
+# The base deterministic CellLumen-Fusion config remains unchanged for the
+# validated 120~170 runs. The C++ rescue below is default-off and only becomes
+# active through this wrapper, capped to the early frame range.
+cell_lumen:
+  fusionSplitPriorMaxParentDistance: 56.0
+  fusionSplitPriorMaxSeparation: 82.0
+  fusionSplitPriorMaxSeparationRadiusScale: 4.2
+  fusionSplitPriorMaxScore: 90.0
+  fusionSplitPriorGlobalSelectMaxCost: 90.0
+  fusionSplitPriorMinParentDistanceBalance: 0.25
+  fusionSplitPriorPrepassFallbackEnabled: false
+
+  fusionSplitPriorEarlyLargeSeparationRescueEnabled: true
+  fusionSplitPriorEarlyLargeSeparationRescueFirstFrameOnly: true
+  fusionSplitPriorEarlyLargeSeparationRescueMaxFrame: 50
+  fusionSplitPriorEarlyLargeSeparationMinSeparation: 44.0
+  fusionSplitPriorEarlyLargeSeparationMinParentDistanceBalance: 0.25
+  fusionSplitPriorEarlyLargeSeparationMaxScore: 90.0
+  fusionSplitPriorEarlyLargeSeparationMinWindowBoth: 1
+  fusionSplitPriorEarlyLargeSeparationMaxWindowMissing: 1
+  fusionSplitPriorEarlyLargeSeparationMaxWindowParentPersists: 1

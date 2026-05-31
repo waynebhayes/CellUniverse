@@ -1,0 +1,5 @@
+base_config: config_embryo_CellLumenFusion_deterministicSplit_allFrames_temporalRepair_antiCascade_noExport.yaml
+
+# Verified stitched run for C. elegans embryo frames 085-120 on 2026-05-31.
+# This entry point inherits the CellLumen Fusion temporal-repair/anti-cascade
+# profile and the no-export settings used during the final validation pass.

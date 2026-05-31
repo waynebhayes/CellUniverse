@@ -1,0 +1,17 @@
+base_config: config_embryo_CellLumenFusion_deterministicSplit_allFrames.yaml
+
+# Early-frame / manual-initial wrapper for the verified deterministic
+# CellLumen-Fusion CellUniverse configuration.
+#
+# Use this when the initial CSV stores z in raw TIFF/GT slice coordinates even
+# if it already has theta columns. This is the case for embryo initials such as
+# config/embryo/initial_embryo_40.csv and the t041 remapped copy.
+#
+# Late resume CSVs produced by CellUniverse already store scaled/interpolated z;
+# keep using config_embryo_CellLumenFusion_deterministicSplit.yaml for those.
+
+simulation:
+  initial_z_space: raw
+
+cell_lumen:
+  fusionStartFrame: 0

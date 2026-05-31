@@ -499,7 +499,7 @@ if [ "${#EXTRA_ARGS[@]}" -gt 0 ]; then
 fi
 
 echo "[CMD] ${CMD[*]}"
-DEBUG_LOG="$OUT_DIR/debug_log.txt"
+DEBUG_LOG="$OUT_DIR/run_f${FIRST_FRAME}_to_f${LAST_FRAME}.log"
 echo "[CMD] ${CMD[*]}" > "$DEBUG_LOG"
 echo "Started: $(date)" >> "$DEBUG_LOG"
 echo "==========================================" >> "$DEBUG_LOG"

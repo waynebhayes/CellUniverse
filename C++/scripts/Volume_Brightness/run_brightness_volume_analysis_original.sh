@@ -4,11 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CPP_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUTPUT_ROOT="$CPP_ROOT/output"
-LOG_DIR="$OUTPUT_ROOT/logs"
-mkdir -p "$OUTPUT_ROOT" "$LOG_DIR"
-
-LOG_FILE="$LOG_DIR/brightness_volume_original_runLog_$(date +%Y%m%d_%H%M%S).txt"
-touch "$LOG_FILE"
+mkdir -p "$OUTPUT_ROOT"
 
 log() {
   echo "$@" | tee -a "$LOG_FILE"
@@ -17,8 +13,6 @@ log() {
 run_and_log() {
   "$@" 2>&1 | tee -a "$LOG_FILE"
 }
-
-log "[INFO] Logging to: $LOG_FILE"
 
 INPUT_DIR="$CPP_ROOT/examples/input/original_data"
 INPUT_PATTERN="$INPUT_DIR/frame%03d.tif"
@@ -39,6 +33,11 @@ fi
 
 RUN_TAG="brightness_original_f$(printf "%03d" "$FIRST_FRAME")_to_f$(printf "%03d" "$LAST_FRAME")_$(date +%Y%m%d_%H%M%S)"
 OUT_DIR="$OUTPUT_BASE/$RUN_TAG"
+mkdir -p "$OUT_DIR"
+LOG_FILE="$OUT_DIR/run_f$(printf "%03d" "$FIRST_FRAME")_to_f$(printf "%03d" "$LAST_FRAME").log"
+touch "$LOG_FILE"
+
+log "[INFO] Logging to: $LOG_FILE"
 
 log "======================================================================================================="
 log "Brightness/Volume Analysis Run (original_data)"
@@ -51,6 +50,7 @@ log "Initial CSV     : $INITIAL_FILE"
 log "Frame Range     : $FIRST_FRAME .. $LAST_FRAME"
 log "Output Base     : $OUTPUT_BASE"
 log "Run Output Dir  : $OUT_DIR"
+log "Run Log         : $LOG_FILE"
 log "======================================================================================================="
 
 [ -d "$CPP_ROOT" ] || { echo "[FATAL] CPP root not found: $CPP_ROOT"; exit 1; }
@@ -60,7 +60,6 @@ log "===========================================================================
 [ -f "$CPP_ROOT/CMakeLists.txt" ] || { echo "[FATAL] CMakeLists.txt not found in: $CPP_ROOT"; exit 1; }
 
 mkdir -p "$BUILD_DIR"
-mkdir -p "$OUT_DIR"
 
 log "[STEP] Reconfiguring CMake..."
 run_and_log cmake -S "$CPP_ROOT" -B "$BUILD_DIR"

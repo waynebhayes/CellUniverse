@@ -1,0 +1,11 @@
+base_config: config_embryo_CellLumenFusion_deterministicSplit_allFrames_temporalRepair_noExport.yaml
+
+# Diagnostic strict temporal-repair profile for early/mid embryo frames.
+# Purpose: isolate CellLumen temporal repair from pre-pass fallback cascades
+# and require both daughter centers to sit meaningfully away from the parent.
+
+cell_lumen:
+  fusionSplitPriorPrepassFallbackEnabled: false
+  fusionSplitPriorTemporalRepairMinParentDistanceBalance: 0.28
+  fusionSplitPriorTemporalRepairMinNearParentDistance: 10.0
+  fusionSplitPriorTemporalRepairSelectionBonus: 70.0

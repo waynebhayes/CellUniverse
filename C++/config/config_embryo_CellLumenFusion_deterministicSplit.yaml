@@ -308,6 +308,14 @@ cell_lumen:
   fusionSplitPriorMinPostRefitLateralSeparation: 4.0
   fusionSplitPriorMinPostRefitLateralSeparationRadiusScale: 0.20
   fusionSplitPriorMaxZDominanceForLowLateralSeparation: 0.85
+  # If two candidate pairs for the same parent are effectively tied, prefer
+  # the one that is not a same-XY z-stack duplicate. This preserves true
+  # mostly-Z splits when they are the only strong hypothesis, but fixes cases
+  # where CellLumen sees both a lateral daughter pair and a nearly equal
+  # stacked-Z duplicate of one daughter.
+  fusionSplitPriorZDominantTieBreakScoreMargin: 2.0
+  fusionSplitPriorZDominantTieBreakMinZDominance: 0.85
+  fusionSplitPriorZDominantTieBreakMaxLateralRadiusScale: 0.85
   # Dense local neighborhoods naturally have more ellipsoid contact. This only
   # widens the CellLumen-prior overlap budget around crowded parents; it does
   # not affect classic random split candidates.

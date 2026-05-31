@@ -1,0 +1,9 @@
+base_config: config_embryo_CellLumenFusion_deterministicSplit_allFrames_temporalRepair.yaml
+
+# Same algorithmic profile, with disk-heavy image export disabled for long
+# validation runs. Cells, logs, candidate graphs, and GT compare CSVs remain
+# the authoritative debugging outputs.
+
+simulation:
+  export_frame_png: false
+  export_frame_tiff: false

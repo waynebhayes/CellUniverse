@@ -6,15 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # C++ repo root: .../C++ (parent of examples)
 CPP_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUTPUT_ROOT="$CPP_ROOT/output"
-LOG_DIR="$OUTPUT_ROOT/logs"
-mkdir -p "$OUTPUT_ROOT" "$LOG_DIR"
-
-# -----------------------------------------
-# Create run log file (stdout + stderr)
-# -----------------------------------------
-LOG_FILE="$LOG_DIR/original_data_runLog_$(date +%Y%m%d_%H%M%S).txt"
-exec > >(tee -a "$LOG_FILE") 2>&1
-echo "[INFO] Logging to: $LOG_FILE"
+mkdir -p "$OUTPUT_ROOT"
 
 # -----------------------------------------
 # Paths
@@ -29,6 +21,36 @@ BUILD_DIR="$CPP_ROOT/build"
 FALLBACK_BUILD_DIR="$CPP_ROOT/cmake-build-debug"
 SKIP_CLEAN="${CELLUNIVERSE_SKIP_CLEAN:-0}"
 
+# -----------------------------------------
+# Frame range: force skip frame000-bogus.tif by setting FIRST>=1
+# Default: 1..5
+# Usage:
+#   ./run_original_data.sh        -> 1..5
+#   ./run_original_data.sh 10     -> 1..10
+#   ./run_original_data.sh 3 8    -> 3..8
+# -----------------------------------------
+FIRST_FRAME=1
+LAST_FRAME=19
+
+if [ "${1:-}" != "" ] && [ "${2:-}" != "" ]; then
+  FIRST_FRAME="$1"
+  LAST_FRAME="$2"
+elif [ "${1:-}" != "" ]; then
+  COUNT="$1"
+  FIRST_FRAME=1
+  LAST_FRAME=$((FIRST_FRAME + COUNT - 1))
+fi
+
+# Safety: never allow FIRST_FRAME < 1 for this dataset
+if [ "$FIRST_FRAME" -lt 1 ]; then
+  FIRST_FRAME=1
+fi
+
+mkdir -p "$OUT_DIR"
+LOG_FILE="$OUT_DIR/run_f${FIRST_FRAME}_to_f${LAST_FRAME}.log"
+exec > >(tee -a "$LOG_FILE") 2>&1
+echo "[INFO] Logging to: $LOG_FILE"
+
 echo "======================================================================================================="
 echo "Cell Universe Original Data Run (clean + rebuild + run)"
 echo "======================================================================================================="
@@ -38,6 +60,7 @@ echo "Input Pattern   : $INPUT_PATTERN"
 echo "Initial CSV     : $INITIAL_FILE"
 echo "Config YAML     : $CONFIG_FILE"
 echo "Output Dir      : $OUT_DIR"
+echo "Run Log         : $LOG_FILE"
 echo "Skip Clean      : $SKIP_CLEAN"
 echo "======================================================================================================="
 
@@ -81,38 +104,12 @@ cmake --build "$BUILD_DIR" -- -j"$(sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 BIN="$BUILD_DIR/celluniverse"
 [ -x "$BIN" ] || { echo "[FATAL] build succeeded but binary not found/executable: $BIN"; exit 1; }
 
-# -----------------------------------------
-# Frame range: force skip frame000-bogus.tif by setting FIRST>=1
-# Default: 1..5
-# Usage:
-#   ./run_original_data.sh        -> 1..5
-#   ./run_original_data.sh 10     -> 1..10
-#   ./run_original_data.sh 3 8    -> 3..8
-# -----------------------------------------
-FIRST_FRAME=1
-LAST_FRAME=19
-
-if [ "${1:-}" != "" ] && [ "${2:-}" != "" ]; then
-  FIRST_FRAME="$1"
-  LAST_FRAME="$2"
-elif [ "${1:-}" != "" ]; then
-  COUNT="$1"
-  FIRST_FRAME=1
-  LAST_FRAME=$((FIRST_FRAME + COUNT - 1))
-fi
-
-# Safety: never allow FIRST_FRAME < 1 for this dataset
-if [ "$FIRST_FRAME" -lt 1 ]; then
-  FIRST_FRAME=1
-fi
-
 echo "[INFO] Running frames: $FIRST_FRAME .. $LAST_FRAME (skipping frame000-bogus.tif)"
 
 # -----------------------------------------
 # Run
 # -----------------------------------------
 echo "[STEP] Running tracker..."
-mkdir -p "$OUT_DIR"
 
 "$BIN" \
   "$FIRST_FRAME" \

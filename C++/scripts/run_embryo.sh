@@ -4,15 +4,13 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 CPP_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 OUTPUT_ROOT="$CPP_ROOT/output"
-LOG_DIR="$OUTPUT_ROOT/logs"
-mkdir -p "$OUTPUT_ROOT" "$LOG_DIR"
+mkdir -p "$OUTPUT_ROOT"
 
 INPUT_DIR="$CPP_ROOT/examples/input/C.elegans_developing embryo_Fluo-N3DH-CE_Training/01"
 INPUT_PATTERN="$INPUT_DIR/t%03d.tif"
 CONFIG_FILE="$CPP_ROOT/config/config.yaml"
 INITIAL_FILE="$CPP_ROOT/config/initial_embyro_79.csv"
 OUT_DIR="$OUTPUT_ROOT/output_embryo_resume40_$(date +%Y%m%d_%H%M%S)"
-LOG_FILE="$LOG_DIR/embryo_resume40_runLog_$(date +%Y%m%d_%H%M%S).txt"
 
 BUILD_DIR="$CPP_ROOT/build"
 FALLBACK_BUILD_DIR="$CPP_ROOT/cmake-build-debug"
@@ -46,6 +44,8 @@ if [ "$FIRST_FRAME" -lt 0 ]; then
   FIRST_FRAME=0
 fi
 
+mkdir -p "$OUT_DIR"
+LOG_FILE="$OUT_DIR/run_f${FIRST_FRAME}_to_f${LAST_FRAME}.log"
 exec > >(tee -a "$LOG_FILE") 2>&1
 
 echo "======================================================================================================="
@@ -90,7 +90,6 @@ BIN="$BUILD_DIR/celluniverse"
 echo "[INFO] Running frames: $FIRST_FRAME .. $LAST_FRAME"
 
 echo "[STEP] Running tracker..."
-mkdir -p "$OUT_DIR"
 
 "$BIN" \
   "$FIRST_FRAME" \

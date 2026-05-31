@@ -341,7 +341,8 @@ int main(int argc, char *argv[])
             targetLocalFrame >= static_cast<int>(lineage.length())) {
             std::cerr << "[Resume] invalid resume_from=" << resumeFrame
                       << " for requested frame range [" << args.firstFrame
-                      << "," << args.lastFrame << "]; running from local frame 0\n";
+                      << "," << args.lastFrame << "]; aborting to avoid an invalid resume run\n";
+            return 2;
         } else {
             char buf[64];
             std::snprintf(buf, sizeof(buf), "frame_%03d.txt", checkpointFrame);
@@ -349,12 +350,20 @@ int main(int argc, char *argv[])
                 config.simulation.resume_source_dir + "/checkpoints/" + buf;
             if (lineage.loadCheckpoint(checkpointFrame, targetLocalFrame, ckptPath)) {
                 loopStart = targetLocalFrame;
-                std::cout << "[Resume] skipping absolute frames "
-                          << args.firstFrame << ".." << (resumeFrame - 1)
-                          << " (local 0.." << (loopStart - 1) << ")"
-                          << " — loaded checkpoint from " << ckptPath << std::endl;
+                if (resumeFrame > args.firstFrame) {
+                    std::cout << "[Resume] skipping absolute frames "
+                              << args.firstFrame << ".." << (resumeFrame - 1)
+                              << " (local 0.." << (loopStart - 1) << ")"
+                              << " — loaded checkpoint from " << ckptPath << std::endl;
+                } else {
+                    std::cout << "[Resume] starting at absolute frame "
+                              << resumeFrame
+                              << " from checkpoint " << ckptPath
+                              << " without replaying earlier frames" << std::endl;
+                }
             } else {
-                std::cerr << "[Resume] checkpoint load failed, running from frame 0\n";
+                std::cerr << "[Resume] checkpoint load failed; aborting to avoid a duplicate or empty-state run\n";
+                return 2;
             }
         }
     }

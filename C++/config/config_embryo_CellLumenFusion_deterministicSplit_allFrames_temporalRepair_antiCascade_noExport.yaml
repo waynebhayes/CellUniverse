@@ -1,0 +1,31 @@
+base_config: config_embryo_CellLumenFusion_deterministicSplit_allFrames_temporalRepair_strict_noExport.yaml
+
+# Diagnostic anti-cascade profile for early/mid embryo frames. It keeps the
+# verified CellLumen Fusion and pre-pass fallback paths available, but blocks
+# immediate re-splitting of newborn daughters through rescue/fallback logic.
+
+cell_lumen:
+  fusionSplitPriorMinParentAgeFrames: 3
+  fusionSplitPriorTemporalRepairMaxParentDistance: 58.0
+  fusionSplitPriorTemporalRepairParentRadiusScale: 2.30
+  fusionSplitPriorTemporalRepairMinParentAgeFrames: 2
+  fusionSplitPriorTemporalRepairStrongMinVoxels: 1500
+  fusionSplitPriorTemporalRepairStrongMinSignal: 120.0
+  fusionSplitPriorTemporalRepairStrongMaxNeighborClaimPenalty: 25.0
+  fusionSplitPriorTemporalRepairStrongMinParentDistanceBalance: 0.20
+  fusionSplitPriorTemporalRepairStrongAsymmetryBalance: 0.55
+  fusionSplitPriorTemporalRepairMinNearParentDistance: 8.0
+  fusionSplitPriorPrepassFallbackMinParentAgeFrames: 3
+  fusionTemporalCenterRepairEnabled: true
+  fusionTemporalCenterRepairMinDistance: 24.0
+  fusionTemporalCenterRepairMaxDistance: 48.0
+  fusionTemporalCenterRepairMinWindowSupport: 2
+  fusionTemporalCenterRepairMaxOldWindowSupport: 0
+  fusionTemporalCenterRepairMinWindowDistanceGain: 6.0
+  fusionTemporalCenterRepairClaimMargin: 4.0
+  fusionTemporalCenterRepairMinCellAgeFrames: 1
+  fusionTemporalCenterRepairOldSupportedMinVoxels: 2500
+  fusionTemporalCenterRepairOldSupportedMinSignal: 85.0
+  fusionTemporalCenterRepairParentAnchorReanchorEnabled: true
+  fusionTemporalCenterRepairParentAnchorReanchorMinShape: 1.9
+  fusionTemporalCenterRepairParentAnchorReanchorMinDistance: 12.0

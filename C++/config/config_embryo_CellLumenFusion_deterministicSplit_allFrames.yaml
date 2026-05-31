@@ -1,0 +1,12 @@
+base_config: config_embryo_CellLumenFusion_deterministicSplit.yaml
+
+# All-frame wrapper for the verified deterministic CellLumen-Fusion
+# CellUniverse configuration.
+#
+# This keeps the normal initial_z_space:auto behavior used by CellUniverse
+# resume CSVs, but removes the inherited fusionStartFrame:85 gate so CellLumen
+# fusion/prior preparation can run on any requested embryo frame.
+
+cell_lumen:
+  fusionStartFrame: 0
+
