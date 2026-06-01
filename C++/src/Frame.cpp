@@ -3199,7 +3199,84 @@ CostCallbackPair Frame::trySplitCellPhased(
     float lumenMaxDynamicDaughterOverlapFraction,
     float lumenSnapshotSeedMaxRefitDrift,
     bool lumenSkipExistingCellBuriedCheck,
-    bool lumenSkipNeighborBridgeCheck)
+    bool lumenSkipNeighborBridgeCheck,
+    bool lumenAllowWindowBackedDuplicateHandoff,
+    float lumenParentAnchorCleanFutureDriftRescueMinImageGain,
+    bool lumenParentAnchorWeakGainDuplicateRescueEnabled,
+    float lumenParentAnchorWeakGainCleanMinShape,
+    float lumenParentAnchorWeakGainPartialMinShape,
+    float lumenParentAnchorWeakGainCleanMaxScore,
+    float lumenParentAnchorWeakGainPartialMaxScore,
+    float lumenParentAnchorWeakGainCleanMaxOverlapCostFraction,
+    float lumenParentAnchorWeakGainPartialMaxOverlapCostFraction,
+    float lumenParentAnchorWeakGainCleanMinImageGain,
+    float lumenParentAnchorWeakGainPartialMinImageGain,
+    float lumenParentAnchorWeakGainMaxBridgeValleyRatio,
+    bool lumenParentAnchorWeakGainPartialRequireConflictEvidence,
+    bool lumenParentAnchorCompactPositiveOneRealRescueEnabled,
+    float lumenParentAnchorCompactPositiveOneRealMaxParentShape,
+    float lumenParentAnchorCompactPositiveOneRealMinPriorScore,
+    float lumenParentAnchorCompactPositiveOneRealMaxPriorScore,
+    float lumenParentAnchorCompactPositiveOneRealMinImageGain,
+    float lumenParentAnchorCompactPositiveOneRealMaxOverlapCostFraction,
+    float lumenParentAnchorCompactPositiveOneRealMaxBridgeValleyRatio,
+    bool lumenParentAnchorOneRealPostRefitGuardEnabled,
+    float lumenParentAnchorOneRealMaxRefitDrift,
+    bool lumenParentAnchorOneRealRefitDriftRescueEnabled,
+    float lumenParentAnchorOneRealRefitDriftRescueMinImageGain,
+    float lumenParentAnchorOneRealRefitDriftRescueMaxBridgeValleyRatio,
+    float lumenParentAnchorOneRealRefitDriftRescueMinBridgeGapWidth,
+    float lumenParentAnchorOneRealRefitDriftRescueMinParentShape,
+    float lumenParentAnchorOneRealRefitDriftRescueMaxScore,
+    float lumenParentAnchorOneRealCleanHighOverlapMinCost,
+    float lumenParentAnchorOneRealCleanHighOverlapMinImageGain,
+    float lumenParentAnchorOneRealCleanHighOverlapMaxBridgeValleyRatio,
+    bool lumenParentAnchorOneRealOverlapNoGapDuplicateEnabled,
+    float lumenParentAnchorOneRealOverlapNoGapDuplicateMinOverlapCost,
+    float lumenParentAnchorOneRealOverlapNoGapDuplicateMaxBridgeGapWidth,
+    float lumenParentAnchorOneRealOverlapNoGapDuplicateMinBridgeValleyRatio,
+    float lumenParentAnchorOneRealOverlapNoGapDuplicateMaxParentShape,
+    float lumenParentAnchorOneRealOverlapNoGapDuplicateMinImageGain,
+    bool lumenParentAnchorOneRealSeedLockOnRefitCollapse,
+    float lumenParentAnchorOneRealSeedLockMaxScore,
+    float lumenParentAnchorOneRealSeedLockMinSeedSeparation,
+    float lumenParentAnchorOneRealSeedLockMaxFinalSeedAxisRatio,
+    bool lumenParentAnchorOneRealMinImageGainGuardEnabled,
+    float lumenParentAnchorOneRealCleanMinImageGain,
+    float lumenParentAnchorOneRealPartialMinImageGain,
+    bool lumenParentAnchorOneRealPositiveWindowRescueEnabled,
+    float lumenParentAnchorOneRealPositiveWindowRescueMinShape,
+    float lumenParentAnchorOneRealPositiveWindowRescueMaxShape,
+    float lumenParentAnchorOneRealPositiveWindowRescueMaxScore,
+    float lumenParentAnchorOneRealPositiveWindowRescueMaxImageWorsening,
+    float lumenParentAnchorOneRealPositiveWindowRescueMaxTotalWorsening,
+    float lumenParentAnchorOneRealPositiveWindowRescueMaxOverlapCostFraction,
+    float lumenParentAnchorOneRealPositiveWindowRescueMaxSoftPenaltyFraction,
+    float lumenParentAnchorOneRealPositiveWindowRescueMaxBridgeValleyRatio,
+    int lumenParentAnchorOneRealPositiveWindowRescueMinRealVoxels,
+    bool lumenCleanTwoRealDuplicateBypassEnabled,
+    float lumenCleanTwoRealDuplicateBypassMinImageGain,
+    float lumenCleanTwoRealDuplicateBypassMaxBridgeValleyRatio,
+    float lumenCleanTwoRealDuplicateBypassMinBridgeGapWidth,
+    float lumenCleanTwoRealDuplicateBypassMinParentDistanceBalance,
+    float lumenCleanTwoRealDuplicateBypassMaxScore,
+    bool lumenCleanTwoRealCompactDuplicateBypassEnabled,
+    float lumenCleanTwoRealCompactDuplicateBypassMinImageGain,
+    float lumenCleanTwoRealCompactDuplicateBypassMaxBridgeValleyRatio,
+    float lumenCleanTwoRealCompactDuplicateBypassMaxOverlapCostFraction,
+    float lumenCleanTwoRealCompactDuplicateBypassMaxSoftPenaltyFraction,
+    float lumenCleanTwoRealCompactDuplicateBypassMinParentDistanceBalance,
+    float lumenCleanTwoRealCompactDuplicateBypassMaxScore,
+    bool lumenRejectNonWindowLowShapeOverlapDuplicate,
+    float lumenNonWindowLowShapeMaxParentShape,
+    float lumenNonWindowLowShapeMinOverlapCost,
+    float lumenNonWindowLowShapeMaxBridgeGapWidth,
+    bool lumenReanchorNonParentDuplicateToOtherDaughter,
+    float lumenNonParentDuplicateReanchorMinImageGain,
+    float lumenNonParentDuplicateReanchorMaxBridgeValleyRatio,
+    float lumenNonParentDuplicateReanchorMinBridgeGapWidth,
+    float lumenNonParentDuplicateReanchorMinMove,
+    float lumenNonParentDuplicateReanchorMinParentDistanceBalance)
 {
     const auto noop = [](bool) {};
     if (cellIndex >= cells.size()) return {0.0, noop};
@@ -3890,6 +3967,12 @@ CostCallbackPair Frame::trySplitCellPhased(
     std::vector<cv::Mat> bestSynth;
     std::vector<double> bestPerSlice;
     double bestImageCost = 0.0;
+    std::vector<Ellipsoid> seedLockedCells;
+    std::vector<cv::Mat> seedLockedSynth;
+    std::vector<double> seedLockedPerSlice;
+    double seedLockedImageCost = 0.0;
+    double seedLockedTotal = std::numeric_limits<double>::infinity();
+    bool hasSeedLockedState = false;
     cv::Point3f bestSeedD1{0, 0, 0};
     cv::Point3f bestSeedD2{0, 0, 0};
     std::string bestLabel;
@@ -4242,6 +4325,13 @@ CostCallbackPair Frame::trySplitCellPhased(
               << " seed2=(" << bestSeedD2.x << "," << bestSeedD2.y << "," << bestSeedD2.z << ")"
               << std::endl;
 
+    seedLockedCells = bestCells;
+    seedLockedSynth = bestSynth;
+    seedLockedPerSlice = bestPerSlice;
+    seedLockedImageCost = bestImageCost;
+    seedLockedTotal = bestTotal;
+    hasSeedLockedState = true;
+
     // --- 4b. Final refine burn-in on the winning candidate ---
     // The candidate loop runs a short (~20 iter) burn-in per candidate so
     // the K=5 comparison is cheap. Now that we've picked a winner, give it
@@ -4483,6 +4573,105 @@ CostCallbackPair Frame::trySplitCellPhased(
     // replaced them during evaluation).
     const size_t d1IdxBest = bestCells.size() - 2;
     const size_t d2IdxBest = bestCells.size() - 1;
+    if (hasSeedLockedState &&
+        lumenParentAnchorOneRealSeedLockOnRefitCollapse &&
+        bestLabel == "cell_lumen_primary" &&
+        lumenProposal != nullptr &&
+        seedLockedCells.size() == bestCells.size()) {
+        auto seedLockIsRealLumenCandidateId = [](int candidateId) {
+            return candidateId >= 0 && candidateId < 1000000000;
+        };
+        const bool seedLockOneRealCandidate =
+            lumenProposal->parentAnchored &&
+            (seedLockIsRealLumenCandidateId(lumenProposal->candidateIdA) !=
+             seedLockIsRealLumenCandidateId(lumenProposal->candidateIdB));
+        const bool seedLockCleanFuture =
+            lumenProposal->windowBothDaughtersSupported >= 2 &&
+            lumenProposal->windowMissingDaughterCount == 0 &&
+            lumenProposal->windowParentPersists == 0;
+        const float seedLockScoreWithoutWindow =
+            lumenProposal->elongation +
+            std::max(0.0f, lumenProposal->balancedWindowBonus);
+        const cv::Point3f refitD1Pos(bestCells[d1IdxBest].getX(),
+                                     bestCells[d1IdxBest].getY(),
+                                     bestCells[d1IdxBest].getZ());
+        const cv::Point3f refitD2Pos(bestCells[d2IdxBest].getX(),
+                                     bestCells[d2IdxBest].getY(),
+                                     bestCells[d2IdxBest].getZ());
+        const float seedAxisForLock =
+            static_cast<float>(cv::norm(bestSeedD2 - bestSeedD1));
+        const float finalAxisForLock =
+            static_cast<float>(cv::norm(refitD2Pos - refitD1Pos));
+        const float finalSeedAxisRatio =
+            seedAxisForLock > 1e-3f ? finalAxisForLock / seedAxisForLock : 1.0f;
+        const bool refitCollapsedSeed =
+            seedAxisForLock >= std::max(
+                0.0f, lumenParentAnchorOneRealSeedLockMinSeedSeparation) &&
+            finalSeedAxisRatio <= std::clamp(
+                lumenParentAnchorOneRealSeedLockMaxFinalSeedAxisRatio,
+                0.0f, 1.0f);
+        const size_t seedD1Idx = seedLockedCells.size() - 2;
+        const size_t seedD2Idx = seedLockedCells.size() - 1;
+        const bool seedLockUseCellLumenGateParams =
+            bestLabel == "cell_lumen_primary" && lumenUseDedicatedCostGate;
+        std::string seedBioReason;
+        const bool seedBioOk =
+            bioCheckDaughters(seedLockedCells[seedD1Idx],
+                              seedLockedCells[seedD2Idx],
+                              refParentVolume, srcMaxR,
+                              seedLockedCells, seedD1Idx, seedD2Idx,
+                              probConfig, seedBioReason,
+                              seedLockUseCellLumenGateParams && lumenSkipExistingCellBuriedCheck,
+                              seedLockUseCellLumenGateParams && lumenSkipNeighborBridgeCheck);
+        if (seedLockOneRealCandidate &&
+            seedLockCleanFuture &&
+            seedLockScoreWithoutWindow <=
+                std::max(0.0f, lumenParentAnchorOneRealSeedLockMaxScore) &&
+            refitCollapsedSeed &&
+            seedBioOk) {
+            std::cout << "[Split CellLumen Seed Lock] " << parentName
+                      << " reason=parent_anchor_one_real_refit_collapse"
+                      << " seedAxisLen=" << seedAxisForLock
+                      << " finalAxisLen=" << finalAxisForLock
+                      << " finalSeedAxisRatio=" << finalSeedAxisRatio
+                      << " maxFinalSeedAxisRatio="
+                      << lumenParentAnchorOneRealSeedLockMaxFinalSeedAxisRatio
+                      << " seedTotal=" << seedLockedTotal
+                      << " refitTotal=" << bestTotal
+                      << " baseline=" << baselineTotal
+                      << " scoreNoWindowBonus="
+                      << seedLockScoreWithoutWindow
+                      << " windowBoth="
+                      << lumenProposal->windowBothDaughtersSupported
+                      << " candidateIds=("
+                      << lumenProposal->candidateIdA << ","
+                      << lumenProposal->candidateIdB << ")"
+                      << " seed1=(" << bestSeedD1.x << ","
+                      << bestSeedD1.y << "," << bestSeedD1.z << ")"
+                      << " seed2=(" << bestSeedD2.x << ","
+                      << bestSeedD2.y << "," << bestSeedD2.z << ")"
+                      << std::endl;
+            bestCells = seedLockedCells;
+            bestSynth = seedLockedSynth;
+            bestPerSlice = seedLockedPerSlice;
+            bestImageCost = seedLockedImageCost;
+            bestTotal = seedLockedTotal;
+        } else if (seedLockOneRealCandidate &&
+                   seedLockCleanFuture &&
+                   refitCollapsedSeed) {
+            std::cout << "[Split CellLumen Seed Lock Skipped] " << parentName
+                      << " seedBioOk=" << (seedBioOk ? 1 : 0)
+                      << " seedBioReason=" << seedBioReason
+                      << " scoreNoWindowBonus="
+                      << seedLockScoreWithoutWindow
+                      << " maxScore="
+                      << lumenParentAnchorOneRealSeedLockMaxScore
+                      << " seedAxisLen=" << seedAxisForLock
+                      << " finalAxisLen=" << finalAxisForLock
+                      << " finalSeedAxisRatio=" << finalSeedAxisRatio
+                      << std::endl;
+        }
+    }
     const Ellipsoid &bestD1 = bestCells[d1IdxBest];
     const Ellipsoid &bestD2 = bestCells[d2IdxBest];
 
@@ -5421,6 +5610,7 @@ CostCallbackPair Frame::trySplitCellPhased(
     const double parentAnchorWeakImageGain =
         std::max(80.0, 2.5 * static_cast<double>(
                            std::max(0.0f, lumenPositiveGateMinImageGain)));
+    const double parentAnchorImageGain = std::max(0.0, -imageCostDiff);
     const bool parentAnchorCleanFutureDriftRescue =
         useCellLumenGateParams &&
         lumenParentAnchoredProposal &&
@@ -5431,6 +5621,9 @@ CostCallbackPair Frame::trySplitCellPhased(
         lumenProposal->neighborClaimPenalty <= 1e-5f &&
         lumenProposal->parentPersistencePenalty <= 1e-5f &&
         lumenProposal->elongation <= 0.0f &&
+        parentAnchorImageGain >= static_cast<double>(std::max(
+                                     0.0f,
+                                     lumenParentAnchorCleanFutureDriftRescueMinImageGain)) &&
         imageCostDiff <= -30.0 &&
         overlapCostDiff <= baselineImageCost * 0.25 &&
         finalAxisLen >= seedAxisLen * 1.50f &&
@@ -5543,11 +5736,401 @@ CostCallbackPair Frame::trySplitCellPhased(
         restoreLiveParent();
         return {0.0, noop};
     }
-    const double duplicateImageGain = std::max(0.0, -imageCostDiff);
+    const double duplicateImageGain = parentAnchorImageGain;
     const float duplicateGateParentShape =
         (lumenProposal != nullptr)
             ? lumenProposal->parentShapeElongation
             : 1.0f;
+    const float duplicateGatePriorScoreWithoutWindow =
+        (lumenProposal != nullptr)
+            ? lumenProposal->elongation +
+                  std::max(0.0f, lumenProposal->balancedWindowBonus)
+            : std::numeric_limits<float>::infinity();
+    const bool parentAnchorOneRealCleanWindowForWeakGain =
+        lumenParentAnchorOneRealCandidate &&
+        lumenProposal != nullptr &&
+        lumenProposal->windowBothDaughtersSupported >= 2 &&
+        lumenProposal->windowMissingDaughterCount == 0 &&
+        lumenProposal->windowParentPersists == 0;
+    const bool parentAnchorOneRealPartialWindowForWeakGain =
+        lumenParentAnchorOneRealCandidate &&
+        lumenProposal != nullptr &&
+        lumenProposal->windowBothDaughtersSupported >= 1 &&
+        lumenProposal->windowMissingDaughterCount <= 1 &&
+        lumenProposal->windowParentPersists <= 1 &&
+        !parentAnchorOneRealCleanWindowForWeakGain &&
+        (!lumenParentAnchorWeakGainPartialRequireConflictEvidence ||
+         lumenProposal->windowMissingDaughterCount > 0 ||
+         lumenProposal->windowParentPersists > 0);
+    const bool parentAnchorOneRealWeakGainCleanWindowRescue =
+        lumenParentAnchorWeakGainDuplicateRescueEnabled &&
+        parentAnchorOneRealCleanWindowForWeakGain &&
+        lumenWeakPositiveSupportAllowed &&
+        lumenProposal->parentDistanceBalance >= 0.90f &&
+        lumenProposal->parentPersistencePenalty <= 1e-5f &&
+        lumenProposal->neighborClaimPenalty <= 1e-5f &&
+        lumenProposal->continuationClaimSoftPenalty <= 1e-5f &&
+        duplicateGateParentShape >=
+            std::max(1.0f, lumenParentAnchorWeakGainCleanMinShape) &&
+        duplicateGatePriorScoreWithoutWindow <=
+            std::max(0.0f, lumenParentAnchorWeakGainCleanMaxScore) &&
+        bridgeCostRescueValleyFromBright <=
+            std::max(0.0f, lumenParentAnchorWeakGainMaxBridgeValleyRatio) &&
+        overlapCostDiff <=
+            baselineImageCost *
+                std::max(0.0f,
+                         lumenParentAnchorWeakGainCleanMaxOverlapCostFraction) &&
+        duplicateImageGain >=
+            static_cast<double>(std::max(
+                0.0f, lumenParentAnchorWeakGainCleanMinImageGain));
+    const bool parentAnchorOneRealWeakGainPartialWindowRescue =
+        lumenParentAnchorWeakGainDuplicateRescueEnabled &&
+        parentAnchorOneRealPartialWindowForWeakGain &&
+        lumenWeakPositiveSupportAllowed &&
+        lumenProposal->parentDistanceBalance >= 0.90f &&
+        lumenProposal->parentPersistencePenalty <= 1e-5f &&
+        lumenProposal->neighborClaimPenalty <= 1e-5f &&
+        lumenProposal->continuationClaimSoftPenalty <= 1e-5f &&
+        duplicateGateParentShape >=
+            std::max(1.0f, lumenParentAnchorWeakGainPartialMinShape) &&
+        duplicateGatePriorScoreWithoutWindow <=
+            std::max(0.0f, lumenParentAnchorWeakGainPartialMaxScore) &&
+        bridgeCostRescueValleyFromBright <=
+            std::max(0.0f, lumenParentAnchorWeakGainMaxBridgeValleyRatio) &&
+        overlapCostDiff <=
+            baselineImageCost *
+                std::max(0.0f,
+                         lumenParentAnchorWeakGainPartialMaxOverlapCostFraction) &&
+        duplicateImageGain >=
+            static_cast<double>(std::max(
+                0.0f, lumenParentAnchorWeakGainPartialMinImageGain));
+    const bool parentAnchorOneRealCompactPositiveWindowRescue =
+        lumenParentAnchorCompactPositiveOneRealRescueEnabled &&
+        parentAnchorOneRealCleanWindowForWeakGain &&
+        lumenWeakPositiveSupportAllowed &&
+        lumenProposal->parentDistanceBalance >= 0.90f &&
+        lumenProposal->parentPersistencePenalty <= 1e-5f &&
+        lumenProposal->neighborClaimPenalty <= 1e-5f &&
+        lumenProposal->continuationClaimSoftPenalty <= 1e-5f &&
+        duplicateGateParentShape <=
+            std::max(1.0f,
+                     lumenParentAnchorCompactPositiveOneRealMaxParentShape) &&
+        duplicateGatePriorScoreWithoutWindow >=
+            lumenParentAnchorCompactPositiveOneRealMinPriorScore &&
+        duplicateGatePriorScoreWithoutWindow <=
+            lumenParentAnchorCompactPositiveOneRealMaxPriorScore &&
+        bridgeCostRescueValleyFromBright <=
+            std::max(
+                0.0f,
+                lumenParentAnchorCompactPositiveOneRealMaxBridgeValleyRatio) &&
+        overlapCostDiff <=
+            baselineImageCost *
+                std::max(
+                    0.0f,
+                    lumenParentAnchorCompactPositiveOneRealMaxOverlapCostFraction) &&
+        duplicateImageGain >=
+            static_cast<double>(std::max(
+                0.0f,
+                lumenParentAnchorCompactPositiveOneRealMinImageGain));
+    const bool parentAnchorOneRealWeakGainWindowRescue =
+        parentAnchorOneRealWeakGainCleanWindowRescue ||
+        parentAnchorOneRealWeakGainPartialWindowRescue ||
+        parentAnchorOneRealCompactPositiveWindowRescue;
+    if (parentAnchorOneRealWeakGainWindowRescue) {
+        std::cout << "[Split Gate Rescue CellLumen parent anchor one-real weak-gain] "
+                  << parentName
+                  << " mode="
+                  << (parentAnchorOneRealCompactPositiveWindowRescue
+                          ? "compact_positive_clean_window"
+                          : (parentAnchorOneRealWeakGainCleanWindowRescue
+                                 ? "clean_window"
+                                 : "partial_window"))
+                  << " imageGain=" << duplicateImageGain
+                  << " minImageGain="
+                  << (parentAnchorOneRealCompactPositiveWindowRescue
+                          ? lumenParentAnchorCompactPositiveOneRealMinImageGain
+                          : (parentAnchorOneRealWeakGainCleanWindowRescue
+                          ? lumenParentAnchorWeakGainCleanMinImageGain
+                          : lumenParentAnchorWeakGainPartialMinImageGain))
+                  << " overlapDiff=" << overlapCostDiff
+                  << " bridgeValleyFromBright="
+                  << bridgeCostRescueValleyFromBright
+                  << " parentShapeElong=" << duplicateGateParentShape
+                  << " priorScoreNoWindowBonus="
+                  << duplicateGatePriorScoreWithoutWindow
+                  << " windowBoth="
+                  << lumenProposal->windowBothDaughtersSupported
+                  << " windowMissing="
+                  << lumenProposal->windowMissingDaughterCount
+                  << " windowParentPersists="
+                  << lumenProposal->windowParentPersists
+                  << std::endl;
+    }
+    const bool parentAnchorOneRealPostRefitGuardActive =
+        useCellLumenGateParams &&
+        lumenParentAnchorOneRealCandidate &&
+        lumenParentAnchorOneRealPostRefitGuardEnabled &&
+        lumenProposal != nullptr &&
+        !parentAnchorCleanFutureDriftRescue;
+    const bool parentAnchorOneRealCanReanchor =
+        lumenAllowWindowBackedDuplicateHandoff &&
+        lumenProposal != nullptr &&
+        (isRealLumenCandidateId(lumenProposal->candidateIdA) !=
+         isRealLumenCandidateId(lumenProposal->candidateIdB));
+    const bool parentAnchorOneRealAIsReal =
+        lumenProposal != nullptr &&
+        isRealLumenCandidateId(lumenProposal->candidateIdA);
+    const cv::Point3f parentAnchorOneRealReanchorPos =
+        parentAnchorOneRealAIsReal
+            ? (lumenProposal != nullptr ? lumenProposal->d1Pos : bestD1Pos)
+            : (lumenProposal != nullptr ? lumenProposal->d2Pos : bestD2Pos);
+    const bool parentAnchorOneRealRefitDriftRescue =
+        parentAnchorOneRealPostRefitGuardActive &&
+        lumenParentAnchorOneRealRefitDriftRescueEnabled &&
+        parentAnchorOneRealCleanWindowForWeakGain &&
+        duplicateImageGain >=
+            static_cast<double>(std::max(
+                0.0f,
+                lumenParentAnchorOneRealRefitDriftRescueMinImageGain)) &&
+        bridgeCostRescueValleyFromBright <=
+            std::max(
+                0.0f,
+                lumenParentAnchorOneRealRefitDriftRescueMaxBridgeValleyRatio) &&
+        lumenBridgeGapWidth >=
+            std::max(
+                0.0f,
+                lumenParentAnchorOneRealRefitDriftRescueMinBridgeGapWidth) &&
+        duplicateGateParentShape >=
+            std::max(
+                1.0f,
+                lumenParentAnchorOneRealRefitDriftRescueMinParentShape) &&
+        duplicateGatePriorScoreWithoutWindow <=
+            std::max(
+                0.0f,
+                lumenParentAnchorOneRealRefitDriftRescueMaxScore);
+    const bool parentAnchorOneRealExcessRefitDrift =
+        parentAnchorOneRealPostRefitGuardActive &&
+        lumenParentAnchorOneRealMaxRefitDrift >= 0.0f &&
+        snapshotDriftMax > lumenParentAnchorOneRealMaxRefitDrift &&
+        lumenProposal->windowParentPersists <= 0 &&
+        !parentAnchorOneRealRefitDriftRescue;
+    if (parentAnchorOneRealRefitDriftRescue &&
+        snapshotDriftMax > lumenParentAnchorOneRealMaxRefitDrift) {
+        std::cout << "[Split Gate Rescue CellLumen parent anchor one-real refit-drift] "
+                  << parentName
+                  << " maxRefitDrift=" << snapshotDriftMax
+                  << " allowedMaxRefitDrift="
+                  << lumenParentAnchorOneRealMaxRefitDrift
+                  << " imageGain=" << duplicateImageGain
+                  << " bridgeGapWidth=" << lumenBridgeGapWidth
+                  << " bridgeValleyFromBright="
+                  << bridgeCostRescueValleyFromBright
+                  << " parentShapeElong=" << duplicateGateParentShape
+                  << " priorScoreNoWindowBonus="
+                  << duplicateGatePriorScoreWithoutWindow
+                  << " windowBoth="
+                  << lumenProposal->windowBothDaughtersSupported
+                  << " candidateIds=("
+                  << lumenProposal->candidateIdA << ","
+                  << lumenProposal->candidateIdB << ")"
+                  << std::endl;
+    }
+    if (parentAnchorOneRealExcessRefitDrift) {
+        std::cout << "[Split Reject CellLumen parent anchor one-real refit-drift guard] "
+                  << parentName
+                  << " drift1=" << drift1
+                  << " drift2=" << drift2
+                  << " maxRefitDrift=" << snapshotDriftMax
+                  << " allowedMaxRefitDrift="
+                  << lumenParentAnchorOneRealMaxRefitDrift
+                  << " imageGain=" << duplicateImageGain
+                  << " overlapDiff=" << overlapCostDiff
+                  << " bridgeValleyFromBright="
+                  << bridgeCostRescueValleyFromBright
+                  << " windowBoth="
+                  << lumenProposal->windowBothDaughtersSupported
+                  << " windowMissing="
+                  << lumenProposal->windowMissingDaughterCount
+                  << " windowParentPersists="
+                  << lumenProposal->windowParentPersists
+                  << " candidateIds=("
+                  << lumenProposal->candidateIdA << ","
+                  << lumenProposal->candidateIdB << ")"
+                  << " reanchor="
+                  << (parentAnchorOneRealCanReanchor ? 1 : 0)
+                  << " reanchorPos=(" << parentAnchorOneRealReanchorPos.x
+                  << "," << parentAnchorOneRealReanchorPos.y << ","
+                  << parentAnchorOneRealReanchorPos.z << ")"
+                  << std::endl;
+        if (parentAnchorOneRealCanReanchor) {
+            restoreLiveParentAt(parentAnchorOneRealReanchorPos,
+                                "one_real_refit_drift_guard");
+        } else {
+            restoreLiveParent();
+        }
+        return {0.0, noop};
+    }
+    const bool parentAnchorOneRealOverlapNoGapDuplicate =
+        parentAnchorOneRealPostRefitGuardActive &&
+        lumenParentAnchorOneRealOverlapNoGapDuplicateEnabled &&
+        parentAnchorOneRealCleanWindowForWeakGain &&
+        overlapCostDiff >=
+            static_cast<double>(std::max(
+                0.0f,
+                lumenParentAnchorOneRealOverlapNoGapDuplicateMinOverlapCost)) &&
+        lumenBridgeGapWidth <=
+            lumenParentAnchorOneRealOverlapNoGapDuplicateMaxBridgeGapWidth &&
+        bridgeCostRescueValleyFromBright >=
+            std::max(
+                0.0f,
+                lumenParentAnchorOneRealOverlapNoGapDuplicateMinBridgeValleyRatio) &&
+        duplicateGateParentShape <=
+            std::max(
+                1.0f,
+                lumenParentAnchorOneRealOverlapNoGapDuplicateMaxParentShape) &&
+        duplicateImageGain >=
+            static_cast<double>(std::max(
+                0.0f,
+                lumenParentAnchorOneRealOverlapNoGapDuplicateMinImageGain)) &&
+        !parentAnchorCleanFutureDriftRescue;
+    if (parentAnchorOneRealOverlapNoGapDuplicate) {
+        std::cout << "[Split Reject CellLumen parent anchor one-real overlap-no-gap duplicate] "
+                  << parentName
+                  << " seedAxisLen=" << seedAxisLen
+                  << " finalAxisLen=" << finalAxisLen
+                  << " totalDiff=" << costDiff
+                  << " imageDiff=" << imageCostDiff
+                  << " overlapDiff=" << overlapCostDiff
+                  << " imageGain=" << duplicateImageGain
+                  << " bridgeGapWidth=" << lumenBridgeGapWidth
+                  << " bridgeValleyFromBright="
+                  << bridgeCostRescueValleyFromBright
+                  << " parentShapeElong=" << duplicateGateParentShape
+                  << " priorScoreNoWindowBonus="
+                  << duplicateGatePriorScoreWithoutWindow
+                  << " candidateIds=("
+                  << lumenProposal->candidateIdA << ","
+                  << lumenProposal->candidateIdB << ")"
+                  << " reanchor="
+                  << (parentAnchorOneRealCanReanchor ? 1 : 0)
+                  << " reanchorPos=(" << parentAnchorOneRealReanchorPos.x
+                  << "," << parentAnchorOneRealReanchorPos.y << ","
+                  << parentAnchorOneRealReanchorPos.z << ")"
+                  << std::endl;
+        if (parentAnchorOneRealCanReanchor) {
+            restoreLiveParentAt(parentAnchorOneRealReanchorPos,
+                                "one_real_overlap_no_gap_duplicate");
+        } else {
+            restoreLiveParent();
+        }
+        return {0.0, noop};
+    }
+    const bool parentAnchorOneRealMinImageGainGuardWindow =
+        parentAnchorOneRealCleanWindowForWeakGain ||
+        parentAnchorOneRealPartialWindowForWeakGain;
+    const double parentAnchorOneRealMinImageGainForGuard =
+        parentAnchorOneRealCleanWindowForWeakGain
+            ? static_cast<double>(std::max(
+                  0.0f, lumenParentAnchorOneRealCleanMinImageGain))
+            : (parentAnchorOneRealPartialWindowForWeakGain
+                   ? static_cast<double>(std::max(
+                         0.0f, lumenParentAnchorOneRealPartialMinImageGain))
+                   : 0.0);
+    const bool parentAnchorOneRealBelowMinImageGain =
+        useCellLumenGateParams &&
+        lumenParentAnchorOneRealCandidate &&
+        lumenParentAnchorOneRealMinImageGainGuardEnabled &&
+        parentAnchorOneRealMinImageGainGuardWindow &&
+        parentAnchorOneRealMinImageGainForGuard > 0.0 &&
+        imageCostDiff < 0.0 &&
+        duplicateImageGain < parentAnchorOneRealMinImageGainForGuard &&
+        !parentAnchorCleanFutureDriftRescue;
+    if (parentAnchorOneRealBelowMinImageGain) {
+        std::cout << "[Split Reject CellLumen parent anchor one-real min-image-gain guard] "
+                  << parentName
+                  << " imageGain=" << duplicateImageGain
+                  << " minImageGain="
+                  << parentAnchorOneRealMinImageGainForGuard
+                  << " windowMode="
+                  << (parentAnchorOneRealCleanWindowForWeakGain ? "clean"
+                                                               : "partial")
+                  << " totalDiff=" << costDiff
+                  << " imageDiff=" << imageCostDiff
+                  << " overlapDiff=" << overlapCostDiff
+                  << " bridgeGapWidth=" << lumenBridgeGapWidth
+                  << " bridgeValleyFromBright="
+                  << bridgeCostRescueValleyFromBright
+                  << " parentShapeElong=" << duplicateGateParentShape
+                  << " priorScoreNoWindowBonus="
+                  << duplicateGatePriorScoreWithoutWindow
+                  << " windowBoth="
+                  << lumenProposal->windowBothDaughtersSupported
+                  << " windowMissing="
+                  << lumenProposal->windowMissingDaughterCount
+                  << " windowParentPersists="
+                  << lumenProposal->windowParentPersists
+                  << " reanchor="
+                  << (parentAnchorOneRealCanReanchor ? 1 : 0)
+                  << " reanchorPos=(" << parentAnchorOneRealReanchorPos.x
+                  << "," << parentAnchorOneRealReanchorPos.y << ","
+                  << parentAnchorOneRealReanchorPos.z << ")"
+                  << " candidateIds=("
+                  << lumenProposal->candidateIdA << ","
+                  << lumenProposal->candidateIdB << ")"
+                  << std::endl;
+        if (parentAnchorOneRealCanReanchor) {
+            restoreLiveParentAt(parentAnchorOneRealReanchorPos,
+                                "one_real_min_image_gain_guard");
+        } else {
+            restoreLiveParent();
+        }
+        return {0.0, noop};
+    }
+    const bool parentAnchorOneRealCleanHighOverlapDuplicate =
+        parentAnchorOneRealPostRefitGuardActive &&
+        parentAnchorOneRealCleanWindowForWeakGain &&
+        lumenParentAnchorOneRealCleanHighOverlapMinCost >= 0.0f &&
+        lumenParentAnchorOneRealCleanHighOverlapMinImageGain >= 0.0f &&
+        lumenParentAnchorOneRealCleanHighOverlapMaxBridgeValleyRatio >= 0.0f &&
+        overlapCostDiff >=
+            lumenParentAnchorOneRealCleanHighOverlapMinCost &&
+        duplicateImageGain >=
+            lumenParentAnchorOneRealCleanHighOverlapMinImageGain &&
+        bridgeCostRescueValleyFromBright >
+            lumenParentAnchorOneRealCleanHighOverlapMaxBridgeValleyRatio;
+    if (parentAnchorOneRealCleanHighOverlapDuplicate) {
+        std::cout << "[Split Reject CellLumen parent anchor one-real clean high-overlap guard] "
+                  << parentName
+                  << " imageGain=" << duplicateImageGain
+                  << " minImageGain="
+                  << lumenParentAnchorOneRealCleanHighOverlapMinImageGain
+                  << " overlapDiff=" << overlapCostDiff
+                  << " minOverlapCost="
+                  << lumenParentAnchorOneRealCleanHighOverlapMinCost
+                  << " bridgeValleyFromBright="
+                  << bridgeCostRescueValleyFromBright
+                  << " maxBridgeValleyRatio="
+                  << lumenParentAnchorOneRealCleanHighOverlapMaxBridgeValleyRatio
+                  << " parentShapeElong=" << duplicateGateParentShape
+                  << " windowBoth="
+                  << lumenProposal->windowBothDaughtersSupported
+                  << " candidateIds=("
+                  << lumenProposal->candidateIdA << ","
+                  << lumenProposal->candidateIdB << ")"
+                  << " reanchor="
+                  << (parentAnchorOneRealCanReanchor ? 1 : 0)
+                  << " reanchorPos=(" << parentAnchorOneRealReanchorPos.x
+                  << "," << parentAnchorOneRealReanchorPos.y << ","
+                  << parentAnchorOneRealReanchorPos.z << ")"
+                  << std::endl;
+        if (parentAnchorOneRealCanReanchor) {
+            restoreLiveParentAt(parentAnchorOneRealReanchorPos,
+                                "one_real_clean_high_overlap_guard");
+        } else {
+            restoreLiveParent();
+        }
+        return {0.0, noop};
+    }
     const bool parentAnchorOneRealWeakGainOverlapDuplicate =
         useCellLumenGateParams &&
         lumenParentAnchorOneRealCandidate &&
@@ -5558,6 +6141,7 @@ CostCallbackPair Frame::trySplitCellPhased(
         lumenBridgeGapWidth < 0.0f &&
         bridgeCostRescueValleyFromBright > 0.60f &&
         duplicateGateParentShape < 2.10f &&
+        !parentAnchorOneRealWeakGainWindowRescue &&
         !parentAnchorCleanFutureDriftRescue;
     if (parentAnchorOneRealWeakGainOverlapDuplicate) {
         std::cout << "[Split Reject CellLumen parent anchor one-real weak-gain overlap duplicate] "
@@ -5598,6 +6182,7 @@ CostCallbackPair Frame::trySplitCellPhased(
         overlapCostDiff > std::max(20000.0, duplicateImageGain * 5.0) &&
         lumenBridgeGapWidth < 1.0f &&
         bridgeCostRescueValleyFromBright > 0.60f &&
+        !parentAnchorOneRealWeakGainWindowRescue &&
         !parentAnchorCleanFutureDriftRescue;
     if (parentAnchorOneRealSevereOverlapDuplicate) {
         std::cout << "[Split Reject CellLumen parent anchor one-real severe-overlap duplicate] "
@@ -5715,6 +6300,7 @@ CostCallbackPair Frame::trySplitCellPhased(
         overlapCostDiff > std::max(8000.0, duplicateImageGain * 6.0) &&
         lumenBridgeGapWidth < 2.0f &&
         bridgeCostRescueValleyFromBright > 0.80f &&
+        !parentAnchorOneRealWeakGainWindowRescue &&
         !parentAnchorCleanFutureDriftRescue;
     if (parentAnchorOneRealWeakPositiveOverlapDuplicate) {
         std::cout << "[Split Reject CellLumen parent anchor one-real weak-positive overlap duplicate] "
@@ -5859,6 +6445,184 @@ CostCallbackPair Frame::trySplitCellPhased(
     };
     scanDaughterExistingDuplicate(bestD1, d1IdxBest);
     scanDaughterExistingDuplicate(bestD2, d2IdxBest);
+    const double earlyLumenPositiveGateSoftPenaltyFraction =
+        (baselineImageCost > 1e-9)
+            ? lumenSoftGatePenaltyCost / baselineImageCost
+            : std::numeric_limits<double>::infinity();
+    const float earlyLumenPriorScore =
+        (lumenProposal != nullptr)
+            ? lumenProposal->elongation
+            : std::numeric_limits<float>::infinity();
+    const float earlyLumenPriorScoreWithoutWindowBonus =
+        (lumenProposal != nullptr)
+            ? earlyLumenPriorScore +
+                  std::max(0.0f, lumenProposal->balancedWindowBonus)
+            : earlyLumenPriorScore;
+    const bool earlyUseCellLumenImageGate =
+        useCellLumenCostGate && lumenUseImageCostGate;
+    const bool earlyCleanFutureWindowSupport =
+        earlyUseCellLumenImageGate &&
+        lumenProposal != nullptr &&
+        lumenProposal->candidateIdA >= 0 &&
+        lumenProposal->candidateIdB >= 0 &&
+        lumenProposal->windowBothDaughtersSupported >= 2 &&
+        lumenProposal->windowMissingDaughterCount == 0 &&
+        lumenProposal->windowParentPersists == 0;
+    const bool continuationConflictDuplicateRescue =
+        lumenAllowWindowBackedDuplicateHandoff &&
+        lumenWeakPositiveSupportAllowed &&
+        earlyCleanFutureWindowSupport &&
+        lumenProposal != nullptr &&
+        lumenProposal->futureContinuationConflictRescued &&
+        lumenProposal->parentPersistencePenalty <= 1e-5f &&
+        lumenProposal->neighborClaimPenalty <= 1e-5f &&
+        lumenProposal->continuationClaimSoftPenalty >= 15.0f &&
+        lumenProposal->parentDistanceBalance >= 0.45f &&
+        imageCostDiff <= -20.0 &&
+        overlapCostDiff <= baselineImageCost * 0.70 &&
+        bridgeCostRescueValleyFromBright <= 0.70f &&
+        earlyLumenPriorScoreWithoutWindowBonus <= 50.0f &&
+        earlyLumenPositiveGateSoftPenaltyFraction <= 0.02;
+    const bool weakNeighborHandoffDuplicateRescue =
+        lumenAllowWindowBackedDuplicateHandoff &&
+        lumenWeakPositiveSupportAllowed &&
+        earlyCleanFutureWindowSupport &&
+        lumenProposal != nullptr &&
+        !lumenParentAnchoredProposal &&
+        lumenProposal->elongatedParentRescued &&
+        lumenProposal->parentDistanceBalance < 0.68f &&
+        lumenProposal->parentPersistencePenalty <= 1e-5f &&
+        lumenProposal->neighborClaimPenalty <= 1e-5f &&
+        lumenProposal->continuationClaimSoftPenalty <= 1e-5f &&
+        imageCostDiff <= 0.0 &&
+        overlapCostDiff <= baselineImageCost * 0.70;
+    const bool cleanTwoRealDuplicateBypass =
+        lumenCleanTwoRealDuplicateBypassEnabled &&
+        lumenAllowWindowBackedDuplicateHandoff &&
+        lumenWeakPositiveSupportAllowed &&
+        earlyCleanFutureWindowSupport &&
+        lumenProposal != nullptr &&
+        !lumenParentAnchorOneRealCandidate &&
+        !lumenParentAnchoredProposal &&
+        isRealLumenCandidateId(lumenProposal->candidateIdA) &&
+        isRealLumenCandidateId(lumenProposal->candidateIdB) &&
+        daughterExistingDuplicate.close &&
+        costDiff > 0.0 &&
+        imageCostDiff < 0.0 &&
+        overlapCostDiff > std::max(2500.0, duplicateImageGain * 1.25) &&
+        duplicateImageGain >=
+            static_cast<double>(std::max(
+                0.0f, lumenCleanTwoRealDuplicateBypassMinImageGain)) &&
+        lumenBridgeGapWidth >=
+            lumenCleanTwoRealDuplicateBypassMinBridgeGapWidth &&
+        bridgeCostRescueValleyFromBright <=
+            lumenCleanTwoRealDuplicateBypassMaxBridgeValleyRatio &&
+        lumenProposal->parentDistanceBalance >=
+            lumenCleanTwoRealDuplicateBypassMinParentDistanceBalance &&
+        earlyLumenPriorScoreWithoutWindowBonus <=
+            lumenCleanTwoRealDuplicateBypassMaxScore &&
+        lumenProposal->balancedWindowBonus > 0.0f;
+    const bool compactCleanTwoRealDuplicateBypass =
+        lumenCleanTwoRealCompactDuplicateBypassEnabled &&
+        lumenAllowWindowBackedDuplicateHandoff &&
+        lumenWeakPositiveSupportAllowed &&
+        earlyCleanFutureWindowSupport &&
+        lumenProposal != nullptr &&
+        !lumenParentAnchorOneRealCandidate &&
+        !lumenParentAnchoredProposal &&
+        isRealLumenCandidateId(lumenProposal->candidateIdA) &&
+        isRealLumenCandidateId(lumenProposal->candidateIdB) &&
+        daughterExistingDuplicate.close &&
+        costDiff > 0.0 &&
+        imageCostDiff < 0.0 &&
+        overlapCostDiff > std::max(2500.0, duplicateImageGain * 1.25) &&
+        overlapCostDiff <=
+            baselineImageCost *
+                static_cast<double>(std::max(
+                    0.0f,
+                    lumenCleanTwoRealCompactDuplicateBypassMaxOverlapCostFraction)) &&
+        duplicateImageGain >=
+            static_cast<double>(std::max(
+                0.0f,
+                lumenCleanTwoRealCompactDuplicateBypassMinImageGain)) &&
+        bridgeCostRescueValleyFromBright <=
+            lumenCleanTwoRealCompactDuplicateBypassMaxBridgeValleyRatio &&
+        earlyLumenPositiveGateSoftPenaltyFraction <=
+            lumenCleanTwoRealCompactDuplicateBypassMaxSoftPenaltyFraction &&
+        lumenProposal->parentDistanceBalance >=
+            lumenCleanTwoRealCompactDuplicateBypassMinParentDistanceBalance &&
+        earlyLumenPriorScoreWithoutWindowBonus <=
+            lumenCleanTwoRealCompactDuplicateBypassMaxScore;
+    const bool windowBackedDuplicateHandoffRescue =
+        continuationConflictDuplicateRescue ||
+        weakNeighborHandoffDuplicateRescue ||
+        cleanTwoRealDuplicateBypass ||
+        compactCleanTwoRealDuplicateBypass;
+    if (cleanTwoRealDuplicateBypass) {
+        std::cout << "[Split Gate Rescue CellLumen clean two-real duplicate bypass] "
+                  << parentName
+                  << " daughter=" << daughterExistingDuplicate.daughterName
+                  << " other=" << daughterExistingDuplicate.otherName
+                  << " imageGain=" << duplicateImageGain
+                  << " minImageGain="
+                  << lumenCleanTwoRealDuplicateBypassMinImageGain
+                  << " totalDiff=" << costDiff
+                  << " imageDiff=" << imageCostDiff
+                  << " overlapDiff=" << overlapCostDiff
+                  << " bridgeGapWidth=" << lumenBridgeGapWidth
+                  << " minBridgeGapWidth="
+                  << lumenCleanTwoRealDuplicateBypassMinBridgeGapWidth
+                  << " bridgeValleyFromBright="
+                  << bridgeCostRescueValleyFromBright
+                  << " maxBridgeValleyRatio="
+                  << lumenCleanTwoRealDuplicateBypassMaxBridgeValleyRatio
+                  << " parentDistBalance="
+                  << lumenProposal->parentDistanceBalance
+                  << " minParentDistBalance="
+                  << lumenCleanTwoRealDuplicateBypassMinParentDistanceBalance
+                  << " priorScoreNoWindowBonus="
+                  << earlyLumenPriorScoreWithoutWindowBonus
+                  << " maxScore="
+                  << lumenCleanTwoRealDuplicateBypassMaxScore
+                  << " candidateIds=("
+                  << lumenProposal->candidateIdA << ","
+                  << lumenProposal->candidateIdB << ")"
+                  << std::endl;
+    }
+    if (compactCleanTwoRealDuplicateBypass) {
+        std::cout << "[Split Gate Rescue CellLumen clean two-real compact duplicate bypass] "
+                  << parentName
+                  << " daughter=" << daughterExistingDuplicate.daughterName
+                  << " other=" << daughterExistingDuplicate.otherName
+                  << " imageGain=" << duplicateImageGain
+                  << " minImageGain="
+                  << lumenCleanTwoRealCompactDuplicateBypassMinImageGain
+                  << " totalDiff=" << costDiff
+                  << " imageDiff=" << imageCostDiff
+                  << " overlapDiff=" << overlapCostDiff
+                  << " maxOverlapFraction="
+                  << lumenCleanTwoRealCompactDuplicateBypassMaxOverlapCostFraction
+                  << " softPenaltyFraction="
+                  << earlyLumenPositiveGateSoftPenaltyFraction
+                  << " maxSoftPenaltyFraction="
+                  << lumenCleanTwoRealCompactDuplicateBypassMaxSoftPenaltyFraction
+                  << " bridgeValleyFromBright="
+                  << bridgeCostRescueValleyFromBright
+                  << " maxBridgeValleyRatio="
+                  << lumenCleanTwoRealCompactDuplicateBypassMaxBridgeValleyRatio
+                  << " parentDistBalance="
+                  << lumenProposal->parentDistanceBalance
+                  << " minParentDistBalance="
+                  << lumenCleanTwoRealCompactDuplicateBypassMinParentDistanceBalance
+                  << " priorScoreNoWindowBonus="
+                  << earlyLumenPriorScoreWithoutWindowBonus
+                  << " maxScore="
+                  << lumenCleanTwoRealCompactDuplicateBypassMaxScore
+                  << " candidateIds=("
+                  << lumenProposal->candidateIdA << ","
+                  << lumenProposal->candidateIdB << ")"
+                  << std::endl;
+    }
     const bool daughterExistingOverlapDuplicate =
         useCellLumenGateParams &&
         bestIsCellLumenPrior &&
@@ -5866,6 +6630,8 @@ CostCallbackPair Frame::trySplitCellPhased(
         imageCostDiff < 0.0 &&
         daughterExistingDuplicate.close &&
         overlapCostDiff > std::max(2500.0, duplicateImageGain * 1.25) &&
+        !parentAnchorOneRealWeakGainWindowRescue &&
+        !windowBackedDuplicateHandoffRescue &&
         !parentAnchorCleanFutureDriftRescue;
 	    if (daughterExistingOverlapDuplicate) {
 	        const bool duplicateIsBestD1 =
@@ -5882,7 +6648,7 @@ CostCallbackPair Frame::trySplitCellPhased(
 	                            liveParent.getY(),
 	                            liveParent.getZ()) -
 	                nonDuplicateDaughterPos));
-	        const bool shouldReanchorTemporalDuplicateDaughter =
+	        const bool strictTemporalDuplicateDaughterReanchor =
 	            !lumenParentAnchorOneRealCandidate &&
 	            !lumenParentAnchoredProposal &&
 	            cleanWindowBackedLumenPrior &&
@@ -5899,6 +6665,29 @@ CostCallbackPair Frame::trySplitCellPhased(
 	            bridgeCostRescueValleyFromBright <= 0.50f &&
 	            duplicateImageGain >= 1200.0 &&
 	            nonDuplicateReanchorMove >= 12.0f;
+	        const bool strongNonParentDuplicateDaughterReanchor =
+	            lumenReanchorNonParentDuplicateToOtherDaughter &&
+	            !lumenParentAnchorOneRealCandidate &&
+	            !lumenParentAnchoredProposal &&
+	            cleanWindowBackedLumenPrior &&
+	            lumenProposal != nullptr &&
+	            duplicateIsOneBestDaughter &&
+	            lumenProposal->windowBothDaughtersSupported >= 2 &&
+	            lumenProposal->windowMissingDaughterCount == 0 &&
+	            lumenProposal->windowParentPersists == 0 &&
+	            lumenProposal->parentDistanceBalance >=
+	                lumenNonParentDuplicateReanchorMinParentDistanceBalance &&
+	            duplicateImageGain >=
+	                lumenNonParentDuplicateReanchorMinImageGain &&
+	            lumenBridgeGapWidth >=
+	                lumenNonParentDuplicateReanchorMinBridgeGapWidth &&
+	            bridgeCostRescueValleyFromBright <=
+	                lumenNonParentDuplicateReanchorMaxBridgeValleyRatio &&
+	            nonDuplicateReanchorMove >=
+	                lumenNonParentDuplicateReanchorMinMove;
+	        const bool shouldReanchorTemporalDuplicateDaughter =
+	            strictTemporalDuplicateDaughterReanchor ||
+	            strongNonParentDuplicateDaughterReanchor;
 	        std::cout << "[Split Reject CellLumen daughter-existing overlap duplicate] "
 	                  << parentName
 	                  << " daughter=" << daughterExistingDuplicate.daughterName
@@ -5930,6 +6719,8 @@ CostCallbackPair Frame::trySplitCellPhased(
 	                          : 1.0f)
 	                  << " reanchorTemporalDuplicate="
 	                  << (shouldReanchorTemporalDuplicateDaughter ? 1 : 0)
+	                  << " reanchorStrongNonParent="
+	                  << (strongNonParentDuplicateDaughterReanchor ? 1 : 0)
 	                  << " reanchorMove="
 	                  << nonDuplicateReanchorMove
 	                  << " reanchorPos=(" << nonDuplicateDaughterPos.x << ","
@@ -6489,7 +7280,7 @@ CostCallbackPair Frame::trySplitCellPhased(
             static_cast<double>(
                 lumenProposal->maxOverlapCostFractionOverride));
     }
-    const bool partialParentAnchorWindowSupport =
+    const bool basePartialParentAnchorWindowSupport =
         useCellLumenCostGate &&
         lumenParentAnchoredProposal &&
         lumenProposal != nullptr &&
@@ -6505,10 +7296,23 @@ CostCallbackPair Frame::trySplitCellPhased(
         bridgeCostRescueValleyFromBright <= 0.95f &&
         overlapCostDiff <= baselineImageCost * 1.05 &&
         snapshotDriftMax <= std::max(9.0f, finalAxisLen * 0.55f);
+    const bool partialParentAnchorWindowSupport =
+        basePartialParentAnchorWindowSupport ||
+        parentAnchorOneRealWeakGainWindowRescue;
     if (partialParentAnchorWindowSupport) {
+        const double parentAnchorMaxOverlapFraction =
+            parentAnchorOneRealWeakGainPartialWindowRescue
+                ? static_cast<double>(std::max(
+                      0.0f,
+                      lumenParentAnchorWeakGainPartialMaxOverlapCostFraction))
+                : (parentAnchorOneRealWeakGainCleanWindowRescue
+                       ? static_cast<double>(std::max(
+                             0.0f,
+                             lumenParentAnchorWeakGainCleanMaxOverlapCostFraction))
+                       : 1.05);
         effectiveLumenMaxOverlapCostFraction = std::max(
             effectiveLumenMaxOverlapCostFraction,
-            1.05);
+            parentAnchorMaxOverlapFraction);
     }
     const double lumenMaxOverlapCost =
         (useCellLumenCostGate && effectiveLumenMaxOverlapCostFraction >= 0.0f)
@@ -6621,6 +7425,95 @@ CostCallbackPair Frame::trySplitCellPhased(
         (baselineImageCost > 1e-9)
             ? lumenSoftGatePenaltyCost / baselineImageCost
             : std::numeric_limits<double>::infinity();
+    const int lumenParentAnchorOneRealMaxCandidateVoxels =
+        (lumenProposal != nullptr)
+            ? std::max(lumenProposal->leftPixelCount,
+                       lumenProposal->rightPixelCount)
+            : 0;
+    const bool parentAnchorOneRealPositiveWindowRescue =
+        useCellLumenCostGate &&
+        useCellLumenImageGate &&
+        bestIsCellLumenPrior &&
+        lumenParentAnchorOneRealPositiveWindowRescueEnabled &&
+        parentAnchorOneRealCleanWindowForWeakGain &&
+        lumenWeakPositiveSupportAllowed &&
+        lumenProposal->parentDistanceBalance >= 0.90f &&
+        lumenProposal->parentPersistencePenalty <= 1e-5f &&
+        lumenProposal->neighborClaimPenalty <= 1e-5f &&
+        lumenProposal->continuationClaimSoftPenalty <= 1e-5f &&
+        duplicateGateParentShape >=
+            std::max(1.0f,
+                     lumenParentAnchorOneRealPositiveWindowRescueMinShape) &&
+        duplicateGateParentShape <=
+            std::max(1.0f,
+                     lumenParentAnchorOneRealPositiveWindowRescueMaxShape) &&
+        duplicateGatePriorScoreWithoutWindow <=
+            std::max(0.0f,
+                     lumenParentAnchorOneRealPositiveWindowRescueMaxScore) &&
+        imageCostDiff >= 0.0 &&
+        imageCostDiff <= static_cast<double>(std::max(
+                             0.0f,
+                             lumenParentAnchorOneRealPositiveWindowRescueMaxImageWorsening)) &&
+        costDiff >= 0.0 &&
+        costDiff <= static_cast<double>(std::max(
+                        0.0f,
+                        lumenParentAnchorOneRealPositiveWindowRescueMaxTotalWorsening)) &&
+        overlapCostDiff <=
+            baselineImageCost *
+                std::max(0.0f,
+                         lumenParentAnchorOneRealPositiveWindowRescueMaxOverlapCostFraction) &&
+        lumenPositiveGateSoftPenaltyFraction <=
+            static_cast<double>(std::max(
+                0.0f,
+                lumenParentAnchorOneRealPositiveWindowRescueMaxSoftPenaltyFraction)) &&
+        bridgeCostRescueValleyFromBright <=
+            std::max(0.0f,
+                     lumenParentAnchorOneRealPositiveWindowRescueMaxBridgeValleyRatio) &&
+        lumenParentAnchorOneRealMaxCandidateVoxels >=
+            std::max(0,
+                     lumenParentAnchorOneRealPositiveWindowRescueMinRealVoxels);
+    if (parentAnchorOneRealPositiveWindowRescue) {
+        std::cout << "[Split Gate Rescue CellLumen parent anchor one-real positive-window] "
+                  << parentName
+                  << " imageWorsening=" << imageCostDiff
+                  << " maxImageWorsening="
+                  << lumenParentAnchorOneRealPositiveWindowRescueMaxImageWorsening
+                  << " totalWorsening=" << costDiff
+                  << " maxTotalWorsening="
+                  << lumenParentAnchorOneRealPositiveWindowRescueMaxTotalWorsening
+                  << " overlapDiff=" << overlapCostDiff
+                  << " maxOverlapFraction="
+                  << lumenParentAnchorOneRealPositiveWindowRescueMaxOverlapCostFraction
+                  << " softPenaltyFraction="
+                  << lumenPositiveGateSoftPenaltyFraction
+                  << " maxSoftPenaltyFraction="
+                  << lumenParentAnchorOneRealPositiveWindowRescueMaxSoftPenaltyFraction
+                  << " bridgeValleyFromBright="
+                  << bridgeCostRescueValleyFromBright
+                  << " maxBridgeValley="
+                  << lumenParentAnchorOneRealPositiveWindowRescueMaxBridgeValleyRatio
+                  << " parentShapeElong=" << duplicateGateParentShape
+                  << " minShape="
+                  << lumenParentAnchorOneRealPositiveWindowRescueMinShape
+                  << " maxShape="
+                  << lumenParentAnchorOneRealPositiveWindowRescueMaxShape
+                  << " priorScoreNoWindowBonus="
+                  << duplicateGatePriorScoreWithoutWindow
+                  << " windowBoth="
+                  << lumenProposal->windowBothDaughtersSupported
+                  << " windowMissing="
+                  << lumenProposal->windowMissingDaughterCount
+                  << " windowParentPersists="
+                  << lumenProposal->windowParentPersists
+                  << " maxCandidateVoxels="
+                  << lumenParentAnchorOneRealMaxCandidateVoxels
+                  << " minRealVoxels="
+                  << lumenParentAnchorOneRealPositiveWindowRescueMinRealVoxels
+                  << " candidateIds=("
+                  << lumenProposal->candidateIdA << ","
+                  << lumenProposal->candidateIdB << ")"
+                  << std::endl;
+    }
     const float lumenParentShapeElongation =
         (lumenProposal != nullptr) ? lumenProposal->parentShapeElongation : 1.0f;
     const float lumenPriorScore =
@@ -6762,6 +7655,7 @@ CostCallbackPair Frame::trySplitCellPhased(
             lumenPositiveGateFutureWindowSoftSupport ||
             lumenCleanOneSidedWindowRescue ||
             partialParentAnchorWindowSupport ||
+            parentAnchorOneRealPositiveWindowRescue ||
             lumenFutureContinuationConflictRescue ||
             lumenCleanWindowTotalImprovement ||
             lumenPrepassFallbackSoftSupport;
@@ -6775,6 +7669,8 @@ CostCallbackPair Frame::trySplitCellPhased(
             lumenPositiveGateSupportReason = "clean_one_sided_window_rescue";
         } else if (!rawImageGainSupport && partialParentAnchorWindowSupport) {
             lumenPositiveGateSupportReason = "partial_parent_anchor_window_support";
+        } else if (!rawImageGainSupport && parentAnchorOneRealPositiveWindowRescue) {
+            lumenPositiveGateSupportReason = "parent_anchor_one_real_positive_window_rescue";
         } else if (!rawImageGainSupport && lumenFutureContinuationConflictRescue) {
             lumenPositiveGateSupportReason = "future_continuation_conflict_rescue";
         } else if (!rawImageGainSupport && lumenCleanWindowTotalImprovement) {
@@ -6782,6 +7678,10 @@ CostCallbackPair Frame::trySplitCellPhased(
         } else if (!rawImageGainSupport && lumenPrepassFallbackSoftSupport) {
             lumenPositiveGateSupportReason = "prepass_fallback_soft_support";
         }
+    }
+    if (parentAnchorOneRealPositiveWindowRescue) {
+        lumenPositiveGateSupportReason =
+            "parent_anchor_one_real_positive_window_rescue";
     }
     const double lumenWeakSplitImageGain =
         std::max(60.0, lumenPositiveGateRequiredImageGain * 2.0);
@@ -7097,6 +7997,7 @@ CostCallbackPair Frame::trySplitCellPhased(
         bridgeCostRescueValleyFromBright > 0.80f &&
         !lumenCleanWindowTotalImprovement &&
         !lumenFutureContinuationConflictRescue &&
+        !parentAnchorOneRealWeakGainWindowRescue &&
         !parentAnchorCleanFutureDriftRescue;
     if (lumenWeakImageOverlapNoGapDuplicate) {
         std::cout << "[Split Reject CellLumen weak-image overlap no-gap duplicate] "
@@ -7151,6 +8052,55 @@ CostCallbackPair Frame::trySplitCellPhased(
                   << lumenPriorScoreWithoutWindowBonus
                   << " softPenaltyFraction="
                   << lumenPositiveGateSoftPenaltyFraction
+                  << " candidateIds=("
+                  << (lumenProposal != nullptr ? lumenProposal->candidateIdA : -1)
+                  << ","
+                  << (lumenProposal != nullptr ? lumenProposal->candidateIdB : -1)
+                  << ")"
+                  << " bestIdx=" << bestIdx
+                  << " bestLabel=" << bestLabel
+                  << std::endl;
+        restoreLiveParent();
+        return {0.0, noop};
+    }
+    const bool lumenNonWindowLowShapeOverlapDuplicate =
+        useCellLumenCostGate &&
+        useCellLumenImageGate &&
+        bestIsCellLumenPrior &&
+        lumenRejectNonWindowLowShapeOverlapDuplicate &&
+        !windowBackedLumenPrior &&
+        lumenParentShapeElongation <=
+            std::max(1.0f, lumenNonWindowLowShapeMaxParentShape) &&
+        costDiff > 0.0 &&
+        imageCostDiff < 0.0 &&
+        overlapCostDiff >=
+            static_cast<double>(std::max(
+                0.0f, lumenNonWindowLowShapeMinOverlapCost)) &&
+        lumenBridgeGapWidth <= lumenNonWindowLowShapeMaxBridgeGapWidth &&
+        !lumenCleanWindowTotalImprovement &&
+        !lumenFutureContinuationConflictRescue &&
+        !parentAnchorCleanFutureDriftRescue;
+    if (lumenNonWindowLowShapeOverlapDuplicate) {
+        std::cout << "[Split Reject CellLumen non-window low-shape overlap duplicate] "
+                  << parentName
+                  << " imageGain=" << duplicateImageGain
+                  << " totalDiff=" << costDiff
+                  << " imageDiff=" << imageCostDiff
+                  << " overlapDiff=" << overlapCostDiff
+                  << " minOverlap="
+                  << lumenNonWindowLowShapeMinOverlapCost
+                  << " bridgeGapWidth=" << lumenBridgeGapWidth
+                  << " maxBridgeGapWidth="
+                  << lumenNonWindowLowShapeMaxBridgeGapWidth
+                  << " bridgeValleyFromBright="
+                  << bridgeCostRescueValleyFromBright
+                  << " parentShapeElong=" << lumenParentShapeElongation
+                  << " maxParentShape="
+                  << lumenNonWindowLowShapeMaxParentShape
+                  << " priorScore=" << lumenPriorScore
+                  << " priorScoreNoWindowBonus="
+                  << lumenPriorScoreWithoutWindowBonus
+                  << " supportReason=" << lumenPositiveGateSupportReason
                   << " candidateIds=("
                   << (lumenProposal != nullptr ? lumenProposal->candidateIdA : -1)
                   << ","
@@ -7222,6 +8172,7 @@ CostCallbackPair Frame::trySplitCellPhased(
         bridgeCostRescueValleyFromBright > 0.80f &&
         !lumenCleanWindowTotalImprovement &&
         !lumenFutureContinuationConflictRescue &&
+        !parentAnchorOneRealWeakGainWindowRescue &&
         !parentAnchorCleanFutureDriftRescue;
     if (lumenOverlapDominatedNoValleyDuplicate) {
         std::cout << "[Split Reject CellLumen overlap-dominated no-valley duplicate] "
@@ -7260,6 +8211,7 @@ CostCallbackPair Frame::trySplitCellPhased(
         !lumenCleanOneSidedWindowRescue &&
         !lumenFutureContinuationConflictRescue &&
         !lumenCleanWindowTotalImprovement &&
+        !parentAnchorOneRealPositiveWindowRescue &&
         (lumenParentShapeElongation < 1.50f ||
          lumenParentDistanceBalance < 0.60f ||
          (lumenNeighborClaimPenalty >= 10.0f &&
@@ -7269,6 +8221,7 @@ CostCallbackPair Frame::trySplitCellPhased(
         !lumenCleanOneSidedWindowRescue &&
         !lumenFutureContinuationConflictRescue &&
         !lumenCleanWindowTotalImprovement &&
+        !parentAnchorOneRealPositiveWindowRescue &&
         lumenNeighborClaimPenalty >= 10.0f &&
         imageCostDiff > -80.0 &&
         (lumenParentDistanceBalance < 0.82f ||
@@ -7279,6 +8232,7 @@ CostCallbackPair Frame::trySplitCellPhased(
         !lumenCleanOneSidedWindowRescue &&
         !lumenFutureContinuationConflictRescue &&
         !lumenCleanWindowTotalImprovement &&
+        !parentAnchorOneRealPositiveWindowRescue &&
         lumenNeighborClaimPenalty >= 7.0f &&
         lumenParentDistanceBalance < 0.75f &&
         overlapCostDiff > baselineImageCost * 0.50 &&
@@ -7323,8 +8277,9 @@ CostCallbackPair Frame::trySplitCellPhased(
     // weakly while exploding overlap.
     const bool lumenCostAccepted =
         useCellLumenCostGate &&
-        lumenGateDiff <= lumenMaxPositiveCost &&
-        lumenPositiveGateHasImageSupport;
+        ((lumenGateDiff <= lumenMaxPositiveCost &&
+          lumenPositiveGateHasImageSupport) ||
+         parentAnchorOneRealPositiveWindowRescue);
     if (lumenCostAccepted) {
         acceptedCostDiff = -std::max(1.0, adaptiveThreshold);
         std::cout << "[Split CellLumen Cost Gate] " << parentName
