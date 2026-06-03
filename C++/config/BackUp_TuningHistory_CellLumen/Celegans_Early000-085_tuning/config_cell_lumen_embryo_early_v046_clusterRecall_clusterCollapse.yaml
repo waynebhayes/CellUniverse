@@ -1,0 +1,13 @@
+base_config: config_cell_lumen_embryo_early_v045_clusterRecall_noHardDelete.yaml
+
+cell_lumen:
+  # Collapse over-segmented candidates into one center per local brightness
+  # cluster. This is not GT driven: it uses only candidate geometry and raw
+  # image signal already measured by CellLumen.
+  finalClusterCentroidCollapseEnabled: true
+  finalClusterCentroidCollapseMinCells: 1
+  finalClusterCentroidCollapseMaxCells: 90
+  finalClusterCentroidCollapseMinClusterSize: 2
+  finalClusterCentroidCollapseLinkDistance: 34.0
+  finalClusterCentroidCollapseRadiusScale: 1.0
+  finalClusterCentroidCollapseUseSignalWeights: false

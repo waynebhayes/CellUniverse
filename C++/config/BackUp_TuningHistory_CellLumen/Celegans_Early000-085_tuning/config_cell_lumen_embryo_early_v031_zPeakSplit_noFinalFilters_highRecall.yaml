@@ -1,0 +1,7 @@
+base_config: config_cell_lumen_embryo_early_v030_zPeakSplit_parentSignalGuard.yaml
+
+cell_lumen:
+  finalSparseIsolatedFloorFilterEnabled: false
+  finalWeakSatelliteFilterEnabled: false
+  finalDuplicateMergeDistance: -1.0
+  finalPostRefineDuplicateMergeDistance: -1.0

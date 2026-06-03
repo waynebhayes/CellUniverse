@@ -1,0 +1,42 @@
+base_config: config_embryo_CellLumenFusion_deterministicSplit.yaml
+
+# Dedicated refill run for frame 126.
+#
+# The single frame rerun on 20260602 found the true CellLumen daughter pairs,
+# but loaded no future offsets, so the current window backed selector kept
+# selected=0. This config keeps the verified deterministic split setup, runs
+# locally with 8 threads, and only relaxes the clean two real CellLumen window
+# pair rule enough to recover the two documented frame 126 splits.
+
+simulation:
+  parallel_threads: 8
+  export_frame_png: false
+  export_frame_tiff: true
+
+cell_lumen:
+  fusionSplitPriorWindowEnabled: true
+  fusionSplitPriorWindowSize: 4
+
+  # Frame 126 has a real asymmetric split from parent t120_cell_1281:
+  # parentDistBalance=0.309003 in the successful 20260525 log. The default
+  # clean two real window pair balance is 0.75, which is too conservative for
+  # that geometry even though both daughter centers are real CellLumen peaks.
+  fusionSplitPriorCleanTwoRealWindowPairMinParentDistanceBalance: 0.30
+  fusionSplitPriorCleanTwoRealWindowPairMaxScore: 18.0
+
+  # Make the same narrow pattern explicit as an optional rescue. Both daughter
+  # candidates must be current frame real CellLumen centers and must survive the
+  # future window checks; this does not open classic random splits.
+  fusionSplitPriorCleanTwoRealAsymmetricRescueEnabled: true
+  fusionSplitPriorCleanTwoRealAsymmetricMinParentDistanceBalance: 0.30
+  fusionSplitPriorCleanTwoRealAsymmetricMaxScore: 18.0
+  fusionSplitPriorCleanTwoRealAsymmetricMinVoxels: 500
+  fusionSplitPriorCleanTwoRealAsymmetricMinSignal: 0.0
+  fusionSplitPriorCleanTwoRealAsymmetricMaxNeighborClaimPenalty: 12.0
+  fusionSplitPriorCleanTwoRealAsymmetricSelectionBonus: 24.0
+
+  # The failed single frame rerun added weak prepass fallback priors after the
+  # true CellLumen priors were skipped. Those attempts did not recover the
+  # missing daughters and only added z stack duplicate risk, so keep this refill
+  # run on the window backed CellLumen path.
+  fusionSplitPriorPrepassFallbackEnabled: false

@@ -1,0 +1,6 @@
+base_config: config_cell_lumen_embryo_early_v032_watershedPrefer_count10to14_highRecall.yaml
+
+cell_lumen:
+  seededWatershedMinSeedDistance: 14.0
+  seededWatershedCloseSeedMinDistance: 6.0
+  seededWatershedMinValleyDrop: 0.0

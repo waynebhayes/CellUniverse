@@ -1,0 +1,24 @@
+base_config: config_embryo_CellLumenFusion_VERIFIED_F085-120_temporalRepair_noTif_20260531.yaml
+
+# Early embryo 000-085 test profile.
+# This starts from the nearest verified 085-120 CellLumen Fusion profile, keeps
+# image export off, and only enables density / brightness monitoring. The new
+# adaptive gate switches stay off so this config cannot change split decisions
+# through the monitoring metrics.
+
+simulation:
+  export_frame_png: false
+  export_frame_tiff: false
+
+cell_lumen:
+  fusionStartFrame: 0
+  fusionDensityMetricsEnabled: true
+  fusionDensityAdaptiveGateEnabled: false
+  fusionBrightnessAdaptiveGateEnabled: false
+  fusionDensityMetricsRadiusScale: 2.5
+  fusionDensityMetricsK: 3
+  fusionBrightnessMetricsRadiusScale: 1.0
+  fusionBrightnessMetricsShellScale: 1.55
+  fusionSplitPriorMinParentAgeFrames: 4
+  fusionSplitPriorTemporalRepairMinParentAgeFrames: 4
+  fusionSplitPriorPrepassFallbackMinParentAgeFrames: 4

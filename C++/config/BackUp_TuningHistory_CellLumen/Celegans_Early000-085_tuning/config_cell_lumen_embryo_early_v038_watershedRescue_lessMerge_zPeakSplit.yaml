@@ -1,0 +1,18 @@
+base_config: config_cell_lumen_embryo_early_v037_watershedRescue_lessFinalMerge.yaml
+
+cell_lumen:
+  finalZPeakSplitEnabled: true
+  finalZPeakSplitMinCells: 8
+  finalZPeakSplitMaxCells: 18
+  finalZPeakSplitMaxAdded: 2
+  finalZPeakSplitMinMajorRadius: 22.0
+  finalZPeakSplitRadiusXY: 28.0
+  finalZPeakSplitQuantile: 0.82
+  finalZPeakSplitMinPeakScoreFraction: 0.68
+  finalZPeakSplitMaxParentTop10MinusShell: 86.0
+  finalZPeakSplitLocal3DFallbackEnabled: false
+  finalZPeakSplitPreferLocal3D: false
+  finalZPeakSplitMinSeparationScaled: 28.0
+  finalZPeakSplitMaxSeparationScaled: 70.0
+  finalZPeakSplitMaxCenterShiftXY: 45.0
+  finalZPeakSplitRadiusScale: 0.78

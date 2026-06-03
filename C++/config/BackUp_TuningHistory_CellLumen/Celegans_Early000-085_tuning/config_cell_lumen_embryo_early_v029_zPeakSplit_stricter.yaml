@@ -1,0 +1,5 @@
+base_config: config_cell_lumen_embryo_early_v028_weakSignal10to30_zPeakSplit8to14.yaml
+
+cell_lumen:
+  finalZPeakSplitMinPeakScoreFraction: 0.68
+  finalZPeakSplitMinSeparationScaled: 28.0

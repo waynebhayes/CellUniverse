@@ -1,0 +1,17 @@
+# 2026-06-03 center-offset diagnostic, TRY02.
+# Result: FAIL. A broad PCA drift guard was too conservative and made frame 85
+# worse than the best existing verified output. This shows that useful PCA
+# center movement is needed and that the visual offset is not solved by a
+# simple global max-move guard.
+base_config: config_embryo_CellLumenFusion_deterministicSplit_allFrames_temporalRepair_antiCascade_noExport.yaml
+
+simulation:
+  parallel_threads: 8
+  export_frame_tiff: false
+
+cell:
+  pcaShapeUpdatePosition: true
+  pcaShapeCenterDriftGuardEnabled: true
+  pcaShapeCenterDriftGuardMaxMove: 8.0
+  pcaShapeCenterDriftGuardMaxAbsZShift: 4.0
+  pcaShapeCenterDriftGuardMaxAbsXYShift: 10.0

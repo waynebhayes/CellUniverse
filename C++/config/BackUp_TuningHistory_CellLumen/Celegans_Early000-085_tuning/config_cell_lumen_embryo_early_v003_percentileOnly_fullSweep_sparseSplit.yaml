@@ -1,0 +1,11 @@
+base_config: ../../config_cell_lumen_embryo_standalone_clean.yaml
+
+cell_lumen:
+  seededWatershedEnabled: false
+  seededWatershedLowRescueEnabled: false
+  seededWatershedRescueEnabled: false
+  localMaxSeedEnabled: false
+  allowSeededSplitInSparseField: true
+  finalWeakSatelliteFilterEnabled: true
+  finalDuplicateMergeDistance: 12.0
+  finalPostRefineDuplicateMergeDistance: 12.0

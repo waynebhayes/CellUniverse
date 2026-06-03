@@ -104,6 +104,21 @@ private:
                                                        const std::vector<DetectedCell> &cells) const;
     void refineCentersByZColumn(const std::vector<cv::Mat> &volume,
                                 std::vector<DetectedCell> &cells) const;
+    std::vector<DetectedCell> splitCellsByLocalZPeaks(const std::vector<cv::Mat> &volume,
+                                                      const std::vector<DetectedCell> &cells,
+                                                      const std::string &frameStem) const;
+    std::vector<DetectedCell> rescueBrightPairMidpoints(const std::vector<cv::Mat> &volume,
+                                                        const std::vector<DetectedCell> &cells,
+                                                        const std::string &frameStem) const;
+    std::vector<DetectedCell> addClusterCentroidRecallCandidates(const std::vector<cv::Mat> &volume,
+                                                                 const std::vector<DetectedCell> &cells,
+                                                                 const std::string &frameStem) const;
+    std::vector<DetectedCell> collapseClusteredCandidates(const std::vector<cv::Mat> &volume,
+                                                          const std::vector<DetectedCell> &cells,
+                                                          const std::string &frameStem) const;
+    std::vector<DetectedCell> filterDominatedDuplicateCandidates(const std::vector<cv::Mat> &volume,
+                                                                 const std::vector<DetectedCell> &cells,
+                                                                 const std::string &frameStem) const;
     std::vector<DetectedCell> mergeLikelySameCellFragments(const std::vector<DetectedCell> &cells,
                                                            const std::vector<cv::Mat> &volume,
                                                            float thresholdLow,

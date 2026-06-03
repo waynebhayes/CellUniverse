@@ -1,0 +1,16 @@
+base_config: ../../config_cell_lumen_embryo_standalone_clean.yaml
+
+cell_lumen:
+  seededWatershedEnabled: true
+  seededWatershedPreferOverPercentile: false
+  seededWatershedPreferBaseCountMin: 1
+  seededWatershedPreferBaseCountMax: 10000
+  seededWatershedMinSeedDistance: 34.0
+  seededWatershedCloseSeedMinDistance: 20.0
+  seededWatershedMinVoxels: 2600
+  seededWatershedAdaptiveMinVoxelsEnabled: false
+  seededWatershedLowRescueEnabled: false
+  seededWatershedRescueEnabled: false
+  finalDuplicateMergeDistance: 20.0
+  finalPostRefineDuplicateMergeDistance: 20.0
+  finalWeakSatelliteFilterEnabled: true

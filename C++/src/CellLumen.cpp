@@ -1895,7 +1895,8 @@ std::vector<EmbryoBrightTracker::Comp3DStat> CellLumen::collapseNearbySeeds(
         for (const auto &existing : merged)
         {
             const float distXY = std::sqrt(squaredDistanceXY(seed.center(), existing.center()));
-            const float distZ = absoluteDistanceZ(seed.center(), existing.center());
+            const float zDistanceScale = config.cellLumen.seedMergeUseScaledZ ? effectiveZScaling() : 1.0f;
+            const float distZ = absoluteDistanceZ(seed.center(), existing.center()) * zDistanceScale;
             const float sizeRatio = static_cast<float>(std::min(seed.vox, existing.vox)) /
                                     static_cast<float>(std::max(seed.vox, existing.vox));
             const float intensityRatio = std::min(seed.meanI(), existing.meanI()) /
@@ -1944,13 +1945,23 @@ bool CellLumen::shouldSplitCoarseComponent(
     }
 
     float maxSeedSeparationXY = 0.0f;
+    float maxSeedSeparation3D = 0.0f;
+    float maxSeedSeparationZ = 0.0f;
+    const float zScale = effectiveZScaling();
     for (size_t i = 0; i < containedSeeds.size(); ++i)
     {
         for (size_t j = i + 1; j < containedSeeds.size(); ++j)
         {
-            maxSeedSeparationXY = std::max(
-                maxSeedSeparationXY,
-                std::sqrt(squaredDistanceXY(containedSeeds[i].center(), containedSeeds[j].center())));
+            const cv::Point3f lhs = containedSeeds[i].center();
+            const cv::Point3f rhs = containedSeeds[j].center();
+            const float dx = lhs.x - rhs.x;
+            const float dy = lhs.y - rhs.y;
+            const float dzScaled = (lhs.z - rhs.z) * zScale;
+            const float separationXY = std::sqrt(dx * dx + dy * dy);
+            const float separation3D = std::sqrt(dx * dx + dy * dy + dzScaled * dzScaled);
+            maxSeedSeparationXY = std::max(maxSeedSeparationXY, separationXY);
+            maxSeedSeparation3D = std::max(maxSeedSeparation3D, separation3D);
+            maxSeedSeparationZ = std::max(maxSeedSeparationZ, std::abs(dzScaled));
         }
     }
 
@@ -1969,6 +1980,21 @@ bool CellLumen::shouldSplitCoarseComponent(
         ? config.cellLumen.seededSplitMinSeedSeparation
         : activeProfile.seedSplitSeparation;
     const float hardSplitThreshold = std::max(configuredHardSplit, coarseCell.majorRadius * 0.75f);
+    if (config.cellLumen.seededSplitUseScaled3DSeparation && balance >= minSeedBalance)
+    {
+        const float configured3D = config.cellLumen.seededSplitMinScaled3DSeparation > 0.0f
+            ? config.cellLumen.seededSplitMinScaled3DSeparation
+            : configuredHardSplit;
+        const float configuredZ = config.cellLumen.seededSplitMinScaledZSeparation > 0.0f
+            ? config.cellLumen.seededSplitMinScaledZSeparation
+            : configured3D;
+        const float hard3DThreshold = std::max(configured3D, coarseCell.majorRadius * 0.65f);
+        if (maxSeedSeparation3D >= hard3DThreshold &&
+            maxSeedSeparationZ >= configuredZ)
+        {
+            return true;
+        }
+    }
     return maxSeedSeparationXY >= hardSplitThreshold;
 }
 
@@ -2875,11 +2901,17 @@ std::vector<CellLumen::DetectedCell> CellLumen::mergeLikelySameCellFragments(
             });
             if (sparseMode)
             {
-                mergeDistance = std::max(mergeDistance, std::max(30.0f, medianMajor * 3.1f));
+                mergeDistance = std::max(
+                    mergeDistance,
+                    std::max(config.cellLumen.fragmentMergeSparseMinDistance,
+                             medianMajor * config.cellLumen.fragmentMergeSparseMajorScale));
             }
             else if (moderateMode)
             {
-                mergeDistance = std::max(mergeDistance, std::max(20.0f, medianMajor * 1.8f));
+                mergeDistance = std::max(
+                    mergeDistance,
+                    std::max(config.cellLumen.fragmentMergeModerateMinDistance,
+                             medianMajor * config.cellLumen.fragmentMergeModerateMajorScale));
             }
             if (distance > mergeDistance)
             {
@@ -2987,6 +3019,22 @@ void CellLumen::refineCentersByZColumn(const std::vector<cv::Mat> &volume,
         volume.empty() ||
         cells.empty())
     {
+        return;
+    }
+
+    const int cellCount = static_cast<int>(cells.size());
+    if ((config.cellLumen.finalZColumnRefineMinCells > 0 &&
+         cellCount < config.cellLumen.finalZColumnRefineMinCells) ||
+        (config.cellLumen.finalZColumnRefineMaxCells > 0 &&
+         cellCount > config.cellLumen.finalZColumnRefineMaxCells))
+    {
+        std::cout << "[CellLumen FinalZColumnRefine]"
+                  << " enabled=1"
+                  << " skipped=count_gate"
+                  << " cells=" << cellCount
+                  << " min_cells=" << config.cellLumen.finalZColumnRefineMinCells
+                  << " max_cells=" << config.cellLumen.finalZColumnRefineMaxCells
+                  << std::endl;
         return;
     }
 
@@ -3131,6 +3179,1298 @@ void CellLumen::refineCentersByZColumn(const std::vector<cv::Mat> &volume,
               << " refined_centers=" << refinedCenters
               << " final_cells=" << cells.size()
               << std::endl;
+}
+
+std::vector<CellLumen::DetectedCell> CellLumen::splitCellsByLocalZPeaks(
+    const std::vector<cv::Mat> &volume,
+    const std::vector<DetectedCell> &cells,
+    const std::string &frameStem) const
+{
+    if (!config.cellLumen.finalZPeakSplitEnabled ||
+        volume.empty() ||
+        cells.empty())
+    {
+        return cells;
+    }
+
+    const int cellCount = static_cast<int>(cells.size());
+    if ((config.cellLumen.finalZPeakSplitMinCells > 0 &&
+         cellCount < config.cellLumen.finalZPeakSplitMinCells) ||
+        (config.cellLumen.finalZPeakSplitMaxCells > 0 &&
+         cellCount > config.cellLumen.finalZPeakSplitMaxCells))
+    {
+        std::cout << "[CellLumen FinalZPeakSplit]"
+                  << " enabled=1"
+                  << " skipped=count_gate"
+                  << " cells=" << cellCount
+                  << " min_cells=" << config.cellLumen.finalZPeakSplitMinCells
+                  << " max_cells=" << config.cellLumen.finalZPeakSplitMaxCells
+                  << std::endl;
+        return cells;
+    }
+
+    struct SlicePeak
+    {
+        int zRaw = 0;
+        float zScaled = 0.0f;
+        float score = 0.0f;
+        float x = 0.0f;
+        float y = 0.0f;
+        int topCount = 0;
+    };
+
+    const float zScale = effectiveZScaling();
+    const int Z = static_cast<int>(volume.size());
+    const int Y = volume[0].rows;
+    const int X = volume[0].cols;
+    const int maxAdded = std::max(0, config.cellLumen.finalZPeakSplitMaxAdded);
+    const float minMajor = std::max(0.0f, config.cellLumen.finalZPeakSplitMinMajorRadius);
+    const float radiusXY = std::max(3.0f, config.cellLumen.finalZPeakSplitRadiusXY);
+    const float radiusXYSq = radiusXY * radiusXY;
+    const float quantile = clampf(config.cellLumen.finalZPeakSplitQuantile, 0.50f, 0.98f);
+    const float minPeakFraction =
+        clampf(config.cellLumen.finalZPeakSplitMinPeakScoreFraction, 0.05f, 0.95f);
+    const float minSeparation = std::max(zScale, config.cellLumen.finalZPeakSplitMinSeparationScaled);
+    const float maxSeparation = config.cellLumen.finalZPeakSplitMaxSeparationScaled > 0.0f
+        ? config.cellLumen.finalZPeakSplitMaxSeparationScaled
+        : std::numeric_limits<float>::max();
+    const float maxShiftXY = std::max(0.0f, config.cellLumen.finalZPeakSplitMaxCenterShiftXY);
+    const float radiusScale = clampf(config.cellLumen.finalZPeakSplitRadiusScale, 0.30f, 1.0f);
+    const int zWindow = std::max(2, static_cast<int>(std::ceil(maxSeparation / zScale)) + 1);
+    const bool local3DFallbackEnabled =
+        config.cellLumen.finalZPeakSplitLocal3DFallbackEnabled;
+    const bool preferLocal3D =
+        config.cellLumen.finalZPeakSplitPreferLocal3D;
+    const float local3DCentroidRadiusXY =
+        std::max(1.0f, config.cellLumen.finalZPeakSplitLocal3DCentroidRadiusXY);
+    const float local3DCentroidRadiusXYSq =
+        local3DCentroidRadiusXY * local3DCentroidRadiusXY;
+    const float local3DCentroidHalfWindowScaled =
+        std::max(zScale, config.cellLumen.finalZPeakSplitLocal3DCentroidHalfWindowScaled);
+    const int local3DCentroidHalfWindowRaw =
+        std::max(1, static_cast<int>(std::ceil(local3DCentroidHalfWindowScaled / zScale)));
+
+    std::vector<DetectedCell> splitCells;
+    splitCells.reserve(cells.size() + static_cast<size_t>(maxAdded));
+    int considered = 0;
+    int splitParents = 0;
+    int local3DSplitParents = 0;
+    int added = 0;
+    int rejectedParentSignal = 0;
+    int rejectedNoPeaks = 0;
+    int rejectedSeparation = 0;
+    int rejectedShift = 0;
+
+    for (const DetectedCell &cell : cells)
+    {
+        if (added >= maxAdded || cell.majorRadius < minMajor)
+        {
+            splitCells.push_back(cell);
+            continue;
+        }
+
+        considered++;
+        if (config.cellLumen.finalZPeakSplitMaxParentTop10MinusShell >= 0.0f &&
+            cell.top10MinusShell > config.cellLumen.finalZPeakSplitMaxParentTop10MinusShell)
+        {
+            rejectedParentSignal++;
+            splitCells.push_back(cell);
+            continue;
+        }
+
+        const int centerZRaw = static_cast<int>(std::lround(cell.centerScaled.z / zScale));
+        const int minZ = std::max(0, centerZRaw - zWindow);
+        const int maxZ = std::min(Z - 1, centerZRaw + zWindow);
+        const int minX = std::max(0, static_cast<int>(std::floor(cell.centerScaled.x - radiusXY)));
+        const int maxX = std::min(X - 1, static_cast<int>(std::ceil(cell.centerScaled.x + radiusXY)));
+        const int minY = std::max(0, static_cast<int>(std::floor(cell.centerScaled.y - radiusXY)));
+        const int maxY = std::min(Y - 1, static_cast<int>(std::ceil(cell.centerScaled.y + radiusXY)));
+
+        struct BrightVoxel
+        {
+            int x = 0;
+            int y = 0;
+            int zRaw = 0;
+            float score = 0.0f;
+        };
+
+        std::vector<SlicePeak> peaks;
+        peaks.reserve(static_cast<size_t>(std::max(0, maxZ - minZ + 1)));
+        for (int z = minZ; z <= maxZ; ++z)
+        {
+            const cv::Mat &slice = volume[static_cast<size_t>(z)];
+            std::vector<float> values;
+            values.reserve(static_cast<size_t>(
+                std::max(1, maxY - minY + 1) *
+                std::max(1, maxX - minX + 1)));
+            for (int y = minY; y <= maxY; ++y)
+            {
+                const float dy = static_cast<float>(y) - cell.centerScaled.y;
+                const float *row = slice.ptr<float>(y);
+                for (int x = minX; x <= maxX; ++x)
+                {
+                    const float dx = static_cast<float>(x) - cell.centerScaled.x;
+                    const float value = row[x];
+                    if (dx * dx + dy * dy <= radiusXYSq && std::isfinite(value))
+                    {
+                        values.push_back(value);
+                    }
+                }
+            }
+            if (values.size() < 16)
+            {
+                continue;
+            }
+
+            const float median = percentileFromValues(values, 0.50f);
+            const float highCutoff = percentileFromValues(values, quantile);
+            double topSum = 0.0;
+            double weightSum = 0.0;
+            double weightedX = 0.0;
+            double weightedY = 0.0;
+            int topCount = 0;
+            for (int y = minY; y <= maxY; ++y)
+            {
+                const float dy = static_cast<float>(y) - cell.centerScaled.y;
+                const float *row = slice.ptr<float>(y);
+                for (int x = minX; x <= maxX; ++x)
+                {
+                    const float dx = static_cast<float>(x) - cell.centerScaled.x;
+                    const float value = row[x];
+                    if (dx * dx + dy * dy > radiusXYSq ||
+                        !std::isfinite(value) ||
+                        value < highCutoff)
+                    {
+                        continue;
+                    }
+                    const double weight = std::max(0.001f, value - median);
+                    topSum += static_cast<double>(value);
+                    weightSum += weight;
+                    weightedX += weight * static_cast<double>(x);
+                    weightedY += weight * static_cast<double>(y);
+                    topCount++;
+                }
+            }
+            if (topCount < 6 || weightSum <= 0.0)
+            {
+                continue;
+            }
+
+            const float topMean = static_cast<float>(topSum / static_cast<double>(topCount));
+            const float score = std::max(0.0f, topMean - median);
+            if (score <= 0.0f)
+            {
+                continue;
+            }
+            peaks.push_back({
+                z,
+                static_cast<float>(z) * zScale,
+                score,
+                static_cast<float>(weightedX / weightSum),
+                static_cast<float>(weightedY / weightSum),
+                topCount
+            });
+        }
+
+        auto findLocal3DPeakPair = [&]() -> std::optional<std::pair<SlicePeak, SlicePeak>> {
+            std::vector<float> values;
+            values.reserve(static_cast<size_t>(
+                std::max(1, maxZ - minZ + 1) *
+                std::max(1, maxY - minY + 1) *
+                std::max(1, maxX - minX + 1)));
+            for (int z = minZ; z <= maxZ; ++z)
+            {
+                const cv::Mat &slice = volume[static_cast<size_t>(z)];
+                for (int y = minY; y <= maxY; ++y)
+                {
+                    const float dy = static_cast<float>(y) - cell.centerScaled.y;
+                    const float *row = slice.ptr<float>(y);
+                    for (int x = minX; x <= maxX; ++x)
+                    {
+                        const float dx = static_cast<float>(x) - cell.centerScaled.x;
+                        const float value = row[x];
+                        if (dx * dx + dy * dy <= radiusXYSq && std::isfinite(value))
+                        {
+                            values.push_back(value);
+                        }
+                    }
+                }
+            }
+            if (values.size() < 32)
+            {
+                return std::nullopt;
+            }
+
+            const float median = percentileFromValues(values, 0.50f);
+            const float highCutoff = percentileFromValues(values, quantile);
+            std::vector<BrightVoxel> brightVoxels;
+            brightVoxels.reserve(values.size() / 10 + 1);
+            for (int z = minZ; z <= maxZ; ++z)
+            {
+                const cv::Mat &slice = volume[static_cast<size_t>(z)];
+                for (int y = minY; y <= maxY; ++y)
+                {
+                    const float dy = static_cast<float>(y) - cell.centerScaled.y;
+                    const float *row = slice.ptr<float>(y);
+                    for (int x = minX; x <= maxX; ++x)
+                    {
+                        const float dx = static_cast<float>(x) - cell.centerScaled.x;
+                        const float value = row[x];
+                        if (dx * dx + dy * dy > radiusXYSq ||
+                            !std::isfinite(value) ||
+                            value < highCutoff)
+                        {
+                            continue;
+                        }
+                        const float score = std::max(0.0f, value - median);
+                        if (score > 0.0f)
+                        {
+                            brightVoxels.push_back({x, y, z, score});
+                        }
+                    }
+                }
+            }
+            if (brightVoxels.size() < 12)
+            {
+                return std::nullopt;
+            }
+
+            std::sort(brightVoxels.begin(), brightVoxels.end(), [](const BrightVoxel &lhs,
+                                                                    const BrightVoxel &rhs) {
+                return lhs.score > rhs.score;
+            });
+            const BrightVoxel firstVoxel = brightVoxels.front();
+            std::optional<BrightVoxel> secondVoxel;
+            for (size_t i = 1; i < brightVoxels.size(); ++i)
+            {
+                const float dx = static_cast<float>(brightVoxels[i].x - firstVoxel.x);
+                const float dy = static_cast<float>(brightVoxels[i].y - firstVoxel.y);
+                const float dz = static_cast<float>(brightVoxels[i].zRaw - firstVoxel.zRaw) * zScale;
+                const float separation = std::sqrt(dx * dx + dy * dy + dz * dz);
+                if (separation < minSeparation || separation > maxSeparation)
+                {
+                    continue;
+                }
+                if (brightVoxels[i].score < firstVoxel.score * minPeakFraction)
+                {
+                    continue;
+                }
+                secondVoxel = brightVoxels[i];
+                break;
+            }
+            if (!secondVoxel)
+            {
+                return std::nullopt;
+            }
+
+            auto centroidAround = [&](const BrightVoxel &peak) -> std::optional<SlicePeak> {
+                double topSum = 0.0;
+                double weightSum = 0.0;
+                double weightedX = 0.0;
+                double weightedY = 0.0;
+                double weightedZ = 0.0;
+                int topCount = 0;
+                const int peakMinZ = std::max(minZ, peak.zRaw - local3DCentroidHalfWindowRaw);
+                const int peakMaxZ = std::min(maxZ, peak.zRaw + local3DCentroidHalfWindowRaw);
+                const int peakMinX = std::max(minX, static_cast<int>(std::floor(peak.x - local3DCentroidRadiusXY)));
+                const int peakMaxX = std::min(maxX, static_cast<int>(std::ceil(peak.x + local3DCentroidRadiusXY)));
+                const int peakMinY = std::max(minY, static_cast<int>(std::floor(peak.y - local3DCentroidRadiusXY)));
+                const int peakMaxY = std::min(maxY, static_cast<int>(std::ceil(peak.y + local3DCentroidRadiusXY)));
+                for (int z = peakMinZ; z <= peakMaxZ; ++z)
+                {
+                    const cv::Mat &slice = volume[static_cast<size_t>(z)];
+                    for (int y = peakMinY; y <= peakMaxY; ++y)
+                    {
+                        const float dy = static_cast<float>(y - peak.y);
+                        const float *row = slice.ptr<float>(y);
+                        for (int x = peakMinX; x <= peakMaxX; ++x)
+                        {
+                            const float dx = static_cast<float>(x - peak.x);
+                            const float value = row[x];
+                            if (dx * dx + dy * dy > local3DCentroidRadiusXYSq ||
+                                !std::isfinite(value) ||
+                                value < highCutoff)
+                            {
+                                continue;
+                            }
+                            const double weight = std::max(0.001f, value - median);
+                            topSum += static_cast<double>(value);
+                            weightSum += weight;
+                            weightedX += weight * static_cast<double>(x);
+                            weightedY += weight * static_cast<double>(y);
+                            weightedZ += weight * static_cast<double>(z) * static_cast<double>(zScale);
+                            topCount++;
+                        }
+                    }
+                }
+                if (topCount < 6 || weightSum <= 0.0)
+                {
+                    return std::nullopt;
+                }
+                return SlicePeak{
+                    peak.zRaw,
+                    static_cast<float>(weightedZ / weightSum),
+                    std::max(0.0f, static_cast<float>(topSum / static_cast<double>(topCount)) - median),
+                    static_cast<float>(weightedX / weightSum),
+                    static_cast<float>(weightedY / weightSum),
+                    topCount
+                };
+            };
+
+            auto firstPeak3D = centroidAround(firstVoxel);
+            auto secondPeak3D = centroidAround(*secondVoxel);
+            if (!firstPeak3D || !secondPeak3D)
+            {
+                return std::nullopt;
+            }
+            return std::make_pair(*firstPeak3D, *secondPeak3D);
+        };
+
+        SlicePeak firstPeak;
+        std::optional<SlicePeak> secondPeak;
+        bool usedLocal3D = false;
+        bool hadEnoughSlicePeaks = peaks.size() >= 2;
+        if (local3DFallbackEnabled && preferLocal3D)
+        {
+            auto local3DPair = findLocal3DPeakPair();
+            if (local3DPair)
+            {
+                firstPeak = local3DPair->first;
+                secondPeak = local3DPair->second;
+                usedLocal3D = true;
+            }
+        }
+
+        if (!secondPeak && hadEnoughSlicePeaks)
+        {
+            std::sort(peaks.begin(), peaks.end(), [](const SlicePeak &lhs, const SlicePeak &rhs) {
+                return lhs.score > rhs.score;
+            });
+            firstPeak = peaks.front();
+            for (size_t i = 1; i < peaks.size(); ++i)
+            {
+                const float separation = std::abs(peaks[i].zScaled - firstPeak.zScaled);
+                if (separation < minSeparation || separation > maxSeparation)
+                {
+                    continue;
+                }
+                if (peaks[i].score < firstPeak.score * minPeakFraction)
+                {
+                    continue;
+                }
+                secondPeak = peaks[i];
+                break;
+            }
+        }
+
+        if (!secondPeak && local3DFallbackEnabled)
+        {
+            auto local3DPair = findLocal3DPeakPair();
+            if (local3DPair)
+            {
+                firstPeak = local3DPair->first;
+                secondPeak = local3DPair->second;
+                usedLocal3D = true;
+            }
+        }
+
+        if (!secondPeak)
+        {
+            if (hadEnoughSlicePeaks)
+            {
+                rejectedSeparation++;
+            }
+            else
+            {
+                rejectedNoPeaks++;
+            }
+            splitCells.push_back(cell);
+            continue;
+        }
+
+        const auto shiftXY = [&](const SlicePeak &peak) {
+            const float dx = peak.x - cell.centerScaled.x;
+            const float dy = peak.y - cell.centerScaled.y;
+            return std::sqrt(dx * dx + dy * dy);
+        };
+        if (shiftXY(firstPeak) > maxShiftXY || shiftXY(*secondPeak) > maxShiftXY)
+        {
+            rejectedShift++;
+            splitCells.push_back(cell);
+            continue;
+        }
+
+        DetectedCell lhs = cell;
+        DetectedCell rhs = cell;
+        lhs.centerScaled = cv::Point3f(firstPeak.x, firstPeak.y, firstPeak.zScaled);
+        rhs.centerScaled = cv::Point3f(secondPeak->x, secondPeak->y, secondPeak->zScaled);
+        lhs.zForCsv = lhs.centerScaled.z / zScale;
+        rhs.zForCsv = rhs.centerScaled.z / zScale;
+        lhs.majorRadius *= radiusScale;
+        lhs.bRadius *= radiusScale;
+        lhs.minorRadius *= radiusScale;
+        rhs.majorRadius *= radiusScale;
+        rhs.bRadius *= radiusScale;
+        rhs.minorRadius *= radiusScale;
+        lhs.voxelCount = std::max(1, cell.voxelCount / 2);
+        rhs.voxelCount = std::max(1, cell.voxelCount - lhs.voxelCount);
+        annotateSignalStats(volume, lhs);
+        annotateSignalStats(volume, rhs);
+
+        splitCells.push_back(lhs);
+        splitCells.push_back(rhs);
+        splitParents++;
+        if (usedLocal3D)
+        {
+            local3DSplitParents++;
+        }
+        added++;
+    }
+
+    if (splitParents > 0)
+    {
+        std::sort(splitCells.begin(), splitCells.end(), [](const DetectedCell &lhs, const DetectedCell &rhs) {
+            if (std::abs(lhs.centerScaled.y - rhs.centerScaled.y) > 1e-3f)
+            {
+                return lhs.centerScaled.y < rhs.centerScaled.y;
+            }
+            return lhs.centerScaled.x < rhs.centerScaled.x;
+        });
+        for (size_t i = 0; i < splitCells.size(); ++i)
+        {
+            splitCells[i].name = makeCellName(frameStem, static_cast<int>(i + 1));
+            splitCells[i].zForCsv = splitCells[i].centerScaled.z / zScale;
+        }
+    }
+
+    std::cout << "[CellLumen FinalZPeakSplit]"
+              << " enabled=1"
+              << " before=" << cells.size()
+              << " after=" << splitCells.size()
+              << " considered=" << considered
+              << " split_parents=" << splitParents
+              << " local3d_split_parents=" << local3DSplitParents
+              << " added=" << added
+              << " max_added=" << maxAdded
+              << " rejected_parent_signal=" << rejectedParentSignal
+              << " rejected_no_peaks=" << rejectedNoPeaks
+              << " rejected_separation=" << rejectedSeparation
+              << " rejected_shift=" << rejectedShift
+              << " max_parent_top10_minus_shell="
+              << config.cellLumen.finalZPeakSplitMaxParentTop10MinusShell
+              << " min_major=" << minMajor
+              << " radius_xy=" << radiusXY
+              << " min_separation_scaled=" << minSeparation
+              << " max_separation_scaled=" << maxSeparation
+              << std::endl;
+
+    return splitCells;
+}
+
+std::vector<CellLumen::DetectedCell> CellLumen::rescueBrightPairMidpoints(
+    const std::vector<cv::Mat> &volume,
+    const std::vector<DetectedCell> &cells,
+    const std::string &frameStem) const
+{
+    if (!config.cellLumen.finalBrightPairMidpointRescueEnabled ||
+        volume.empty() ||
+        cells.size() < 2)
+    {
+        return cells;
+    }
+
+    const int cellCount = static_cast<int>(cells.size());
+    if ((config.cellLumen.finalBrightPairMidpointRescueMinCells > 0 &&
+         cellCount < config.cellLumen.finalBrightPairMidpointRescueMinCells) ||
+        (config.cellLumen.finalBrightPairMidpointRescueMaxCells > 0 &&
+         cellCount > config.cellLumen.finalBrightPairMidpointRescueMaxCells))
+    {
+        std::cout << "[CellLumen BrightPairMidpointRescue]"
+                  << " enabled=1"
+                  << " skipped=count_gate"
+                  << " cells=" << cellCount
+                  << " min_cells=" << config.cellLumen.finalBrightPairMidpointRescueMinCells
+                  << " max_cells=" << config.cellLumen.finalBrightPairMidpointRescueMaxCells
+                  << std::endl;
+        return cells;
+    }
+
+    struct MidpointCandidate
+    {
+        DetectedCell cell;
+        float pairDistance = 0.0f;
+        float signal = 0.0f;
+        size_t lhs = 0;
+        size_t rhs = 0;
+    };
+
+    const float minDistance =
+        std::max(0.0f, config.cellLumen.finalBrightPairMidpointRescueMinDistance);
+    const float maxDistance =
+        std::max(minDistance, config.cellLumen.finalBrightPairMidpointRescueMaxDistance);
+    const float minSignal =
+        std::max(0.0f, config.cellLumen.finalBrightPairMidpointRescueMinTop10MinusShell);
+    const float radiusScale =
+        clampf(config.cellLumen.finalBrightPairMidpointRescueRadiusScale, 0.25f, 1.25f);
+
+    std::vector<MidpointCandidate> candidates;
+    for (size_t i = 0; i < cells.size(); ++i)
+    {
+        for (size_t j = i + 1; j < cells.size(); ++j)
+        {
+            const float distance = std::sqrt(squaredDistance(cells[i].centerScaled,
+                                                             cells[j].centerScaled));
+            if (distance < minDistance || distance > maxDistance)
+            {
+                continue;
+            }
+
+            DetectedCell midpoint = cells[i].top10MinusShell >= cells[j].top10MinusShell
+                ? cells[i]
+                : cells[j];
+            midpoint.centerScaled.x = 0.5f * (cells[i].centerScaled.x + cells[j].centerScaled.x);
+            midpoint.centerScaled.y = 0.5f * (cells[i].centerScaled.y + cells[j].centerScaled.y);
+            midpoint.centerScaled.z = 0.5f * (cells[i].centerScaled.z + cells[j].centerScaled.z);
+            midpoint.zForCsv = midpoint.centerScaled.z / effectiveZScaling();
+            midpoint.majorRadius =
+                0.5f * (cells[i].majorRadius + cells[j].majorRadius) * radiusScale;
+            midpoint.bRadius =
+                0.5f * (cells[i].bRadius + cells[j].bRadius) * radiusScale;
+            midpoint.minorRadius =
+                0.5f * (cells[i].minorRadius + cells[j].minorRadius) * radiusScale;
+            midpoint.voxelCount =
+                std::max(1, (cells[i].voxelCount + cells[j].voxelCount) / 2);
+            annotateSignalStats(volume, midpoint);
+            if (midpoint.top10MinusShell < minSignal)
+            {
+                continue;
+            }
+            candidates.push_back({midpoint, distance, midpoint.top10MinusShell, i, j});
+        }
+    }
+
+    std::sort(candidates.begin(), candidates.end(), [](const MidpointCandidate &lhs,
+                                                       const MidpointCandidate &rhs) {
+        if (std::abs(lhs.signal - rhs.signal) > 1e-3f)
+        {
+            return lhs.signal > rhs.signal;
+        }
+        return lhs.pairDistance < rhs.pairDistance;
+    });
+
+    std::vector<DetectedCell> rescued = cells;
+    const int maxAdded = std::max(0, config.cellLumen.finalBrightPairMidpointRescueMaxAdded);
+    const float minAddedDistance =
+        std::max(0.0f, config.cellLumen.finalBrightPairMidpointRescueMinAddedDistance);
+    const float minAddedDistanceSq = minAddedDistance * minAddedDistance;
+    int added = 0;
+    int rejectedNearAdded = 0;
+    for (const MidpointCandidate &candidate : candidates)
+    {
+        if (added >= maxAdded)
+        {
+            break;
+        }
+        bool nearAdded = false;
+        for (size_t k = cells.size(); k < rescued.size(); ++k)
+        {
+            if (squaredDistance(candidate.cell.centerScaled,
+                                rescued[k].centerScaled) <= minAddedDistanceSq)
+            {
+                nearAdded = true;
+                break;
+            }
+        }
+        if (nearAdded)
+        {
+            rejectedNearAdded++;
+            continue;
+        }
+        rescued.push_back(candidate.cell);
+        added++;
+    }
+
+    if (added > 0)
+    {
+        std::sort(rescued.begin(), rescued.end(), [](const DetectedCell &lhs,
+                                                     const DetectedCell &rhs) {
+            if (std::abs(lhs.centerScaled.y - rhs.centerScaled.y) > 1e-3f)
+            {
+                return lhs.centerScaled.y < rhs.centerScaled.y;
+            }
+            return lhs.centerScaled.x < rhs.centerScaled.x;
+        });
+        for (size_t i = 0; i < rescued.size(); ++i)
+        {
+            rescued[i].name = makeCellName(frameStem, static_cast<int>(i + 1));
+            rescued[i].zForCsv = rescued[i].centerScaled.z / effectiveZScaling();
+        }
+    }
+
+    std::cout << "[CellLumen BrightPairMidpointRescue]"
+              << " enabled=1"
+              << " before=" << cells.size()
+              << " after=" << rescued.size()
+              << " candidates=" << candidates.size()
+              << " added=" << added
+              << " max_added=" << maxAdded
+              << " min_distance=" << minDistance
+              << " max_distance=" << maxDistance
+              << " min_signal=" << minSignal
+              << " rejected_near_added=" << rejectedNearAdded
+              << std::endl;
+
+    return rescued;
+}
+
+std::vector<CellLumen::DetectedCell> CellLumen::addClusterCentroidRecallCandidates(
+    const std::vector<cv::Mat> &volume,
+    const std::vector<DetectedCell> &cells,
+    const std::string &frameStem) const
+{
+    if (!config.cellLumen.finalClusterCentroidRecallRescueEnabled ||
+        volume.empty() ||
+        cells.size() < 2)
+    {
+        return cells;
+    }
+
+    const int cellCount = static_cast<int>(cells.size());
+    if ((config.cellLumen.finalClusterCentroidRecallRescueMinCells > 0 &&
+         cellCount < config.cellLumen.finalClusterCentroidRecallRescueMinCells) ||
+        (config.cellLumen.finalClusterCentroidRecallRescueMaxCells > 0 &&
+         cellCount > config.cellLumen.finalClusterCentroidRecallRescueMaxCells))
+    {
+        std::cout << "[CellLumen ClusterCentroidRecallRescue]"
+                  << " enabled=1"
+                  << " skipped=count_gate"
+                  << " cells=" << cellCount
+                  << " min_cells=" << config.cellLumen.finalClusterCentroidRecallRescueMinCells
+                  << " max_cells=" << config.cellLumen.finalClusterCentroidRecallRescueMaxCells
+                  << std::endl;
+        return cells;
+    }
+
+    std::vector<DetectedCell> annotated = cells;
+    for (DetectedCell &cell : annotated)
+    {
+        annotateSignalStats(volume, cell);
+    }
+
+    const float clusterDistance =
+        std::max(1.0f, config.cellLumen.finalClusterCentroidRecallRescueClusterDistance);
+    const float clusterDistanceSq = clusterDistance * clusterDistance;
+    const int minClusterSize =
+        std::max(2, config.cellLumen.finalClusterCentroidRecallRescueMinClusterSize);
+    const int maxAdded =
+        std::max(0, config.cellLumen.finalClusterCentroidRecallRescueMaxAdded);
+    const float minAddedDistance =
+        std::max(0.0f, config.cellLumen.finalClusterCentroidRecallRescueMinAddedDistance);
+    const float minAddedDistanceSq = minAddedDistance * minAddedDistance;
+    const float minSignal =
+        config.cellLumen.finalClusterCentroidRecallRescueMinTop10MinusShell;
+    const float radiusScale =
+        clampf(config.cellLumen.finalClusterCentroidRecallRescueRadiusScale, 0.25f, 1.25f);
+
+    std::vector<int> parent(annotated.size());
+    for (size_t i = 0; i < parent.size(); ++i)
+    {
+        parent[i] = static_cast<int>(i);
+    }
+    for (size_t i = 0; i < annotated.size(); ++i)
+    {
+        for (size_t j = i + 1; j < annotated.size(); ++j)
+        {
+            if (squaredDistance(annotated[i].centerScaled,
+                                annotated[j].centerScaled) <= clusterDistanceSq)
+            {
+                unionRoots(parent, static_cast<int>(i), static_cast<int>(j));
+            }
+        }
+    }
+
+    std::map<int, std::vector<int>> groups;
+    for (size_t i = 0; i < annotated.size(); ++i)
+    {
+        groups[findRoot(parent, static_cast<int>(i))].push_back(static_cast<int>(i));
+    }
+
+    struct RecallCandidate
+    {
+        DetectedCell cell;
+        int members = 0;
+        float score = 0.0f;
+    };
+
+    std::vector<RecallCandidate> candidates;
+    int rejectedSmallCluster = 0;
+    int rejectedWeakSignal = 0;
+    for (const auto &[root, members] : groups)
+    {
+        (void)root;
+        if (static_cast<int>(members.size()) < minClusterSize)
+        {
+            rejectedSmallCluster++;
+            continue;
+        }
+
+        const DetectedCell *templateCell = &annotated[static_cast<size_t>(members.front())];
+        for (int index : members)
+        {
+            const DetectedCell &cell = annotated[static_cast<size_t>(index)];
+            if (cell.top10MinusShell > templateCell->top10MinusShell ||
+                (std::abs(cell.top10MinusShell - templateCell->top10MinusShell) < 1e-3f &&
+                 cell.voxelCount > templateCell->voxelCount))
+            {
+                templateCell = &cell;
+            }
+        }
+
+        DetectedCell centroid = *templateCell;
+        double totalWeight = 0.0;
+        double weightedX = 0.0;
+        double weightedY = 0.0;
+        double weightedZ = 0.0;
+        double weightedMean = 0.0;
+        double totalVoxels = 0.0;
+        int x0 = std::numeric_limits<int>::max();
+        int y0 = std::numeric_limits<int>::max();
+        int z0 = std::numeric_limits<int>::max();
+        int x1 = std::numeric_limits<int>::min();
+        int y1 = std::numeric_limits<int>::min();
+        int z1 = std::numeric_limits<int>::min();
+        float maxMajor = 0.0f;
+        float maxB = 0.0f;
+        float maxMinor = 0.0f;
+        float maxSignal = -std::numeric_limits<float>::max();
+        for (int index : members)
+        {
+            const DetectedCell &cell = annotated[static_cast<size_t>(index)];
+            const double signalWeight =
+                static_cast<double>(std::max(1.0f, cell.top10MinusShell));
+            const double voxelWeight =
+                static_cast<double>(std::max(1, cell.voxelCount));
+            const double weight = signalWeight * std::sqrt(voxelWeight);
+            totalWeight += weight;
+            weightedX += weight * static_cast<double>(cell.centerScaled.x);
+            weightedY += weight * static_cast<double>(cell.centerScaled.y);
+            weightedZ += weight * static_cast<double>(cell.centerScaled.z);
+            weightedMean += weight * static_cast<double>(cell.meanIntensity);
+            totalVoxels += voxelWeight;
+            x0 = std::min(x0, cell.component.x0);
+            y0 = std::min(y0, cell.component.y0);
+            z0 = std::min(z0, cell.component.z0);
+            x1 = std::max(x1, cell.component.x1);
+            y1 = std::max(y1, cell.component.y1);
+            z1 = std::max(z1, cell.component.z1);
+            maxMajor = std::max(maxMajor, cell.majorRadius);
+            maxB = std::max(maxB, cell.bRadius);
+            maxMinor = std::max(maxMinor, cell.minorRadius);
+            maxSignal = std::max(maxSignal, cell.top10MinusShell);
+        }
+        if (totalWeight <= 0.0)
+        {
+            rejectedWeakSignal++;
+            continue;
+        }
+
+        centroid.centerScaled.x = static_cast<float>(weightedX / totalWeight);
+        centroid.centerScaled.y = static_cast<float>(weightedY / totalWeight);
+        centroid.centerScaled.z = static_cast<float>(weightedZ / totalWeight);
+        centroid.zForCsv = centroid.centerScaled.z / effectiveZScaling();
+        centroid.majorRadius = std::max(1.0f, maxMajor * radiusScale);
+        centroid.bRadius = std::max(1.0f, maxB * radiusScale);
+        centroid.minorRadius = std::max(1.0f, maxMinor * radiusScale);
+        centroid.voxelCount = std::max(1, static_cast<int>(std::lround(totalVoxels /
+                                                                       static_cast<double>(members.size()))));
+        centroid.meanIntensity = static_cast<float>(weightedMean / totalWeight);
+        centroid.component.x0 = x0;
+        centroid.component.y0 = y0;
+        centroid.component.z0 = z0;
+        centroid.component.x1 = x1;
+        centroid.component.y1 = y1;
+        centroid.component.z1 = z1;
+        centroid.component.vox = centroid.voxelCount;
+        centroid.component.sumW = static_cast<double>(centroid.voxelCount);
+        centroid.component.sx = static_cast<double>(centroid.centerScaled.x) * centroid.component.sumW;
+        centroid.component.sy = static_cast<double>(centroid.centerScaled.y) * centroid.component.sumW;
+        centroid.component.sz = static_cast<double>(centroid.zForCsv) * centroid.component.sumW;
+        centroid.component.sumI = static_cast<double>(centroid.meanIntensity) * centroid.component.sumW;
+        annotateSignalStats(volume, centroid);
+
+        if (minSignal >= 0.0f && centroid.top10MinusShell < minSignal)
+        {
+            rejectedWeakSignal++;
+            continue;
+        }
+
+        const float score = centroid.top10MinusShell +
+                            25.0f * static_cast<float>(members.size()) +
+                            0.002f * maxSignal;
+        candidates.push_back({centroid, static_cast<int>(members.size()), score});
+    }
+
+    std::sort(candidates.begin(),
+              candidates.end(),
+              [](const RecallCandidate &lhs, const RecallCandidate &rhs) {
+                  if (std::abs(lhs.score - rhs.score) > 1e-3f)
+                  {
+                      return lhs.score > rhs.score;
+                  }
+                  return lhs.members > rhs.members;
+              });
+
+    std::vector<DetectedCell> rescued = annotated;
+    int added = 0;
+    int rejectedNearExisting = 0;
+    for (const RecallCandidate &candidate : candidates)
+    {
+        if (added >= maxAdded)
+        {
+            break;
+        }
+        bool nearExisting = false;
+        if (minAddedDistance > 0.0f)
+        {
+            for (const DetectedCell &existing : rescued)
+            {
+                if (squaredDistance(candidate.cell.centerScaled,
+                                    existing.centerScaled) <= minAddedDistanceSq)
+                {
+                    nearExisting = true;
+                    break;
+                }
+            }
+        }
+        if (nearExisting)
+        {
+            rejectedNearExisting++;
+            continue;
+        }
+        rescued.push_back(candidate.cell);
+        added++;
+    }
+
+    if (added > 0)
+    {
+        std::sort(rescued.begin(), rescued.end(), [](const DetectedCell &lhs,
+                                                     const DetectedCell &rhs) {
+            if (std::abs(lhs.centerScaled.y - rhs.centerScaled.y) > 1e-3f)
+            {
+                return lhs.centerScaled.y < rhs.centerScaled.y;
+            }
+            return lhs.centerScaled.x < rhs.centerScaled.x;
+        });
+        for (size_t i = 0; i < rescued.size(); ++i)
+        {
+            rescued[i].name = makeCellName(frameStem, static_cast<int>(i + 1));
+            rescued[i].zForCsv = rescued[i].centerScaled.z / effectiveZScaling();
+        }
+    }
+
+    std::cout << "[CellLumen ClusterCentroidRecallRescue]"
+              << " enabled=1"
+              << " before=" << cells.size()
+              << " after=" << rescued.size()
+              << " groups=" << groups.size()
+              << " candidates=" << candidates.size()
+              << " added=" << added
+              << " max_added=" << maxAdded
+              << " cluster_distance=" << clusterDistance
+              << " min_cluster_size=" << minClusterSize
+              << " min_added_distance=" << minAddedDistance
+              << " min_signal=" << minSignal
+              << " rejected_small_cluster=" << rejectedSmallCluster
+              << " rejected_weak_signal=" << rejectedWeakSignal
+              << " rejected_near_existing=" << rejectedNearExisting
+              << std::endl;
+
+    return rescued;
+}
+
+std::vector<CellLumen::DetectedCell> CellLumen::collapseClusteredCandidates(
+    const std::vector<cv::Mat> &volume,
+    const std::vector<DetectedCell> &cells,
+    const std::string &frameStem) const
+{
+    if (!config.cellLumen.finalClusterCentroidCollapseEnabled ||
+        cells.size() < 2)
+    {
+        return cells;
+    }
+
+    const int cellCount = static_cast<int>(cells.size());
+    if ((config.cellLumen.finalClusterCentroidCollapseMinCells > 0 &&
+         cellCount < config.cellLumen.finalClusterCentroidCollapseMinCells) ||
+        (config.cellLumen.finalClusterCentroidCollapseMaxCells > 0 &&
+         cellCount > config.cellLumen.finalClusterCentroidCollapseMaxCells))
+    {
+        std::cout << "[CellLumen ClusterCentroidCollapse]"
+                  << " enabled=1"
+                  << " skipped=count_gate"
+                  << " cells=" << cellCount
+                  << " min_cells=" << config.cellLumen.finalClusterCentroidCollapseMinCells
+                  << " max_cells=" << config.cellLumen.finalClusterCentroidCollapseMaxCells
+                  << std::endl;
+        return cells;
+    }
+
+    std::vector<DetectedCell> annotated = cells;
+    if (!volume.empty())
+    {
+        for (DetectedCell &cell : annotated)
+        {
+            annotateSignalStats(volume, cell);
+        }
+    }
+
+    const float linkDistance =
+        std::max(1.0f, config.cellLumen.finalClusterCentroidCollapseLinkDistance);
+    const float linkDistanceSq = linkDistance * linkDistance;
+    const int minClusterSize =
+        std::max(2, config.cellLumen.finalClusterCentroidCollapseMinClusterSize);
+    const float radiusScale =
+        clampf(config.cellLumen.finalClusterCentroidCollapseRadiusScale, 0.25f, 1.50f);
+    const bool useSignalWeights =
+        config.cellLumen.finalClusterCentroidCollapseUseSignalWeights;
+
+    std::vector<int> parent(annotated.size());
+    for (size_t i = 0; i < parent.size(); ++i)
+    {
+        parent[i] = static_cast<int>(i);
+    }
+    for (size_t i = 0; i < annotated.size(); ++i)
+    {
+        for (size_t j = i + 1; j < annotated.size(); ++j)
+        {
+            if (squaredDistance(annotated[i].centerScaled,
+                                annotated[j].centerScaled) <= linkDistanceSq)
+            {
+                unionRoots(parent, static_cast<int>(i), static_cast<int>(j));
+            }
+        }
+    }
+
+    std::map<int, std::vector<int>> groups;
+    for (size_t i = 0; i < annotated.size(); ++i)
+    {
+        groups[findRoot(parent, static_cast<int>(i))].push_back(static_cast<int>(i));
+    }
+
+    std::vector<DetectedCell> collapsed;
+    collapsed.reserve(groups.size());
+    int mergedGroups = 0;
+    int mergedCells = 0;
+    int singletonGroups = 0;
+    int tooSmallGroups = 0;
+
+    for (const auto &[root, members] : groups)
+    {
+        (void)root;
+        if (static_cast<int>(members.size()) < minClusterSize)
+        {
+            if (members.size() == 1)
+            {
+                singletonGroups++;
+            }
+            else
+            {
+                tooSmallGroups++;
+            }
+            for (int index : members)
+            {
+                collapsed.push_back(annotated[static_cast<size_t>(index)]);
+            }
+            continue;
+        }
+
+        const DetectedCell *templateCell = &annotated[static_cast<size_t>(members.front())];
+        for (int index : members)
+        {
+            const DetectedCell &cell = annotated[static_cast<size_t>(index)];
+            if (cell.top10MinusShell > templateCell->top10MinusShell ||
+                (std::abs(cell.top10MinusShell - templateCell->top10MinusShell) < 1e-3f &&
+                 cell.voxelCount > templateCell->voxelCount))
+            {
+                templateCell = &cell;
+            }
+        }
+
+        DetectedCell centroid = *templateCell;
+        double totalWeight = 0.0;
+        double weightedX = 0.0;
+        double weightedY = 0.0;
+        double weightedZ = 0.0;
+        double weightedMean = 0.0;
+        double weightedMajor = 0.0;
+        double weightedB = 0.0;
+        double weightedMinor = 0.0;
+        double weightedVoxels = 0.0;
+        int x0 = std::numeric_limits<int>::max();
+        int y0 = std::numeric_limits<int>::max();
+        int z0 = std::numeric_limits<int>::max();
+        int x1 = std::numeric_limits<int>::min();
+        int y1 = std::numeric_limits<int>::min();
+        int z1 = std::numeric_limits<int>::min();
+        for (int index : members)
+        {
+            const DetectedCell &cell = annotated[static_cast<size_t>(index)];
+            const double signalWeight =
+                static_cast<double>(std::max(1.0f, cell.top10MinusShell));
+            const double weight = useSignalWeights ? signalWeight : 1.0;
+            totalWeight += weight;
+            weightedX += weight * static_cast<double>(cell.centerScaled.x);
+            weightedY += weight * static_cast<double>(cell.centerScaled.y);
+            weightedZ += weight * static_cast<double>(cell.centerScaled.z);
+            weightedMean += weight * static_cast<double>(cell.meanIntensity);
+            weightedMajor += weight * static_cast<double>(cell.majorRadius);
+            weightedB += weight * static_cast<double>(cell.bRadius);
+            weightedMinor += weight * static_cast<double>(cell.minorRadius);
+            weightedVoxels += weight * static_cast<double>(std::max(1, cell.voxelCount));
+            x0 = std::min(x0, cell.component.x0);
+            y0 = std::min(y0, cell.component.y0);
+            z0 = std::min(z0, cell.component.z0);
+            x1 = std::max(x1, cell.component.x1);
+            y1 = std::max(y1, cell.component.y1);
+            z1 = std::max(z1, cell.component.z1);
+        }
+        if (totalWeight <= 0.0)
+        {
+            for (int index : members)
+            {
+                collapsed.push_back(annotated[static_cast<size_t>(index)]);
+            }
+            continue;
+        }
+
+        centroid.centerScaled.x = static_cast<float>(weightedX / totalWeight);
+        centroid.centerScaled.y = static_cast<float>(weightedY / totalWeight);
+        centroid.centerScaled.z = static_cast<float>(weightedZ / totalWeight);
+        centroid.zForCsv = centroid.centerScaled.z / effectiveZScaling();
+        centroid.majorRadius = std::max(1.0f, static_cast<float>(weightedMajor / totalWeight) * radiusScale);
+        centroid.bRadius = std::max(1.0f, static_cast<float>(weightedB / totalWeight) * radiusScale);
+        centroid.minorRadius = std::max(1.0f, static_cast<float>(weightedMinor / totalWeight) * radiusScale);
+        centroid.voxelCount = std::max(1, static_cast<int>(std::lround(weightedVoxels / totalWeight)));
+        centroid.meanIntensity = static_cast<float>(weightedMean / totalWeight);
+        centroid.component.x0 = x0;
+        centroid.component.y0 = y0;
+        centroid.component.z0 = z0;
+        centroid.component.x1 = x1;
+        centroid.component.y1 = y1;
+        centroid.component.z1 = z1;
+        centroid.component.vox = centroid.voxelCount;
+        centroid.component.sumW = static_cast<double>(centroid.voxelCount);
+        centroid.component.sx = static_cast<double>(centroid.centerScaled.x) * centroid.component.sumW;
+        centroid.component.sy = static_cast<double>(centroid.centerScaled.y) * centroid.component.sumW;
+        centroid.component.sz = static_cast<double>(centroid.zForCsv) * centroid.component.sumW;
+        centroid.component.sumI = static_cast<double>(centroid.meanIntensity) * centroid.component.sumW;
+        if (!volume.empty())
+        {
+            annotateSignalStats(volume, centroid);
+        }
+        collapsed.push_back(centroid);
+        mergedGroups++;
+        mergedCells += static_cast<int>(members.size());
+    }
+
+    if (collapsed.size() != cells.size())
+    {
+        std::sort(collapsed.begin(), collapsed.end(), [](const DetectedCell &lhs,
+                                                         const DetectedCell &rhs) {
+            if (std::abs(lhs.centerScaled.y - rhs.centerScaled.y) > 1e-3f)
+            {
+                return lhs.centerScaled.y < rhs.centerScaled.y;
+            }
+            return lhs.centerScaled.x < rhs.centerScaled.x;
+        });
+        for (size_t i = 0; i < collapsed.size(); ++i)
+        {
+            collapsed[i].name = makeCellName(frameStem, static_cast<int>(i + 1));
+            collapsed[i].zForCsv = collapsed[i].centerScaled.z / effectiveZScaling();
+        }
+    }
+
+    std::cout << "[CellLumen ClusterCentroidCollapse]"
+              << " enabled=1"
+              << " before=" << cells.size()
+              << " after=" << collapsed.size()
+              << " groups=" << groups.size()
+              << " merged_groups=" << mergedGroups
+              << " merged_cells=" << mergedCells
+              << " singleton_groups=" << singletonGroups
+              << " too_small_groups=" << tooSmallGroups
+              << " link_distance=" << linkDistance
+              << " min_cluster_size=" << minClusterSize
+              << " radius_scale=" << radiusScale
+              << " signal_weights=" << useSignalWeights
+              << std::endl;
+
+    return collapsed;
+}
+
+std::vector<CellLumen::DetectedCell> CellLumen::filterDominatedDuplicateCandidates(
+    const std::vector<cv::Mat> &volume,
+    const std::vector<DetectedCell> &cells,
+    const std::string &frameStem) const
+{
+    (void)frameStem;
+    if (!config.cellLumen.finalDominatedDuplicateFilterEnabled ||
+        cells.size() < 2 ||
+        volume.empty())
+    {
+        return cells;
+    }
+
+    const int cellCount = static_cast<int>(cells.size());
+    if ((config.cellLumen.finalDominatedDuplicateFilterMinCells > 0 &&
+         cellCount < config.cellLumen.finalDominatedDuplicateFilterMinCells) ||
+        (config.cellLumen.finalDominatedDuplicateFilterMaxCells > 0 &&
+         cellCount > config.cellLumen.finalDominatedDuplicateFilterMaxCells))
+    {
+        std::cout << "[CellLumen DominatedDuplicateFilter]"
+                  << " enabled=1"
+                  << " skipped=count_gate"
+                  << " cells=" << cellCount
+                  << " min_cells=" << config.cellLumen.finalDominatedDuplicateFilterMinCells
+                  << " max_cells=" << config.cellLumen.finalDominatedDuplicateFilterMaxCells
+                  << std::endl;
+        return cells;
+    }
+
+    std::vector<DetectedCell> annotated = cells;
+    for (DetectedCell &cell : annotated)
+    {
+        annotateSignalStats(volume, cell);
+    }
+
+    const float distance =
+        std::max(0.0f, config.cellLumen.finalDominatedDuplicateFilterDistance);
+    const float distanceSq = distance * distance;
+    const float voxelRatio =
+        std::max(1.0f, config.cellLumen.finalDominatedDuplicateFilterMinVoxelRatio);
+    const float signalRatio =
+        std::max(1.0f, config.cellLumen.finalDominatedDuplicateFilterMinSignalRatio);
+    const float radiusRatio =
+        std::max(1.0f, config.cellLumen.finalDominatedDuplicateFilterMinRadiusRatio);
+    const float maxLoserSignal =
+        config.cellLumen.finalDominatedDuplicateFilterMaxLoserTop10MinusShell;
+    const bool requireTwoSignals =
+        config.cellLumen.finalDominatedDuplicateFilterRequireTwoSignals;
+
+    std::vector<bool> reject(annotated.size(), false);
+    int rejected = 0;
+    int rejectedVoxelSignal = 0;
+    int rejectedVoxelRadius = 0;
+    int rejectedSignalRadius = 0;
+    for (size_t i = 0; i < annotated.size(); ++i)
+    {
+        const DetectedCell &cell = annotated[i];
+        const bool loserSignalAllowed =
+            maxLoserSignal < 0.0f || cell.top10MinusShell <= maxLoserSignal;
+        if (!loserSignalAllowed)
+        {
+            continue;
+        }
+
+        for (size_t j = 0; j < annotated.size(); ++j)
+        {
+            if (i == j)
+            {
+                continue;
+            }
+            const DetectedCell &neighbor = annotated[j];
+            if (squaredDistance(cell.centerScaled, neighbor.centerScaled) > distanceSq)
+            {
+                continue;
+            }
+
+            const bool voxelDominated =
+                static_cast<float>(neighbor.voxelCount) >=
+                voxelRatio * static_cast<float>(std::max(1, cell.voxelCount));
+            const bool signalDominated =
+                neighbor.top10MinusShell >=
+                    signalRatio * std::max(1.0f, cell.top10MinusShell) &&
+                neighbor.top10MinusShell > cell.top10MinusShell + 5.0f;
+            const bool radiusDominated =
+                neighbor.majorRadius >= radiusRatio * std::max(1.0f, cell.majorRadius);
+            const int evidenceCount =
+                static_cast<int>(voxelDominated) +
+                static_cast<int>(signalDominated) +
+                static_cast<int>(radiusDominated);
+            if (evidenceCount < (requireTwoSignals ? 2 : 1))
+            {
+                continue;
+            }
+
+            reject[i] = true;
+            rejected++;
+            if (voxelDominated && signalDominated)
+            {
+                rejectedVoxelSignal++;
+            }
+            else if (voxelDominated && radiusDominated)
+            {
+                rejectedVoxelRadius++;
+            }
+            else if (signalDominated && radiusDominated)
+            {
+                rejectedSignalRadius++;
+            }
+            break;
+        }
+    }
+
+    if (rejected == 0)
+    {
+        std::cout << "[CellLumen DominatedDuplicateFilter]"
+                  << " enabled=1"
+                  << " before=" << cells.size()
+                  << " after=" << cells.size()
+                  << " rejected=0"
+                  << " distance=" << distance
+                  << std::endl;
+        return annotated;
+    }
+
+    std::vector<DetectedCell> filtered;
+    filtered.reserve(annotated.size() - static_cast<size_t>(rejected));
+    for (size_t i = 0; i < annotated.size(); ++i)
+    {
+        if (!reject[i])
+        {
+            filtered.push_back(annotated[i]);
+        }
+    }
+    std::sort(filtered.begin(), filtered.end(), [](const DetectedCell &lhs,
+                                                   const DetectedCell &rhs) {
+        if (std::abs(lhs.centerScaled.y - rhs.centerScaled.y) > 1e-3f)
+        {
+            return lhs.centerScaled.y < rhs.centerScaled.y;
+        }
+        return lhs.centerScaled.x < rhs.centerScaled.x;
+    });
+    for (size_t i = 0; i < filtered.size(); ++i)
+    {
+        filtered[i].name = makeCellName(frameStem, static_cast<int>(i + 1));
+        filtered[i].zForCsv = filtered[i].centerScaled.z / effectiveZScaling();
+    }
+
+    std::cout << "[CellLumen DominatedDuplicateFilter]"
+              << " enabled=1"
+              << " before=" << cells.size()
+              << " after=" << filtered.size()
+              << " rejected=" << rejected
+              << " distance=" << distance
+              << " voxel_ratio=" << voxelRatio
+              << " signal_ratio=" << signalRatio
+              << " radius_ratio=" << radiusRatio
+              << " max_loser_signal=" << maxLoserSignal
+              << " rejected_voxel_signal=" << rejectedVoxelSignal
+              << " rejected_voxel_radius=" << rejectedVoxelRadius
+              << " rejected_signal_radius=" << rejectedSignalRadius
+              << std::endl;
+
+    return filtered;
 }
 
 float CellLumen::scoreCandidateCells(const std::vector<DetectedCell> &cells,
@@ -3493,7 +4833,22 @@ std::vector<CellLumen::DetectedCell> CellLumen::detectCellsInVolume(
                   << std::endl;
     }
 
-    if (config.cellLumen.seededWatershedLowRescueEnabled)
+    const int lowRescueBaseCellCount = static_cast<int>(bestCells.size());
+    const bool lowRescueBaseCountAllowed =
+        (config.cellLumen.seededWatershedLowRescueMinBaseCells <= 0 ||
+         lowRescueBaseCellCount >= config.cellLumen.seededWatershedLowRescueMinBaseCells) &&
+        (config.cellLumen.seededWatershedLowRescueMaxBaseCells <= 0 ||
+         lowRescueBaseCellCount <= config.cellLumen.seededWatershedLowRescueMaxBaseCells);
+    if (config.cellLumen.seededWatershedLowRescueEnabled && !lowRescueBaseCountAllowed)
+    {
+        std::cout << "[CellLumen SeededWatershed LowRescue]"
+                  << " skipped=base_count_gate"
+                  << " base_cells=" << lowRescueBaseCellCount
+                  << " min_base_cells=" << config.cellLumen.seededWatershedLowRescueMinBaseCells
+                  << " max_base_cells=" << config.cellLumen.seededWatershedLowRescueMaxBaseCells
+                  << std::endl;
+    }
+    if (config.cellLumen.seededWatershedLowRescueEnabled && lowRescueBaseCountAllowed)
     {
         const CellLumenConfig savedCellLumenConfig = config.cellLumen;
         config.cellLumen.seededWatershedSeedPercentile =
@@ -4079,9 +5434,193 @@ std::vector<CellLumen::DetectedCell> CellLumen::detectCellsInVolume(
     }
 
     refineCentersByZColumn(volume, bestCells);
+
+    const size_t beforeZPeakSplit = bestCells.size();
+    bestCells = splitCellsByLocalZPeaks(volume, bestCells, frameStem);
+    if (bestCells.size() != beforeZPeakSplit)
+    {
+        std::sort(bestCells.begin(), bestCells.end(), [](const DetectedCell &lhs, const DetectedCell &rhs) {
+            if (std::abs(lhs.centerScaled.y - rhs.centerScaled.y) > 1e-3f)
+            {
+                return lhs.centerScaled.y < rhs.centerScaled.y;
+            }
+            return lhs.centerScaled.x < rhs.centerScaled.x;
+        });
+        for (size_t i = 0; i < bestCells.size(); ++i)
+        {
+            bestCells[i].name = makeCellName(frameStem, static_cast<int>(i + 1));
+            bestCells[i].zForCsv = bestCells[i].centerScaled.z / effectiveZScaling();
+        }
+    }
+
+    if (config.cellLumen.finalSparseIsolatedFloorFilterEnabled &&
+        bestCells.size() >= 2)
+    {
+        const int cellCount = static_cast<int>(bestCells.size());
+        const bool sparseCountMode =
+            config.cellLumen.finalSparseIsolatedFloorFilterMaxCells <= 0 ||
+            cellCount <= config.cellLumen.finalSparseIsolatedFloorFilterMaxCells;
+        const bool weakSignalMode =
+            config.cellLumen.finalSparseIsolatedFloorWeakSignalMaxCells > 0 &&
+            (config.cellLumen.finalSparseIsolatedFloorWeakSignalMinCells <= 0 ||
+             cellCount >= config.cellLumen.finalSparseIsolatedFloorWeakSignalMinCells) &&
+            cellCount <= config.cellLumen.finalSparseIsolatedFloorWeakSignalMaxCells &&
+            config.cellLumen.finalSparseIsolatedFloorMaxTop10MinusShell >= 0.0f;
+        const float maxMajor = config.cellLumen.finalSparseIsolatedFloorMaxMajorRadius;
+        const float maxMinor = config.cellLumen.finalSparseIsolatedFloorMaxMinorRadius;
+        const float minNearest = std::max(0.0f, config.cellLumen.finalSparseIsolatedFloorMinNearestDistance);
+        std::vector<DetectedCell> filtered;
+        filtered.reserve(bestCells.size());
+        int rejected = 0;
+        int rejectedBySparseCount = 0;
+        int rejectedByWeakSignal = 0;
+        for (size_t i = 0; i < bestCells.size(); ++i)
+        {
+            const DetectedCell &cell = bestCells[i];
+            const bool floorSized =
+                cell.majorRadius <= maxMajor &&
+                cell.minorRadius <= maxMinor;
+            float nearestDistance = std::numeric_limits<float>::max();
+            for (size_t j = 0; j < bestCells.size(); ++j)
+            {
+                if (i == j)
+                {
+                    continue;
+                }
+                nearestDistance = std::min(
+                    nearestDistance,
+                    std::sqrt(squaredDistance(cell.centerScaled, bestCells[j].centerScaled)));
+            }
+
+            const bool weakFloorSignal =
+                weakSignalMode &&
+                cell.top10MinusShell <= config.cellLumen.finalSparseIsolatedFloorMaxTop10MinusShell;
+            const bool rejectAsSparseFloor =
+                floorSized &&
+                nearestDistance >= minNearest &&
+                (sparseCountMode || weakFloorSignal);
+            if (rejectAsSparseFloor)
+            {
+                rejected++;
+                if (sparseCountMode)
+                {
+                    rejectedBySparseCount++;
+                }
+                else
+                {
+                    rejectedByWeakSignal++;
+                }
+                continue;
+            }
+            filtered.push_back(cell);
+        }
+        if (rejected > 0)
+        {
+            bestCells = std::move(filtered);
+            std::sort(bestCells.begin(), bestCells.end(), [](const DetectedCell &lhs, const DetectedCell &rhs) {
+                if (std::abs(lhs.centerScaled.y - rhs.centerScaled.y) > 1e-3f)
+                {
+                    return lhs.centerScaled.y < rhs.centerScaled.y;
+                }
+                return lhs.centerScaled.x < rhs.centerScaled.x;
+            });
+            for (size_t i = 0; i < bestCells.size(); ++i)
+            {
+                bestCells[i].name = makeCellName(frameStem, static_cast<int>(i + 1));
+                bestCells[i].zForCsv = bestCells[i].centerScaled.z / effectiveZScaling();
+            }
+        }
+        std::cout << "[CellLumen SparseIsolatedFloorFilter]"
+                  << " enabled=1"
+                  << " before=" << (bestCells.size() + static_cast<size_t>(rejected))
+                  << " after=" << bestCells.size()
+                  << " rejected=" << rejected
+                  << " max_cells=" << config.cellLumen.finalSparseIsolatedFloorFilterMaxCells
+                  << " weak_signal_min_cells=" << config.cellLumen.finalSparseIsolatedFloorWeakSignalMinCells
+                  << " weak_signal_max_cells=" << config.cellLumen.finalSparseIsolatedFloorWeakSignalMaxCells
+                  << " max_top10_minus_shell=" << config.cellLumen.finalSparseIsolatedFloorMaxTop10MinusShell
+                  << " rejected_sparse_count=" << rejectedBySparseCount
+                  << " rejected_weak_signal=" << rejectedByWeakSignal
+                  << " max_major=" << maxMajor
+                  << " max_minor=" << maxMinor
+                  << " min_nearest_distance=" << minNearest
+                  << std::endl;
+    }
     const size_t beforeWeakSatelliteFilter = bestCells.size();
     bestCells = filterWeakSatelliteCells(volume, bestCells);
     if (bestCells.size() != beforeWeakSatelliteFilter)
+    {
+        std::sort(bestCells.begin(), bestCells.end(), [](const DetectedCell &lhs, const DetectedCell &rhs) {
+            if (std::abs(lhs.centerScaled.y - rhs.centerScaled.y) > 1e-3f)
+            {
+                return lhs.centerScaled.y < rhs.centerScaled.y;
+            }
+            return lhs.centerScaled.x < rhs.centerScaled.x;
+        });
+        for (size_t i = 0; i < bestCells.size(); ++i)
+        {
+            bestCells[i].name = makeCellName(frameStem, static_cast<int>(i + 1));
+            bestCells[i].zForCsv = bestCells[i].centerScaled.z / effectiveZScaling();
+        }
+    }
+
+    const size_t beforeBrightPairMidpointRescue = bestCells.size();
+    bestCells = rescueBrightPairMidpoints(volume, bestCells, frameStem);
+    if (bestCells.size() != beforeBrightPairMidpointRescue)
+    {
+        std::sort(bestCells.begin(), bestCells.end(), [](const DetectedCell &lhs, const DetectedCell &rhs) {
+            if (std::abs(lhs.centerScaled.y - rhs.centerScaled.y) > 1e-3f)
+            {
+                return lhs.centerScaled.y < rhs.centerScaled.y;
+            }
+            return lhs.centerScaled.x < rhs.centerScaled.x;
+        });
+        for (size_t i = 0; i < bestCells.size(); ++i)
+        {
+            bestCells[i].name = makeCellName(frameStem, static_cast<int>(i + 1));
+            bestCells[i].zForCsv = bestCells[i].centerScaled.z / effectiveZScaling();
+        }
+    }
+
+    const size_t beforeClusterCentroidRecallRescue = bestCells.size();
+    bestCells = addClusterCentroidRecallCandidates(volume, bestCells, frameStem);
+    if (bestCells.size() != beforeClusterCentroidRecallRescue)
+    {
+        std::sort(bestCells.begin(), bestCells.end(), [](const DetectedCell &lhs, const DetectedCell &rhs) {
+            if (std::abs(lhs.centerScaled.y - rhs.centerScaled.y) > 1e-3f)
+            {
+                return lhs.centerScaled.y < rhs.centerScaled.y;
+            }
+            return lhs.centerScaled.x < rhs.centerScaled.x;
+        });
+        for (size_t i = 0; i < bestCells.size(); ++i)
+        {
+            bestCells[i].name = makeCellName(frameStem, static_cast<int>(i + 1));
+            bestCells[i].zForCsv = bestCells[i].centerScaled.z / effectiveZScaling();
+        }
+    }
+
+    const size_t beforeClusterCentroidCollapse = bestCells.size();
+    bestCells = collapseClusteredCandidates(volume, bestCells, frameStem);
+    if (bestCells.size() != beforeClusterCentroidCollapse)
+    {
+        std::sort(bestCells.begin(), bestCells.end(), [](const DetectedCell &lhs, const DetectedCell &rhs) {
+            if (std::abs(lhs.centerScaled.y - rhs.centerScaled.y) > 1e-3f)
+            {
+                return lhs.centerScaled.y < rhs.centerScaled.y;
+            }
+            return lhs.centerScaled.x < rhs.centerScaled.x;
+        });
+        for (size_t i = 0; i < bestCells.size(); ++i)
+        {
+            bestCells[i].name = makeCellName(frameStem, static_cast<int>(i + 1));
+            bestCells[i].zForCsv = bestCells[i].centerScaled.z / effectiveZScaling();
+        }
+    }
+
+    const size_t beforeDominatedDuplicateFilter = bestCells.size();
+    bestCells = filterDominatedDuplicateCandidates(volume, bestCells, frameStem);
+    if (bestCells.size() != beforeDominatedDuplicateFilter)
     {
         std::sort(bestCells.begin(), bestCells.end(), [](const DetectedCell &lhs, const DetectedCell &rhs) {
             if (std::abs(lhs.centerScaled.y - rhs.centerScaled.y) > 1e-3f)

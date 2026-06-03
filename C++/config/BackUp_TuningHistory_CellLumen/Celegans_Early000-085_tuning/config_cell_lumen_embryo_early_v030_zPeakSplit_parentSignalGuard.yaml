@@ -1,0 +1,4 @@
+base_config: config_cell_lumen_embryo_early_v029_zPeakSplit_stricter.yaml
+
+cell_lumen:
+  finalZPeakSplitMaxParentTop10MinusShell: 86.0

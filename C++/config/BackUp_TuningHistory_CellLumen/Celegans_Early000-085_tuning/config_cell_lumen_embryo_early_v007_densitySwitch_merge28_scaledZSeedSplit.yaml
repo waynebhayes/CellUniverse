@@ -1,0 +1,20 @@
+base_config: ../../config_cell_lumen_embryo_standalone_clean.yaml
+
+cell_lumen:
+  seededWatershedEnabled: true
+  seededWatershedPreferOverPercentile: false
+  seededWatershedPreferBaseCountMin: 21
+  seededWatershedPreferBaseCountMax: 10000
+  seededWatershedLowRescueEnabled: false
+  seededWatershedRescueEnabled: false
+  finalWeakSatelliteFilterEnabled: true
+  finalDuplicateMergeDistance: 28.0
+  finalPostRefineDuplicateMergeDistance: 28.0
+
+  # Early embryo daughters can separate mostly along Z while staying close in
+  # XY. Keep this isolated to the early profile so existing middle and late
+  # CellLumen configs preserve their old XY-only seed behavior.
+  seedMergeUseScaledZ: true
+  seededSplitUseScaled3DSeparation: true
+  seededSplitMinScaled3DSeparation: 30.0
+  seededSplitMinScaledZSeparation: 28.0

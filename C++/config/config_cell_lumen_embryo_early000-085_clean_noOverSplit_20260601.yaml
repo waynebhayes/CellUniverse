@@ -1,0 +1,20 @@
+# Early embryo CellLumen standalone tuning profile.
+#
+# This config is intentionally independent from the verified standalone clean
+# and CellUniverse high recall configs. It starts from the stable standalone
+# clean profile, then early-frame over split controls can be adjusted here
+# without changing the middle or late frame pipelines.
+base_config: config_cell_lumen_embryo_standalone_clean.yaml
+
+cell_lumen:
+  # Early frames have only a few large cells. Marker watershed over splits one
+  # real cell into many internal bright peaks, so early tuning starts from the
+  # connected component path while keeping the inherited percentile sweep.
+  seededWatershedEnabled: false
+  seededWatershedLowRescueEnabled: false
+  seededWatershedRescueEnabled: false
+  localMaxSeedEnabled: false
+  allowSeededSplitInSparseField: true
+  finalWeakSatelliteFilterEnabled: true
+  finalDuplicateMergeDistance: 12.0
+  finalPostRefineDuplicateMergeDistance: 12.0

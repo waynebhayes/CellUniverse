@@ -1,0 +1,5 @@
+base_config: config_cell_lumen_embryo_early_v036_watershedRescue_highRecall.yaml
+
+cell_lumen:
+  finalDuplicateMergeDistance: 8.0
+  finalPostRefineDuplicateMergeDistance: 8.0

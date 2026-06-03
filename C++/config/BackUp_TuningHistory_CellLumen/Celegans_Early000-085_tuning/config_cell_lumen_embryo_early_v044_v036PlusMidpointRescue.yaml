@@ -1,0 +1,12 @@
+base_config: config_cell_lumen_embryo_early_v036_watershedRescue_highRecall.yaml
+
+cell_lumen:
+  finalBrightPairMidpointRescueEnabled: true
+  finalBrightPairMidpointRescueMinCells: 35
+  finalBrightPairMidpointRescueMaxCells: 90
+  finalBrightPairMidpointRescueMaxAdded: 4
+  finalBrightPairMidpointRescueMinDistance: 34.0
+  finalBrightPairMidpointRescueMaxDistance: 48.0
+  finalBrightPairMidpointRescueMinTop10MinusShell: 55.0
+  finalBrightPairMidpointRescueRadiusScale: 0.85
+  finalBrightPairMidpointRescueMinAddedDistance: 18.0

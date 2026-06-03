@@ -1,0 +1,21 @@
+# 2026-06-03 center-offset diagnostic, TRY03.
+# Result: diagnostic only. Frame 85 stayed comparable to the best verified
+# output, but frame 86 failed badly. The failure exposed the real risky path:
+# after a CellLumen split is rejected for daughter-existing overlap duplicate,
+# the parent can still be reanchored to the rejected low-z candidate. For
+# Cell type 1_40111 in frame 86 this moved z from about 170.8 to 147.2, then
+# the later PCA guard preserved the wrong center. Do not use this as a final
+# 85~100 visualization profile.
+base_config: config_embryo_CellLumenFusion_deterministicSplit_allFrames_temporalRepair_antiCascade_noExport.yaml
+
+simulation:
+  parallel_threads: 8
+  export_frame_tiff: false
+
+cell:
+  pcaShapeUpdatePosition: true
+  pcaShapeCenterDriftGuardEnabled: true
+  pcaShapeCenterDriftGuardMaxMove: 0.0
+  pcaShapeCenterDriftGuardMaxAbsZShift: 0.0
+  pcaShapeCenterDriftGuardMaxNegativeZShift: 4.0
+  pcaShapeCenterDriftGuardMaxAbsXYShift: 0.0

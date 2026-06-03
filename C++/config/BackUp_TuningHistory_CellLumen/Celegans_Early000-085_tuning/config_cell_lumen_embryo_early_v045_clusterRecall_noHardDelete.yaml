@@ -1,0 +1,36 @@
+base_config: config_cell_lumen_embryo_early_v043_baselineClean_midpointRescue.yaml
+
+cell_lumen:
+  # Early frames need recall first: these switches add candidate centers from raw
+  # image and existing CellLumen fragments, without using GT at runtime.
+  finalZColumnRefineEnabled: true
+  finalZColumnRefineMinCells: 1
+  finalZColumnRefineMaxCells: 90
+  finalZColumnRefineRadiusXY: 12.0
+  finalZColumnRefineHalfWindowScaled: 42.0
+  finalZColumnRefineQuantile: 0.70
+  finalZColumnRefineMinScoreFraction: 0.35
+  finalZColumnRefineMaxMoveScaled: 45.0
+  finalZColumnRefineBlend: 1.0
+
+  finalClusterCentroidRecallRescueEnabled: true
+  finalClusterCentroidRecallRescueMinCells: 1
+  finalClusterCentroidRecallRescueMaxCells: 90
+  finalClusterCentroidRecallRescueMaxAdded: 18
+  finalClusterCentroidRecallRescueMinClusterSize: 2
+  finalClusterCentroidRecallRescueClusterDistance: 34.0
+  finalClusterCentroidRecallRescueMinAddedDistance: 4.0
+  finalClusterCentroidRecallRescueMinTop10MinusShell: -1.0
+  finalClusterCentroidRecallRescueRadiusScale: 0.90
+
+  # Keep deletion very strict. The first target is no GT miss, so this is off
+  # until recall is verified.
+  finalDominatedDuplicateFilterEnabled: false
+  finalDominatedDuplicateFilterMinCells: 1
+  finalDominatedDuplicateFilterMaxCells: 90
+  finalDominatedDuplicateFilterDistance: 8.0
+  finalDominatedDuplicateFilterMinVoxelRatio: 3.0
+  finalDominatedDuplicateFilterMinSignalRatio: 1.6
+  finalDominatedDuplicateFilterMinRadiusRatio: 1.5
+  finalDominatedDuplicateFilterMaxLoserTop10MinusShell: 80.0
+  finalDominatedDuplicateFilterRequireTwoSignals: true

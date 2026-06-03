@@ -1,0 +1,4 @@
+base_config: config_cell_lumen_embryo_early_v022_densityBandedFloor_zstrong_count20to30.yaml
+
+cell_lumen:
+  percentiles: [99.05]

@@ -1,0 +1,7 @@
+base_config: config_cell_lumen_embryo_early_v030_zPeakSplit_parentSignalGuard.yaml
+
+cell_lumen:
+  finalZPeakSplitLocal3DFallbackEnabled: true
+  finalZPeakSplitPreferLocal3D: true
+  finalZPeakSplitLocal3DCentroidRadiusXY: 10.0
+  finalZPeakSplitLocal3DCentroidHalfWindowScaled: 14.0

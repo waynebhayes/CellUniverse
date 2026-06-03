@@ -206,6 +206,119 @@ static void writeCandidateGraphRow(std::ostream &out,
         << csvEscape(row.note) << '\n';
 }
 
+struct BrightnessNeighborhoodStats {
+    int innerVoxels = 0;
+    int shellVoxels = 0;
+    float innerMean = 0.0f;
+    float shellMean = 0.0f;
+    float innerTop10Mean = 0.0f;
+    float innerMax = 0.0f;
+};
+
+static float readStackVoxelAsFloat(const cv::Mat &slice, int y, int x)
+{
+    switch (slice.type()) {
+    case CV_32F:
+        return slice.at<float>(y, x);
+    case CV_64F:
+        return static_cast<float>(slice.at<double>(y, x));
+    case CV_8U:
+        return static_cast<float>(slice.at<unsigned char>(y, x)) / 255.0f;
+    case CV_16U:
+        return static_cast<float>(slice.at<unsigned short>(y, x)) / 65535.0f;
+    default:
+        return static_cast<float>(slice.at<float>(y, x));
+    }
+}
+
+static float medianOrZero(std::vector<float> values)
+{
+    if (values.empty()) {
+        return 0.0f;
+    }
+    const size_t mid = values.size() / 2;
+    std::nth_element(values.begin(), values.begin() + mid, values.end());
+    float median = values[mid];
+    if (values.size() % 2 == 0) {
+        const auto lowerIt = std::max_element(values.begin(), values.begin() + mid);
+        median = 0.5f * (median + *lowerIt);
+    }
+    return median;
+}
+
+static BrightnessNeighborhoodStats sampleBrightnessNeighborhood(
+    const std::vector<cv::Mat> &stack,
+    const cv::Point3f &center,
+    float innerRadius,
+    float shellRadius)
+{
+    BrightnessNeighborhoodStats stats;
+    if (stack.empty() || stack[0].empty()) {
+        return stats;
+    }
+
+    innerRadius = std::max(1.0f, innerRadius);
+    shellRadius = std::max(innerRadius + 1.0f, shellRadius);
+    const float innerSq = innerRadius * innerRadius;
+    const float shellSq = shellRadius * shellRadius;
+    const int maxZ = static_cast<int>(stack.size()) - 1;
+    const int maxY = stack[0].rows - 1;
+    const int maxX = stack[0].cols - 1;
+    const int minZ = std::max(0, static_cast<int>(std::floor(center.z - shellRadius)));
+    const int maxZBound = std::min(maxZ, static_cast<int>(std::ceil(center.z + shellRadius)));
+    const int minY = std::max(0, static_cast<int>(std::floor(center.y - shellRadius)));
+    const int maxYBound = std::min(maxY, static_cast<int>(std::ceil(center.y + shellRadius)));
+    const int minX = std::max(0, static_cast<int>(std::floor(center.x - shellRadius)));
+    const int maxXBound = std::min(maxX, static_cast<int>(std::ceil(center.x + shellRadius)));
+
+    double innerSum = 0.0;
+    double shellSum = 0.0;
+    std::vector<float> innerValues;
+    for (int z = minZ; z <= maxZBound; ++z) {
+        const cv::Mat &slice = stack[static_cast<size_t>(z)];
+        for (int y = minY; y <= maxYBound; ++y) {
+            for (int x = minX; x <= maxXBound; ++x) {
+                const float dx = static_cast<float>(x) - center.x;
+                const float dy = static_cast<float>(y) - center.y;
+                const float dz = static_cast<float>(z) - center.z;
+                const float distSq = dx * dx + dy * dy + dz * dz;
+                if (distSq > shellSq) {
+                    continue;
+                }
+                const float value = readStackVoxelAsFloat(slice, y, x);
+                if (distSq <= innerSq) {
+                    innerSum += value;
+                    innerValues.push_back(value);
+                    stats.innerMax = std::max(stats.innerMax, value);
+                    ++stats.innerVoxels;
+                } else {
+                    shellSum += value;
+                    ++stats.shellVoxels;
+                }
+            }
+        }
+    }
+
+    if (stats.innerVoxels > 0) {
+        stats.innerMean = static_cast<float>(innerSum / stats.innerVoxels);
+        const size_t topCount = std::max<size_t>(
+            1, static_cast<size_t>(std::ceil(innerValues.size() * 0.10)));
+        std::nth_element(innerValues.begin(),
+                         innerValues.begin() + static_cast<std::ptrdiff_t>(topCount - 1),
+                         innerValues.end(),
+                         std::greater<float>());
+        double topSum = 0.0;
+        for (size_t i = 0; i < topCount; ++i) {
+            topSum += innerValues[i];
+        }
+        stats.innerTop10Mean = static_cast<float>(topSum / topCount);
+    }
+    if (stats.shellVoxels > 0) {
+        stats.shellMean = static_cast<float>(shellSum / stats.shellVoxels);
+    }
+    return stats;
+}
+
 class ScopedStageTimer {
 public:
     ScopedStageTimer(int frame, std::string stage)
@@ -5488,6 +5601,192 @@ CellUniverse::getCellLumenLookaheadCandidates(int frameIndex)
     return stored;
 }
 
+void CellUniverse::writeDensityBrightnessMetrics(int frameIndex,
+                                                 const std::string &phase)
+{
+    const CellLumenConfig &lumenConfig = config.cellLumen;
+    if (!lumenConfig.fusionDensityMetricsEnabled) {
+        return;
+    }
+    if (frameIndex < 0 || static_cast<size_t>(frameIndex) >= frames.size()) {
+        return;
+    }
+
+    Frame &frame = frames[static_cast<size_t>(frameIndex)];
+    const int absoluteFrame = firstFrame + frameIndex;
+    const std::vector<cv::Mat> &stack = frame.getRealFrame();
+    const auto lookaheadIt = cellLumenLookaheadCandidates.find(frameIndex);
+    const std::vector<CellLumenLookaheadCandidate> emptyCandidates;
+    const auto &lumenCandidates =
+        lookaheadIt != cellLumenLookaheadCandidates.end()
+            ? lookaheadIt->second
+            : emptyCandidates;
+
+    std::error_code ec;
+    fs::create_directories(outputPath, ec);
+    const fs::path csvPath =
+        fs::path(outputPath) / "density_brightness_metrics.csv";
+    bool writeHeader = true;
+    if (fs::exists(csvPath, ec) && !ec) {
+        const auto size = fs::file_size(csvPath, ec);
+        writeHeader = ec || size == 0;
+    }
+    std::ofstream out(csvPath, std::ios::app);
+    if (!out) {
+        std::cerr << "[Density Metrics] frame=" << absoluteFrame
+                  << " status=skipped reason=cannot_open_csv path="
+                  << csvPath << std::endl;
+        return;
+    }
+    if (writeHeader) {
+        out << "frame,phase,cell_name,x,y,z,a_radius,b_radius,c_radius,"
+            << "shape,cell_brightness,density_radius,local_neighbor_count,"
+            << "nearest_neighbor_distance,knn_distance,density_per_1000_voxels,"
+            << "lumen_candidate_count,lumen_within_density_radius,"
+            << "nearest_lumen_distance,nearest_lumen_signal,"
+            << "brightness_radius,brightness_shell_radius,inner_voxels,"
+            << "shell_voxels,inner_mean,shell_mean,inner_top10_mean,"
+            << "inner_max,mean_minus_shell,top10_minus_shell,"
+            << "density_adaptive_enabled,brightness_adaptive_enabled\n";
+    }
+
+    const int k = std::max(1, lumenConfig.fusionDensityMetricsK);
+    const float densityScale = std::max(
+        0.0f, lumenConfig.fusionDensityMetricsRadiusScale);
+    const float brightnessScale = std::max(
+        0.0f, lumenConfig.fusionBrightnessMetricsRadiusScale);
+    const float shellScale = std::max(
+        1.01f, lumenConfig.fusionBrightnessMetricsShellScale);
+    std::vector<float> nearestDistances;
+    std::vector<float> knnDistances;
+    std::vector<float> densityValues;
+    std::vector<float> top10MinusShellValues;
+
+    for (size_t i = 0; i < frame.cells.size(); ++i) {
+        const Ellipsoid &cell = frame.cells[i];
+        const EllipsoidParams params = cell.getCellParams();
+        const cv::Point3f pos(params.x, params.y, params.z);
+        const float maxRadius = std::max(
+            1.0f,
+            std::max(params.aRadius, std::max(params.bRadius, params.cRadius)));
+        const float densityRadius = std::max(1.0f, densityScale * maxRadius);
+
+        std::vector<float> distances;
+        distances.reserve(frame.cells.size() > 0 ? frame.cells.size() - 1 : 0);
+        int localNeighborCount = 0;
+        for (size_t j = 0; j < frame.cells.size(); ++j) {
+            if (i == j) {
+                continue;
+            }
+            const EllipsoidParams otherParams = frame.cells[j].getCellParams();
+            const cv::Point3f otherPos(otherParams.x, otherParams.y, otherParams.z);
+            const float dist = cv::norm(pos - otherPos);
+            distances.push_back(dist);
+            if (dist <= densityRadius) {
+                ++localNeighborCount;
+            }
+        }
+        std::sort(distances.begin(), distances.end());
+        const float nearestDistance =
+            distances.empty() ? 0.0f : distances.front();
+        const float knnDistance =
+            distances.empty()
+                ? 0.0f
+                : distances[std::min<size_t>(static_cast<size_t>(k - 1),
+                                             distances.size() - 1)];
+        constexpr float pi = 3.14159265358979323846f;
+        const float densityVolume =
+            (4.0f / 3.0f) * pi *
+            densityRadius * densityRadius * densityRadius;
+        const float densityPer1000 =
+            densityVolume > 1e-6f
+                ? (static_cast<float>(localNeighborCount) / densityVolume) *
+                      1000.0f
+                : 0.0f;
+
+        int lumenWithinDensityRadius = 0;
+        float nearestLumenDistance = 0.0f;
+        float nearestLumenSignal = 0.0f;
+        bool hasLumenDistance = false;
+        for (const auto &candidate : lumenCandidates) {
+            const float dist = cv::norm(pos - candidate.position);
+            if (dist <= densityRadius) {
+                ++lumenWithinDensityRadius;
+            }
+            if (!hasLumenDistance || dist < nearestLumenDistance) {
+                hasLumenDistance = true;
+                nearestLumenDistance = dist;
+                nearestLumenSignal = candidate.signal;
+            }
+        }
+
+        const float brightnessRadius =
+            std::max(1.0f, brightnessScale * maxRadius);
+        const float shellRadius =
+            std::max(brightnessRadius + 1.0f, brightnessRadius * shellScale);
+        const BrightnessNeighborhoodStats brightnessStats =
+            sampleBrightnessNeighborhood(stack, pos, brightnessRadius, shellRadius);
+        const float meanMinusShell =
+            brightnessStats.innerMean - brightnessStats.shellMean;
+        const float top10MinusShell =
+            brightnessStats.innerTop10Mean - brightnessStats.shellMean;
+
+        nearestDistances.push_back(nearestDistance);
+        knnDistances.push_back(knnDistance);
+        densityValues.push_back(densityPer1000);
+        top10MinusShellValues.push_back(top10MinusShell);
+
+        out << absoluteFrame << ','
+            << csvEscape(phase) << ','
+            << csvEscape(params.name) << ','
+            << params.x << ','
+            << params.y << ','
+            << params.z << ','
+            << params.aRadius << ','
+            << params.bRadius << ','
+            << params.cRadius << ','
+            << cell.shapeElongation() << ','
+            << params.brightness << ','
+            << densityRadius << ','
+            << localNeighborCount << ','
+            << nearestDistance << ','
+            << knnDistance << ','
+            << densityPer1000 << ','
+            << lumenCandidates.size() << ','
+            << lumenWithinDensityRadius << ','
+            << nearestLumenDistance << ','
+            << nearestLumenSignal << ','
+            << brightnessRadius << ','
+            << shellRadius << ','
+            << brightnessStats.innerVoxels << ','
+            << brightnessStats.shellVoxels << ','
+            << brightnessStats.innerMean << ','
+            << brightnessStats.shellMean << ','
+            << brightnessStats.innerTop10Mean << ','
+            << brightnessStats.innerMax << ','
+            << meanMinusShell << ','
+            << top10MinusShell << ','
+            << (lumenConfig.fusionDensityAdaptiveGateEnabled ? 1 : 0) << ','
+            << (lumenConfig.fusionBrightnessAdaptiveGateEnabled ? 1 : 0)
+            << '\n';
+    }
+
+    std::cout << "[Density Metrics] frame=" << absoluteFrame
+              << " phase=" << phase
+              << " cells=" << frame.cells.size()
+              << " lumenCandidates=" << lumenCandidates.size()
+              << " medianNearestNeighbor=" << medianOrZero(nearestDistances)
+              << " medianKnnDistance=" << medianOrZero(knnDistances)
+              << " medianDensityPer1000Voxels=" << medianOrZero(densityValues)
+              << " medianTop10MinusShell="
+              << medianOrZero(top10MinusShellValues)
+              << " densityAdaptive="
+              << (lumenConfig.fusionDensityAdaptiveGateEnabled ? 1 : 0)
+              << " brightnessAdaptive="
+              << (lumenConfig.fusionBrightnessAdaptiveGateEnabled ? 1 : 0)
+              << std::endl;
+}
+
 void CellUniverse::optimize(int frameIndex)
 {
     if (frameIndex < 0 || static_cast<size_t>(frameIndex) >= frames.size())
@@ -5634,6 +5933,7 @@ void CellUniverse::optimize(int frameIndex)
         frame.setMeanCellBrightness(
             frame.cells.empty() ? 0.0f : bSum / static_cast<float>(frame.cells.size()));
     }
+    writeDensityBrightnessMetrics(frameIndex, "pre_optimize");
 
     auto logPerturbCandidate = [&](const std::string &source,
                                    const std::string &cellName,
@@ -6091,6 +6391,57 @@ void CellUniverse::optimize(int frameIndex)
                                            updatePosForCell, posShiftCap,
                                            maskA, maskB, maskC,
                                            &shapeLogs[ci]);
+            // 2026-06-03 center-offset diagnostic guard. This block is only
+            // active when pcaShapeCenterDriftGuardEnabled is explicitly set in
+            // YAML. It was added to test whether visual center drift comes from
+            // the PCA shape pass; it is not part of the default verified path.
+            if (updatePosForCell && !isTrashCell &&
+                config.cell && config.cell->pcaShapeCenterDriftGuardEnabled) {
+                const cv::Point3f postPcaPos(frame.cells[ci].getX(),
+                                             frame.cells[ci].getY(),
+                                             frame.cells[ci].getZ());
+                const cv::Point3f drift = postPcaPos - prePcaPos;
+                const float driftMove =
+                    static_cast<float>(cv::norm(drift));
+                const float driftXY =
+                    std::sqrt(drift.x * drift.x + drift.y * drift.y);
+                const float maxMove =
+                    std::max(0.0f,
+                             config.cell->pcaShapeCenterDriftGuardMaxMove);
+                const float maxAbsZ =
+                    std::max(0.0f,
+                             config.cell->pcaShapeCenterDriftGuardMaxAbsZShift);
+                const float maxNegativeZ =
+                    std::max(0.0f,
+                             config.cell->pcaShapeCenterDriftGuardMaxNegativeZShift);
+                const float maxAbsXY =
+                    std::max(0.0f,
+                             config.cell->pcaShapeCenterDriftGuardMaxAbsXYShift);
+                const bool moveTooLarge =
+                    maxMove > 0.0f && driftMove > maxMove;
+                const bool zTooLarge =
+                    maxAbsZ > 0.0f && std::abs(drift.z) > maxAbsZ;
+                const bool negativeZTooLarge =
+                    maxNegativeZ > 0.0f && drift.z < -maxNegativeZ;
+                const bool xyTooLarge =
+                    maxAbsXY > 0.0f && driftXY > maxAbsXY;
+                if (moveTooLarge || zTooLarge || negativeZTooLarge || xyTooLarge) {
+                    frame.cells[ci].setPosition(prePcaPos.x,
+                                                prePcaPos.y,
+                                                prePcaPos.z);
+                    shapeLogs[ci]
+                        << "  [PCA Shape Center Drift Guard] cell=" << sname
+                        << " move=" << driftMove
+                        << " xy=" << driftXY
+                        << " dz=" << drift.z
+                        << " maxMove=" << maxMove
+                        << " maxAbsZ=" << maxAbsZ
+                        << " maxNegativeZ=" << maxNegativeZ
+                        << " maxAbsXY=" << maxAbsXY
+                        << " action=revert_position_keep_shape"
+                        << std::endl;
+                }
+            }
             const bool hasPreviousSnapshot =
                 previousSnapshots.find(sname) != previousSnapshots.end();
             if (updatePosForCell && !isTrashCell && hasPreviousSnapshot) {
@@ -10562,6 +10913,7 @@ void CellUniverse::optimize(int frameIndex)
               << " split_attempts=" << splitAttempted
               << " split_accepted=" << splitAccepted
               << " final_cells=" << frame.cells.size() << std::endl;
+    writeDensityBrightnessMetrics(frameIndex, "post_optimize");
 
     // M1/M2 cache per-frame summaries so optimize(frameIndex+1) doesn't need
     // frames[frameIndex]'s image stacks.

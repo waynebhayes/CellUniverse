@@ -1,0 +1,6 @@
+base_config: config_cell_lumen_embryo_early_v027_densityBandedFloor_weakSignal10to30.yaml
+
+cell_lumen:
+  seededWatershedPreferBaseCountMin: 10
+  seededWatershedPreferBaseCountMax: 14
+  finalZPeakSplitEnabled: false

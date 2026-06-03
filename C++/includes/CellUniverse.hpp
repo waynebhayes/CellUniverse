@@ -143,6 +143,7 @@ private:
                                      const std::vector<cv::Mat> &realFrame,
                                      bool keepLoaded);
    void applyCellLumenRescue(int frameIndex);
+   void writeDensityBrightnessMetrics(int frameIndex, const std::string &phase);
    const std::vector<CellLumenLookaheadCandidate> &getCellLumenLookaheadCandidates(int frameIndex);
 };
 

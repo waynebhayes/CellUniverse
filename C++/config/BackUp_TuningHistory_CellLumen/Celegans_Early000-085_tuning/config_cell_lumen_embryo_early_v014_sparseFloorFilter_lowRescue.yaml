@@ -1,0 +1,28 @@
+base_config: ../../config_cell_lumen_embryo_standalone_clean.yaml
+
+cell_lumen:
+  seededWatershedEnabled: true
+  seededWatershedPreferOverPercentile: false
+  seededWatershedPreferBaseCountMin: 21
+  seededWatershedPreferBaseCountMax: 10000
+  seededWatershedLowRescueEnabled: true
+  seededWatershedRescueEnabled: false
+  finalWeakSatelliteFilterEnabled: true
+  finalDuplicateMergeDistance: 28.0
+  finalPostRefineDuplicateMergeDistance: 28.0
+
+  maxCandidateCountGrowthFromFirst: 1.45
+  candidateOvergrowthPenaltyWeight: 120.0
+  candidateCellCountWeight: 0.45
+  candidatePercentilePreferenceWeight: 18.0
+
+  fragmentMergeSparseMinDistance: 30.0
+  fragmentMergeSparseMajorScale: 2.35
+  fragmentMergeModerateMinDistance: 20.0
+  fragmentMergeModerateMajorScale: 1.80
+
+  finalSparseIsolatedFloorFilterEnabled: true
+  finalSparseIsolatedFloorFilterMaxCells: 16
+  finalSparseIsolatedFloorMaxMajorRadius: 18.2
+  finalSparseIsolatedFloorMaxMinorRadius: 18.2
+  finalSparseIsolatedFloorMinNearestDistance: 45.0

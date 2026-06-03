@@ -1,0 +1,15 @@
+base_config: config_cell_lumen_embryo_early_v027_densityBandedFloor_weakSignal10to30.yaml
+
+cell_lumen:
+  finalZPeakSplitEnabled: true
+  finalZPeakSplitMinCells: 8
+  finalZPeakSplitMaxCells: 14
+  finalZPeakSplitMaxAdded: 2
+  finalZPeakSplitMinMajorRadius: 22.0
+  finalZPeakSplitRadiusXY: 28.0
+  finalZPeakSplitQuantile: 0.82
+  finalZPeakSplitMinPeakScoreFraction: 0.50
+  finalZPeakSplitMinSeparationScaled: 24.0
+  finalZPeakSplitMaxSeparationScaled: 70.0
+  finalZPeakSplitMaxCenterShiftXY: 45.0
+  finalZPeakSplitRadiusScale: 0.78

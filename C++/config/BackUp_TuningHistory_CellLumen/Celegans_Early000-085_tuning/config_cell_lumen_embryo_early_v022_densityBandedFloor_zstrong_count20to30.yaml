@@ -1,0 +1,44 @@
+base_config: ../../config_cell_lumen_embryo_standalone_clean.yaml
+
+cell_lumen:
+  seededWatershedEnabled: true
+  seededWatershedPreferOverPercentile: false
+  seededWatershedPreferBaseCountMin: 21
+  seededWatershedPreferBaseCountMax: 10000
+  seededWatershedLowRescueEnabled: true
+  seededWatershedLowRescueMinBaseCells: 30
+  seededWatershedLowRescueMaxBaseCells: 31
+  seededWatershedLowRescueMaxAdded: 4
+  seededWatershedRescueEnabled: false
+  finalWeakSatelliteFilterEnabled: true
+  finalDuplicateMergeDistance: 28.0
+  finalPostRefineDuplicateMergeDistance: 28.0
+
+  maxCandidateCountGrowthFromFirst: 1.45
+  candidateOvergrowthPenaltyWeight: 120.0
+  candidateCellCountWeight: 0.45
+  candidatePercentilePreferenceWeight: 18.0
+
+  fragmentMergeSparseMinDistance: 30.0
+  fragmentMergeSparseMajorScale: 2.35
+  fragmentMergeModerateMinDistance: 20.0
+  fragmentMergeModerateMajorScale: 1.80
+
+  finalZColumnRefineEnabled: true
+  finalZColumnRefineRadiusXY: 12.0
+  finalZColumnRefineHalfWindowScaled: 42.0
+  finalZColumnRefineQuantile: 0.80
+  finalZColumnRefineMinScoreFraction: 0.35
+  finalZColumnRefineMaxMoveScaled: 42.0
+  finalZColumnRefineBlend: 1.0
+  finalZColumnRefineMinCells: 20
+  finalZColumnRefineMaxCells: 30
+
+  finalSparseIsolatedFloorFilterEnabled: true
+  finalSparseIsolatedFloorFilterMaxCells: 9
+  finalSparseIsolatedFloorMaxMajorRadius: 18.6
+  finalSparseIsolatedFloorMaxMinorRadius: 18.6
+  finalSparseIsolatedFloorMinNearestDistance: 45.0
+  finalSparseIsolatedFloorWeakSignalMinCells: 20
+  finalSparseIsolatedFloorWeakSignalMaxCells: 30
+  finalSparseIsolatedFloorMaxTop10MinusShell: 60.0

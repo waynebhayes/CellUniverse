@@ -1,207 +1,235 @@
-#!/usr/bin/env python3
-from __future__ import annotations
-
-import argparse
-import re
 from pathlib import Path
-
-import imageio.v3 as iio
-import napari
+import re
 import numpy as np
+import imageio.v3 as iio
 import tifffile as tiff
+import napari
 from qtpy.QtCore import QTimer
 
+# =========================================================
+# 路径
+# =========================================================
+BASE_DIR = Path("/Users/wangyiding/CellUniverse/C++/output/✅40Frames_Embryo_20260414_022211")
+REAL_DIR = BASE_DIR / "real"
+SYNTH_DIR = BASE_DIR / "synth"
 
-def natural_key(value: str):
-    return [int(x) if x.isdigit() else x.lower() for x in re.split(r"(\d+)", str(value))]
-
+# =========================================================
+# 工具函数
+# =========================================================
+def natural_key(s):
+    s = str(s)
+    return [int(x) if x.isdigit() else x.lower() for x in re.split(r'(\d+)', s)]
 
 def collect_frame_dirs(folder: Path):
-    return sorted([p for p in folder.iterdir() if p.is_dir()], key=lambda p: natural_key(p.name))
+    frame_dirs = [p for p in folder.iterdir() if p.is_dir()]
+    frame_dirs = sorted(frame_dirs, key=lambda p: natural_key(p.name))
+    return frame_dirs
 
+def collect_recursive_tifs(folder: Path):
+    files = sorted(
+        list(folder.rglob("*.tif")) + list(folder.rglob("*.tiff")),
+        key=lambda p: natural_key(p.name)
+    )
+    return files
 
-def collect_recursive_images(folder: Path, patterns: tuple[str, ...]):
-    files: list[Path] = []
-    for pattern in patterns:
-        files.extend(folder.rglob(pattern))
-    return sorted(files, key=lambda p: natural_key(p))
-
-
-def load_volume_from_files(files: list[Path]) -> np.ndarray:
-    if not files:
-        raise RuntimeError("No files were provided to load_volume_from_files().")
-
-    if files[0].suffix.lower() in {".tif", ".tiff"}:
-        slices = [tiff.imread(str(path)) for path in files]
-    else:
-        slices = [iio.imread(path) for path in files]
-
-    if slices[0].ndim == 2:
-        return np.stack(slices, axis=0)
-
-    if slices[0].ndim == 3 and len(slices) == 1:
-        return slices[0]
-
-    raise RuntimeError(f"Unsupported slice structure for files under {files[0].parent}")
-
-
-def load_time_series(folder: Path, label: str) -> np.ndarray:
+def load_synth_from_png_folders(folder: Path):
     frame_dirs = collect_frame_dirs(folder)
+    if not frame_dirs:
+        raise RuntimeError(f"[ERROR] No frame folders found under synth dir: {folder}")
+
+    print("[INFO] synth frame folders found:")
+    for p in frame_dirs[:10]:
+        print("   ", p.name)
+    if len(frame_dirs) > 10:
+        print(f"   ... total = {len(frame_dirs)}")
+
+    volumes = []
+    expected_shape = None
+
+    for frame_dir in frame_dirs:
+        pngs = sorted(list(frame_dir.glob("*.png")), key=lambda p: natural_key(p.name))
+        if not pngs:
+            print(f"[WARN] skip empty synth frame folder: {frame_dir}")
+            continue
+
+        slices = [iio.imread(p) for p in pngs]
+        vol = np.stack(slices, axis=0)   # (Z,Y,X)
+
+        if expected_shape is None:
+            expected_shape = vol.shape
+        elif vol.shape != expected_shape:
+            raise RuntimeError(
+                f"[ERROR] Synth shape mismatch at frame {frame_dir.name}: "
+                f"{vol.shape} != {expected_shape}"
+            )
+
+        volumes.append(vol)
+
+    if not volumes:
+        raise RuntimeError("[ERROR] No valid synth volumes loaded.")
+
+    data = np.stack(volumes, axis=0)   # (T,Z,Y,X)
+    print("[INFO] synth final 4D shape =", data.shape)
+    return data
+
+def load_real(folder: Path):
+    # 先尝试：real 下面也是按帧子文件夹组织
+    frame_dirs = collect_frame_dirs(folder)
+
+    # 如果 real 下存在子文件夹，则优先按“每个子文件夹=1帧”读取
     if frame_dirs:
-        print(f"[INFO] {label} frame folders found: {len(frame_dirs)}")
-        volumes: list[np.ndarray] = []
+        print("[INFO] real frame folders found:")
+        for p in frame_dirs[:10]:
+            print("   ", p.name)
+        if len(frame_dirs) > 10:
+            print(f"   ... total = {len(frame_dirs)}")
+
+        volumes = []
         expected_shape = None
 
         for frame_dir in frame_dirs:
-            files = sorted(
-                list(frame_dir.glob("*.tif")) +
-                list(frame_dir.glob("*.tiff")) +
-                list(frame_dir.glob("*.png")),
-                key=lambda p: natural_key(p.name),
+            tifs = sorted(
+                list(frame_dir.glob("*.tif")) + list(frame_dir.glob("*.tiff")),
+                key=lambda p: natural_key(p.name)
             )
-            if not files:
-                print(f"[WARN] Skipping empty frame folder: {frame_dir}")
+            pngs = sorted(list(frame_dir.glob("*.png")), key=lambda p: natural_key(p.name))
+
+            if tifs:
+                slices = [tiff.imread(str(p)) for p in tifs]
+                # 如果每张 tif 本身就是 2D，则 stack；如果已经是 3D，就直接用第一张
+                if slices[0].ndim == 2:
+                    vol = np.stack(slices, axis=0)
+                elif slices[0].ndim == 3 and len(slices) == 1:
+                    vol = slices[0]
+                else:
+                    raise RuntimeError(f"[ERROR] Unsupported tif structure in {frame_dir}")
+            elif pngs:
+                slices = [iio.imread(p) for p in pngs]
+                vol = np.stack(slices, axis=0)
+            else:
+                print(f"[WARN] skip empty real frame folder: {frame_dir}")
                 continue
 
-            volume = load_volume_from_files(files)
             if expected_shape is None:
-                expected_shape = volume.shape
-            elif volume.shape != expected_shape:
+                expected_shape = vol.shape
+            elif vol.shape != expected_shape:
                 raise RuntimeError(
-                    f"{label} frame shape mismatch at {frame_dir.name}: "
-                    f"{volume.shape} != {expected_shape}"
+                    f"[ERROR] Real shape mismatch at frame {frame_dir.name}: "
+                    f"{vol.shape} != {expected_shape}"
                 )
 
-            volumes.append(volume)
+            volumes.append(vol)
 
         if not volumes:
-            raise RuntimeError(f"No valid {label} volumes loaded from frame folders.")
+            raise RuntimeError("[ERROR] No valid real volumes loaded from frame folders.")
 
-        data = np.stack(volumes, axis=0)
-        print(f"[INFO] {label} final 4D shape = {data.shape}")
+        data = np.stack(volumes, axis=0)   # (T,Z,Y,X)
+        print("[INFO] real final 4D shape =", data.shape)
         return data
 
-    files = collect_recursive_images(folder, ("*.tif", "*.tiff", "*.png"))
-    if not files:
-        raise RuntimeError(f"No readable image files found under {folder}")
+    # 否则尝试：real 下面直接是很多 tif 文件
+    tif_files = collect_recursive_tifs(folder)
+    if tif_files:
+        print("[INFO] first 10 real tif files:")
+        for p in tif_files[:10]:
+            print("   ", p)
+        if len(tif_files) > 10:
+            print(f"   ... total = {len(tif_files)}")
 
-    print(f"[INFO] {label} recursive file count = {len(files)}")
-    volumes: list[np.ndarray] = []
-    expected_shape = None
-    for file_path in files:
-        volume = load_volume_from_files([file_path])
-        if expected_shape is None:
-            expected_shape = volume.shape
-        elif volume.shape != expected_shape:
-            raise RuntimeError(
-                f"{label} volume shape mismatch for {file_path.name}: "
-                f"{volume.shape} != {expected_shape}"
-            )
-        volumes.append(volume)
+        vols = []
+        expected_shape = None
+        for f in tif_files:
+            arr = tiff.imread(str(f))
+            if arr.ndim != 3:
+                raise RuntimeError(f"[ERROR] Real tif is not 3D: {f}, shape={arr.shape}")
 
-    data = np.stack(volumes, axis=0)
-    print(f"[INFO] {label} final 4D shape = {data.shape}")
-    return data
+            if expected_shape is None:
+                expected_shape = arr.shape
+            elif arr.shape != expected_shape:
+                raise RuntimeError(
+                    f"[ERROR] Real tif shape mismatch: {f}, {arr.shape} != {expected_shape}"
+                )
 
+            vols.append(arr)
 
-def build_parser():
-    parser = argparse.ArgumentParser(
-        description="Play real and synth outputs inside one napari window on the same time axis."
-    )
-    parser.add_argument(
-        "base_dir",
-        nargs="?",
-        default="/Users/wangyiding/CellUniverse/C++/output/🟣HL60_20260419.0638",
-        help="Output directory that contains real/ and synth/ subfolders.",
-    )
-    parser.add_argument("--fps", type=float, default=2.0, help="Playback speed in frames per second.")
-    parser.add_argument(
-        "--layout",
-        choices=("grid", "overlay"),
-        default="grid",
-        help="Use grid to show real and synth side by side, or overlay to stack them in one view.",
-    )
-    parser.add_argument("--real-colormap", default="gray", help="Napari colormap for real volume.")
-    parser.add_argument("--synth-colormap", default="green", help="Napari colormap for synth volume.")
-    return parser
+        data = np.stack(vols, axis=0)   # (T,Z,Y,X)
+        print("[INFO] real final 4D shape =", data.shape)
+        return data
 
+    raise RuntimeError(f"[ERROR] No readable real data found under: {folder}")
 
-def main():
-    args = build_parser().parse_args()
-    base_dir = Path(args.base_dir).expanduser().resolve()
-    real_dir = base_dir / "real"
-    synth_dir = base_dir / "synth"
+# =========================================================
+# 读取数据
+# =========================================================
+real = load_real(REAL_DIR)
+synth = load_synth_from_png_folders(SYNTH_DIR)
 
-    if not real_dir.is_dir():
-        raise RuntimeError(f"Missing real directory: {real_dir}")
-    if not synth_dir.is_dir():
-        raise RuntimeError(f"Missing synth directory: {synth_dir}")
+print("[INFO] real shape :", real.shape)
+print("[INFO] synth shape:", synth.shape)
 
-    real = load_time_series(real_dir, "real")
-    synth = load_time_series(synth_dir, "synth")
+# 为了同一个时间轴播放，取共同最小帧数
+nT = min(real.shape[0], synth.shape[0])
+if real.shape[0] != synth.shape[0]:
+    print(f"[WARN] different T: real={real.shape[0]}, synth={synth.shape[0]}, using min T={nT}")
 
-    n_frames = min(real.shape[0], synth.shape[0])
-    if real.shape[0] != synth.shape[0]:
-        print(
-            f"[WARN] Different frame counts: real={real.shape[0]}, "
-            f"synth={synth.shape[0]}, using {n_frames}"
-        )
-    real = real[:n_frames]
-    synth = synth[:n_frames]
+real = real[:nT]
+synth = synth[:nT]
 
-    viewer = napari.Viewer(title=f"Real + Synth: {base_dir.name}")
+# =========================================================
+# 打开同一个 napari 窗口
+# =========================================================
+viewer = napari.Viewer(title="Real + Synth (same napari window)")
 
-    layer_real = viewer.add_image(
-        real,
-        name="real",
-        rendering="mip",
-        depiction="volume",
-        colormap=args.real_colormap,
-    )
-    layer_synth = viewer.add_image(
-        synth,
-        name="synth",
-        rendering="mip",
-        depiction="volume",
-        colormap=args.synth_colormap,
-    )
+layer_real = viewer.add_image(
+    real,
+    name="real",
+    rendering="mip",
+    depiction="volume",
+    colormap="gray",
+)
 
-    for layer in (layer_real, layer_synth):
-        try:
-            layer.interpolation = "linear"
-        except Exception:
-            pass
+layer_synth = viewer.add_image(
+    synth,
+    name="synth",
+    rendering="mip",
+    depiction="volume",
+    colormap="green",
+)
 
-    viewer.dims.axis_labels = ("t", "z", "y", "x")
-    viewer.dims.ndisplay = 3
+# 有些 napari 版本需要单独设 interpolation
+try:
+    layer_real.interpolation = "linear"
+except Exception:
+    pass
 
-    if args.layout == "grid":
-        viewer.grid.enabled = True
-        viewer.grid.stride = 2
-    else:
-        viewer.grid.enabled = False
-        try:
-            layer_synth.opacity = 0.55
-        except Exception:
-            pass
+try:
+    layer_synth.interpolation = "linear"
+except Exception:
+    pass
 
-    interval_ms = max(1, int(1000 / max(args.fps, 0.1)))
-    timer = QTimer()
+viewer.dims.axis_labels = ("t", "z", "y", "x")
+viewer.dims.ndisplay = 3
 
-    def step():
-        t = int(viewer.dims.current_step[0])
-        viewer.dims.set_point(0, (t + 1) % n_frames)
+# 同一个 napari 窗口里并排显示两个 layer
+viewer.grid.enabled = True
+viewer.grid.stride = 2
 
-    timer.timeout.connect(step)
-    timer.start(interval_ms)
+# 不主动改 scale，避免把结构拉坏
+# 如果你将来确认 real 的真实体素比例，再单独改 layer_real.scale
 
-    print(f"[INFO] base_dir = {base_dir}")
-    print(f"[INFO] real shape  = {real.shape}")
-    print(f"[INFO] synth shape = {synth.shape}")
-    print(f"[INFO] autoplay = {args.fps} fps, frames = {n_frames}, layout = {args.layout}")
+# 自动循环播放
+fps = 2
+interval_ms = int(1000 / fps)
 
-    napari.run()
+timer = QTimer()
 
+def step():
+    t = int(viewer.dims.current_step[0])
+    viewer.dims.set_point(0, (t + 1) % nT)
 
-if __name__ == "__main__":
-    main()
+timer.timeout.connect(step)
+timer.start(interval_ms)
+
+print(f"[INFO] autoplay started at {fps} fps, total frames = {nT}")
+
+napari.run()
