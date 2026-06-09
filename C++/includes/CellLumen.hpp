@@ -35,8 +35,7 @@ public:
     CellLumen(BaseConfig config, const fs::path &outputDir);
 
     std::vector<DetectedCell> detectCellsForFrame(const fs::path &imageFile,
-                                                  bool printCellDetails = false,
-                                                  bool allowTraMask = true);
+                                                  bool printCellDetails = false);
 
     std::vector<DetectedCell> buildInitialCsvForFrame(const fs::path &imageFile,
                                                       const fs::path &csvOutputPath);
@@ -68,9 +67,6 @@ private:
     int computeMinComponentVoxels() const;
     std::vector<DetectedCell> detectCellsInVolume(const std::vector<cv::Mat> &volume,
                                                   const std::string &frameStem);
-    std::vector<DetectedCell> detectCellsFromTraMask(const fs::path &traMaskFile,
-                                                     const std::vector<cv::Mat> &rawVolume,
-                                                     const std::string &frameStem) const;
     std::vector<DetectedCell> detectCellsAtPercentile(const std::vector<cv::Mat> &volume,
                                                       const std::string &frameStem,
                                                       float percentileHigh) const;

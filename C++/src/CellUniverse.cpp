@@ -2277,7 +2277,7 @@ void CellUniverse::applyCellLumenRescue(int frameIndex)
     std::vector<CellLumen::DetectedCell> candidates;
     try {
         CellLumen lumen(config, fs::path(outputPath) / "cell_lumen_fusion");
-        candidates = lumen.detectCellsForFrame(framePath, false, false);
+        candidates = lumen.detectCellsForFrame(framePath, false);
     } catch (const std::exception &ex) {
         Ellipsoid::cellConfig = savedCellConfig;
         std::cout << "[CellLumen Fusion] frame=" << absoluteFrame
@@ -5562,7 +5562,6 @@ CellUniverse::getCellLumenLookaheadCandidates(int frameIndex)
         CellLumen lumen(config, fs::path(outputPath) / "cell_lumen_fusion_window");
         const auto detected =
             lumen.detectCellsForFrame(imagePaths[static_cast<size_t>(frameIndex)],
-                                      false,
                                       false);
         int candidateId = 0;
         for (const auto &candidate : detected) {

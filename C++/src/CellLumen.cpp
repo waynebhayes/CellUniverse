@@ -258,12 +258,6 @@ std::vector<float> cellLumenPercentiles(const CellLumenConfig &config)
     return envPercentiles;
 }
 
-bool shouldUseTraMaskWhenAvailable()
-{
-    const char *value = std::getenv("CELLUNIVERSE_CELL_LUMEN_USE_TRA_MASK");
-    return value != nullptr && std::string(value) == "1";
-}
-
 bool shouldSkipCellLumenTiffOutput()
 {
     const char *value = std::getenv("CELLUNIVERSE_CELL_LUMEN_SKIP_TIFF");
@@ -335,104 +329,6 @@ float meanOfTopFraction(std::vector<float> values, float fraction)
         sum += values[i];
     }
     return static_cast<float>(sum / static_cast<double>(keep));
-}
-
-int frameNumberFromPath(const fs::path &imageFile)
-{
-    std::string digits;
-    for (char ch : imageFile.stem().string())
-    {
-        if (std::isdigit(static_cast<unsigned char>(ch)))
-        {
-            digits.push_back(ch);
-        }
-    }
-    if (digits.empty())
-    {
-        return -1;
-    }
-    return std::stoi(digits);
-}
-
-std::string formatFrameNumber3(int frameNumber)
-{
-    std::ostringstream stream;
-    stream << std::setfill('0') << std::setw(3) << frameNumber;
-    return stream.str();
-}
-
-std::optional<fs::path> findPairedTraMask(const fs::path &imageFile)
-{
-    if (!shouldUseTraMaskWhenAvailable())
-    {
-        return std::nullopt;
-    }
-
-    const int frameNumber = frameNumberFromPath(imageFile);
-    if (frameNumber < 0)
-    {
-        return std::nullopt;
-    }
-
-    const std::string frameText = formatFrameNumber3(frameNumber);
-    const fs::path maskName = "man_track" + frameText + ".tif";
-    if (imageFile.filename() == maskName)
-    {
-        return imageFile;
-    }
-
-    std::vector<fs::path> candidates;
-    const fs::path sequenceDir = imageFile.parent_path();
-    const fs::path datasetRoot = sequenceDir.parent_path();
-    candidates.push_back(datasetRoot / "CellLumen_Embryo" / "TRA" / maskName);
-    candidates.push_back(datasetRoot / (sequenceDir.filename().string() + "_GT") / "TRA" / maskName);
-    candidates.push_back(datasetRoot / "TRA" / maskName);
-
-    for (const auto &candidate : candidates)
-    {
-        if (fs::exists(candidate))
-        {
-            return candidate;
-        }
-    }
-    return std::nullopt;
-}
-
-int labelValueAt(const cv::Mat &slice, int y, int x)
-{
-    if (slice.channels() != 1)
-    {
-        throw std::runtime_error("TRA mask must be a single-channel label image.");
-    }
-
-    switch (slice.depth())
-    {
-        case CV_8U:
-            return static_cast<int>(slice.at<unsigned char>(y, x));
-        case CV_16U:
-            return static_cast<int>(slice.at<unsigned short>(y, x));
-        case CV_16S:
-            return static_cast<int>(slice.at<short>(y, x));
-        case CV_32S:
-            return slice.at<int>(y, x);
-        case CV_32F:
-            return static_cast<int>(std::lround(slice.at<float>(y, x)));
-        case CV_64F:
-            return static_cast<int>(std::lround(slice.at<double>(y, x)));
-        default:
-            throw std::runtime_error("Unsupported TRA mask pixel depth.");
-    }
-}
-
-std::vector<cv::Mat> loadTraMaskStack(const fs::path &maskFile)
-{
-    std::vector<cv::Mat> slices;
-    cv::imreadmulti(maskFile.string(), slices, cv::IMREAD_UNCHANGED);
-    if (slices.empty())
-    {
-        throw std::runtime_error("TRA mask has 0 slices: " + maskFile.string());
-    }
-    return slices;
 }
 
 std::vector<cv::Mat> interpolateStackForPreview(const std::vector<cv::Mat> &volume, int zScale)
@@ -1658,212 +1554,6 @@ std::vector<CellLumen::DetectedCell> CellLumen::detectCellsBySeededWatershed(
               << " default_qualified_cells=" << defaultQualifiedCells
               << " skipped_small=" << skippedSmall
               << " cells=" << cells.size()
-              << std::endl;
-
-    return cells;
-}
-
-std::vector<CellLumen::DetectedCell> CellLumen::detectCellsFromTraMask(
-    const fs::path &traMaskFile,
-    const std::vector<cv::Mat> &rawVolume,
-    const std::string &frameStem) const
-{
-    const std::vector<cv::Mat> labelSlices = loadTraMaskStack(traMaskFile);
-    if (rawVolume.empty())
-    {
-        throw std::runtime_error("TRA mask mode requires the matching raw frame volume.");
-    }
-
-    const bool rawMatchesMask =
-        rawVolume.size() == labelSlices.size() &&
-        !rawVolume.front().empty() &&
-        rawVolume.front().size() == labelSlices.front().size();
-    if (!rawMatchesMask)
-    {
-        std::cout << "[CellLumen TRA] warning=raw_mask_size_mismatch"
-                  << " raw_slices=" << rawVolume.size()
-                  << " mask_slices=" << labelSlices.size()
-                  << std::endl;
-    }
-
-    std::map<int, EmbryoBrightTracker::Comp3DStat> labelStats;
-    for (int z = 0; z < static_cast<int>(labelSlices.size()); ++z)
-    {
-        const cv::Mat &maskSlice = labelSlices[static_cast<size_t>(z)];
-        for (int y = 0; y < maskSlice.rows; ++y)
-        {
-            for (int x = 0; x < maskSlice.cols; ++x)
-            {
-                const int label = labelValueAt(maskSlice, y, x);
-                if (label <= 0)
-                {
-                    continue;
-                }
-
-                auto [it, inserted] = labelStats.try_emplace(label);
-                auto &stat = it->second;
-                if (inserted)
-                {
-                    stat.x0 = stat.x1 = x;
-                    stat.y0 = stat.y1 = y;
-                    stat.z0 = stat.z1 = z;
-                }
-
-                stat.vox++;
-                stat.sumW += 1.0;
-                stat.sx += static_cast<double>(x);
-                stat.sy += static_cast<double>(y);
-                stat.sz += static_cast<double>(z);
-                stat.ux += static_cast<double>(x);
-                stat.uy += static_cast<double>(y);
-                stat.uz += static_cast<double>(z);
-                stat.x0 = std::min(stat.x0, x);
-                stat.x1 = std::max(stat.x1, x);
-                stat.y0 = std::min(stat.y0, y);
-                stat.y1 = std::max(stat.y1, y);
-                stat.z0 = std::min(stat.z0, z);
-                stat.z1 = std::max(stat.z1, z);
-
-                if (rawMatchesMask)
-                {
-                    stat.sumI += rawVolume[static_cast<size_t>(z)].ptr<float>(y)[x];
-                }
-            }
-        }
-    }
-
-    const float minMajor = config.cell ? static_cast<float>(config.cell->minARadius) : 6.0f;
-    const float maxMajor = config.cell ? static_cast<float>(config.cell->maxARadius) : 35.0f;
-    const float minMinor = config.cell ? static_cast<float>(config.cell->minCRadius) : 4.0f;
-    const float maxMinor = config.cell ? static_cast<float>(config.cell->maxCRadius) : 25.0f;
-    const float minB = (config.cell && config.cell->maxBRadius > 0.0f)
-        ? static_cast<float>(config.cell->minBRadius)
-        : minMajor;
-    const float maxB = (config.cell && config.cell->maxBRadius > 0.0f)
-        ? static_cast<float>(config.cell->maxBRadius)
-        : maxMajor;
-    const float zScale = effectiveZScaling();
-
-    auto estimateRadiiFromRawNeighborhood = [&](const cv::Point3f &centerRaw,
-                                                float &major,
-                                                float &bRadius,
-                                                float &minor) {
-        major = std::max(minMajor, 12.0f);
-        bRadius = std::max(minB, 10.0f);
-        minor = std::max(minMinor, 8.0f);
-        if (!rawMatchesMask)
-        {
-            return;
-        }
-
-        const float searchXY = std::clamp(std::max(minMajor * 4.8f, 22.0f), 18.0f, 34.0f);
-        const int rx = static_cast<int>(std::ceil(searchXY));
-        const int ry = rx;
-        const int rz = std::max(2, static_cast<int>(std::ceil((searchXY / zScale) * 1.35f)));
-        const int cz = static_cast<int>(std::lround(centerRaw.z));
-        const int cy = static_cast<int>(std::lround(centerRaw.y));
-        const int cx = static_cast<int>(std::lround(centerRaw.x));
-
-        std::vector<float> neighborhoodValues;
-        for (int z = std::max(0, cz - rz); z <= std::min(static_cast<int>(rawVolume.size()) - 1, cz + rz); ++z)
-        {
-            const cv::Mat &slice = rawVolume[static_cast<size_t>(z)];
-            for (int y = std::max(0, cy - ry); y <= std::min(slice.rows - 1, cy + ry); ++y)
-            {
-                const float dy = static_cast<float>(y) - centerRaw.y;
-                for (int x = std::max(0, cx - rx); x <= std::min(slice.cols - 1, cx + rx); ++x)
-                {
-                    const float dx = static_cast<float>(x) - centerRaw.x;
-                    const float dzScaled = (static_cast<float>(z) - centerRaw.z) * zScale;
-                    const float normalized = (dx * dx + dy * dy) / (searchXY * searchXY) +
-                                             (dzScaled * dzScaled) / (searchXY * searchXY);
-                    if (normalized > 1.0f)
-                    {
-                        continue;
-                    }
-                    const float value = slice.ptr<float>(y)[x];
-                    if (std::isfinite(value) && value > 0.0f)
-                    {
-                        neighborhoodValues.push_back(value);
-                    }
-                }
-            }
-        }
-
-        if (neighborhoodValues.size() < 16)
-        {
-            return;
-        }
-
-        const float threshold = percentileFromValues(neighborhoodValues, 0.72f);
-        double sumW = 0.0;
-        double sumDx2 = 0.0;
-        double sumDy2 = 0.0;
-        double sumDz2 = 0.0;
-        for (int z = std::max(0, cz - rz); z <= std::min(static_cast<int>(rawVolume.size()) - 1, cz + rz); ++z)
-        {
-            const cv::Mat &slice = rawVolume[static_cast<size_t>(z)];
-            for (int y = std::max(0, cy - ry); y <= std::min(slice.rows - 1, cy + ry); ++y)
-            {
-                const float dy = static_cast<float>(y) - centerRaw.y;
-                for (int x = std::max(0, cx - rx); x <= std::min(slice.cols - 1, cx + rx); ++x)
-                {
-                    const float dx = static_cast<float>(x) - centerRaw.x;
-                    const float dzScaled = (static_cast<float>(z) - centerRaw.z) * zScale;
-                    const float normalized = (dx * dx + dy * dy) / (searchXY * searchXY) +
-                                             (dzScaled * dzScaled) / (searchXY * searchXY);
-                    if (normalized > 1.0f)
-                    {
-                        continue;
-                    }
-
-                    const float value = slice.ptr<float>(y)[x];
-                    const float signal = value - threshold;
-                    if (signal <= 0.0f)
-                    {
-                        continue;
-                    }
-                    const double weight = static_cast<double>(signal) * static_cast<double>(signal);
-                    sumW += weight;
-                    sumDx2 += weight * static_cast<double>(dx * dx);
-                    sumDy2 += weight * static_cast<double>(dy * dy);
-                    sumDz2 += weight * static_cast<double>(dzScaled * dzScaled);
-                }
-            }
-        }
-
-        if (sumW <= 1e-6)
-        {
-            return;
-        }
-
-        const float radiusScale = 2.55f;
-        const float rxMoment = radiusScale * std::sqrt(static_cast<float>(sumDx2 / sumW));
-        const float ryMoment = radiusScale * std::sqrt(static_cast<float>(sumDy2 / sumW));
-        const float rzMoment = radiusScale * std::sqrt(static_cast<float>(sumDz2 / sumW));
-        major = clampf(std::max(rxMoment, ryMoment), minMajor, maxMajor);
-        bRadius = clampf(std::min(rxMoment, ryMoment), minB, std::min(maxB, major));
-        minor = clampf(rzMoment, minMinor, std::min(maxMinor, major));
-    };
-
-    std::vector<DetectedCell> cells;
-    cells.reserve(labelStats.size());
-    for (const auto &[label, stat] : labelStats)
-    {
-        DetectedCell cell = makeDetectedCellFromComponent(stat);
-        const cv::Point3f centerRaw = stat.center();
-        cell.centerScaled = cv::Point3f(centerRaw.x, centerRaw.y, centerRaw.z * zScale);
-        cell.zForCsv = centerRaw.z;
-        estimateRadiiFromRawNeighborhood(centerRaw, cell.majorRadius, cell.bRadius, cell.minorRadius);
-        std::ostringstream name;
-        name << frameStem << "_label_" << label;
-        cell.name = name.str();
-        cells.push_back(cell);
-    }
-
-    std::cout << "[CellLumen TRA] mask=" << traMaskFile
-              << " labels=" << cells.size()
-              << " raw_radius_estimate=" << (rawMatchesMask ? 1 : 0)
               << std::endl;
 
     return cells;
@@ -5807,15 +5497,7 @@ std::vector<CellLumen::DetectedCell> CellLumen::buildInitialCsvForFrame(
     }
 
     const std::string frameStem = imageFile.stem().string();
-    std::vector<DetectedCell> cells;
-    if (const std::optional<fs::path> traMask = findPairedTraMask(imageFile))
-    {
-        cells = detectCellsFromTraMask(*traMask, realFrame, frameStem);
-    }
-    else
-    {
-        cells = detectCellsInVolume(realFrame, frameStem);
-    }
+    std::vector<DetectedCell> cells = detectCellsInVolume(realFrame, frameStem);
     logElapsed("detect_cells");
 
     std::cout << "[CellLumen Result] frame=" << imageFile.filename().string()
@@ -5850,8 +5532,7 @@ std::vector<CellLumen::DetectedCell> CellLumen::buildInitialCsvForFrame(
 
 std::vector<CellLumen::DetectedCell> CellLumen::detectCellsForFrame(
     const fs::path &imageFile,
-    bool printCellDetails,
-    bool allowTraMask)
+    bool printCellDetails)
 {
     using Clock = std::chrono::steady_clock;
     const auto totalStart = Clock::now();
@@ -5884,18 +5565,7 @@ std::vector<CellLumen::DetectedCell> CellLumen::detectCellsForFrame(
     }
 
     const std::string frameStem = imageFile.stem().string();
-    std::vector<DetectedCell> cells;
-    if (allowTraMask)
-    {
-        if (const std::optional<fs::path> traMask = findPairedTraMask(imageFile))
-        {
-            cells = detectCellsFromTraMask(*traMask, realFrame, frameStem);
-        }
-    }
-    if (cells.empty())
-    {
-        cells = detectCellsInVolume(realFrame, frameStem);
-    }
+    std::vector<DetectedCell> cells = detectCellsInVolume(realFrame, frameStem);
 
     std::cout << "[CellLumen Fusion Result] frame=" << imageFile.filename().string()
               << " detected_cells=" << cells.size()

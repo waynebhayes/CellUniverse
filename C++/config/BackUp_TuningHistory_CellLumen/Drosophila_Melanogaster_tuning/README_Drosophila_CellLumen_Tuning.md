@@ -7,7 +7,6 @@ Current constraints:
 - Do not modify C++ source for this tuning pass without explicit permission.
 - Tuning outputs go under `C++/output/CellLum_TuneOutput_Drosophila_Melanogaster`.
 - Use `CELLUNIVERSE_CELL_LUMEN_SKIP_TIFF=1` during parameter sweeps to avoid large preview TIFF output.
-- Do not set `CELLUNIVERSE_CELL_LUMEN_USE_TRA_MASK=1` during raw detection tests, because that would initialize directly from the GT TRA masks.
 
 Dataset notes from initial inspection:
 

@@ -1,0 +1,37 @@
+base_config: config.yaml
+
+# A549 Lung Cancer cells embedded in Matrigel matrix.
+# Run1 uses the traditional Cell Universe optimizer only, with CellLumen
+# explicitly disabled. The input seed file is the manual t000 shape CSV from
+# CellUniverse_LocalPythonApp/output/manual_initials.
+
+cell:
+  maxARadius: 120
+  maxBRadius: 120
+  maxCRadius: 120
+
+simulation:
+  parallel_threads: 8
+  parallel_min_slices: 4
+  frame_intensity_scale_high_percentile: 1.0
+  frame_intensity_hard_max: 0.0
+  post_alignment_black_threshold: 0.02
+  post_alignment_black_percentile: 0.0
+  post_alignment_chunk_blackoff_enabled: false
+  post_alignment_tiny_particle_removal_enabled: false
+  export_frame_png: false
+  export_frame_tiff: true
+  export_preprocessed_images: false
+  export_signal_debug_images: false
+  export_perturb_debug_images: false
+  export_perturb_cell_center_debug_images: false
+  quit_after_preprocessing: false
+  prepare_analyze_one_frame: true
+  release_analyzed_exported_frames: true
+  resume_from: 0
+  resume_source_dir: ""
+  initial_z_space: scaled
+
+cell_lumen:
+  enabled: false
+  fusionEnabled: false
