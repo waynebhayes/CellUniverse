@@ -3,7 +3,7 @@
 # strongly and broke frame 86, producing an extra cell and large center errors.
 # Keep this only as evidence that PCA position updates cannot be globally
 # disabled for the 85~100 segment.
-base_config: config_embryo_CellLumenFusion_deterministicSplit_allFrames_temporalRepair_antiCascade_noExport.yaml
+base_config: ../Best_until_now/config_embryo_CellLumenFusion_deterministicSplit_allFrames_temporalRepair_antiCascade_noExport.yaml
 
 simulation:
   parallel_threads: 8

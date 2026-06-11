@@ -515,6 +515,9 @@ public:
     void setPositionPriorThreshold(float t) { _positionPriorThreshold = t; }
     void setMaxPerturbDriftXY(float v) { _maxPerturbDriftXY = v; }
     void setMaxPerturbDriftZ(float v)  { _maxPerturbDriftZ  = v; }
+    void setSimulationConfig(const SimulationConfig &cfg) {
+        simulationConfig = cfg;
+    }
 
     // _sharedMasks removed — cost path now uses empty mask (no Voronoi
     // exclusion). The shared mask was never read after perturbCell

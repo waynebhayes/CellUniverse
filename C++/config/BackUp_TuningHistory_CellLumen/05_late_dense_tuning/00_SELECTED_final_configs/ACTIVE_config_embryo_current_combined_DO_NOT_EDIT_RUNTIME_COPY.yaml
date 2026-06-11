@@ -1,4 +1,4 @@
-base_config: config.yaml
+base_config: ../../../Shared_base/config.yaml
 
 # Embryo specific settings for the raw CellLumen path.
 # These priors come from the verified Cell Universe output for embryo frames

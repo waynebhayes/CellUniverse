@@ -1,4 +1,4 @@
-base_config: config_embryo.yaml
+base_config: ../Best_until_now/config_embryo.yaml
 
 # Local smoke config for checking whether CellLumen fusion can help while the
 # original heavy preprocessing path is still active. This keeps the heavy

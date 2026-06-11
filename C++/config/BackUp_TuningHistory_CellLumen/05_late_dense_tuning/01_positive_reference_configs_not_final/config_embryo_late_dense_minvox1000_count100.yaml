@@ -1,4 +1,4 @@
-base_config: ../../config_embryo.yaml
+base_config: ../../../C.elegans developing embryo/Best_until_now/config_embryo.yaml
 
 # Late dense embryo probe for frames 180 to 194.
 # The strict 2600 voxel floor leaves only about 108 to 116 default qualified

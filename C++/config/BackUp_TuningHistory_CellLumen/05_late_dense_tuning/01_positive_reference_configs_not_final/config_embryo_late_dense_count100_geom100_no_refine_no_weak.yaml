@@ -2,7 +2,7 @@
 # Pure component geometry with final local refine disabled. This is a control
 # for late frames where brightness based refinement may pull centers away from
 # the biological object center.
-base_config: config_embryo_late_dense_minvox1000_count100.yaml
+base_config: ../01_positive_reference_configs_not_final/config_embryo_late_dense_minvox1000_count100.yaml
 
 cell_lumen:
   geometricCenterBlend: 1.0

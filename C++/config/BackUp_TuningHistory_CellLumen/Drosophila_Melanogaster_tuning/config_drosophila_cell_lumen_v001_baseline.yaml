@@ -1,4 +1,4 @@
-base_config: ../../config.yaml
+base_config: ../../Shared_base/config.yaml
 
 # Drosophila Melanogaster embryo CellLumen tuning.
 # Scope: raw --cell-lumen initialization only. No C++ source changes are needed

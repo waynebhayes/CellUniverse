@@ -1,4 +1,4 @@
-base_config: config_embryo_CellLumenFusion_VERIFIED_F085-120_temporalRepair_noTif_20260531.yaml
+base_config: ../Best_until_now/config_embryo_CellLumenFusion_VERIFIED_F085-120_temporalRepair_noTif_20260531.yaml
 
 # Early embryo 000-085 test profile.
 # This starts from the nearest verified 085-120 CellLumen Fusion profile, keeps

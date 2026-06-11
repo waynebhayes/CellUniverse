@@ -1,0 +1,5 @@
+stage,frames,cell_count_start,cell_count_end,cell_count_median,density_median_per_1e6_voxels,density_min_per_1e6_voxels,density_max_per_1e6_voxels,nearest_neighbor_median_of_medians,nearest_neighbor_min_median,nearest_neighbor_max_median
+F001-084,84,4,55,24.0,1.929628,0.955829,10.453656,80.63288,58.090416,197.371715
+F085-120,36,61,129,97.0,5.082866,3.668904,6.295614,49.337691,43.952308,55.198435
+F121-170,50,139,299,189.0,8.425697,6.572976,12.886741,37.366222,31.681759,42.373837
+F170-171,2,299,306,302.5,13.002365,12.886741,13.117988,31.447258,31.212757,31.681759

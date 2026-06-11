@@ -1,4 +1,4 @@
-base_config: config_embryo_CellLumenFusion_deterministicSplit_allFrames_temporalRepair_noExport.yaml
+base_config: ../Best_until_now/config_embryo_CellLumenFusion_deterministicSplit_allFrames_temporalRepair_noExport.yaml
 
 # Diagnostic strict temporal-repair profile for early/mid embryo frames.
 # Purpose: isolate CellLumen temporal repair from pre-pass fallback cascades

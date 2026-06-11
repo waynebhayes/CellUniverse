@@ -1,4 +1,4 @@
-base_config: ../../config_cell_lumen_embryo_standalone_clean.yaml
+base_config: ../../C.elegans developing embryo/Best_until_now/config_cell_lumen_embryo_standalone_clean.yaml
 
 cell_lumen:
   finalDuplicateMergeDistance: 45.0

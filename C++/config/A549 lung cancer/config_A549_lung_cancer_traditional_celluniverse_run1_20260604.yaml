@@ -1,4 +1,4 @@
-base_config: config.yaml
+base_config: ../Shared_base/config.yaml
 
 # A549 Lung Cancer cells embedded in Matrigel matrix.
 # Run1 uses the traditional Cell Universe optimizer only, with CellLumen

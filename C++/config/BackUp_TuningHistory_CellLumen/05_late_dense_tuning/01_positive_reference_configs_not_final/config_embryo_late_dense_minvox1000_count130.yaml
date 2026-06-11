@@ -1,4 +1,4 @@
-base_config: ../../config_embryo.yaml
+base_config: ../../../C.elegans developing embryo/Best_until_now/config_embryo.yaml
 
 # Late dense embryo probe.
 # Frames after about 170 contain many dim, tightly packed cells. The current

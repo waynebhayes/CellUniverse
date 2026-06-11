@@ -1,7 +1,7 @@
 # Late dense CellLumen tuning candidate.
 # More aggressive seed spacing for very dense late frames. It should improve
 # recall if persistent misses are caused by close cells sharing one seed.
-base_config: config_embryo_late_dense_minvox1000_count100.yaml
+base_config: ../01_positive_reference_configs_not_final/config_embryo_late_dense_minvox1000_count100.yaml
 
 cell_lumen:
   seededWatershedMinSeedDistance: 14.0

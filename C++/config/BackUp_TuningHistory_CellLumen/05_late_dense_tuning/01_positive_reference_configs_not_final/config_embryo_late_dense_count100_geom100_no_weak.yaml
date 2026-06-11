@@ -2,7 +2,7 @@
 # Uses pure component geometry for the initial watershed center, with the weak
 # satellite filter disabled. This tests whether the remaining late-frame z
 # offsets are caused by uneven intensity pulling the weighted center.
-base_config: config_embryo_late_dense_minvox1000_count100.yaml
+base_config: ../01_positive_reference_configs_not_final/config_embryo_late_dense_minvox1000_count100.yaml
 
 cell_lumen:
   geometricCenterBlend: 1.0

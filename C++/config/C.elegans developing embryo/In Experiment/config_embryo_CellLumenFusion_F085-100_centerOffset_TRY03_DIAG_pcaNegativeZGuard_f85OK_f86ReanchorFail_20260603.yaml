@@ -6,7 +6,7 @@
 # Cell type 1_40111 in frame 86 this moved z from about 170.8 to 147.2, then
 # the later PCA guard preserved the wrong center. Do not use this as a final
 # 85~100 visualization profile.
-base_config: config_embryo_CellLumenFusion_deterministicSplit_allFrames_temporalRepair_antiCascade_noExport.yaml
+base_config: ../Best_until_now/config_embryo_CellLumenFusion_deterministicSplit_allFrames_temporalRepair_antiCascade_noExport.yaml
 
 simulation:
   parallel_threads: 8

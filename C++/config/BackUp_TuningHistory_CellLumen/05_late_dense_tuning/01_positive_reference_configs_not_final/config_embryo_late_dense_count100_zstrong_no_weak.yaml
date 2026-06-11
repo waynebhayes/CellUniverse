@@ -2,7 +2,7 @@
 # Keeps the best late dense recall settings and tests a stronger final z-only
 # refinement. The remaining late misses are mostly z offsets, so this variant
 # changes only the final z coordinate estimate instead of the seed detector.
-base_config: config_embryo_late_dense_minvox1000_count100.yaml
+base_config: ../01_positive_reference_configs_not_final/config_embryo_late_dense_minvox1000_count100.yaml
 
 cell_lumen:
   finalWeakSatelliteFilterEnabled: false

@@ -1,5 +1,0 @@
-base_config: config_embryo_CellLumenFusion_deterministicSplit_allFrames.yaml
-
-simulation:
-  export_frame_png: false
-  export_frame_tiff: false

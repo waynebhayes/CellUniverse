@@ -1,4 +1,4 @@
-base_config: config_embryo_late_dense_minvox1000_count100.yaml
+base_config: ../01_positive_reference_configs_not_final/config_embryo_late_dense_minvox1000_count100.yaml
 
 # Probe for the remaining late dense misses.
 # After the count100 dense switch, remaining failures are mostly good x/y

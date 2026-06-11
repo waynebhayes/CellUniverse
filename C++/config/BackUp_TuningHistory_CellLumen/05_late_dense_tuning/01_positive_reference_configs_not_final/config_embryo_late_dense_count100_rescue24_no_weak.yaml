@@ -3,7 +3,7 @@
 # filter, and lets low rescue add candidates that sit closer to existing cells.
 # This targets late embryo frames where true neighboring cell centers are often
 # closer than the old 28 px rescue spacing.
-base_config: config_embryo_late_dense_minvox1000_count100.yaml
+base_config: ../01_positive_reference_configs_not_final/config_embryo_late_dense_minvox1000_count100.yaml
 
 cell_lumen:
   finalWeakSatelliteFilterEnabled: false

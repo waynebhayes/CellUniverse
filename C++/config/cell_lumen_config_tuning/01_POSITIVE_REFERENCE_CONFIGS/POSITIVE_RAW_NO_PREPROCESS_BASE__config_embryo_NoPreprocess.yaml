@@ -1,4 +1,4 @@
-base_config: config_embryo.yaml
+base_config: ../../C.elegans developing embryo/Best_until_now/config_embryo.yaml
 
 # Embryo main optimizer experiment for raw information preservation.
 # This config disables the heavy iterative cleanup that can black out dim late

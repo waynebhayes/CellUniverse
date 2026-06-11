@@ -1,0 +1,22 @@
+base_config: ../Best_until_now/config_embryo_CellLumenFusion_VERIFIED_F085-120_temporalRepair_noTif_20260531.yaml
+
+# Experimental unified C.elegans profile.
+#
+# This file is not a verified replacement for the stage specific configs.
+# It keeps the strongest verified 85 to 120 profile as the base and turns on
+# density and brightness metric export so the next step can build a real
+# density based parameter controller.
+#
+# Current C++ support records density metrics but does not yet switch split
+# gates from density. Keep this file in In Experiment until a full 1 to 171
+# validation run proves it.
+
+simulation:
+  export_frame_png: false
+  export_frame_tiff: false
+
+cell_lumen:
+  fusionDensityMetricsEnabled: true
+  fusionDensityAdaptiveGateEnabled: false
+  fusionDensityMetricsRadiusScale: 2.50
+  fusionDensityMetricsK: 3

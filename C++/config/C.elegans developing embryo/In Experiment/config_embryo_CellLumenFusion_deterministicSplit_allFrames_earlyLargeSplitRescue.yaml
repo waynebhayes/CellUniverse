@@ -1,4 +1,4 @@
-base_config: config_embryo_CellLumenFusion_deterministicSplit_allFrames.yaml
+base_config: ../Best_until_now/config_embryo_CellLumenFusion_deterministicSplit_allFrames.yaml
 
 # Early embryo wrapper for dense, synchronous large-separation divisions.
 # The base deterministic CellLumen-Fusion config remains unchanged for the

@@ -142,6 +142,9 @@ private:
    void prepareSignalCentersForFrame(int frameIndex,
                                      const std::vector<cv::Mat> &realFrame,
                                      bool keepLoaded);
+   float computeFrameMedianNearestNeighbor(int frameIndex) const;
+   void applyRuntimeDensityProfileForFrame(int frameIndex,
+                                           const std::string &phase);
    void applyCellLumenRescue(int frameIndex);
    void writeDensityBrightnessMetrics(int frameIndex, const std::string &phase);
    const std::vector<CellLumenLookaheadCandidate> &getCellLumenLookaheadCandidates(int frameIndex);

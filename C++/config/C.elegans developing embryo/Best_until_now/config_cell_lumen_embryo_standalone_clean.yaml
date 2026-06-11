@@ -6,7 +6,7 @@
 #
 # This file intentionally stays separate from config_embryo.yaml so late dense
 # tuning does not overwrite the shared 85 to 150 embryo behavior.
-base_config: config_embryo.yaml
+base_config: ../Best_until_now/config_embryo.yaml
 
 cell_lumen:
   # Late dense frames can start with fewer qualified watershed cells even when

@@ -57,16 +57,97 @@ inline YAML::Node mergeYamlNodes(const YAML::Node &base, const YAML::Node &overr
 inline YAML::Node loadConfigYamlNode(const std::string &path)
 {
     const YAML::Node node = YAML::LoadFile(path);
+    YAML::Node loaded;
     if (!node["base_config"]) {
-        return node;
+        loaded = node;
+    } else {
+        std::filesystem::path basePath(node["base_config"].as<std::string>());
+        if (basePath.is_relative()) {
+            basePath = std::filesystem::path(path).parent_path() / basePath;
+        }
+
+        loaded = mergeYamlNodes(loadConfigYamlNode(basePath.string()), node);
     }
 
-    std::filesystem::path basePath(node["base_config"].as<std::string>());
-    if (basePath.is_relative()) {
-        basePath = std::filesystem::path(path).parent_path() / basePath;
+    if (!loaded["unified_density_profile_yaml"] || !loaded["profiles"]) {
+        return loaded;
     }
 
-    return mergeYamlNodes(loadConfigYamlNode(basePath.string()), node);
+    const YAML::Node meta = loaded["unified_density_profile_yaml"];
+    const YAML::Node profiles = loaded["profiles"];
+    if (!profiles || !profiles.IsMap()) {
+        return loaded;
+    }
+
+    std::string defaultProfile;
+    if (meta["default_profile"]) {
+        defaultProfile = meta["default_profile"].as<std::string>();
+    } else {
+        for (const auto &entry : profiles) {
+            defaultProfile = entry.first.as<std::string>();
+            break;
+        }
+    }
+    if (defaultProfile.empty() || !profiles[defaultProfile] ||
+        !profiles[defaultProfile]["expanded_config"]) {
+        throw std::runtime_error(
+            "Unified density profile YAML has no usable default profile.");
+    }
+
+    YAML::Node runtime = YAML::Clone(profiles[defaultProfile]["expanded_config"]);
+    YAML::Node runtimeProfiles;
+    runtimeProfiles["enabled"] =
+        meta["runtime_density_profile_selection_enabled"]
+            ? meta["runtime_density_profile_selection_enabled"].as<bool>()
+            : false;
+    runtimeProfiles["metric"] =
+        meta["density_profile_selection_metric"]
+            ? meta["density_profile_selection_metric"].as<std::string>()
+            : std::string("median_nearest_neighbor_px");
+    runtimeProfiles["default_profile"] = defaultProfile;
+    runtimeProfiles["active_profile"] = defaultProfile;
+
+    YAML::Node rulesByProfile;
+    const bool hasDensitySelectionRules =
+        meta["density_profile_selection"] &&
+        meta["density_profile_selection"].IsSequence();
+    if (hasDensitySelectionRules) {
+        for (const auto &rule : meta["density_profile_selection"]) {
+            if (!rule["profile"]) {
+                continue;
+            }
+            const std::string name = rule["profile"].as<std::string>();
+            rulesByProfile[name] = YAML::Clone(rule);
+        }
+    }
+
+    YAML::Node profileList(YAML::NodeType::Sequence);
+    for (const auto &entry : profiles) {
+        const std::string name = entry.first.as<std::string>();
+        if (!entry.second["expanded_config"]) {
+            continue;
+        }
+        if (hasDensitySelectionRules && !rulesByProfile[name]) {
+            continue;
+        }
+        YAML::Node profile;
+        profile["name"] = name;
+        profile["expanded_config"] = YAML::Clone(entry.second["expanded_config"]);
+        if (rulesByProfile[name]) {
+            profile["min_median_nearest_neighbor_px"] =
+                rulesByProfile[name]["min_median_nearest_neighbor_px"]
+                    ? rulesByProfile[name]["min_median_nearest_neighbor_px"].as<float>()
+                    : -1000000000.0f;
+            profile["max_median_nearest_neighbor_px"] =
+                rulesByProfile[name]["max_median_nearest_neighbor_px"]
+                    ? rulesByProfile[name]["max_median_nearest_neighbor_px"].as<float>()
+                    : 1000000000.0f;
+        }
+        profileList.push_back(profile);
+    }
+    runtimeProfiles["profiles"] = profileList;
+    runtime["runtime_density_profiles"] = runtimeProfiles;
+    return runtime;
 }
 
 } // namespace CellUniverseConfig
@@ -2997,6 +3078,17 @@ public:
     SimulationConfig simulation;
     ProbabilityConfig prob;
     CellLumenConfig cellLumen;
+    struct RuntimeDensityProfile {
+        std::string name;
+        float minMedianNearestNeighborPx = -1000000000.0f;
+        float maxMedianNearestNeighborPx = 1000000000.0f;
+        YAML::Node expandedConfig;
+    };
+    bool runtimeDensityProfileSelectionEnabled = false;
+    std::string runtimeDensityProfileMetric = "median_nearest_neighbor_px";
+    std::string runtimeDensityDefaultProfile;
+    std::string runtimeDensityActiveProfile;
+    std::vector<RuntimeDensityProfile> runtimeDensityProfiles;
 
     BaseConfig() = default;
     ~BaseConfig() = default;
@@ -3007,7 +3099,12 @@ public:
           cell(other.cell ? std::make_unique<EllipsoidConfig>(*other.cell) : nullptr),
           simulation(other.simulation),
           prob(other.prob),
-          cellLumen(other.cellLumen) {}
+          cellLumen(other.cellLumen),
+          runtimeDensityProfileSelectionEnabled(other.runtimeDensityProfileSelectionEnabled),
+          runtimeDensityProfileMetric(other.runtimeDensityProfileMetric),
+          runtimeDensityDefaultProfile(other.runtimeDensityDefaultProfile),
+          runtimeDensityActiveProfile(other.runtimeDensityActiveProfile),
+          runtimeDensityProfiles(other.runtimeDensityProfiles) {}
 
     BaseConfig& operator=(const BaseConfig& other) {
         if (this != &other) {
@@ -3016,6 +3113,11 @@ public:
             simulation = other.simulation;
             prob = other.prob;
             cellLumen = other.cellLumen;
+            runtimeDensityProfileSelectionEnabled = other.runtimeDensityProfileSelectionEnabled;
+            runtimeDensityProfileMetric = other.runtimeDensityProfileMetric;
+            runtimeDensityDefaultProfile = other.runtimeDensityDefaultProfile;
+            runtimeDensityActiveProfile = other.runtimeDensityActiveProfile;
+            runtimeDensityProfiles = other.runtimeDensityProfiles;
         }
         return *this;
     }
@@ -3031,12 +3133,63 @@ public:
         simulation.explodeConfig(node["simulation"]);
         prob.explodeConfig(node["prob"]);
         if (node["cell_lumen"]) cellLumen.explodeConfig(node["cell_lumen"]);
+        if (node["runtime_density_profiles"]) {
+            const YAML::Node runtime = node["runtime_density_profiles"];
+            if (runtime["enabled"]) {
+                runtimeDensityProfileSelectionEnabled =
+                    runtime["enabled"].as<bool>();
+            }
+            if (runtime["metric"]) {
+                runtimeDensityProfileMetric = runtime["metric"].as<std::string>();
+            }
+            if (runtime["default_profile"]) {
+                runtimeDensityDefaultProfile =
+                    runtime["default_profile"].as<std::string>();
+            }
+            if (runtime["active_profile"]) {
+                runtimeDensityActiveProfile =
+                    runtime["active_profile"].as<std::string>();
+            } else {
+                runtimeDensityActiveProfile = runtimeDensityDefaultProfile;
+            }
+            runtimeDensityProfiles.clear();
+            if (runtime["profiles"] && runtime["profiles"].IsSequence()) {
+                for (const auto &entry : runtime["profiles"]) {
+                    if (!entry["name"] || !entry["expanded_config"]) {
+                        continue;
+                    }
+                    RuntimeDensityProfile profile;
+                    profile.name = entry["name"].as<std::string>();
+                    if (entry["min_median_nearest_neighbor_px"]) {
+                        profile.minMedianNearestNeighborPx =
+                            entry["min_median_nearest_neighbor_px"].as<float>();
+                    }
+                    if (entry["max_median_nearest_neighbor_px"]) {
+                        profile.maxMedianNearestNeighborPx =
+                            entry["max_median_nearest_neighbor_px"].as<float>();
+                    }
+                    profile.expandedConfig =
+                        YAML::Clone(entry["expanded_config"]);
+                    runtimeDensityProfiles.push_back(profile);
+                }
+            }
+        }
     }
 
     void printConfig() const {
         simulation.printConfig();
         prob.printConfig();
         cellLumen.printConfig();
+        std::cout << "runtimeDensityProfileSelectionEnabled: "
+                  << runtimeDensityProfileSelectionEnabled << '\n';
+        if (runtimeDensityProfileSelectionEnabled) {
+            std::cout << "runtimeDensityProfileMetric: "
+                      << runtimeDensityProfileMetric << '\n';
+            std::cout << "runtimeDensityActiveProfile: "
+                      << runtimeDensityActiveProfile << '\n';
+            std::cout << "runtimeDensityProfileCount: "
+                      << runtimeDensityProfiles.size() << '\n';
+        }
     }
 };
 

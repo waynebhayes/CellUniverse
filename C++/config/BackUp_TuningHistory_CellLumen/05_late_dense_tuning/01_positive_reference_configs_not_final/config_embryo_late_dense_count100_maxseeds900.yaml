@@ -1,4 +1,4 @@
-base_config: config_embryo_late_dense_minvox1000_count100.yaml
+base_config: ../01_positive_reference_configs_not_final/config_embryo_late_dense_minvox1000_count100.yaml
 
 # Probe: late dense frames hit the 650 marker cap. Raising the cap gives
 # marker watershed enough seeds to represent tightly packed dim cells instead

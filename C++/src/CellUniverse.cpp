@@ -5203,6 +5203,7 @@ void CellUniverse::prepareFrame(int frameIndex)
     {
         throw std::invalid_argument("prepareFrame: invalid frame index");
     }
+    applyRuntimeDensityProfileForFrame(frameIndex, "prepare");
     if (frames[frameIndex].hasImageStacks()) {
         return;  // already loaded
     }
@@ -5305,6 +5306,134 @@ void CellUniverse::prepareFrame(int frameIndex)
     frames[frameIndex].loadImageStacks(real_frame);
     frames[frameIndex].setSignalMap(std::move(signalMap));
     prepareSignalCentersForFrame(frameIndex, real_frame, true);
+}
+
+float CellUniverse::computeFrameMedianNearestNeighbor(int frameIndex) const
+{
+    if (frameIndex < 0 || static_cast<size_t>(frameIndex) >= frames.size()) {
+        throw std::invalid_argument(
+            "computeFrameMedianNearestNeighbor: invalid frame index");
+    }
+
+    const auto &cells = frames[static_cast<size_t>(frameIndex)].cells;
+    if (cells.size() < 2) {
+        return 1000000000.0f;
+    }
+
+    std::vector<float> nearestDistances;
+    nearestDistances.reserve(cells.size());
+    for (size_t i = 0; i < cells.size(); ++i) {
+        const EllipsoidParams params = cells[i].getCellParams();
+        const cv::Point3f pos(params.x, params.y, params.z);
+        float nearest = std::numeric_limits<float>::max();
+        for (size_t j = 0; j < cells.size(); ++j) {
+            if (i == j) {
+                continue;
+            }
+            const EllipsoidParams otherParams = cells[j].getCellParams();
+            const cv::Point3f otherPos(
+                otherParams.x, otherParams.y, otherParams.z);
+            nearest = std::min(nearest,
+                               static_cast<float>(cv::norm(pos - otherPos)));
+        }
+        if (nearest < std::numeric_limits<float>::max()) {
+            nearestDistances.push_back(nearest);
+        }
+    }
+    return medianOrZero(nearestDistances);
+}
+
+void CellUniverse::applyRuntimeDensityProfileForFrame(
+    int frameIndex,
+    const std::string &phase)
+{
+    if (!config.runtimeDensityProfileSelectionEnabled ||
+        config.runtimeDensityProfiles.empty()) {
+        return;
+    }
+    if (frameIndex < 0 || static_cast<size_t>(frameIndex) >= frames.size()) {
+        throw std::invalid_argument(
+            "applyRuntimeDensityProfileForFrame: invalid frame index");
+    }
+
+    const float medianNearest =
+        computeFrameMedianNearestNeighbor(frameIndex);
+
+    const BaseConfig::RuntimeDensityProfile *selected = nullptr;
+    for (const auto &profile : config.runtimeDensityProfiles) {
+        if (medianNearest >= profile.minMedianNearestNeighborPx &&
+            medianNearest < profile.maxMedianNearestNeighborPx) {
+            selected = &profile;
+            break;
+        }
+    }
+    if (selected == nullptr && !config.runtimeDensityDefaultProfile.empty()) {
+        for (const auto &profile : config.runtimeDensityProfiles) {
+            if (profile.name == config.runtimeDensityDefaultProfile) {
+                selected = &profile;
+                break;
+            }
+        }
+    }
+    if (selected == nullptr) {
+        selected = &config.runtimeDensityProfiles.front();
+    }
+
+    const std::string selectedName = selected->name;
+    const bool changed =
+        (selectedName != config.runtimeDensityActiveProfile);
+    if (changed) {
+        BaseConfig selectedConfig;
+        selectedConfig.explodeConfig(selected->expandedConfig);
+
+        const auto runtimeProfiles = config.runtimeDensityProfiles;
+        const bool runtimeEnabled =
+            config.runtimeDensityProfileSelectionEnabled;
+        const std::string runtimeMetric =
+            config.runtimeDensityProfileMetric;
+        const std::string runtimeDefault =
+            config.runtimeDensityDefaultProfile;
+
+        const int runtimeZSlices = config.simulation.z_slices;
+        const float runtimeZScaling = config.simulation.z_scaling;
+        const int parallelThreads = config.simulation.parallel_threads;
+        const int parallelMinSlices = config.simulation.parallel_min_slices;
+        const int resumeFrom = config.simulation.resume_from;
+        const std::string resumeSourceDir =
+            config.simulation.resume_source_dir;
+
+        selectedConfig.runtimeDensityProfiles = runtimeProfiles;
+        selectedConfig.runtimeDensityProfileSelectionEnabled =
+            runtimeEnabled;
+        selectedConfig.runtimeDensityProfileMetric = runtimeMetric;
+        selectedConfig.runtimeDensityDefaultProfile = runtimeDefault;
+        selectedConfig.runtimeDensityActiveProfile = selectedName;
+
+        selectedConfig.simulation.z_slices = runtimeZSlices;
+        selectedConfig.simulation.z_scaling = runtimeZScaling;
+        selectedConfig.simulation.parallel_threads = parallelThreads;
+        selectedConfig.simulation.parallel_min_slices = parallelMinSlices;
+        selectedConfig.simulation.resume_from = resumeFrom;
+        selectedConfig.simulation.resume_source_dir = resumeSourceDir;
+
+        config = selectedConfig;
+        if (config.cell) {
+            config.cell->maxZ =
+                static_cast<float>(config.simulation.z_slices) - 1.0f;
+            Ellipsoid::cellConfig = *config.cell;
+        }
+    }
+    frames[static_cast<size_t>(frameIndex)].setSimulationConfig(
+        config.simulation);
+
+    std::cout << "[Runtime Density Profile] frame="
+              << (firstFrame + frameIndex)
+              << " phase=" << phase
+              << " metric=" << config.runtimeDensityProfileMetric
+              << " medianNearestNeighbor=" << medianNearest
+              << " selectedProfile=" << selectedName
+              << " changed=" << (changed ? 1 : 0)
+              << std::endl;
 }
 
 void CellUniverse::prepareSignalCentersForFrame(int frameIndex,
@@ -5795,6 +5924,9 @@ void CellUniverse::optimize(int frameIndex)
 
     Frame &frame = frames[frameIndex];
     const int absoluteFrame = firstFrame + frameIndex;
+    if (!frame.hasImageStacks()) {
+        applyRuntimeDensityProfileForFrame(frameIndex, "optimize");
+    }
 
     const bool hasPreviousFrameSummary =
         frameIndex > 0 ||

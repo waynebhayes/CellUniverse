@@ -1,4 +1,4 @@
-base_config: config_embryo_NoPreprocess.yaml
+base_config: ../Best_until_now/config_embryo_NoPreprocess.yaml
 
 # Conservative CellLumen plus Cell Universe fusion for embryo raw intensity runs.
 #

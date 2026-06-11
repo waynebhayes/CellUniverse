@@ -1,4 +1,4 @@
-base_config: config_embryo_late_dense_minvox1000_count100.yaml
+base_config: ../01_positive_reference_configs_not_final/config_embryo_late_dense_minvox1000_count100.yaml
 
 # Probe: keep late dense recovery but disable final near duplicate and weak
 # satellite cleanup. The 170 to 194 frames contain true daughters that can be

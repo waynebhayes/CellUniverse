@@ -2,7 +2,7 @@
 # Reduces the final duplicate merge radius and disables the weak satellite
 # filter. This keeps nearby daughter centers separate more often while still
 # merging very close duplicate detections.
-base_config: config_embryo_late_dense_minvox1000_count100.yaml
+base_config: ../01_positive_reference_configs_not_final/config_embryo_late_dense_minvox1000_count100.yaml
 
 cell_lumen:
   finalDuplicateMergeDistance: 3.0

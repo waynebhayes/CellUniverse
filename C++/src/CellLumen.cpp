@@ -5364,7 +5364,7 @@ void CellLumen::saveInitialCsv(const fs::path &csvOutputPath,
         throw std::runtime_error("Failed to open output CSV: " + csvOutputPath.string());
     }
 
-    out << "file,name,x,y,z,majorRadius,minorRadius\n";
+    out << "file,name,x,y,z,majorRadius,bRadius,minorRadius\n";
     out << std::setprecision(15);
     for (const auto &cell : cells)
     {
@@ -5374,6 +5374,7 @@ void CellLumen::saveInitialCsv(const fs::path &csvOutputPath,
             << cell.centerScaled.y << ","
             << cell.zForCsv << ","
             << cell.majorRadius << ","
+            << cell.bRadius << ","
             << cell.minorRadius << "\n";
     }
 }
