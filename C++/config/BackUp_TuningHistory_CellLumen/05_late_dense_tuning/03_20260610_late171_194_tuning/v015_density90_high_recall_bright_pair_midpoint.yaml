@@ -1,0 +1,21 @@
+# Late dense 171 to 194 high recall probe.
+# Purpose: add midpoint rescue candidates between nearby bright detections. This
+# is add-only and may help bottom or boundary cells whose nearest candidates sit
+# on opposite sides of the true center.
+base_config: ../../../C.elegans developing embryo/Best_until_now/config_cell_lumen_embryo_celluniverse_preprocess_high_recall.yaml
+
+cell_lumen:
+  seededWatershedAdaptiveMinVoxelsCellCount: 90
+  finalBrightPairMidpointRescueEnabled: true
+  finalBrightPairMidpointRescueMinCells: 280
+  finalBrightPairMidpointRescueMaxCells: 390
+  finalBrightPairMidpointRescueMaxAdded: 40
+  finalBrightPairMidpointRescueMinDistance: 26.0
+  finalBrightPairMidpointRescueMaxDistance: 68.0
+  finalBrightPairMidpointRescueMinTop10MinusShell: 45.0
+  finalBrightPairMidpointRescueRadiusScale: 0.85
+  finalBrightPairMidpointRescueMinAddedDistance: 10.0
+  finalDuplicateMergeDistance: -1.0
+  finalPostRefineDuplicateMergeDistance: -1.0
+  finalWeakSatelliteFilterEnabled: false
+

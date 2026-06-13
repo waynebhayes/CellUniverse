@@ -1,0 +1,10 @@
+# Late dense 171 to 194 probe.
+# Purpose: fix the f184 density boundary failure without changing the clean
+# duplicate cleanup behavior. The old trigger was 100; f184 had 99 default
+# watershed cells, so it stayed at the strict 2600 voxel floor and collapsed to
+# 119 detections.
+base_config: ../../../C.elegans developing embryo/Best_until_now/config_cell_lumen_embryo_standalone_clean.yaml
+
+cell_lumen:
+  seededWatershedAdaptiveMinVoxelsCellCount: 90
+

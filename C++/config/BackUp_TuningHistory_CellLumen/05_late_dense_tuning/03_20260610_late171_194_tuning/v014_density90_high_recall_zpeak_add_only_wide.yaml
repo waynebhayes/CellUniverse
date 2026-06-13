@@ -1,0 +1,30 @@
+# Late dense 171 to 194 high recall probe.
+# Purpose: wider add-only z-peak search for the remaining hard coverage misses.
+# This version is deliberately permissive, so it is first tested on hard frames
+# before any full sweep.
+base_config: ../../../C.elegans developing embryo/Best_until_now/config_cell_lumen_embryo_celluniverse_preprocess_high_recall.yaml
+
+cell_lumen:
+  seededWatershedAdaptiveMinVoxelsCellCount: 90
+  finalZColumnRefineEnabled: false
+  finalZPeakSplitEnabled: true
+  finalZPeakSplitAddOnlyEnabled: true
+  finalZPeakSplitMinCells: 250
+  finalZPeakSplitMaxCells: 430
+  finalZPeakSplitMaxAdded: 120
+  finalZPeakSplitMinMajorRadius: 17.0
+  finalZPeakSplitRadiusXY: 30.0
+  finalZPeakSplitQuantile: 0.72
+  finalZPeakSplitMinPeakScoreFraction: 0.25
+  finalZPeakSplitMinSeparationScaled: 14.0
+  finalZPeakSplitMaxSeparationScaled: 84.0
+  finalZPeakSplitMaxCenterShiftXY: 32.0
+  finalZPeakSplitRadiusScale: 0.78
+  finalZPeakSplitLocal3DFallbackEnabled: true
+  finalZPeakSplitPreferLocal3D: true
+  finalZPeakSplitLocal3DCentroidRadiusXY: 12.0
+  finalZPeakSplitLocal3DCentroidHalfWindowScaled: 28.0
+  finalDuplicateMergeDistance: -1.0
+  finalPostRefineDuplicateMergeDistance: -1.0
+  finalWeakSatelliteFilterEnabled: false
+

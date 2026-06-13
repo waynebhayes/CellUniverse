@@ -1,0 +1,13 @@
+# Late dense 171 to 194 probe.
+# Purpose: suppress duplicate centers earlier by requiring a stronger valley
+# between close watershed seeds. This may lower duplicate centers but can lose
+# true close cells, so it is only a comparison candidate.
+base_config: ../../../C.elegans developing embryo/Best_until_now/config_cell_lumen_embryo_standalone_clean.yaml
+
+cell_lumen:
+  seededWatershedAdaptiveMinVoxelsCellCount: 90
+  seededWatershedMinValleyDrop: 2.0
+  seededWatershedLowRescueMinValleyDrop: 2.0
+  finalDuplicateMergeDistance: 4.0
+  finalPostRefineDuplicateMergeDistance: 4.0
+

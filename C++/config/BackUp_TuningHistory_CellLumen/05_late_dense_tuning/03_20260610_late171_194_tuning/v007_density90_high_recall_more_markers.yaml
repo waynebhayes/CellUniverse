@@ -1,0 +1,21 @@
+# Late dense 171 to 194 high recall probe.
+# Purpose: one step more permissive than v006. It allows more watershed markers
+# and slightly lower seed threshold so dim late cells are less likely to be
+# absent from the candidate set.
+base_config: ../../../C.elegans developing embryo/Best_until_now/config_cell_lumen_embryo_celluniverse_preprocess_high_recall.yaml
+
+cell_lumen:
+  seededWatershedAdaptiveMinVoxelsCellCount: 90
+  seededWatershedAdaptiveDenseMinVoxels: 650
+  seededWatershedLowRescueMinVoxels: 650
+  seededWatershedLowRescueMinCandidateVoxels: 650
+  seededWatershedLowRescueMinDistance: 22.0
+  seededWatershedLowRescueMinTop10MinusShell: 50.0
+  seededWatershedLowRescueMaxAdded: 60
+  seededWatershedMaxSeeds: 900
+  seededWatershedSeedPercentile: 80.0
+  seededWatershedSeedThresholdFloor: 0.065
+  finalDuplicateMergeDistance: -1.0
+  finalPostRefineDuplicateMergeDistance: -1.0
+  finalWeakSatelliteFilterEnabled: false
+

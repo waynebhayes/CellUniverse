@@ -1,0 +1,19 @@
+# Late dense 171 to 194 high recall probe.
+# Purpose: prefer not missing dim or close late cells. This keeps final duplicate
+# merging disabled, lowers the dense voxel floor, and lets low rescue add more
+# nearby dim candidates. Extra duplicates are expected and should be resolved by
+# Cell Universe rather than deleted inside CellLumen.
+base_config: ../../../C.elegans developing embryo/Best_until_now/config_cell_lumen_embryo_celluniverse_preprocess_high_recall.yaml
+
+cell_lumen:
+  seededWatershedAdaptiveMinVoxelsCellCount: 90
+  seededWatershedAdaptiveDenseMinVoxels: 650
+  seededWatershedLowRescueMinVoxels: 650
+  seededWatershedLowRescueMinCandidateVoxels: 650
+  seededWatershedLowRescueMinDistance: 24.0
+  seededWatershedLowRescueMinTop10MinusShell: 55.0
+  seededWatershedLowRescueMaxAdded: 40
+  finalDuplicateMergeDistance: -1.0
+  finalPostRefineDuplicateMergeDistance: -1.0
+  finalWeakSatelliteFilterEnabled: false
+

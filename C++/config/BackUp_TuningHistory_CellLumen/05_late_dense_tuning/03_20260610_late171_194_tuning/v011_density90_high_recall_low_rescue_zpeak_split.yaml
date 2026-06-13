@@ -1,0 +1,35 @@
+# Late dense 171 to 194 high recall probe.
+# Purpose: combine the v006 low rescue sensitivity with v010 z-peak split. This
+# is intentionally permissive and should be judged mainly by coverage miss and
+# far extra count, not by one-to-one extra count.
+base_config: ../../../C.elegans developing embryo/Best_until_now/config_cell_lumen_embryo_celluniverse_preprocess_high_recall.yaml
+
+cell_lumen:
+  seededWatershedAdaptiveMinVoxelsCellCount: 90
+  seededWatershedAdaptiveDenseMinVoxels: 650
+  seededWatershedLowRescueMinVoxels: 650
+  seededWatershedLowRescueMinCandidateVoxels: 650
+  seededWatershedLowRescueMinDistance: 24.0
+  seededWatershedLowRescueMinTop10MinusShell: 55.0
+  seededWatershedLowRescueMaxAdded: 40
+  finalZColumnRefineEnabled: false
+  finalZPeakSplitEnabled: true
+  finalZPeakSplitMinCells: 250
+  finalZPeakSplitMaxCells: 390
+  finalZPeakSplitMaxAdded: 30
+  finalZPeakSplitMinMajorRadius: 18.0
+  finalZPeakSplitRadiusXY: 24.0
+  finalZPeakSplitQuantile: 0.82
+  finalZPeakSplitMinPeakScoreFraction: 0.45
+  finalZPeakSplitMinSeparationScaled: 18.0
+  finalZPeakSplitMaxSeparationScaled: 70.0
+  finalZPeakSplitMaxCenterShiftXY: 18.0
+  finalZPeakSplitRadiusScale: 0.78
+  finalZPeakSplitLocal3DFallbackEnabled: true
+  finalZPeakSplitPreferLocal3D: false
+  finalZPeakSplitLocal3DCentroidRadiusXY: 10.0
+  finalZPeakSplitLocal3DCentroidHalfWindowScaled: 18.0
+  finalDuplicateMergeDistance: -1.0
+  finalPostRefineDuplicateMergeDistance: -1.0
+  finalWeakSatelliteFilterEnabled: false
+

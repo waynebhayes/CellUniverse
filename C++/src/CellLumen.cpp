@@ -2914,6 +2914,7 @@ std::vector<CellLumen::DetectedCell> CellLumen::splitCellsByLocalZPeaks(
     const int Y = volume[0].rows;
     const int X = volume[0].cols;
     const int maxAdded = std::max(0, config.cellLumen.finalZPeakSplitMaxAdded);
+    const bool addOnly = config.cellLumen.finalZPeakSplitAddOnlyEnabled;
     const float minMajor = std::max(0.0f, config.cellLumen.finalZPeakSplitMinMajorRadius);
     const float radiusXY = std::max(3.0f, config.cellLumen.finalZPeakSplitRadiusXY);
     const float radiusXYSq = radiusXY * radiusXY;
@@ -3307,14 +3308,39 @@ std::vector<CellLumen::DetectedCell> CellLumen::splitCellsByLocalZPeaks(
         annotateSignalStats(volume, lhs);
         annotateSignalStats(volume, rhs);
 
-        splitCells.push_back(lhs);
-        splitCells.push_back(rhs);
-        splitParents++;
-        if (usedLocal3D)
+        bool parentSplitRecorded = false;
+        if (addOnly)
         {
-            local3DSplitParents++;
+            splitCells.push_back(cell);
+            if (added < maxAdded)
+            {
+                splitCells.push_back(lhs);
+                added++;
+                parentSplitRecorded = true;
+            }
+            if (added < maxAdded)
+            {
+                splitCells.push_back(rhs);
+                added++;
+                parentSplitRecorded = true;
+            }
         }
-        added++;
+        else
+        {
+            splitCells.push_back(lhs);
+            splitCells.push_back(rhs);
+            added++;
+            parentSplitRecorded = true;
+        }
+
+        if (parentSplitRecorded)
+        {
+            splitParents++;
+            if (usedLocal3D)
+            {
+                local3DSplitParents++;
+            }
+        }
     }
 
     if (splitParents > 0)
@@ -3342,6 +3368,7 @@ std::vector<CellLumen::DetectedCell> CellLumen::splitCellsByLocalZPeaks(
               << " local3d_split_parents=" << local3DSplitParents
               << " added=" << added
               << " max_added=" << maxAdded
+              << " add_only=" << addOnly
               << " rejected_parent_signal=" << rejectedParentSignal
               << " rejected_no_peaks=" << rejectedNoPeaks
               << " rejected_separation=" << rejectedSeparation
@@ -3390,6 +3417,7 @@ std::vector<CellLumen::DetectedCell> CellLumen::rescueBrightPairMidpoints(
         DetectedCell cell;
         float pairDistance = 0.0f;
         float signal = 0.0f;
+        float nearestExistingDistance = 0.0f;
         size_t lhs = 0;
         size_t rhs = 0;
     };
@@ -3402,8 +3430,15 @@ std::vector<CellLumen::DetectedCell> CellLumen::rescueBrightPairMidpoints(
         std::max(0.0f, config.cellLumen.finalBrightPairMidpointRescueMinTop10MinusShell);
     const float radiusScale =
         clampf(config.cellLumen.finalBrightPairMidpointRescueRadiusScale, 0.25f, 1.25f);
+    const float minExistingDistance =
+        config.cellLumen.finalBrightPairMidpointRescueMinExistingDistance;
+    const float minExistingDistanceSq = minExistingDistance * minExistingDistance;
+    const bool requireExistingDistance = minExistingDistance > 0.0f;
+    const bool sortByExistingDistance =
+        config.cellLumen.finalBrightPairMidpointRescueSortByExistingDistance;
 
     std::vector<MidpointCandidate> candidates;
+    int rejectedNearExisting = 0;
     for (size_t i = 0; i < cells.size(); ++i)
     {
         for (size_t j = i + 1; j < cells.size(); ++j)
@@ -3435,12 +3470,38 @@ std::vector<CellLumen::DetectedCell> CellLumen::rescueBrightPairMidpoints(
             {
                 continue;
             }
-            candidates.push_back({midpoint, distance, midpoint.top10MinusShell, i, j});
+            float nearestExistingDistanceSq = std::numeric_limits<float>::max();
+            for (const DetectedCell &existing : cells)
+            {
+                nearestExistingDistanceSq =
+                    std::min(nearestExistingDistanceSq,
+                             squaredDistance(midpoint.centerScaled,
+                                             existing.centerScaled));
+            }
+            if (requireExistingDistance &&
+                nearestExistingDistanceSq < minExistingDistanceSq)
+            {
+                rejectedNearExisting++;
+                continue;
+            }
+            candidates.push_back({
+                midpoint,
+                distance,
+                midpoint.top10MinusShell,
+                std::sqrt(nearestExistingDistanceSq),
+                i,
+                j
+            });
         }
     }
 
-    std::sort(candidates.begin(), candidates.end(), [](const MidpointCandidate &lhs,
-                                                       const MidpointCandidate &rhs) {
+    std::sort(candidates.begin(), candidates.end(), [&](const MidpointCandidate &lhs,
+                                                        const MidpointCandidate &rhs) {
+        if (sortByExistingDistance &&
+            std::abs(lhs.nearestExistingDistance - rhs.nearestExistingDistance) > 1e-3f)
+        {
+            return lhs.nearestExistingDistance > rhs.nearestExistingDistance;
+        }
         if (std::abs(lhs.signal - rhs.signal) > 1e-3f)
         {
             return lhs.signal > rhs.signal;
@@ -3507,6 +3568,9 @@ std::vector<CellLumen::DetectedCell> CellLumen::rescueBrightPairMidpoints(
               << " min_distance=" << minDistance
               << " max_distance=" << maxDistance
               << " min_signal=" << minSignal
+              << " min_existing_distance=" << minExistingDistance
+              << " sort_by_existing_distance=" << sortByExistingDistance
+              << " rejected_near_existing=" << rejectedNearExisting
               << " rejected_near_added=" << rejectedNearAdded
               << std::endl;
 

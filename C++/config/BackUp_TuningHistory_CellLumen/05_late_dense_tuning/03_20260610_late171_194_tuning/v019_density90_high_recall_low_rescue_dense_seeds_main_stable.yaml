@@ -1,0 +1,22 @@
+# Late dense 171 to 194 high recall probe.
+# Same dense low rescue idea as v018, but keeps the main seeded watershed pass
+# unchanged. v018 showed that increasing global max seeds perturbs otherwise
+# stable centers, so this version only changes the low rescue geometry.
+base_config: ../../../C.elegans developing embryo/Best_until_now/config_cell_lumen_embryo_celluniverse_preprocess_high_recall.yaml
+
+cell_lumen:
+  seededWatershedAdaptiveMinVoxelsCellCount: 90
+  seededWatershedAdaptiveDenseMinVoxels: 800
+  seededWatershedLowRescueMinVoxels: 800
+  seededWatershedLowRescueMinCandidateVoxels: 800
+  seededWatershedLowRescueMinSeedDistance: 12.0
+  seededWatershedLowRescueCloseSeedMinDistance: 6.0
+  seededWatershedLowRescueMinValleyDrop: 0.0
+  seededWatershedLowRescueClusterDistance: 12.0
+  seededWatershedLowRescueMinDistance: 12.0
+  seededWatershedLowRescueMinTop10MinusShell: 65.0
+  seededWatershedLowRescueMaxAdded: 120
+  seededWatershedLowRescueSortByDistance: false
+  finalDuplicateMergeDistance: -1.0
+  finalPostRefineDuplicateMergeDistance: -1.0
+  finalWeakSatelliteFilterEnabled: false

@@ -1,0 +1,19 @@
+# Late dense 171 to 194 probe.
+# Purpose: use a small exact duplicate merge, then remove only nearby candidates
+# that are clearly dominated by a stronger neighbor. This is meant to avoid the
+# miss increase caused by a wider blind distance merge.
+base_config: ../../../C.elegans developing embryo/Best_until_now/config_cell_lumen_embryo_standalone_clean.yaml
+
+cell_lumen:
+  seededWatershedAdaptiveMinVoxelsCellCount: 90
+  finalDuplicateMergeDistance: 3.0
+  finalPostRefineDuplicateMergeDistance: 3.0
+  finalDominatedDuplicateFilterEnabled: true
+  finalDominatedDuplicateFilterMinCells: 250
+  finalDominatedDuplicateFilterMaxCells: 390
+  finalDominatedDuplicateFilterDistance: 12.0
+  finalDominatedDuplicateFilterMinVoxelRatio: 1.6
+  finalDominatedDuplicateFilterMinSignalRatio: 1.20
+  finalDominatedDuplicateFilterMinRadiusRatio: 1.15
+  finalDominatedDuplicateFilterRequireTwoSignals: true
+

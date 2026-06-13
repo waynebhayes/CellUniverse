@@ -1,0 +1,19 @@
+# Late dense 171 to 194 high recall probe.
+# Goal: prefer no miss over clean one-to-one matching. This keeps the v005
+# quality thresholds but allows low rescue candidates closer to existing
+# centers, because the remaining misses are mostly adjacent dense cells whose
+# nearest candidate is only slightly too far in scaled 3D.
+base_config: ../../../C.elegans developing embryo/Best_until_now/config_cell_lumen_embryo_celluniverse_preprocess_high_recall.yaml
+
+cell_lumen:
+  seededWatershedAdaptiveMinVoxelsCellCount: 90
+  seededWatershedAdaptiveDenseMinVoxels: 800
+  seededWatershedLowRescueMinVoxels: 800
+  seededWatershedLowRescueMinCandidateVoxels: 800
+  seededWatershedLowRescueMinDistance: 18.0
+  seededWatershedLowRescueMinTop10MinusShell: 65.0
+  seededWatershedLowRescueMaxAdded: 80
+  seededWatershedLowRescueSortByDistance: false
+  finalDuplicateMergeDistance: -1.0
+  finalPostRefineDuplicateMergeDistance: -1.0
+  finalWeakSatelliteFilterEnabled: false

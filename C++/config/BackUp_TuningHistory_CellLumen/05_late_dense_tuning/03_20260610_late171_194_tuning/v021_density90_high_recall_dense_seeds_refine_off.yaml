@@ -1,0 +1,23 @@
+# Late dense 171 to 194 high recall probe.
+# Dense low rescue seeds with add-only behavior. This is like v019 but turns
+# off low rescue refinement so the extra low rescue candidates cannot pull
+# stable main-pass centers away from correct positions.
+base_config: ../../../C.elegans developing embryo/Best_until_now/config_cell_lumen_embryo_celluniverse_preprocess_high_recall.yaml
+
+cell_lumen:
+  seededWatershedAdaptiveMinVoxelsCellCount: 90
+  seededWatershedAdaptiveDenseMinVoxels: 800
+  seededWatershedLowRescueRefineEnabled: false
+  seededWatershedLowRescueMinVoxels: 800
+  seededWatershedLowRescueMinCandidateVoxels: 800
+  seededWatershedLowRescueMinSeedDistance: 12.0
+  seededWatershedLowRescueCloseSeedMinDistance: 6.0
+  seededWatershedLowRescueMinValleyDrop: 0.0
+  seededWatershedLowRescueClusterDistance: 12.0
+  seededWatershedLowRescueMinDistance: 12.0
+  seededWatershedLowRescueMinTop10MinusShell: 65.0
+  seededWatershedLowRescueMaxAdded: 120
+  seededWatershedLowRescueSortByDistance: false
+  finalDuplicateMergeDistance: -1.0
+  finalPostRefineDuplicateMergeDistance: -1.0
+  finalWeakSatelliteFilterEnabled: false

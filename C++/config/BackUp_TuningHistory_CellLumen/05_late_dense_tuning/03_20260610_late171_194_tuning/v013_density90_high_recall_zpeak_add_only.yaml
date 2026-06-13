@@ -1,0 +1,30 @@
+# Late dense 171 to 194 high recall probe.
+# Purpose: use the new default-off add-only z-peak mode. Unlike v010 and v011,
+# this keeps the original CellLumen center and adds extra z-peak candidates,
+# so a bad split cannot destroy an already useful candidate.
+base_config: ../../../C.elegans developing embryo/Best_until_now/config_cell_lumen_embryo_celluniverse_preprocess_high_recall.yaml
+
+cell_lumen:
+  seededWatershedAdaptiveMinVoxelsCellCount: 90
+  finalZColumnRefineEnabled: false
+  finalZPeakSplitEnabled: true
+  finalZPeakSplitAddOnlyEnabled: true
+  finalZPeakSplitMinCells: 250
+  finalZPeakSplitMaxCells: 390
+  finalZPeakSplitMaxAdded: 60
+  finalZPeakSplitMinMajorRadius: 18.0
+  finalZPeakSplitRadiusXY: 24.0
+  finalZPeakSplitQuantile: 0.82
+  finalZPeakSplitMinPeakScoreFraction: 0.45
+  finalZPeakSplitMinSeparationScaled: 18.0
+  finalZPeakSplitMaxSeparationScaled: 70.0
+  finalZPeakSplitMaxCenterShiftXY: 18.0
+  finalZPeakSplitRadiusScale: 0.78
+  finalZPeakSplitLocal3DFallbackEnabled: true
+  finalZPeakSplitPreferLocal3D: false
+  finalZPeakSplitLocal3DCentroidRadiusXY: 10.0
+  finalZPeakSplitLocal3DCentroidHalfWindowScaled: 18.0
+  finalDuplicateMergeDistance: -1.0
+  finalPostRefineDuplicateMergeDistance: -1.0
+  finalWeakSatelliteFilterEnabled: false
+

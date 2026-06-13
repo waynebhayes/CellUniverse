@@ -1,0 +1,30 @@
+# Late dense 171 to 194 high recall probe.
+# Compressed version of v025. Tests whether 300 gap-priority midpoint
+# candidates are enough to keep zero coverage miss on the remaining boundary
+# frames while avoiding the huge diagnostic extra count.
+base_config: ../../../C.elegans developing embryo/Best_until_now/config_cell_lumen_embryo_celluniverse_preprocess_high_recall.yaml
+
+cell_lumen:
+  seededWatershedAdaptiveMinVoxelsCellCount: 90
+  seededWatershedAdaptiveDenseMinVoxels: 800
+  seededWatershedLowRescueRefineEnabled: false
+  seededWatershedLowRescueMinVoxels: 800
+  seededWatershedLowRescueMinCandidateVoxels: 800
+  seededWatershedLowRescueMinDistance: 14.0
+  seededWatershedLowRescueMinTop10MinusShell: 65.0
+  seededWatershedLowRescueMaxAdded: 120
+  seededWatershedLowRescueSortByDistance: false
+  finalBrightPairMidpointRescueEnabled: true
+  finalBrightPairMidpointRescueMinCells: 300
+  finalBrightPairMidpointRescueMaxCells: 430
+  finalBrightPairMidpointRescueMaxAdded: 300
+  finalBrightPairMidpointRescueMinDistance: 20.0
+  finalBrightPairMidpointRescueMaxDistance: 80.0
+  finalBrightPairMidpointRescueMinTop10MinusShell: 0.0
+  finalBrightPairMidpointRescueRadiusScale: 0.85
+  finalBrightPairMidpointRescueMinAddedDistance: 6.0
+  finalBrightPairMidpointRescueMinExistingDistance: 8.0
+  finalBrightPairMidpointRescueSortByExistingDistance: true
+  finalDuplicateMergeDistance: -1.0
+  finalPostRefineDuplicateMergeDistance: -1.0
+  finalWeakSatelliteFilterEnabled: false

@@ -1510,6 +1510,7 @@ public:
     int finalZPeakSplitMinCells = -1;
     int finalZPeakSplitMaxCells = -1;
     int finalZPeakSplitMaxAdded = 2;
+    bool finalZPeakSplitAddOnlyEnabled = false;
     float finalZPeakSplitMinMajorRadius = 22.0f;
     float finalZPeakSplitRadiusXY = 24.0f;
     float finalZPeakSplitQuantile = 0.82f;
@@ -1532,6 +1533,8 @@ public:
     float finalBrightPairMidpointRescueMinTop10MinusShell = 55.0f;
     float finalBrightPairMidpointRescueRadiusScale = 0.85f;
     float finalBrightPairMidpointRescueMinAddedDistance = 18.0f;
+    float finalBrightPairMidpointRescueMinExistingDistance = -1.0f;
+    bool finalBrightPairMidpointRescueSortByExistingDistance = false;
     bool finalClusterCentroidRecallRescueEnabled = false;
     int finalClusterCentroidRecallRescueMinCells = -1;
     int finalClusterCentroidRecallRescueMaxCells = -1;
@@ -2197,6 +2200,7 @@ public:
         if (node["finalZPeakSplitMinCells"]) finalZPeakSplitMinCells = node["finalZPeakSplitMinCells"].as<int>();
         if (node["finalZPeakSplitMaxCells"]) finalZPeakSplitMaxCells = node["finalZPeakSplitMaxCells"].as<int>();
         if (node["finalZPeakSplitMaxAdded"]) finalZPeakSplitMaxAdded = node["finalZPeakSplitMaxAdded"].as<int>();
+        if (node["finalZPeakSplitAddOnlyEnabled"]) finalZPeakSplitAddOnlyEnabled = node["finalZPeakSplitAddOnlyEnabled"].as<bool>();
         if (node["finalZPeakSplitMinMajorRadius"]) finalZPeakSplitMinMajorRadius = node["finalZPeakSplitMinMajorRadius"].as<float>();
         if (node["finalZPeakSplitRadiusXY"]) finalZPeakSplitRadiusXY = node["finalZPeakSplitRadiusXY"].as<float>();
         if (node["finalZPeakSplitQuantile"]) finalZPeakSplitQuantile = node["finalZPeakSplitQuantile"].as<float>();
@@ -2219,6 +2223,8 @@ public:
         if (node["finalBrightPairMidpointRescueMinTop10MinusShell"]) finalBrightPairMidpointRescueMinTop10MinusShell = node["finalBrightPairMidpointRescueMinTop10MinusShell"].as<float>();
         if (node["finalBrightPairMidpointRescueRadiusScale"]) finalBrightPairMidpointRescueRadiusScale = node["finalBrightPairMidpointRescueRadiusScale"].as<float>();
         if (node["finalBrightPairMidpointRescueMinAddedDistance"]) finalBrightPairMidpointRescueMinAddedDistance = node["finalBrightPairMidpointRescueMinAddedDistance"].as<float>();
+        if (node["finalBrightPairMidpointRescueMinExistingDistance"]) finalBrightPairMidpointRescueMinExistingDistance = node["finalBrightPairMidpointRescueMinExistingDistance"].as<float>();
+        if (node["finalBrightPairMidpointRescueSortByExistingDistance"]) finalBrightPairMidpointRescueSortByExistingDistance = node["finalBrightPairMidpointRescueSortByExistingDistance"].as<bool>();
         if (node["finalClusterCentroidRecallRescueEnabled"]) finalClusterCentroidRecallRescueEnabled = node["finalClusterCentroidRecallRescueEnabled"].as<bool>();
         if (node["finalClusterCentroidRecallRescueMinCells"]) finalClusterCentroidRecallRescueMinCells = node["finalClusterCentroidRecallRescueMinCells"].as<int>();
         if (node["finalClusterCentroidRecallRescueMaxCells"]) finalClusterCentroidRecallRescueMaxCells = node["finalClusterCentroidRecallRescueMaxCells"].as<int>();
@@ -2682,6 +2688,7 @@ public:
         std::cout << "finalZPeakSplitMinCells: " << finalZPeakSplitMinCells << '\n';
         std::cout << "finalZPeakSplitMaxCells: " << finalZPeakSplitMaxCells << '\n';
         std::cout << "finalZPeakSplitMaxAdded: " << finalZPeakSplitMaxAdded << '\n';
+        std::cout << "finalZPeakSplitAddOnlyEnabled: " << finalZPeakSplitAddOnlyEnabled << '\n';
         std::cout << "finalZPeakSplitMinMajorRadius: " << finalZPeakSplitMinMajorRadius << '\n';
         std::cout << "finalZPeakSplitRadiusXY: " << finalZPeakSplitRadiusXY << '\n';
         std::cout << "finalZPeakSplitQuantile: " << finalZPeakSplitQuantile << '\n';
@@ -2702,6 +2709,8 @@ public:
         std::cout << "finalBrightPairMidpointRescueMinDistance: " << finalBrightPairMidpointRescueMinDistance << '\n';
         std::cout << "finalBrightPairMidpointRescueMaxDistance: " << finalBrightPairMidpointRescueMaxDistance << '\n';
         std::cout << "finalBrightPairMidpointRescueMinTop10MinusShell: " << finalBrightPairMidpointRescueMinTop10MinusShell << '\n';
+        std::cout << "finalBrightPairMidpointRescueMinExistingDistance: " << finalBrightPairMidpointRescueMinExistingDistance << '\n';
+        std::cout << "finalBrightPairMidpointRescueSortByExistingDistance: " << finalBrightPairMidpointRescueSortByExistingDistance << '\n';
         std::cout << "finalClusterCentroidRecallRescueEnabled: " << finalClusterCentroidRecallRescueEnabled << '\n';
         std::cout << "finalClusterCentroidRecallRescueMinCells: " << finalClusterCentroidRecallRescueMinCells << '\n';
         std::cout << "finalClusterCentroidRecallRescueMaxCells: " << finalClusterCentroidRecallRescueMaxCells << '\n';

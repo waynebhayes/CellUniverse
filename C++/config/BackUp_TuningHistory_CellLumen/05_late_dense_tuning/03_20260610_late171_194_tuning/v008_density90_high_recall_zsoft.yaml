@@ -1,0 +1,18 @@
+# Late dense 171 to 194 high recall probe.
+# Purpose: keep the v005 high recall behavior and test a conservative z-column
+# correction for the remaining coverage misses that are mostly z-biased.
+base_config: ../../../C.elegans developing embryo/Best_until_now/config_cell_lumen_embryo_celluniverse_preprocess_high_recall.yaml
+
+cell_lumen:
+  seededWatershedAdaptiveMinVoxelsCellCount: 90
+  finalZColumnRefineEnabled: true
+  finalZColumnRefineRadiusXY: 10.0
+  finalZColumnRefineHalfWindowScaled: 28.0
+  finalZColumnRefineQuantile: 0.75
+  finalZColumnRefineMinScoreFraction: 0.65
+  finalZColumnRefineMaxMoveScaled: 14.0
+  finalZColumnRefineBlend: 0.5
+  finalDuplicateMergeDistance: -1.0
+  finalPostRefineDuplicateMergeDistance: -1.0
+  finalWeakSatelliteFilterEnabled: false
+

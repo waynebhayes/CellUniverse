@@ -1,0 +1,28 @@
+# Late dense 171 to 194 high recall probe.
+# Based on v020. Remaining misses often sit between two nearby accepted
+# candidates, so this adds more pair-midpoint candidates after CellLumen has
+# kept stable main centers and add-only low rescue candidates.
+base_config: ../../../C.elegans developing embryo/Best_until_now/config_cell_lumen_embryo_celluniverse_preprocess_high_recall.yaml
+
+cell_lumen:
+  seededWatershedAdaptiveMinVoxelsCellCount: 90
+  seededWatershedAdaptiveDenseMinVoxels: 800
+  seededWatershedLowRescueRefineEnabled: false
+  seededWatershedLowRescueMinVoxels: 800
+  seededWatershedLowRescueMinCandidateVoxels: 800
+  seededWatershedLowRescueMinDistance: 14.0
+  seededWatershedLowRescueMinTop10MinusShell: 65.0
+  seededWatershedLowRescueMaxAdded: 120
+  seededWatershedLowRescueSortByDistance: false
+  finalBrightPairMidpointRescueEnabled: true
+  finalBrightPairMidpointRescueMinCells: 300
+  finalBrightPairMidpointRescueMaxCells: 430
+  finalBrightPairMidpointRescueMaxAdded: 200
+  finalBrightPairMidpointRescueMinDistance: 20.0
+  finalBrightPairMidpointRescueMaxDistance: 72.0
+  finalBrightPairMidpointRescueMinTop10MinusShell: 20.0
+  finalBrightPairMidpointRescueRadiusScale: 0.85
+  finalBrightPairMidpointRescueMinAddedDistance: 8.0
+  finalDuplicateMergeDistance: -1.0
+  finalPostRefineDuplicateMergeDistance: -1.0
+  finalWeakSatelliteFilterEnabled: false

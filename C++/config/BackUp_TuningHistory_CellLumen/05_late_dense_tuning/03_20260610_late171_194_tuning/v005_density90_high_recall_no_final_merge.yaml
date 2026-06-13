@@ -1,0 +1,10 @@
+# Late dense 171 to 194 high recall probe.
+# Purpose: use the existing CellUniverse preprocessing high recall mode, but
+# fix the f184 density boundary by triggering the dense voxel floor at 90 cells.
+# This is a candidate-source config, so extra centers are acceptable if every
+# real cell has at least one nearby CellLumen candidate.
+base_config: ../../../C.elegans developing embryo/Best_until_now/config_cell_lumen_embryo_celluniverse_preprocess_high_recall.yaml
+
+cell_lumen:
+  seededWatershedAdaptiveMinVoxelsCellCount: 90
+

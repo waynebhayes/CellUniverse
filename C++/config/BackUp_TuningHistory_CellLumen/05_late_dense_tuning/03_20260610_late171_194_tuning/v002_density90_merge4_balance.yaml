@@ -1,0 +1,11 @@
+# Late dense 171 to 194 probe.
+# Purpose: keep the f184 density trigger fix, but make final duplicate merging
+# slightly less aggressive than the standalone clean config. This tests whether
+# the clean config is losing true close centers by merging at distance 5.
+base_config: ../../../C.elegans developing embryo/Best_until_now/config_cell_lumen_embryo_standalone_clean.yaml
+
+cell_lumen:
+  seededWatershedAdaptiveMinVoxelsCellCount: 90
+  finalDuplicateMergeDistance: 4.0
+  finalPostRefineDuplicateMergeDistance: 4.0
+

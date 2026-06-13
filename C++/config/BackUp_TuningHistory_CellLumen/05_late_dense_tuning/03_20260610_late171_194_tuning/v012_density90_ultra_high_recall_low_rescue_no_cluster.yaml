@@ -1,0 +1,25 @@
+# Late dense 171 to 194 ultra high recall probe.
+# Purpose: test the "no miss first" policy using YAML only. Low rescue is made
+# much more permissive and clustering is disabled so multiple nearby dim
+# candidates are kept for Cell Universe to judge later. This is expected to add
+# many extra candidates; it should only be selected if coverage miss improves
+# without many far background candidates.
+base_config: ../../../C.elegans developing embryo/Best_until_now/config_cell_lumen_embryo_celluniverse_preprocess_high_recall.yaml
+
+cell_lumen:
+  seededWatershedAdaptiveMinVoxelsCellCount: 90
+  seededWatershedAdaptiveDenseMinVoxels: 500
+  seededWatershedLowRescueSeedPercentile: 65.0
+  seededWatershedLowRescueMinVoxels: 500
+  seededWatershedLowRescueMinCandidateVoxels: 500
+  seededWatershedLowRescueMinSeedDistance: 12.0
+  seededWatershedLowRescueCloseSeedMinDistance: 6.0
+  seededWatershedLowRescueMinValleyDrop: 0.0
+  seededWatershedLowRescueClusterDistance: -1.0
+  seededWatershedLowRescueMinDistance: 8.0
+  seededWatershedLowRescueMinTop10MinusShell: 35.0
+  seededWatershedLowRescueMaxAdded: 120
+  finalDuplicateMergeDistance: -1.0
+  finalPostRefineDuplicateMergeDistance: -1.0
+  finalWeakSatelliteFilterEnabled: false
+
