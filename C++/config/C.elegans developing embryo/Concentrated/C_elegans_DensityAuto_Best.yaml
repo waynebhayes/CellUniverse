@@ -676,8 +676,6 @@ profiles:
         fusionSplitPriorWindowParentPersistencePenalty: 6.0
         fusionSplitPriorWindowBalancedDaughterBonus: 25.0
         fusionSplitPriorWindowBalancedMinParentDistanceBalance: 0.65
-        fusionSplitPriorCleanTwoRealWindowPairMinParentDistanceBalance: 0.62
-        fusionSplitPriorCleanTwoRealWindowPairMaxScore: 12.0
         fusionSplitPriorWindowBalancedMinNearParentRadiusScale: 0.6
         fusionSplitPriorWindowHighConfidenceMaxOverlapCostFraction: 1.0
         fusionSplitPriorRankingSoftGateEnabled: true
