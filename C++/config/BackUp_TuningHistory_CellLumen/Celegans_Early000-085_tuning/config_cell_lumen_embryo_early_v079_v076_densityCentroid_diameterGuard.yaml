@@ -1,0 +1,11 @@
+base_config: config_cell_lumen_embryo_early_v078_v076_densityGroupGuard_noPairValley.yaml
+
+cell_lumen:
+  # v079 disables the new two-lobe density guard because v078 showed it was too
+  # sensitive to texture inside one large early cell. We keep the safer part:
+  # when a group is collapsed, use the brightness-density centroid instead of
+  # averaging local seed centers. A simple max-diameter guard still prevents very
+  # wide single-link groups from becoming one midpoint.
+  initialPriorClusterCollapseDensityTwoLobeGuardEnabled: false
+  initialPriorClusterCollapseDensityCentroidEnabled: true
+  initialPriorClusterCollapseMaxGroupDiameter: 64.0

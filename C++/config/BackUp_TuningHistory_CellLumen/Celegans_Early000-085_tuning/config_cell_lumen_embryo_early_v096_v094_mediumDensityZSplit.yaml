@@ -1,0 +1,10 @@
+base_config: config_cell_lumen_embryo_early_v094_v091_zProfileSignalPriority.yaml
+
+cell_lumen:
+  # v096 keeps the f018 z-profile rescue, but gives a larger z-peak split
+  # budget only after the collapsed candidate field reaches medium density.
+  # This avoids adding many internal fragments in the earliest large-cell
+  # frames while still testing the f036-style z-separated doublet.
+  finalZPeakSplitMinCells: 20
+  finalZPeakSplitMaxCells: 52
+  finalZPeakSplitMaxAdded: 8

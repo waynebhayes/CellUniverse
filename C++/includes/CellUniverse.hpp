@@ -113,13 +113,24 @@ private:
    // fallback may not resurrect these parents, otherwise a weak Lumen pair can
    // be rejected in ranking and then re-enter through the fallback path.
    std::unordered_map<int, std::set<std::string>> cellLumenSplitPriorRejectedBadParents;
+   // Parents whose local CellLumen peaks were already collapsed into one
+   // continuation center for this frame. This is frame-local evidence that the
+   // peaks probably describe internal lumen texture, so later split fallback
+   // code can avoid contradicting the center-prior decision for the same
+   // parent. Kept behind YAML switches so verified profiles remain unchanged.
+   std::unordered_map<int, std::set<std::string>> cellLumenCollapsedCenterParents;
    struct CellLumenCenterCandidate {
        cv::Point3f position{0.0f, 0.0f, 0.0f};
        float distance = 0.0f;
        int voxelCount = 0;
        float signal = 0.0f;
-       int candidateId = -1;
-   };
+	       int candidateId = -1;
+	       int clusterCandidateCount = 1;
+	       float positionBlendOverride = -1.0f;
+	       bool clusterCollapsed = false;
+	       bool youngFarSingle = false;
+	       float parentZShift = 0.0f;
+	   };
    std::unordered_map<int, std::unordered_map<std::string, CellLumenCenterCandidate>> cellLumenCenterCandidates;
    struct CellLumenLookaheadCandidate {
        cv::Point3f position{0.0f, 0.0f, 0.0f};

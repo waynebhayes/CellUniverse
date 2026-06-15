@@ -1,0 +1,8 @@
+base_config: config_cell_lumen_embryo_early_v091_v090_zProfileRescue.yaml
+
+cell_lumen:
+  # v094 keeps the same z-profile rescue geometry as v091, but changes the
+  # candidate priority so the small add-back budget favors strong local z
+  # density evidence instead of simply rewarding larger z movement. This is for
+  # the f018-style case where the correct upper peak exists but ranked too low.
+  finalZProfileRescueShiftPriorityWeight: -1.0

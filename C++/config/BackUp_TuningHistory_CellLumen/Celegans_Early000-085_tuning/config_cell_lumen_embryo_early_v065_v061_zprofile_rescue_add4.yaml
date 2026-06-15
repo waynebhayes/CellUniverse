@@ -1,0 +1,19 @@
+base_config: config_cell_lumen_embryo_early_v061_v059_postCollapse_zrefine.yaml
+
+cell_lumen:
+  # v065 adds only a few z-profile clones after collapse/refine. It does not
+  # move or delete existing centers. This targets the remaining f018/f036 cases
+  # where the correct x/y evidence is present but a second upper z slice is
+  # needed for a nearby z-separated cell.
+  finalZProfileRescueAddEnabled: true
+  finalZProfileRescueMinCells: 1
+  finalZProfileRescueMaxCells: 90
+  finalZProfileRescueMaxAdded: 4
+  finalZProfileRescueRadiusXY: 12.0
+  finalZProfileRescueHalfWindowScaled: 42.0
+  finalZProfileRescueQuantile: 0.70
+  finalZProfileRescueMinScoreFraction: 0.70
+  finalZProfileRescueMinShiftScaled: 10.0
+  finalZProfileRescueMaxShiftScaled: 42.0
+  finalZProfileRescueMinExistingDistance: 6.0
+  finalZProfileRescueRadiusScale: 0.90

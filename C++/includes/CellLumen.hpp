@@ -51,6 +51,21 @@ private:
         float dedupDistance = 8.0f;
     };
 
+    struct ClusterDensityShape
+    {
+        cv::Point3f centroidScaled{};
+        float radiusX = 0.0f;
+        float radiusY = 0.0f;
+        float radiusZ = 0.0f;
+        int supportVoxels = 0;
+        float threshold = 0.0f;
+        float memberSpan = 0.0f;
+        float valleyRatio = 1.0f;
+        float valleySupportRatio = 1.0f;
+        float valleyDrop = 0.0f;
+        bool twoLobeGuard = false;
+    };
+
     BaseConfig config;
     fs::path outputDir;
     EmbryoBrightTracker tracker;
@@ -103,18 +118,28 @@ private:
     std::vector<DetectedCell> splitCellsByLocalZPeaks(const std::vector<cv::Mat> &volume,
                                                       const std::vector<DetectedCell> &cells,
                                                       const std::string &frameStem) const;
+    std::vector<DetectedCell> addZProfileRescueCandidates(const std::vector<cv::Mat> &volume,
+                                                          const std::vector<DetectedCell> &cells,
+                                                          const std::string &frameStem) const;
     std::vector<DetectedCell> rescueBrightPairMidpoints(const std::vector<cv::Mat> &volume,
                                                         const std::vector<DetectedCell> &cells,
                                                         const std::string &frameStem) const;
     std::vector<DetectedCell> addClusterCentroidRecallCandidates(const std::vector<cv::Mat> &volume,
                                                                  const std::vector<DetectedCell> &cells,
                                                                  const std::string &frameStem) const;
+    float computeInitialPriorClusterLinkDistance(float fallbackDistance) const;
+    std::optional<ClusterDensityShape> measureClusterDensityShape(
+        const std::vector<cv::Mat> &volume,
+        const std::vector<DetectedCell> &cells,
+        const std::vector<int> &members) const;
     std::vector<DetectedCell> collapseClusteredCandidates(const std::vector<cv::Mat> &volume,
                                                           const std::vector<DetectedCell> &cells,
                                                           const std::string &frameStem) const;
     std::vector<DetectedCell> filterDominatedDuplicateCandidates(const std::vector<cv::Mat> &volume,
                                                                  const std::vector<DetectedCell> &cells,
                                                                  const std::string &frameStem) const;
+    std::vector<DetectedCell> filterLowDensityArtifacts(const std::vector<DetectedCell> &cells,
+                                                        const std::string &frameStem) const;
     std::vector<DetectedCell> mergeLikelySameCellFragments(const std::vector<DetectedCell> &cells,
                                                            const std::vector<cv::Mat> &volume,
                                                            float thresholdLow,

@@ -1,0 +1,11 @@
+base_config: config_cell_lumen_embryo_early_v087_v086_addback_max63.yaml
+
+cell_lumen:
+  # v089 tests a more local dynamic collapse rule for the remaining f018
+  # competition miss. Instead of increasing z split globally, it only blocks
+  # a pairwise collapse edge when the line between two candidate centers has a
+  # dark valley. Internal texture inside one large cell should usually keep a
+  # brighter bridge, while two real close cells should have a lower support gap.
+  initialPriorClusterCollapseValleyGuardEnabled: true
+  initialPriorClusterCollapseValleyMaxQ20Ratio: 0.62
+  initialPriorClusterCollapseValleyMinDrop: 18.0

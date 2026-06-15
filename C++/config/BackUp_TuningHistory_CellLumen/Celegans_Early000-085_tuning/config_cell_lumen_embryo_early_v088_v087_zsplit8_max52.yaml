@@ -1,0 +1,11 @@
+base_config: config_cell_lumen_embryo_early_v087_v086_addback_max63.yaml
+
+cell_lumen:
+  # v088 targets the two remaining v087 miss cases. Both still have image
+  # evidence near the true center after collapse, but the small post-collapse
+  # z-split budget is spent before those centers are recovered. This version
+  # allows a few more post-collapse z candidates only while the local candidate
+  # count is still low or moderate; dense frames skip this rescue to avoid a
+  # broad extra explosion.
+  finalZPeakSplitMaxCells: 52
+  finalZPeakSplitMaxAdded: 8

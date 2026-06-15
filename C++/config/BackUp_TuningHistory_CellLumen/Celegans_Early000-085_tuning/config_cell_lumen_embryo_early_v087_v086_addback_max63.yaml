@@ -1,0 +1,20 @@
+base_config: config_cell_lumen_embryo_early_v086_v085_frameDensityNoLobeGuard.yaml
+
+cell_lumen:
+  # v087 keeps the clean early frame-density collapse from v086, but avoids the
+  # late sparse-to-mid density over-merge seen around f066/f071 by stopping
+  # initial-prior collapse above this candidate count.
+  initialPriorClusterCollapseMaxCells: 63
+
+  # When a low-density collapse group is wide enough to be ambiguous, keep the
+  # density centroid and add back only one strong far member. This is a small
+  # recall safety net for real close daughters; it is much smaller than leaving
+  # all internal fragments in the output.
+  initialPriorClusterCollapseAmbiguousAddbackEnabled: true
+  initialPriorClusterCollapseAmbiguousAddbackMinCells: 1
+  initialPriorClusterCollapseAmbiguousAddbackMaxCells: 63
+  initialPriorClusterCollapseAmbiguousAddbackMaxAdded: 8
+  initialPriorClusterCollapseAmbiguousAddbackMaxPerGroup: 1
+  initialPriorClusterCollapseAmbiguousAddbackMinGroupDiameter: 28.0
+  initialPriorClusterCollapseAmbiguousAddbackMinCentroidDistance: 10.0
+  initialPriorClusterCollapseAmbiguousAddbackMinTop10MinusShell: 60.0

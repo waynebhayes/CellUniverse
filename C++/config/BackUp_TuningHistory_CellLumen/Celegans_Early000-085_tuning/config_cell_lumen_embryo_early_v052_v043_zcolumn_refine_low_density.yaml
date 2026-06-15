@@ -1,0 +1,24 @@
+base_config: config_cell_lumen_embryo_early_v043_baselineClean_midpointRescue.yaml
+
+cell_lumen:
+  # v052 returns to the high recall v043 path because it already sees most early
+  # cells. The remaining misses are often only slightly outside the 20 px
+  # evaluation threshold, with a strong z-direction bias. This test enables the
+  # existing z-column refiner and the new default-off low-density artifact
+  # cleanup, without using GT at runtime.
+  finalZColumnRefineEnabled: true
+  finalZColumnRefineRadiusXY: 12.0
+  finalZColumnRefineHalfWindowScaled: 42.0
+  finalZColumnRefineQuantile: 0.70
+  finalZColumnRefineMinScoreFraction: 0.35
+  finalZColumnRefineMaxMoveScaled: 32.0
+  finalZColumnRefineBlend: 1.0
+  finalZColumnRefineMinCells: 1
+  finalZColumnRefineMaxCells: 90
+
+  finalLowDensityArtifactFilterEnabled: true
+  finalLowDensityArtifactFilterMinCells: 1
+  finalLowDensityArtifactFilterMaxCells: 90
+  finalLowDensityArtifactMaxMeanRatio: 0.65
+  finalLowDensityArtifactMaxVoxelRatio: 0.95
+  finalLowDensityArtifactMinNearestDistance: 38.0

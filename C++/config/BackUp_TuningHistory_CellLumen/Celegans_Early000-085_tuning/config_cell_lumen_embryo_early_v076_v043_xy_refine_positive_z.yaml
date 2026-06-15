@@ -1,0 +1,23 @@
+base_config: config_cell_lumen_embryo_early_v043_baselineClean_midpointRescue.yaml
+
+cell_lumen:
+  # v076 separates two effects that conflicted in v071. The wider local
+  # brightness centroid fixes early x/y drift, but it should not pull sparse
+  # z-separated cells downward. We therefore apply the local pass to x/y only,
+  # then allow the z-column pass to move centers only toward an upper bright
+  # slice. This is image-only and does not add or delete candidates.
+  finalLocalRefineEnabled: true
+  finalLocalRefineRadius: 28.0
+  finalLocalRefineQuantile: 0.75
+  finalLocalRefineBlend: 1.0
+  finalLocalRefineZBlend: 0.0
+  finalZColumnRefineEnabled: true
+  finalZColumnRefineRadiusXY: 12.0
+  finalZColumnRefineHalfWindowScaled: 42.0
+  finalZColumnRefineQuantile: 0.70
+  finalZColumnRefineMinScoreFraction: 0.35
+  finalZColumnRefineMaxMoveScaled: 32.0
+  finalZColumnRefineBlend: 1.0
+  finalZColumnRefinePositiveOnly: true
+  finalZColumnRefineMinCells: 1
+  finalZColumnRefineMaxCells: 90

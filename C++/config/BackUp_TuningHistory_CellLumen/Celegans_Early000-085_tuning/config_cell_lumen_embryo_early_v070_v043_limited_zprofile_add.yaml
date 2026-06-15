@@ -1,0 +1,20 @@
+base_config: config_cell_lumen_embryo_early_v043_baselineClean_midpointRescue.yaml
+
+cell_lumen:
+  # v070 keeps the stable v043 candidate set and only adds a very small
+  # image-only z-profile rescue budget. This targets cases where a valid x/y
+  # candidate exists near a real center but the strongest z slice is separated
+  # from another bright local slice. It is add-only and capped to avoid the
+  # broad extra explosion seen in v068.
+  finalZProfileRescueAddEnabled: true
+  finalZProfileRescueMinCells: 1
+  finalZProfileRescueMaxCells: 45
+  finalZProfileRescueMaxAdded: 4
+  finalZProfileRescueRadiusXY: 12.0
+  finalZProfileRescueHalfWindowScaled: 42.0
+  finalZProfileRescueQuantile: 0.70
+  finalZProfileRescueMinScoreFraction: 0.72
+  finalZProfileRescueMinShiftScaled: 10.0
+  finalZProfileRescueMaxShiftScaled: 42.0
+  finalZProfileRescueMinExistingDistance: 6.0
+  finalZProfileRescueRadiusScale: 0.90

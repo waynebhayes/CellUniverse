@@ -1,0 +1,18 @@
+base_config: config_cell_lumen_embryo_early_v046_clusterRecall_clusterCollapse.yaml
+
+cell_lumen:
+  # v047 keeps the v046 high recall cluster collapse idea, but avoids a purely
+  # hand-picked collapse distance. The initial CSV is a legal starting input for
+  # Cell Universe, so this experiment uses only its early cell spacing scale to
+  # estimate how close brightness fragments must be before they should become
+  # one candidate center. It does not use GT or current-frame answer positions.
+  initialPriorClusterCollapseEnabled: true
+  initialPriorCsvPath: /Users/wangyiding/CellUniverse/C++/config/C.elegans developing embryo/C.elegans_initial/initial_files/00_core_start_points/initial_embryo_0.csv
+  initialPriorClusterCollapseMinCells: 1
+  initialPriorClusterCollapseMaxCells: 90
+  initialPriorClusterCollapseMinClusterSize: 2
+  initialPriorClusterCollapseLinkScale: 0.18
+  initialPriorClusterCollapseMinLinkDistance: 24.0
+  initialPriorClusterCollapseMaxLinkDistance: 42.0
+  initialPriorClusterCollapseRadiusScale: 1.0
+  initialPriorClusterCollapseUseSignalWeights: false

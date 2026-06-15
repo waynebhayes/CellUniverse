@@ -1,0 +1,10 @@
+base_config: config_cell_lumen_embryo_early_v050_initialPrior_lowDensity_max60.yaml
+
+cell_lumen:
+  # v059 keeps the useful low-density initial-prior collapse from v050, but
+  # adds the new low-brightness valley guard. Real neighboring cells should
+  # have a darker gap between centers, while duplicate peaks inside one large
+  # early cell usually have a continuous bright bridge.
+  initialPriorClusterCollapseValleyGuardEnabled: true
+  initialPriorClusterCollapseValleyMaxQ20Ratio: 0.72
+  initialPriorClusterCollapseValleyMinDrop: 15.0

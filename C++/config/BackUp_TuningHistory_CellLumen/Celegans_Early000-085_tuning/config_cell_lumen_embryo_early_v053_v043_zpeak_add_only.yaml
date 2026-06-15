@@ -1,0 +1,24 @@
+base_config: config_cell_lumen_embryo_early_v043_baselineClean_midpointRescue.yaml
+
+cell_lumen:
+  # v053 keeps the high recall v043 detector and adds only extra candidates
+  # when one accepted early cell has two reliable z peaks. This is safer than
+  # replacing the parent center because the early cells are large and their
+  # bright core can sit a few pixels away from the biological center.
+  finalZPeakSplitEnabled: true
+  finalZPeakSplitMinCells: 1
+  finalZPeakSplitMaxCells: 90
+  finalZPeakSplitMaxAdded: 24
+  finalZPeakSplitAddOnlyEnabled: true
+  finalZPeakSplitMinMajorRadius: 18.0
+  finalZPeakSplitRadiusXY: 22.0
+  finalZPeakSplitQuantile: 0.76
+  finalZPeakSplitMinPeakScoreFraction: 0.42
+  finalZPeakSplitLocal3DFallbackEnabled: true
+  finalZPeakSplitPreferLocal3D: true
+  finalZPeakSplitLocal3DCentroidRadiusXY: 12.0
+  finalZPeakSplitLocal3DCentroidHalfWindowScaled: 18.0
+  finalZPeakSplitMinSeparationScaled: 16.0
+  finalZPeakSplitMaxSeparationScaled: 58.0
+  finalZPeakSplitMaxCenterShiftXY: 32.0
+  finalZPeakSplitRadiusScale: 0.82

@@ -1,0 +1,9 @@
+base_config: config_cell_lumen_embryo_early_v080_v079_postCollapseZSplit.yaml
+
+cell_lumen:
+  # v080 helps the earliest over-split frames but starts causing misses after
+  # the embryo has more local true neighbors. v081 keeps the same density
+  # centroid plus z-doublet recovery, but only when the pre-collapse candidate
+  # count is still very low. Above this count, it falls back to the v076
+  # high-recall behavior, where extra candidates are safer than missing cells.
+  initialPriorClusterCollapseMaxCells: 25

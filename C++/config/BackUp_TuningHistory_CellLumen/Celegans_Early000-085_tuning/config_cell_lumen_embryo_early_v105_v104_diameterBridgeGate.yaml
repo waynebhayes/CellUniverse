@@ -1,0 +1,9 @@
+base_config: config_cell_lumen_embryo_early_v104_v103_groupCountGate32.yaml
+
+cell_lumen:
+  # v105 handles the f043/f054 transition misses: when the raw field is already
+  # moderately dense and local-link clustering produces an oversized bridge
+  # group, skip initial-prior collapse for that frame. Earlier large-cell frames
+  # keep using collapse.
+  initialPriorClusterCollapseSkipDiameterGuardMinCells: 55
+  initialPriorClusterCollapseSkipDiameterGuardMaxCells: 63

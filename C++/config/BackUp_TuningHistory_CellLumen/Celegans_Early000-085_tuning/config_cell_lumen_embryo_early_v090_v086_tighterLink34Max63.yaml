@@ -1,0 +1,10 @@
+base_config: config_cell_lumen_embryo_early_v086_v085_frameDensityNoLobeGuard.yaml
+
+cell_lumen:
+  # v090 tests whether the remaining misses are mainly caused by an overly
+  # broad collapse link radius. It keeps the clean frame-density centroid/radii
+  # path from v086, skips collapse in later dense candidate fields, and tightens
+  # the maximum link distance so close true neighbors are less likely to join
+  # the same single-link group.
+  initialPriorClusterCollapseMaxCells: 63
+  initialPriorClusterCollapseMaxLinkDistance: 34.0

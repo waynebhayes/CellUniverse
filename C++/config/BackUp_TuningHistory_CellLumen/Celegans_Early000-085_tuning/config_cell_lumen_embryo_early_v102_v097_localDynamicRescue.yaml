@@ -1,0 +1,25 @@
+base_config: config_cell_lumen_embryo_early_v097_v096_collapseMax49.yaml
+
+cell_lumen:
+  # v102 keeps v097's lower-extra count gate, then adds two narrow local rescue
+  # rules instead of globally increasing recall.
+  #
+  # 1. f021/f025: collapse leaves 12-14 clean-looking candidates, but the true
+  #    upper z-density peak ranks around 10-12. Only in this small count window
+  #    do we raise the z-profile add-back budget.
+  finalZProfileRescueBoostMinCells: 12
+  finalZProfileRescueBoostMaxCells: 14
+  finalZProfileRescueBoostMaxAdded: 12
+
+  # 2. f039: raw candidate count is in a medium transition range where one
+  #    collapse group can hide an isolated true center. Add back at most one
+  #    strong far member per ambiguous group, but do not enable this in the
+  #    earliest large-cell frames where it mostly restores internal fragments.
+  initialPriorClusterCollapseAmbiguousAddbackEnabled: true
+  initialPriorClusterCollapseAmbiguousAddbackMinCells: 40
+  initialPriorClusterCollapseAmbiguousAddbackMaxCells: 49
+  initialPriorClusterCollapseAmbiguousAddbackMaxAdded: 8
+  initialPriorClusterCollapseAmbiguousAddbackMaxPerGroup: 1
+  initialPriorClusterCollapseAmbiguousAddbackMinGroupDiameter: 24.0
+  initialPriorClusterCollapseAmbiguousAddbackMinCentroidDistance: 10.0
+  initialPriorClusterCollapseAmbiguousAddbackMinTop10MinusShell: 45.0

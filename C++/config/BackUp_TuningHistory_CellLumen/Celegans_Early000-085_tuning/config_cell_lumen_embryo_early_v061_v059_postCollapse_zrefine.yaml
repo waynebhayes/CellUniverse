@@ -1,0 +1,17 @@
+base_config: config_cell_lumen_embryo_early_v059_initialPrior_valleyGuard.yaml
+
+cell_lumen:
+  # v061 applies the z correction after cluster collapse. v060 showed that
+  # pre-collapse z correction is averaged away by collapse, so this version
+  # keeps the low-extra final candidate count and fixes the final centers.
+  finalZColumnRefineEnabled: true
+  finalZColumnRefineBeforeCollapseEnabled: false
+  finalPostCollapseZColumnRefineEnabled: true
+  finalZColumnRefineRadiusXY: 12.0
+  finalZColumnRefineHalfWindowScaled: 42.0
+  finalZColumnRefineQuantile: 0.70
+  finalZColumnRefineMinScoreFraction: 0.35
+  finalZColumnRefineMaxMoveScaled: 32.0
+  finalZColumnRefineBlend: 1.0
+  finalZColumnRefineMinCells: 1
+  finalZColumnRefineMaxCells: 90

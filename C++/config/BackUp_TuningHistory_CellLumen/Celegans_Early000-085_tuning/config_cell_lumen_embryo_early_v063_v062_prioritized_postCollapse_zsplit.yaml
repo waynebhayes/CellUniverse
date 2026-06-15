@@ -1,0 +1,9 @@
+base_config: config_cell_lumen_embryo_early_v062_v061_postCollapse_zsplit_add8.yaml
+
+cell_lumen:
+  # v063 keeps the post-collapse add-only split but prioritizes all candidate
+  # parents before spending the small budget. v062 spent the budget on early
+  # traversal-order parents and did not reach the remaining f018/f036 cases.
+  finalZPeakSplitPrioritizeCandidates: true
+  finalZPeakSplitPriorityMinPeakShiftScaled: 14.0
+  finalZPeakSplitPriorityScoreWeight: 0.02

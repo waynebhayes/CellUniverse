@@ -1,0 +1,13 @@
+base_config: config_cell_lumen_embryo_early_v097_v096_collapseMax49.yaml
+
+cell_lumen:
+  # v100 checks whether the existing ambiguous collapse add-back is enough for
+  # the remaining isolated misses before adding more code.
+  initialPriorClusterCollapseAmbiguousAddbackEnabled: true
+  initialPriorClusterCollapseAmbiguousAddbackMinCells: 1
+  initialPriorClusterCollapseAmbiguousAddbackMaxCells: 49
+  initialPriorClusterCollapseAmbiguousAddbackMaxAdded: 8
+  initialPriorClusterCollapseAmbiguousAddbackMaxPerGroup: 1
+  initialPriorClusterCollapseAmbiguousAddbackMinGroupDiameter: 24.0
+  initialPriorClusterCollapseAmbiguousAddbackMinCentroidDistance: 10.0
+  initialPriorClusterCollapseAmbiguousAddbackMinTop10MinusShell: 45.0

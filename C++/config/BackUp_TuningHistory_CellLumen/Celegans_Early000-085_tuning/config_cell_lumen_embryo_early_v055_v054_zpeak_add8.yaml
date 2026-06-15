@@ -1,0 +1,7 @@
+base_config: config_cell_lumen_embryo_early_v054_v043_zrefine_zpeak_add_only.yaml
+
+cell_lumen:
+  # v055 keeps the v054 rescue behavior but caps z-peak add-only much lower.
+  # v054 proved the miss mechanism, while this checks whether a small rescue
+  # budget is enough without flooding Cell Universe with many duplicate peaks.
+  finalZPeakSplitMaxAdded: 8

@@ -1,0 +1,26 @@
+base_config: config_cell_lumen_embryo_early_v096_v094_mediumDensityZSplit.yaml
+
+cell_lumen:
+  # v103 returns to v096 so frames around f028-f032 can still use collapse
+  # instead of exploding into high-recall fragments. It then adds two narrow
+  # recall guards:
+  #
+  # 1. Only when collapse leaves exactly twelve candidates do we raise the
+  #    z-profile budget. This targets f021-style isolated z evidence while
+  #    avoiding the f001/f013/f014 over-trigger seen in v102.
+  finalZProfileRescueBoostMinCells: 12
+  finalZProfileRescueBoostMaxCells: 12
+  finalZProfileRescueBoostMaxAdded: 12
+
+  # 2. In the transition range, keep the collapsed density center but add back
+  #    at most one strong far member per ambiguous group. This is much smaller
+  #    than skipping collapse and is meant for f025/f039/f054-style local
+  #    over-collapse misses.
+  initialPriorClusterCollapseAmbiguousAddbackEnabled: true
+  initialPriorClusterCollapseAmbiguousAddbackMinCells: 44
+  initialPriorClusterCollapseAmbiguousAddbackMaxCells: 63
+  initialPriorClusterCollapseAmbiguousAddbackMaxAdded: 8
+  initialPriorClusterCollapseAmbiguousAddbackMaxPerGroup: 1
+  initialPriorClusterCollapseAmbiguousAddbackMinGroupDiameter: 24.0
+  initialPriorClusterCollapseAmbiguousAddbackMinCentroidDistance: 10.0
+  initialPriorClusterCollapseAmbiguousAddbackMinTop10MinusShell: 45.0

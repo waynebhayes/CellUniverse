@@ -1,0 +1,8 @@
+base_config: config_cell_lumen_embryo_early_v083_v079_tinyPostCollapseZSplit.yaml
+
+cell_lumen:
+  # f004 has two simultaneous z-separated daughter pairs. v083 used only one
+  # pair budget and spent it on the stronger pair, leaving the second pair as a
+  # collapsed midpoint. v084 allows two pairs while still staying much smaller
+  # than the broad v080 budget.
+  finalZPeakSplitMaxAdded: 4

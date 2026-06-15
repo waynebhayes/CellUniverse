@@ -1,0 +1,7 @@
+base_config: config_cell_lumen_embryo_early_v103_v096_groupAddbackExactZBoost.yaml
+
+cell_lumen:
+  # v104 keeps early over-split collapse, but stops initial-prior collapse once
+  # the linked candidate groups already look like a mid-density field. This
+  # uses image-derived group count instead of frame number or GT.
+  initialPriorClusterCollapseSkipAboveGroupCount: 32

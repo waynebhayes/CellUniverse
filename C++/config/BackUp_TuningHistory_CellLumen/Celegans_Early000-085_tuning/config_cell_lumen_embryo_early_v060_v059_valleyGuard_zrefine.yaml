@@ -1,0 +1,15 @@
+base_config: config_cell_lumen_embryo_early_v059_initialPrior_valleyGuard.yaml
+
+cell_lumen:
+  # v060 keeps the low-extra collapse behavior from v059 and only corrects the
+  # remaining z bias. The miss cases after v059 were not missing centers; their
+  # nearest candidates were 20 to 24 px away, mainly because z stayed too low.
+  finalZColumnRefineEnabled: true
+  finalZColumnRefineRadiusXY: 12.0
+  finalZColumnRefineHalfWindowScaled: 42.0
+  finalZColumnRefineQuantile: 0.70
+  finalZColumnRefineMinScoreFraction: 0.35
+  finalZColumnRefineMaxMoveScaled: 32.0
+  finalZColumnRefineBlend: 1.0
+  finalZColumnRefineMinCells: 1
+  finalZColumnRefineMaxCells: 90

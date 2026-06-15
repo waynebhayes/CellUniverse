@@ -1,0 +1,12 @@
+base_config: config_cell_lumen_embryo_early_v080_v079_postCollapseZSplit.yaml
+
+cell_lumen:
+  # v082 re-enables the density two-lobe guard after adding a support-density
+  # check in C++. A group is protected from collapse only when the middle has
+  # both low brightness and low high-voxel support. This tries to separate true
+  # close daughters from texture inside one large cell.
+  initialPriorClusterCollapseDensityTwoLobeGuardEnabled: true
+  initialPriorClusterCollapseDensityTwoLobeMinDistance: 30.0
+  initialPriorClusterCollapseDensityTwoLobeMaxValleyRatio: 0.58
+  initialPriorClusterCollapseDensityTwoLobeMaxSupportRatio: 0.28
+  initialPriorClusterCollapseDensityTwoLobeMinDrop: 12.0

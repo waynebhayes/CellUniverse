@@ -1,0 +1,7 @@
+base_config: config_cell_lumen_embryo_early_v097_v096_collapseMax49.yaml
+
+cell_lumen:
+  # v098 tests whether the remaining isolated misses are simply z-profile
+  # recall budget misses. In f021 and f025 the correct image-only z rescue
+  # candidate exists, but ranks around 10-12, outside the v097 budget of four.
+  finalZProfileRescueMaxAdded: 12

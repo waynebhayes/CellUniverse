@@ -1,0 +1,9 @@
+base_config: config_cell_lumen_embryo_early_v069_v043_stronger_local_z_refine.yaml
+
+cell_lumen:
+  # f002 label 256 remains only about 0.03 px outside the review radius in
+  # v069. This variant keeps the same safe no-add behavior but gives the local
+  # brightness centroid a slightly wider search radius to see whether the
+  # accepted candidate moves into the visible cell core without adding extras.
+  finalLocalRefineRadius: 28.0
+  finalLocalRefineQuantile: 0.75

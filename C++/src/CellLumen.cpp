@@ -1,4 +1,5 @@
 #include "../includes/CellLumen.hpp"
+#include "../includes/CsvHandler.hpp"
 #include "../includes/ImageHandler.hpp"
 
 #include <algorithm>
@@ -496,6 +497,67 @@ float sampleLineMinimum(const std::vector<cv::Mat> &volume,
     }
 
     return minValue == std::numeric_limits<float>::max() ? 0.0f : minValue;
+}
+
+struct LineIntensityProfile
+{
+    int count = 0;
+    float minimum = 0.0f;
+    float q20 = 0.0f;
+    float median = 0.0f;
+};
+
+std::optional<LineIntensityProfile> sampleLineProfile(const std::vector<cv::Mat> &volume,
+                                                      const cv::Point3f &a,
+                                                      const cv::Point3f &b,
+                                                      float zScale)
+{
+    if (volume.empty())
+    {
+        return std::nullopt;
+    }
+
+    const float dx = b.x - a.x;
+    const float dy = b.y - a.y;
+    const float dzScaled = (b.z - a.z) * zScale;
+    const float distance = std::sqrt(dx * dx + dy * dy + dzScaled * dzScaled);
+    const int steps = std::clamp(static_cast<int>(std::ceil(distance / 1.5f)), 8, 64);
+    std::vector<float> samples;
+    samples.reserve(static_cast<size_t>(steps + 1));
+    for (int i = 0; i <= steps; ++i)
+    {
+        const float t = static_cast<float>(i) / static_cast<float>(steps);
+        const int x = static_cast<int>(std::lround(a.x + t * dx));
+        const int y = static_cast<int>(std::lround(a.y + t * dy));
+        const int z = static_cast<int>(std::lround(a.z + t * (b.z - a.z)));
+        if (z < 0 || z >= static_cast<int>(volume.size()))
+        {
+            continue;
+        }
+        const cv::Mat &slice = volume[static_cast<size_t>(z)];
+        if (y < 0 || y >= slice.rows || x < 0 || x >= slice.cols)
+        {
+            continue;
+        }
+        const float value = slice.ptr<float>(y)[x];
+        if (std::isfinite(value))
+        {
+            samples.push_back(value);
+        }
+    }
+
+    if (samples.size() < 5)
+    {
+        return std::nullopt;
+    }
+
+    std::sort(samples.begin(), samples.end());
+    LineIntensityProfile profile;
+    profile.count = static_cast<int>(samples.size());
+    profile.minimum = samples.front();
+    profile.q20 = samples[static_cast<size_t>(0.20f * static_cast<float>(samples.size() - 1))];
+    profile.median = samples[samples.size() / 2];
+    return profile;
 }
 
 float squaredDistanceXY(const cv::Point3f &lhs, const cv::Point3f &rhs)
@@ -2742,6 +2804,7 @@ void CellLumen::refineCentersByZColumn(const std::vector<cv::Mat> &volume,
     const float maxMoveScaled =
         std::max(0.0f, config.cellLumen.finalZColumnRefineMaxMoveScaled);
     const float blend = clampf(config.cellLumen.finalZColumnRefineBlend, 0.0f, 1.0f);
+    const bool positiveOnly = config.cellLumen.finalZColumnRefinePositiveOnly;
     int refinedCenters = 0;
 
     for (DetectedCell &cell : cells)
@@ -2841,6 +2904,10 @@ void CellLumen::refineCentersByZColumn(const std::vector<cv::Mat> &volume,
 
         const float proposedZ = static_cast<float>(weightedZ / totalWeight);
         const float deltaZ = proposedZ - cell.centerScaled.z;
+        if (positiveOnly && deltaZ < 0.0f)
+        {
+            continue;
+        }
         if (std::abs(deltaZ) > maxMoveScaled)
         {
             continue;
@@ -2866,6 +2933,7 @@ void CellLumen::refineCentersByZColumn(const std::vector<cv::Mat> &volume,
               << " min_score_fraction=" << minScoreFraction
               << " max_move_scaled=" << maxMoveScaled
               << " blend=" << blend
+              << " positive_only=" << positiveOnly
               << " refined_centers=" << refinedCenters
               << " final_cells=" << cells.size()
               << std::endl;
@@ -2927,6 +2995,12 @@ std::vector<CellLumen::DetectedCell> CellLumen::splitCellsByLocalZPeaks(
         : std::numeric_limits<float>::max();
     const float maxShiftXY = std::max(0.0f, config.cellLumen.finalZPeakSplitMaxCenterShiftXY);
     const float radiusScale = clampf(config.cellLumen.finalZPeakSplitRadiusScale, 0.30f, 1.0f);
+    const bool prioritizeCandidates =
+        addOnly && config.cellLumen.finalZPeakSplitPrioritizeCandidates;
+    const float priorityMinPeakShift =
+        std::max(0.0f, config.cellLumen.finalZPeakSplitPriorityMinPeakShiftScaled);
+    const float priorityScoreWeight =
+        std::max(0.0f, config.cellLumen.finalZPeakSplitPriorityScoreWeight);
     const int zWindow = std::max(2, static_cast<int>(std::ceil(maxSeparation / zScale)) + 1);
     const bool local3DFallbackEnabled =
         config.cellLumen.finalZPeakSplitLocal3DFallbackEnabled;
@@ -2943,6 +3017,18 @@ std::vector<CellLumen::DetectedCell> CellLumen::splitCellsByLocalZPeaks(
 
     std::vector<DetectedCell> splitCells;
     splitCells.reserve(cells.size() + static_cast<size_t>(maxAdded));
+    struct SplitOption
+    {
+        DetectedCell lhs;
+        DetectedCell rhs;
+        float priority = 0.0f;
+        bool usedLocal3D = false;
+    };
+    std::vector<SplitOption> prioritizedOptions;
+    if (prioritizeCandidates)
+    {
+        prioritizedOptions.reserve(cells.size());
+    }
     int considered = 0;
     int splitParents = 0;
     int local3DSplitParents = 0;
@@ -2951,10 +3037,11 @@ std::vector<CellLumen::DetectedCell> CellLumen::splitCellsByLocalZPeaks(
     int rejectedNoPeaks = 0;
     int rejectedSeparation = 0;
     int rejectedShift = 0;
+    int rejectedPriorityShift = 0;
 
     for (const DetectedCell &cell : cells)
     {
-        if (added >= maxAdded || cell.majorRadius < minMajor)
+        if ((!prioritizeCandidates && added >= maxAdded) || cell.majorRadius < minMajor)
         {
             splitCells.push_back(cell);
             continue;
@@ -3312,13 +3399,37 @@ std::vector<CellLumen::DetectedCell> CellLumen::splitCellsByLocalZPeaks(
         if (addOnly)
         {
             splitCells.push_back(cell);
-            if (added < maxAdded)
+            if (prioritizeCandidates)
+            {
+                const auto peakDistance = [&](const DetectedCell &candidate) {
+                    const float dx = candidate.centerScaled.x - cell.centerScaled.x;
+                    const float dy = candidate.centerScaled.y - cell.centerScaled.y;
+                    const float dz = candidate.centerScaled.z - cell.centerScaled.z;
+                    return std::sqrt(dx * dx + dy * dy + dz * dz);
+                };
+                const float peakShift =
+                    std::max(peakDistance(lhs), peakDistance(rhs));
+                if (peakShift < priorityMinPeakShift)
+                {
+                    rejectedPriorityShift++;
+                }
+                else
+                {
+                    const float secondaryScore =
+                        std::min(firstPeak.score, secondPeak->score);
+                    const float priority =
+                        peakShift + priorityScoreWeight * secondaryScore +
+                        (usedLocal3D ? 3.0f : 0.0f);
+                    prioritizedOptions.push_back({lhs, rhs, priority, usedLocal3D});
+                }
+            }
+            else if (added < maxAdded)
             {
                 splitCells.push_back(lhs);
                 added++;
                 parentSplitRecorded = true;
             }
-            if (added < maxAdded)
+            if (!prioritizeCandidates && added < maxAdded)
             {
                 splitCells.push_back(rhs);
                 added++;
@@ -3339,6 +3450,42 @@ std::vector<CellLumen::DetectedCell> CellLumen::splitCellsByLocalZPeaks(
             if (usedLocal3D)
             {
                 local3DSplitParents++;
+            }
+        }
+    }
+
+    if (prioritizeCandidates && !prioritizedOptions.empty())
+    {
+        std::sort(prioritizedOptions.begin(), prioritizedOptions.end(),
+                  [](const SplitOption &lhs, const SplitOption &rhs) {
+            return lhs.priority > rhs.priority;
+        });
+        for (const SplitOption &option : prioritizedOptions)
+        {
+            bool selectedParent = false;
+            if (added < maxAdded)
+            {
+                splitCells.push_back(option.lhs);
+                added++;
+                selectedParent = true;
+            }
+            if (added < maxAdded)
+            {
+                splitCells.push_back(option.rhs);
+                added++;
+                selectedParent = true;
+            }
+            if (selectedParent)
+            {
+                splitParents++;
+                if (option.usedLocal3D)
+                {
+                    local3DSplitParents++;
+                }
+            }
+            if (added >= maxAdded)
+            {
+                break;
             }
         }
     }
@@ -3369,10 +3516,13 @@ std::vector<CellLumen::DetectedCell> CellLumen::splitCellsByLocalZPeaks(
               << " added=" << added
               << " max_added=" << maxAdded
               << " add_only=" << addOnly
+              << " prioritize=" << prioritizeCandidates
+              << " prioritized_candidates=" << prioritizedOptions.size()
               << " rejected_parent_signal=" << rejectedParentSignal
               << " rejected_no_peaks=" << rejectedNoPeaks
               << " rejected_separation=" << rejectedSeparation
               << " rejected_shift=" << rejectedShift
+              << " rejected_priority_shift=" << rejectedPriorityShift
               << " max_parent_top10_minus_shell="
               << config.cellLumen.finalZPeakSplitMaxParentTop10MinusShell
               << " min_major=" << minMajor
@@ -3382,6 +3532,292 @@ std::vector<CellLumen::DetectedCell> CellLumen::splitCellsByLocalZPeaks(
               << std::endl;
 
     return splitCells;
+}
+
+std::vector<CellLumen::DetectedCell> CellLumen::addZProfileRescueCandidates(
+    const std::vector<cv::Mat> &volume,
+    const std::vector<DetectedCell> &cells,
+    const std::string &frameStem) const
+{
+    if (!config.cellLumen.finalZProfileRescueAddEnabled ||
+        volume.empty() ||
+        cells.empty())
+    {
+        return cells;
+    }
+
+    const int cellCount = static_cast<int>(cells.size());
+    if ((config.cellLumen.finalZProfileRescueMinCells > 0 &&
+         cellCount < config.cellLumen.finalZProfileRescueMinCells) ||
+        (config.cellLumen.finalZProfileRescueMaxCells > 0 &&
+         cellCount > config.cellLumen.finalZProfileRescueMaxCells))
+    {
+        std::cout << "[CellLumen ZProfileRescue]"
+                  << " enabled=1 skipped=count_gate"
+                  << " cells=" << cellCount
+                  << " min_cells=" << config.cellLumen.finalZProfileRescueMinCells
+                  << " max_cells=" << config.cellLumen.finalZProfileRescueMaxCells
+                  << std::endl;
+        return cells;
+    }
+
+    struct SliceScore
+    {
+        float zScaled = 0.0f;
+        float score = 0.0f;
+    };
+    struct RescueOption
+    {
+        DetectedCell cell;
+        float priority = 0.0f;
+        cv::Point3f parentCenter{};
+        float shift = 0.0f;
+        float score = 0.0f;
+    };
+
+    const float zScale = effectiveZScaling();
+    const int Z = static_cast<int>(volume.size());
+    const int Y = volume[0].rows;
+    const int X = volume[0].cols;
+    const float radiusXY = std::max(1.0f, config.cellLumen.finalZProfileRescueRadiusXY);
+    const float radiusXYSq = radiusXY * radiusXY;
+    const float halfWindowScaled =
+        std::max(zScale, config.cellLumen.finalZProfileRescueHalfWindowScaled);
+    const int zWindow = std::max(1, static_cast<int>(std::ceil(halfWindowScaled / zScale)));
+    const float quantile = clampf(config.cellLumen.finalZProfileRescueQuantile, 0.0f, 0.99f);
+    const float minScoreFraction =
+        clampf(config.cellLumen.finalZProfileRescueMinScoreFraction, 0.05f, 0.99f);
+    const float minShift = std::max(0.0f, config.cellLumen.finalZProfileRescueMinShiftScaled);
+    const float maxShift = config.cellLumen.finalZProfileRescueMaxShiftScaled > 0.0f
+        ? config.cellLumen.finalZProfileRescueMaxShiftScaled
+        : std::numeric_limits<float>::max();
+    const float minExistingDistance =
+        std::max(0.0f, config.cellLumen.finalZProfileRescueMinExistingDistance);
+    const float minExistingDistanceSq = minExistingDistance * minExistingDistance;
+    const float radiusScale =
+        clampf(config.cellLumen.finalZProfileRescueRadiusScale, 0.30f, 1.0f);
+    int maxAdded = std::max(0, config.cellLumen.finalZProfileRescueMaxAdded);
+    const bool boostWindowMatches =
+        config.cellLumen.finalZProfileRescueBoostMaxAdded > maxAdded &&
+        (config.cellLumen.finalZProfileRescueBoostMinCells <= 0 ||
+         cellCount >= config.cellLumen.finalZProfileRescueBoostMinCells) &&
+        (config.cellLumen.finalZProfileRescueBoostMaxCells <= 0 ||
+         cellCount <= config.cellLumen.finalZProfileRescueBoostMaxCells);
+    if (boostWindowMatches)
+    {
+        // This narrow recall boost is for sparse frames where collapse leaves a
+        // small, clean-looking candidate set but one true z-separated center is
+        // still present in lower-ranked image evidence. A global budget raise
+        // creates too many internal fragments, so the boost is count-gated.
+        maxAdded = config.cellLumen.finalZProfileRescueBoostMaxAdded;
+    }
+
+    std::vector<RescueOption> options;
+    options.reserve(cells.size());
+    int considered = 0;
+    int rejectedNoProfile = 0;
+    int rejectedNoUpperPeak = 0;
+    int rejectedExistingDistance = 0;
+
+    for (const DetectedCell &cell : cells)
+    {
+        considered++;
+        const int minX = std::max(0, static_cast<int>(std::floor(cell.centerScaled.x - radiusXY)));
+        const int maxX = std::min(X - 1, static_cast<int>(std::ceil(cell.centerScaled.x + radiusXY)));
+        const int minY = std::max(0, static_cast<int>(std::floor(cell.centerScaled.y - radiusXY)));
+        const int maxY = std::min(Y - 1, static_cast<int>(std::ceil(cell.centerScaled.y + radiusXY)));
+        const int centerZRaw = static_cast<int>(std::lround(cell.centerScaled.z / zScale));
+        const int minZ = std::max(0, centerZRaw - zWindow);
+        const int maxZ = std::min(Z - 1, centerZRaw + zWindow);
+
+        std::vector<SliceScore> scores;
+        scores.reserve(static_cast<size_t>(std::max(0, maxZ - minZ + 1)));
+        float bestScore = 0.0f;
+        for (int z = minZ; z <= maxZ; ++z)
+        {
+            std::vector<float> values;
+            values.reserve(static_cast<size_t>(
+                std::max(1, maxY - minY + 1) *
+                std::max(1, maxX - minX + 1)));
+            const cv::Mat &slice = volume[static_cast<size_t>(z)];
+            for (int y = minY; y <= maxY; ++y)
+            {
+                const float dy = static_cast<float>(y) - cell.centerScaled.y;
+                const float *row = slice.ptr<float>(y);
+                for (int x = minX; x <= maxX; ++x)
+                {
+                    const float dx = static_cast<float>(x) - cell.centerScaled.x;
+                    const float value = row[x];
+                    if (dx * dx + dy * dy <= radiusXYSq && std::isfinite(value))
+                    {
+                        values.push_back(value);
+                    }
+                }
+            }
+            if (values.size() < 12)
+            {
+                continue;
+            }
+
+            const float median = percentileFromValues(values, 0.50f);
+            const float cutoff = percentileFromValues(values, quantile);
+            double topSum = 0.0;
+            int topCount = 0;
+            for (float value : values)
+            {
+                if (value >= cutoff)
+                {
+                    topSum += static_cast<double>(value);
+                    topCount++;
+                }
+            }
+            if (topCount == 0)
+            {
+                continue;
+            }
+            const float topMean = static_cast<float>(topSum / static_cast<double>(topCount));
+            const float score = std::max(0.0f, topMean - median);
+            scores.push_back({static_cast<float>(z) * zScale, score});
+            bestScore = std::max(bestScore, score);
+        }
+
+        if (scores.empty() || bestScore <= 0.0f)
+        {
+            rejectedNoProfile++;
+            continue;
+        }
+
+        const float scoreFloor = bestScore * minScoreFraction;
+        std::optional<SliceScore> bestUpper;
+        for (const SliceScore &score : scores)
+        {
+            const float shift = score.zScaled - cell.centerScaled.z;
+            if (shift < minShift || shift > maxShift || score.score < scoreFloor)
+            {
+                continue;
+            }
+            if (!bestUpper ||
+                score.score > bestUpper->score ||
+                (std::abs(score.score - bestUpper->score) < 1e-3f &&
+                 score.zScaled > bestUpper->zScaled))
+            {
+                bestUpper = score;
+            }
+        }
+        if (!bestUpper)
+        {
+            rejectedNoUpperPeak++;
+            continue;
+        }
+
+        DetectedCell rescue = cell;
+        rescue.centerScaled.z = bestUpper->zScaled;
+        rescue.zForCsv = rescue.centerScaled.z / zScale;
+        rescue.majorRadius *= radiusScale;
+        rescue.bRadius *= radiusScale;
+        rescue.minorRadius *= radiusScale;
+        annotateSignalStats(volume, rescue);
+
+        bool tooClose = false;
+        for (const DetectedCell &existing : cells)
+        {
+            if (squaredDistance(rescue.centerScaled, existing.centerScaled) < minExistingDistanceSq)
+            {
+                tooClose = true;
+                break;
+            }
+        }
+        if (tooClose)
+        {
+            rejectedExistingDistance++;
+            continue;
+        }
+
+        const float shift = rescue.centerScaled.z - cell.centerScaled.z;
+        // The original rescue priority rewarded larger z shifts, which could
+        // spend the tiny add-back budget on far jumps before a nearer true
+        // z-separated peak. Keep the old behavior by default; tuning YAMLs can
+        // lower or invert this weight when the local z density evidence should
+        // dominate over shift length.
+        const float priority = bestUpper->score +
+                               config.cellLumen.finalZProfileRescueShiftPriorityWeight * shift;
+        options.push_back({rescue, priority, cell.centerScaled, shift, bestUpper->score});
+    }
+
+    std::sort(options.begin(), options.end(), [](const RescueOption &lhs,
+                                                 const RescueOption &rhs) {
+        return lhs.priority > rhs.priority;
+    });
+
+    // Keep this diagnostic attached to the rescue stage rather than a separate
+    // ad hoc script. The whole purpose of this default-off rescue is to recover
+    // z-separated doublets without GT, so the runtime log must show which image
+    // evidence won the small candidate budget.
+    const int debugCount = std::min<int>(static_cast<int>(options.size()), 12);
+    for (int i = 0; i < debugCount; ++i)
+    {
+        const RescueOption &option = options[static_cast<size_t>(i)];
+        std::cout << "[CellLumen ZProfileRescue Option]"
+                  << " rank=" << (i + 1)
+                  << " parent=(" << option.parentCenter.x
+                  << "," << option.parentCenter.y
+                  << "," << option.parentCenter.z << ")"
+                  << " rescue=(" << option.cell.centerScaled.x
+                  << "," << option.cell.centerScaled.y
+                  << "," << option.cell.centerScaled.z << ")"
+                  << " shift=" << option.shift
+                  << " score=" << option.score
+                  << " priority=" << option.priority
+                  << std::endl;
+    }
+
+    std::vector<DetectedCell> output = cells;
+    int added = 0;
+    for (const RescueOption &option : options)
+    {
+        if (added >= maxAdded)
+        {
+            break;
+        }
+        output.push_back(option.cell);
+        added++;
+    }
+
+    if (added > 0)
+    {
+        std::sort(output.begin(), output.end(), [](const DetectedCell &lhs,
+                                                   const DetectedCell &rhs) {
+            if (std::abs(lhs.centerScaled.y - rhs.centerScaled.y) > 1e-3f)
+            {
+                return lhs.centerScaled.y < rhs.centerScaled.y;
+            }
+            return lhs.centerScaled.x < rhs.centerScaled.x;
+        });
+        for (size_t i = 0; i < output.size(); ++i)
+        {
+            output[i].name = makeCellName(frameStem, static_cast<int>(i + 1));
+            output[i].zForCsv = output[i].centerScaled.z / zScale;
+        }
+    }
+
+    std::cout << "[CellLumen ZProfileRescue]"
+              << " enabled=1"
+              << " before=" << cells.size()
+              << " after=" << output.size()
+              << " considered=" << considered
+              << " options=" << options.size()
+              << " added=" << added
+              << " max_added=" << maxAdded
+              << " boost_window=" << boostWindowMatches
+              << " min_shift=" << minShift
+              << " max_shift=" << maxShift
+              << " min_score_fraction=" << minScoreFraction
+              << " rejected_no_profile=" << rejectedNoProfile
+              << " rejected_no_upper_peak=" << rejectedNoUpperPeak
+              << " rejected_existing_distance=" << rejectedExistingDistance
+              << std::endl;
+
+    return output;
 }
 
 std::vector<CellLumen::DetectedCell> CellLumen::rescueBrightPairMidpoints(
@@ -3842,29 +4278,389 @@ std::vector<CellLumen::DetectedCell> CellLumen::addClusterCentroidRecallCandidat
     return rescued;
 }
 
+float CellLumen::computeInitialPriorClusterLinkDistance(float fallbackDistance) const
+{
+    if (!config.cellLumen.initialPriorClusterCollapseEnabled ||
+        config.cellLumen.initialPriorCsvPath.empty())
+    {
+        return fallbackDistance;
+    }
+
+    // The initial CSV is a valid runtime prior for Cell Universe. Here we use
+    // it only to estimate the embryo's early cell spacing scale, then collapse
+    // nearby CellLumen fragments that are much closer than that scale. This
+    // avoids hard-coded frame numbers and does not use any current-frame GT.
+    try
+    {
+        const float radiusScale = config.cell ? config.cell->initialRadiusScale : 1.0f;
+        const std::vector<InitialCellRecord> records = CsvHandler::loadInitialCells(
+            config.cellLumen.initialPriorCsvPath,
+            "",
+            effectiveZScaling(),
+            radiusScale,
+            config.simulation.initial_z_space);
+
+        std::vector<cv::Point3f> centers;
+        centers.reserve(records.size());
+        for (const InitialCellRecord &record : records)
+        {
+            if (record.isTrash)
+            {
+                continue;
+            }
+            centers.emplace_back(record.x, record.y, record.z);
+        }
+
+        if (centers.size() < 2)
+        {
+            std::cout << "[CellLumen InitialPriorClusterScale]"
+                      << " enabled=1 skipped=too_few_initial_cells"
+                      << " path=" << config.cellLumen.initialPriorCsvPath
+                      << " cells=" << centers.size()
+                      << " fallback_link_distance=" << fallbackDistance
+                      << std::endl;
+            return fallbackDistance;
+        }
+
+        std::vector<float> nearestDistances;
+        nearestDistances.reserve(centers.size());
+        for (size_t i = 0; i < centers.size(); ++i)
+        {
+            float nearest = std::numeric_limits<float>::max();
+            for (size_t j = 0; j < centers.size(); ++j)
+            {
+                if (i == j)
+                {
+                    continue;
+                }
+                nearest = std::min(nearest, std::sqrt(squaredDistance(centers[i], centers[j])));
+            }
+            if (std::isfinite(nearest))
+            {
+                nearestDistances.push_back(nearest);
+            }
+        }
+
+        if (nearestDistances.empty())
+        {
+            return fallbackDistance;
+        }
+
+        std::sort(nearestDistances.begin(), nearestDistances.end());
+        const float medianNearest =
+            nearestDistances[nearestDistances.size() / 2];
+        const float scaledLink =
+            medianNearest * config.cellLumen.initialPriorClusterCollapseLinkScale;
+        const float minLink =
+            std::max(1.0f, config.cellLumen.initialPriorClusterCollapseMinLinkDistance);
+        const float maxLink =
+            std::max(minLink, config.cellLumen.initialPriorClusterCollapseMaxLinkDistance);
+        const float linkDistance = clampf(scaledLink, minLink, maxLink);
+
+        std::cout << "[CellLumen InitialPriorClusterScale]"
+                  << " enabled=1"
+                  << " initial_cells=" << centers.size()
+                  << " median_initial_nn=" << medianNearest
+                  << " link_scale=" << config.cellLumen.initialPriorClusterCollapseLinkScale
+                  << " link_distance=" << linkDistance
+                  << " min_link=" << minLink
+                  << " max_link=" << maxLink
+                  << " path=" << config.cellLumen.initialPriorCsvPath
+                  << std::endl;
+
+        return linkDistance;
+    }
+    catch (const std::exception &e)
+    {
+        std::cout << "[CellLumen InitialPriorClusterScale]"
+                  << " enabled=1 skipped=parse_error"
+                  << " path=" << config.cellLumen.initialPriorCsvPath
+                  << " error=\"" << e.what() << "\""
+                  << " fallback_link_distance=" << fallbackDistance
+                  << std::endl;
+        return fallbackDistance;
+    }
+}
+
+std::optional<CellLumen::ClusterDensityShape> CellLumen::measureClusterDensityShape(
+    const std::vector<cv::Mat> &volume,
+    const std::vector<DetectedCell> &cells,
+    const std::vector<int> &members) const
+{
+    if (volume.empty() || members.size() < 2)
+    {
+        return std::nullopt;
+    }
+
+    const int Z = static_cast<int>(volume.size());
+    const int Y = volume.front().rows;
+    const int X = volume.front().cols;
+    if (Z <= 0 || Y <= 0 || X <= 0)
+    {
+        return std::nullopt;
+    }
+
+    const int pad = std::max(
+        0,
+        static_cast<int>(std::lround(
+            std::max(0.0f, config.cellLumen.initialPriorClusterCollapseDensityPadding))));
+    int x0 = X - 1;
+    int y0 = Y - 1;
+    int z0 = Z - 1;
+    int x1 = 0;
+    int y1 = 0;
+    int z1 = 0;
+    int firstIndex = members.front();
+    int secondIndex = members.back();
+    float memberSpan = 0.0f;
+    for (size_t a = 0; a < members.size(); ++a)
+    {
+        const DetectedCell &lhs = cells[static_cast<size_t>(members[a])];
+        x0 = std::min(x0, lhs.component.x0);
+        y0 = std::min(y0, lhs.component.y0);
+        z0 = std::min(z0, lhs.component.z0);
+        x1 = std::max(x1, lhs.component.x1);
+        y1 = std::max(y1, lhs.component.y1);
+        z1 = std::max(z1, lhs.component.z1);
+        for (size_t b = a + 1; b < members.size(); ++b)
+        {
+            const DetectedCell &rhs = cells[static_cast<size_t>(members[b])];
+            const float distance = std::sqrt(squaredDistance(lhs.centerScaled, rhs.centerScaled));
+            if (distance > memberSpan)
+            {
+                memberSpan = distance;
+                firstIndex = members[a];
+                secondIndex = members[b];
+            }
+        }
+    }
+
+    x0 = std::clamp(x0 - pad, 0, X - 1);
+    y0 = std::clamp(y0 - pad, 0, Y - 1);
+    z0 = std::clamp(z0 - std::max(1, pad / 4), 0, Z - 1);
+    x1 = std::clamp(x1 + pad, 0, X - 1);
+    y1 = std::clamp(y1 + pad, 0, Y - 1);
+    z1 = std::clamp(z1 + std::max(1, pad / 4), 0, Z - 1);
+    if (x1 < x0 || y1 < y0 || z1 < z0)
+    {
+        return std::nullopt;
+    }
+
+    std::vector<float> localValues;
+    localValues.reserve(static_cast<size_t>(x1 - x0 + 1) *
+                        static_cast<size_t>(y1 - y0 + 1) *
+                        static_cast<size_t>(z1 - z0 + 1));
+    for (int z = z0; z <= z1; ++z)
+    {
+        const cv::Mat &slice = volume[static_cast<size_t>(z)];
+        for (int y = y0; y <= y1; ++y)
+        {
+            const float *row = slice.ptr<float>(y);
+            for (int x = x0; x <= x1; ++x)
+            {
+                const float value = row[x];
+                if (std::isfinite(value))
+                {
+                    localValues.push_back(value);
+                }
+            }
+        }
+    }
+    if (localValues.empty())
+    {
+        return std::nullopt;
+    }
+
+    const float quantile = clampf(
+        config.cellLumen.initialPriorClusterCollapseDensityQuantile,
+        0.05f,
+        0.95f);
+    const float localThreshold = percentileFromValues(localValues, quantile);
+    const float threshold = config.cellLumen.initialPriorClusterCollapseDensityUseFrameThreshold
+        ? stackPercentile(
+              volume,
+              clampf(config.cellLumen.initialPriorClusterCollapseDensityFrameQuantile,
+                     0.50f,
+                     0.995f),
+              true)
+        : localThreshold;
+    const float zScale = effectiveZScaling();
+
+    double totalWeight = 0.0;
+    double sx = 0.0;
+    double sy = 0.0;
+    double sz = 0.0;
+    double sx2 = 0.0;
+    double sy2 = 0.0;
+    double sz2 = 0.0;
+    int supportVoxels = 0;
+
+    const cv::Point3f &a = cells[static_cast<size_t>(firstIndex)].centerScaled;
+    const cv::Point3f &b = cells[static_cast<size_t>(secondIndex)].centerScaled;
+    cv::Point3f axis(b.x - a.x, b.y - a.y, b.z - a.z);
+    const float axisLength = std::max(1e-3f, std::sqrt(axis.x * axis.x + axis.y * axis.y + axis.z * axis.z));
+    axis.x /= axisLength;
+    axis.y /= axisLength;
+    axis.z /= axisLength;
+    const auto project = [&](float x, float y, float zScaled) {
+        return (x - a.x) * axis.x + (y - a.y) * axis.y + (zScaled - a.z) * axis.z;
+    };
+    const float endpointA = project(a.x, a.y, a.z);
+    const float endpointB = project(b.x, b.y, b.z);
+    const float projMin = std::min(endpointA, endpointB);
+    const float projMax = std::max(endpointA, endpointB);
+    const float projRange = std::max(1.0f, projMax - projMin);
+    std::array<double, 17> projectionBins{};
+    std::array<double, 17> supportBins{};
+
+    for (int z = z0; z <= z1; ++z)
+    {
+        const cv::Mat &slice = volume[static_cast<size_t>(z)];
+        const float zScaled = static_cast<float>(z) * zScale;
+        for (int y = y0; y <= y1; ++y)
+        {
+            const float *row = slice.ptr<float>(y);
+            for (int x = x0; x <= x1; ++x)
+            {
+                const float value = row[x];
+                if (!std::isfinite(value) || value < threshold)
+                {
+                    continue;
+                }
+                const double weight = std::max(1e-3f, value - threshold + 1.0f);
+                totalWeight += weight;
+                sx += weight * static_cast<double>(x);
+                sy += weight * static_cast<double>(y);
+                sz += weight * static_cast<double>(zScaled);
+                sx2 += weight * static_cast<double>(x) * static_cast<double>(x);
+                sy2 += weight * static_cast<double>(y) * static_cast<double>(y);
+                sz2 += weight * static_cast<double>(zScaled) * static_cast<double>(zScaled);
+                supportVoxels++;
+
+                const float t = std::clamp((project(static_cast<float>(x),
+                                                    static_cast<float>(y),
+                                                    zScaled) - projMin) / projRange,
+                                           0.0f,
+                                           0.999f);
+                const int bin = static_cast<int>(t * static_cast<float>(projectionBins.size()));
+                projectionBins[static_cast<size_t>(bin)] += weight;
+                supportBins[static_cast<size_t>(bin)] += 1.0;
+            }
+        }
+    }
+
+    if (supportVoxels < std::max(1, config.cellLumen.initialPriorClusterCollapseDensityMinVoxels) ||
+        totalWeight <= 0.0)
+    {
+        return std::nullopt;
+    }
+
+    ClusterDensityShape stats;
+    stats.centroidScaled = cv::Point3f(
+        static_cast<float>(sx / totalWeight),
+        static_cast<float>(sy / totalWeight),
+        static_cast<float>(sz / totalWeight));
+    stats.supportVoxels = supportVoxels;
+    stats.threshold = threshold;
+    stats.memberSpan = memberSpan;
+    const auto weightedStd = [totalWeight](double sum, double sumSquares) {
+        const double mean = sum / totalWeight;
+        const double variance = std::max(0.0, sumSquares / totalWeight - mean * mean);
+        return static_cast<float>(std::sqrt(variance));
+    };
+    const float radiusSigmaScale = std::max(
+        0.25f,
+        config.cellLumen.initialPriorClusterCollapseDensityRadiusSigmaScale);
+    // This is the PCA-like part of the density shape model. A local-peak
+    // candidate can be only a tiny fragment, but the above-threshold support
+    // cloud gives a better estimate of the full visible cell body.
+    stats.radiusX = radiusSigmaScale * weightedStd(sx, sx2);
+    stats.radiusY = radiusSigmaScale * weightedStd(sy, sy2);
+    stats.radiusZ = radiusSigmaScale * weightedStd(sz, sz2);
+
+    const auto peakInRange = [&](int begin, int end) {
+        double peak = 0.0;
+        int peakIndex = begin;
+        for (int i = begin; i <= end; ++i)
+        {
+            if (projectionBins[static_cast<size_t>(i)] > peak)
+            {
+                peak = projectionBins[static_cast<size_t>(i)];
+                peakIndex = i;
+            }
+        }
+        return std::make_pair(peak, peakIndex);
+    };
+    const auto [leftPeak, leftIndex] = peakInRange(0, 7);
+    const auto [rightPeak, rightIndex] = peakInRange(9, 16);
+    const double minPeak = std::min(leftPeak, rightPeak);
+    const double leftSupportPeak = supportBins[static_cast<size_t>(leftIndex)];
+    const double rightSupportPeak = supportBins[static_cast<size_t>(rightIndex)];
+    const double minSupportPeak = std::min(leftSupportPeak, rightSupportPeak);
+    double valley = minPeak;
+    double valleySupport = minSupportPeak;
+    if (leftIndex + 1 < rightIndex)
+    {
+        for (int i = leftIndex + 1; i < rightIndex; ++i)
+        {
+            valley = std::min(valley, projectionBins[static_cast<size_t>(i)]);
+            valleySupport = std::min(valleySupport, supportBins[static_cast<size_t>(i)]);
+        }
+    }
+    stats.valleyRatio = static_cast<float>(valley / std::max(1e-6, minPeak));
+    stats.valleySupportRatio =
+        static_cast<float>(valleySupport / std::max(1e-6, minSupportPeak));
+    stats.valleyDrop = static_cast<float>(minPeak - valley);
+    stats.twoLobeGuard =
+        memberSpan >= std::max(0.0f, config.cellLumen.initialPriorClusterCollapseDensityTwoLobeMinDistance) &&
+        stats.valleyRatio <= clampf(
+            config.cellLumen.initialPriorClusterCollapseDensityTwoLobeMaxValleyRatio,
+            0.05f,
+            0.99f) &&
+        stats.valleySupportRatio <= clampf(
+            config.cellLumen.initialPriorClusterCollapseDensityTwoLobeMaxSupportRatio,
+            0.01f,
+            0.99f) &&
+        stats.valleyDrop >= std::max(
+            0.0f,
+            config.cellLumen.initialPriorClusterCollapseDensityTwoLobeMinDrop);
+
+    return stats;
+}
+
 std::vector<CellLumen::DetectedCell> CellLumen::collapseClusteredCandidates(
     const std::vector<cv::Mat> &volume,
     const std::vector<DetectedCell> &cells,
     const std::string &frameStem) const
 {
-    if (!config.cellLumen.finalClusterCentroidCollapseEnabled ||
+    // Keep the old fixed-distance collapse available. The initial-prior mode is
+    // default-off and is meant for early sparse frames where one large nucleus
+    // often contains several local brightness maxima.
+    const bool initialPriorMode =
+        config.cellLumen.initialPriorClusterCollapseEnabled;
+    if ((!config.cellLumen.finalClusterCentroidCollapseEnabled && !initialPriorMode) ||
         cells.size() < 2)
     {
         return cells;
     }
 
     const int cellCount = static_cast<int>(cells.size());
-    if ((config.cellLumen.finalClusterCentroidCollapseMinCells > 0 &&
-         cellCount < config.cellLumen.finalClusterCentroidCollapseMinCells) ||
-        (config.cellLumen.finalClusterCentroidCollapseMaxCells > 0 &&
-         cellCount > config.cellLumen.finalClusterCentroidCollapseMaxCells))
+    const int minCells = initialPriorMode
+        ? config.cellLumen.initialPriorClusterCollapseMinCells
+        : config.cellLumen.finalClusterCentroidCollapseMinCells;
+    const int maxCells = initialPriorMode
+        ? config.cellLumen.initialPriorClusterCollapseMaxCells
+        : config.cellLumen.finalClusterCentroidCollapseMaxCells;
+    if ((minCells > 0 && cellCount < minCells) ||
+        (maxCells > 0 && cellCount > maxCells))
     {
         std::cout << "[CellLumen ClusterCentroidCollapse]"
                   << " enabled=1"
                   << " skipped=count_gate"
+                  << " mode=" << (initialPriorMode ? "initial_prior" : "fixed")
                   << " cells=" << cellCount
-                  << " min_cells=" << config.cellLumen.finalClusterCentroidCollapseMinCells
-                  << " max_cells=" << config.cellLumen.finalClusterCentroidCollapseMaxCells
+                  << " min_cells=" << minCells
+                  << " max_cells=" << maxCells
                   << std::endl;
         return cells;
     }
@@ -3878,15 +4674,76 @@ std::vector<CellLumen::DetectedCell> CellLumen::collapseClusteredCandidates(
         }
     }
 
-    const float linkDistance =
+    const float configuredLinkDistance =
         std::max(1.0f, config.cellLumen.finalClusterCentroidCollapseLinkDistance);
+    const float linkDistance = initialPriorMode
+        ? computeInitialPriorClusterLinkDistance(configuredLinkDistance)
+        : configuredLinkDistance;
     const float linkDistanceSq = linkDistance * linkDistance;
-    const int minClusterSize =
-        std::max(2, config.cellLumen.finalClusterCentroidCollapseMinClusterSize);
-    const float radiusScale =
-        clampf(config.cellLumen.finalClusterCentroidCollapseRadiusScale, 0.25f, 1.50f);
-    const bool useSignalWeights =
-        config.cellLumen.finalClusterCentroidCollapseUseSignalWeights;
+    const int minClusterSize = std::max(
+        2,
+        initialPriorMode
+            ? config.cellLumen.initialPriorClusterCollapseMinClusterSize
+            : config.cellLumen.finalClusterCentroidCollapseMinClusterSize);
+    const float radiusScale = clampf(
+        initialPriorMode
+            ? config.cellLumen.initialPriorClusterCollapseRadiusScale
+            : config.cellLumen.finalClusterCentroidCollapseRadiusScale,
+        0.25f,
+        1.50f);
+    const bool useSignalWeights = initialPriorMode
+        ? config.cellLumen.initialPriorClusterCollapseUseSignalWeights
+        : config.cellLumen.finalClusterCentroidCollapseUseSignalWeights;
+    const float maxGroupDiameter = initialPriorMode
+        ? config.cellLumen.initialPriorClusterCollapseMaxGroupDiameter
+        : -1.0f;
+    const bool valleyGuardEnabled =
+        initialPriorMode &&
+        config.cellLumen.initialPriorClusterCollapseValleyGuardEnabled &&
+        !volume.empty();
+    const float valleyMaxQ20Ratio = clampf(
+        config.cellLumen.initialPriorClusterCollapseValleyMaxQ20Ratio,
+        0.05f,
+        0.99f);
+    const float valleyMinDrop =
+        std::max(0.0f, config.cellLumen.initialPriorClusterCollapseValleyMinDrop);
+    const bool densityShapeEnabled =
+        initialPriorMode &&
+        config.cellLumen.initialPriorClusterCollapseDensityShapeEnabled &&
+        !volume.empty();
+    const bool densityCentroidEnabled =
+        densityShapeEnabled &&
+        config.cellLumen.initialPriorClusterCollapseDensityCentroidEnabled;
+    const bool densityTwoLobeGuardEnabled =
+        densityShapeEnabled &&
+        config.cellLumen.initialPriorClusterCollapseDensityTwoLobeGuardEnabled;
+    const bool densityMomentRadiiEnabled =
+        densityShapeEnabled &&
+        config.cellLumen.initialPriorClusterCollapseDensityMomentRadiiEnabled;
+    const bool ambiguousAddbackEnabled =
+        initialPriorMode &&
+        config.cellLumen.initialPriorClusterCollapseAmbiguousAddbackEnabled &&
+        (config.cellLumen.initialPriorClusterCollapseAmbiguousAddbackMinCells <= 0 ||
+         cellCount >= config.cellLumen.initialPriorClusterCollapseAmbiguousAddbackMinCells) &&
+        (config.cellLumen.initialPriorClusterCollapseAmbiguousAddbackMaxCells <= 0 ||
+         cellCount <= config.cellLumen.initialPriorClusterCollapseAmbiguousAddbackMaxCells);
+    const float zScale = effectiveZScaling();
+    auto hasBlockingValley = [&](const DetectedCell &lhs, const DetectedCell &rhs) {
+        const cv::Point3f a(lhs.centerScaled.x, lhs.centerScaled.y, lhs.zForCsv);
+        const cv::Point3f b(rhs.centerScaled.x, rhs.centerScaled.y, rhs.zForCsv);
+        const auto profile = sampleLineProfile(volume, a, b, zScale);
+        if (!profile)
+        {
+            return false;
+        }
+        const float edgeLevel = std::max(
+            1.0f,
+            std::min(lhs.meanIntensity, rhs.meanIntensity));
+        const float q20Ratio = profile->q20 / edgeLevel;
+        const float valleyDrop = edgeLevel - profile->q20;
+        return q20Ratio <= valleyMaxQ20Ratio && valleyDrop >= valleyMinDrop;
+    };
+    int valleyGuardedPairs = 0;
 
     std::vector<int> parent(annotated.size());
     for (size_t i = 0; i < parent.size(); ++i)
@@ -3900,6 +4757,12 @@ std::vector<CellLumen::DetectedCell> CellLumen::collapseClusteredCandidates(
             if (squaredDistance(annotated[i].centerScaled,
                                 annotated[j].centerScaled) <= linkDistanceSq)
             {
+                if (valleyGuardEnabled &&
+                    hasBlockingValley(annotated[i], annotated[j]))
+                {
+                    valleyGuardedPairs++;
+                    continue;
+                }
                 unionRoots(parent, static_cast<int>(i), static_cast<int>(j));
             }
         }
@@ -3911,12 +4774,107 @@ std::vector<CellLumen::DetectedCell> CellLumen::collapseClusteredCandidates(
         groups[findRoot(parent, static_cast<int>(i))].push_back(static_cast<int>(i));
     }
 
+    if (initialPriorMode &&
+        config.cellLumen.initialPriorClusterCollapseSkipAboveGroupCount > 0 &&
+        static_cast<int>(groups.size()) >
+            config.cellLumen.initialPriorClusterCollapseSkipAboveGroupCount)
+    {
+        // Raw candidate count confuses early over-segmentation with real
+        // mid-density frames. Group count is measured after the same local-link
+        // clustering collapse would use, so it better reflects whether the
+        // frame already contains many separated bodies. In that case, keeping
+        // high-recall candidates is safer than compressing real neighbors.
+        std::cout << "[CellLumen ClusterCentroidCollapse]"
+                  << " enabled=1"
+                  << " skipped=group_count_gate"
+                  << " mode=initial_prior"
+                  << " cells=" << cellCount
+                  << " groups=" << groups.size()
+                  << " max_groups="
+                  << config.cellLumen.initialPriorClusterCollapseSkipAboveGroupCount
+                  << " link_distance=" << linkDistance
+                  << " valley_guarded_pairs=" << valleyGuardedPairs
+                  << std::endl;
+        return annotated;
+    }
+
+    const bool diameterSkipWindow =
+        initialPriorMode &&
+        maxGroupDiameter > 0.0f &&
+        config.cellLumen.initialPriorClusterCollapseSkipDiameterGuardMinCells > 0 &&
+        cellCount >= config.cellLumen.initialPriorClusterCollapseSkipDiameterGuardMinCells &&
+        (config.cellLumen.initialPriorClusterCollapseSkipDiameterGuardMaxCells <= 0 ||
+         cellCount <= config.cellLumen.initialPriorClusterCollapseSkipDiameterGuardMaxCells);
+    if (diameterSkipWindow)
+    {
+        bool hasOversizedGroup = false;
+        float largestGroupDiameter = 0.0f;
+        for (const auto &[root, members] : groups)
+        {
+            (void)root;
+            if (static_cast<int>(members.size()) < minClusterSize)
+            {
+                continue;
+            }
+            float groupDiameter = 0.0f;
+            for (size_t a = 0; a < members.size(); ++a)
+            {
+                const DetectedCell &lhs = annotated[static_cast<size_t>(members[a])];
+                for (size_t b = a + 1; b < members.size(); ++b)
+                {
+                    const DetectedCell &rhs = annotated[static_cast<size_t>(members[b])];
+                    groupDiameter = std::max(
+                        groupDiameter,
+                        std::sqrt(squaredDistance(lhs.centerScaled, rhs.centerScaled)));
+                }
+            }
+            largestGroupDiameter = std::max(largestGroupDiameter, groupDiameter);
+            if (groupDiameter > maxGroupDiameter)
+            {
+                hasOversizedGroup = true;
+            }
+        }
+        if (hasOversizedGroup)
+        {
+            // At moderate density, an oversized linked group usually means the
+            // single-link chain crossed a real cell boundary. Keeping the
+            // high-recall candidates is safer than collapsing several nearby
+            // cells into a shifted centroid.
+            std::cout << "[CellLumen ClusterCentroidCollapse]"
+                      << " enabled=1"
+                      << " skipped=diameter_group_gate"
+                      << " mode=initial_prior"
+                      << " cells=" << cellCount
+                      << " groups=" << groups.size()
+                      << " largest_group_diameter=" << largestGroupDiameter
+                      << " max_group_diameter=" << maxGroupDiameter
+                      << " min_cells="
+                      << config.cellLumen.initialPriorClusterCollapseSkipDiameterGuardMinCells
+                      << " max_cells="
+                      << config.cellLumen.initialPriorClusterCollapseSkipDiameterGuardMaxCells
+                      << " link_distance=" << linkDistance
+                      << " valley_guarded_pairs=" << valleyGuardedPairs
+                      << std::endl;
+            return annotated;
+        }
+    }
+
     std::vector<DetectedCell> collapsed;
     collapsed.reserve(groups.size());
     int mergedGroups = 0;
     int mergedCells = 0;
     int singletonGroups = 0;
     int tooSmallGroups = 0;
+    int diameterGuardedGroups = 0;
+    int diameterGuardedCells = 0;
+    int densityGuardedGroups = 0;
+    int densityGuardedCells = 0;
+    int densityCentroidGroups = 0;
+    int densityMomentRadiiGroups = 0;
+    int densityMeasuredGroups = 0;
+    int ambiguousAddbackGroups = 0;
+    int ambiguousAddbackCells = 0;
+    int ambiguousAddbackRejectedNear = 0;
 
     for (const auto &[root, members] : groups)
     {
@@ -3936,6 +4894,64 @@ std::vector<CellLumen::DetectedCell> CellLumen::collapseClusteredCandidates(
                 collapsed.push_back(annotated[static_cast<size_t>(index)]);
             }
             continue;
+        }
+
+        float groupDiameter = 0.0f;
+        for (size_t a = 0; a < members.size(); ++a)
+        {
+            const DetectedCell &lhs = annotated[static_cast<size_t>(members[a])];
+            for (size_t b = a + 1; b < members.size(); ++b)
+            {
+                const DetectedCell &rhs = annotated[static_cast<size_t>(members[b])];
+                groupDiameter = std::max(
+                    groupDiameter,
+                    std::sqrt(squaredDistance(lhs.centerScaled, rhs.centerScaled)));
+            }
+        }
+
+        if (maxGroupDiameter > 0.0f)
+        {
+            if (groupDiameter > maxGroupDiameter)
+            {
+                // Single-link clustering can connect two real cells through a
+                // chain of internal fragments. When the group diameter is too
+                // large, keeping the original candidates is safer for Cell
+                // Universe than collapsing them into one midpoint-like miss.
+                diameterGuardedGroups++;
+                diameterGuardedCells += static_cast<int>(members.size());
+                for (int index : members)
+                {
+                    collapsed.push_back(annotated[static_cast<size_t>(index)]);
+                }
+                continue;
+            }
+        }
+
+        std::optional<ClusterDensityShape> densityShape;
+        if (densityShapeEnabled)
+        {
+            densityShape = measureClusterDensityShape(volume, annotated, members);
+            if (densityShape)
+            {
+                densityMeasuredGroups++;
+            }
+            if (densityTwoLobeGuardEnabled &&
+                densityShape &&
+                densityShape->twoLobeGuard)
+            {
+                // A human reviewer separates close daughters when there is a
+                // real low-intensity saddle between two bright lobes. This
+                // default-off guard gives CellLumen the same group-level check:
+                // keep the original candidates instead of collapsing a true
+                // two-lobe density body into one midpoint.
+                densityGuardedGroups++;
+                densityGuardedCells += static_cast<int>(members.size());
+                for (int index : members)
+                {
+                    collapsed.push_back(annotated[static_cast<size_t>(index)]);
+                }
+                continue;
+            }
         }
 
         const DetectedCell *templateCell = &annotated[static_cast<size_t>(members.front())];
@@ -4000,10 +5016,64 @@ std::vector<CellLumen::DetectedCell> CellLumen::collapseClusteredCandidates(
         centroid.centerScaled.x = static_cast<float>(weightedX / totalWeight);
         centroid.centerScaled.y = static_cast<float>(weightedY / totalWeight);
         centroid.centerScaled.z = static_cast<float>(weightedZ / totalWeight);
+        if (densityCentroidEnabled && densityShape)
+        {
+            // Distance-only candidate averaging follows the internal seed
+            // locations. For large early cells, the brightness-density centroid
+            // is closer to how the PCA shape fitter sees one continuous cell.
+            centroid.centerScaled = densityShape->centroidScaled;
+            densityCentroidGroups++;
+        }
         centroid.zForCsv = centroid.centerScaled.z / effectiveZScaling();
         centroid.majorRadius = std::max(1.0f, static_cast<float>(weightedMajor / totalWeight) * radiusScale);
         centroid.bRadius = std::max(1.0f, static_cast<float>(weightedB / totalWeight) * radiusScale);
         centroid.minorRadius = std::max(1.0f, static_cast<float>(weightedMinor / totalWeight) * radiusScale);
+        if (densityMomentRadiiEnabled && densityShape &&
+            densityShape->radiusX > 0.0f &&
+            densityShape->radiusY > 0.0f &&
+            densityShape->radiusZ > 0.0f)
+        {
+            // A group made of several seed fragments should inherit the shape
+            // of the full bright-density support, not the average size of the
+            // fragments. This stays image-only and is controlled by YAML.
+            const float minMajor = config.cell ? static_cast<float>(config.cell->minARadius) : 10.0f;
+            const float maxMajor = config.cell ? static_cast<float>(config.cell->maxARadius) : 50.0f;
+            const float minMinor = config.cell ? static_cast<float>(config.cell->minCRadius) : 5.0f;
+            const float maxMinor = config.cell ? static_cast<float>(config.cell->maxCRadius) : 45.0f;
+            const float minB = (config.cell && config.cell->maxBRadius > 0.0f)
+                ? static_cast<float>(config.cell->minBRadius)
+                : minMajor;
+            const float maxB = (config.cell && config.cell->maxBRadius > 0.0f)
+                ? static_cast<float>(config.cell->maxBRadius)
+                : maxMajor;
+            const float outputMinMajor = config.cellLumen.minOutputMajorRadius > 0.0f
+                ? config.cellLumen.minOutputMajorRadius
+                : minMajor;
+            const float outputMinB = config.cellLumen.minOutputBRadius > 0.0f
+                ? config.cellLumen.minOutputBRadius
+                : minB;
+            const float outputMinMinor = config.cellLumen.minOutputMinorRadius > 0.0f
+                ? config.cellLumen.minOutputMinorRadius
+                : minMinor;
+            const float outputMaxMajor = config.cellLumen.maxOutputMajorRadius > 0.0f
+                ? config.cellLumen.maxOutputMajorRadius
+                : maxMajor;
+            const float outputMaxB = config.cellLumen.maxOutputBRadius > 0.0f
+                ? config.cellLumen.maxOutputBRadius
+                : maxB;
+            const float outputMaxMinor = config.cellLumen.maxOutputMinorRadius > 0.0f
+                ? config.cellLumen.maxOutputMinorRadius
+                : maxMinor;
+            const float xyMajor = std::max(densityShape->radiusX, densityShape->radiusY);
+            const float xyMinor = std::min(densityShape->radiusX, densityShape->radiusY);
+            centroid.majorRadius = clampf(radiusScale * xyMajor, outputMinMajor, outputMaxMajor);
+            centroid.bRadius = clampf(radiusScale * xyMinor, outputMinB, std::min(outputMaxB, centroid.majorRadius));
+            centroid.minorRadius = clampf(
+                radiusScale * densityShape->radiusZ,
+                outputMinMinor,
+                std::min(outputMaxMinor, centroid.majorRadius));
+            densityMomentRadiiGroups++;
+        }
         centroid.voxelCount = std::max(1, static_cast<int>(std::lround(weightedVoxels / totalWeight)));
         centroid.meanIntensity = static_cast<float>(weightedMean / totalWeight);
         centroid.component.x0 = x0;
@@ -4025,6 +5095,89 @@ std::vector<CellLumen::DetectedCell> CellLumen::collapseClusteredCandidates(
         collapsed.push_back(centroid);
         mergedGroups++;
         mergedCells += static_cast<int>(members.size());
+
+        if (ambiguousAddbackEnabled &&
+            ambiguousAddbackCells < std::max(0, config.cellLumen.initialPriorClusterCollapseAmbiguousAddbackMaxAdded) &&
+            groupDiameter >= std::max(0.0f, config.cellLumen.initialPriorClusterCollapseAmbiguousAddbackMinGroupDiameter))
+        {
+            struct AddbackCandidate
+            {
+                float distanceFromCentroid = 0.0f;
+                int index = 0;
+            };
+            std::vector<AddbackCandidate> addbackCandidates;
+            addbackCandidates.reserve(members.size());
+            for (int index : members)
+            {
+                const DetectedCell &member = annotated[static_cast<size_t>(index)];
+                if (config.cellLumen.initialPriorClusterCollapseAmbiguousAddbackMinTop10MinusShell >= 0.0f &&
+                    member.top10MinusShell <
+                        config.cellLumen.initialPriorClusterCollapseAmbiguousAddbackMinTop10MinusShell)
+                {
+                    continue;
+                }
+                const float distanceFromCentroid =
+                    std::sqrt(squaredDistance(member.centerScaled, centroid.centerScaled));
+                if (distanceFromCentroid <
+                    std::max(0.0f, config.cellLumen.initialPriorClusterCollapseAmbiguousAddbackMinCentroidDistance))
+                {
+                    continue;
+                }
+                addbackCandidates.push_back(AddbackCandidate{distanceFromCentroid, index});
+            }
+            std::sort(addbackCandidates.begin(),
+                      addbackCandidates.end(),
+                      [&](const AddbackCandidate &lhs, const AddbackCandidate &rhs) {
+                          const DetectedCell &lhsCell = annotated[static_cast<size_t>(lhs.index)];
+                          const DetectedCell &rhsCell = annotated[static_cast<size_t>(rhs.index)];
+                          if (std::abs(lhs.distanceFromCentroid - rhs.distanceFromCentroid) > 1e-3f)
+                          {
+                              return lhs.distanceFromCentroid > rhs.distanceFromCentroid;
+                          }
+                          if (std::abs(lhsCell.top10MinusShell - rhsCell.top10MinusShell) > 1e-3f)
+                          {
+                              return lhsCell.top10MinusShell > rhsCell.top10MinusShell;
+                          }
+                          return lhsCell.voxelCount > rhsCell.voxelCount;
+                      });
+
+            int addedForGroup = 0;
+            const int maxPerGroup = std::max(1, config.cellLumen.initialPriorClusterCollapseAmbiguousAddbackMaxPerGroup);
+            const int maxTotal = std::max(0, config.cellLumen.initialPriorClusterCollapseAmbiguousAddbackMaxAdded);
+            const float minAddDistance = std::max(
+                0.0f,
+                config.cellLumen.initialPriorClusterCollapseAmbiguousAddbackMinCentroidDistance);
+            const float minAddDistanceSq = minAddDistance * minAddDistance;
+            for (const AddbackCandidate &candidate : addbackCandidates)
+            {
+                if (addedForGroup >= maxPerGroup || ambiguousAddbackCells >= maxTotal)
+                {
+                    break;
+                }
+                const DetectedCell &member = annotated[static_cast<size_t>(candidate.index)];
+                bool nearExisting = false;
+                for (size_t i = 0; i + 1 < collapsed.size(); ++i)
+                {
+                    if (squaredDistance(member.centerScaled, collapsed[i].centerScaled) <= minAddDistanceSq)
+                    {
+                        nearExisting = true;
+                        break;
+                    }
+                }
+                if (nearExisting)
+                {
+                    ambiguousAddbackRejectedNear++;
+                    continue;
+                }
+                collapsed.push_back(member);
+                addedForGroup++;
+                ambiguousAddbackCells++;
+            }
+            if (addedForGroup > 0)
+            {
+                ambiguousAddbackGroups++;
+            }
+        }
     }
 
     if (collapsed.size() != cells.size())
@@ -4046,6 +5199,7 @@ std::vector<CellLumen::DetectedCell> CellLumen::collapseClusteredCandidates(
 
     std::cout << "[CellLumen ClusterCentroidCollapse]"
               << " enabled=1"
+              << " mode=" << (initialPriorMode ? "initial_prior" : "fixed")
               << " before=" << cells.size()
               << " after=" << collapsed.size()
               << " groups=" << groups.size()
@@ -4053,7 +5207,22 @@ std::vector<CellLumen::DetectedCell> CellLumen::collapseClusteredCandidates(
               << " merged_cells=" << mergedCells
               << " singleton_groups=" << singletonGroups
               << " too_small_groups=" << tooSmallGroups
+              << " diameter_guarded_groups=" << diameterGuardedGroups
+              << " diameter_guarded_cells=" << diameterGuardedCells
+              << " density_shape=" << densityShapeEnabled
+              << " density_measured_groups=" << densityMeasuredGroups
+              << " density_guarded_groups=" << densityGuardedGroups
+              << " density_guarded_cells=" << densityGuardedCells
+              << " density_centroid_groups=" << densityCentroidGroups
+              << " density_moment_radii_groups=" << densityMomentRadiiGroups
+              << " ambiguous_addback=" << ambiguousAddbackEnabled
+              << " ambiguous_addback_groups=" << ambiguousAddbackGroups
+              << " ambiguous_addback_cells=" << ambiguousAddbackCells
+              << " ambiguous_addback_rejected_near=" << ambiguousAddbackRejectedNear
+              << " valley_guard=" << valleyGuardEnabled
+              << " valley_guarded_pairs=" << valleyGuardedPairs
               << " link_distance=" << linkDistance
+              << " max_group_diameter=" << maxGroupDiameter
               << " min_cluster_size=" << minClusterSize
               << " radius_scale=" << radiusScale
               << " signal_weights=" << useSignalWeights
@@ -4222,6 +5391,171 @@ std::vector<CellLumen::DetectedCell> CellLumen::filterDominatedDuplicateCandidat
               << " rejected_voxel_signal=" << rejectedVoxelSignal
               << " rejected_voxel_radius=" << rejectedVoxelRadius
               << " rejected_signal_radius=" << rejectedSignalRadius
+              << std::endl;
+
+    return filtered;
+}
+
+std::vector<CellLumen::DetectedCell> CellLumen::filterLowDensityArtifacts(
+    const std::vector<DetectedCell> &cells,
+    const std::string &frameStem) const
+{
+    if (!config.cellLumen.finalLowDensityArtifactFilterEnabled ||
+        cells.size() < 2)
+    {
+        return cells;
+    }
+
+    const int cellCount = static_cast<int>(cells.size());
+    if ((config.cellLumen.finalLowDensityArtifactFilterMinCells > 0 &&
+         cellCount < config.cellLumen.finalLowDensityArtifactFilterMinCells) ||
+        (config.cellLumen.finalLowDensityArtifactFilterMaxCells > 0 &&
+         cellCount > config.cellLumen.finalLowDensityArtifactFilterMaxCells))
+    {
+        std::cout << "[CellLumen LowDensityArtifactFilter]"
+                  << " enabled=1 skipped=count_gate"
+                  << " cells=" << cellCount
+                  << " min_cells=" << config.cellLumen.finalLowDensityArtifactFilterMinCells
+                  << " max_cells=" << config.cellLumen.finalLowDensityArtifactFilterMaxCells
+                  << std::endl;
+        return cells;
+    }
+
+    std::vector<float> meanValues;
+    std::vector<float> voxelValues;
+    std::vector<float> majorValues;
+    std::vector<float> minorValues;
+    meanValues.reserve(cells.size());
+    voxelValues.reserve(cells.size());
+    majorValues.reserve(cells.size());
+    minorValues.reserve(cells.size());
+    for (const DetectedCell &cell : cells)
+    {
+        if (std::isfinite(cell.meanIntensity) && cell.meanIntensity > 0.0f)
+        {
+            meanValues.push_back(cell.meanIntensity);
+        }
+        if (cell.voxelCount > 0)
+        {
+            voxelValues.push_back(static_cast<float>(cell.voxelCount));
+        }
+        if (std::isfinite(cell.majorRadius) && cell.majorRadius > 0.0f)
+        {
+            majorValues.push_back(cell.majorRadius);
+        }
+        if (std::isfinite(cell.minorRadius) && cell.minorRadius > 0.0f)
+        {
+            minorValues.push_back(cell.minorRadius);
+        }
+    }
+
+    const auto medianOrZero = [](std::vector<float> values) -> float {
+        if (values.empty())
+        {
+            return 0.0f;
+        }
+        std::sort(values.begin(), values.end());
+        return values[values.size() / 2];
+    };
+
+    const float medianMean = medianOrZero(meanValues);
+    const float medianVoxels = medianOrZero(voxelValues);
+    const float medianMajor = medianOrZero(majorValues);
+    const float medianMinor = medianOrZero(minorValues);
+    if (medianMean <= 0.0f || medianVoxels <= 0.0f)
+    {
+        std::cout << "[CellLumen LowDensityArtifactFilter]"
+                  << " enabled=1 skipped=missing_reference_stats"
+                  << " cells=" << cellCount
+                  << " median_mean=" << medianMean
+                  << " median_voxels=" << medianVoxels
+                  << std::endl;
+        return cells;
+    }
+
+    const float maxMeanRatio =
+        std::max(0.0f, config.cellLumen.finalLowDensityArtifactMaxMeanRatio);
+    const float maxVoxelRatio =
+        std::max(0.0f, config.cellLumen.finalLowDensityArtifactMaxVoxelRatio);
+    const float minNearest =
+        std::max(0.0f, config.cellLumen.finalLowDensityArtifactMinNearestDistance);
+    const float maxMajorRatio =
+        config.cellLumen.finalLowDensityArtifactMaxMajorRadiusRatio;
+    const float maxMinorRatio =
+        config.cellLumen.finalLowDensityArtifactMaxMinorRadiusRatio;
+
+    std::vector<DetectedCell> filtered;
+    filtered.reserve(cells.size());
+    int rejected = 0;
+    for (size_t i = 0; i < cells.size(); ++i)
+    {
+        const DetectedCell &cell = cells[i];
+        float nearestDistance = std::numeric_limits<float>::max();
+        for (size_t j = 0; j < cells.size(); ++j)
+        {
+            if (i == j)
+            {
+                continue;
+            }
+            nearestDistance = std::min(
+                nearestDistance,
+                std::sqrt(squaredDistance(cell.centerScaled, cells[j].centerScaled)));
+        }
+
+        const float meanRatio = cell.meanIntensity / medianMean;
+        const float voxelRatio =
+            static_cast<float>(std::max(1, cell.voxelCount)) / medianVoxels;
+        const bool lowMean = meanRatio <= maxMeanRatio;
+        const bool lowVoxelSupport = voxelRatio <= maxVoxelRatio;
+        const bool isolated = nearestDistance >= minNearest;
+        const bool smallMajorEnough =
+            maxMajorRatio <= 0.0f ||
+            (medianMajor > 0.0f && cell.majorRadius / medianMajor <= maxMajorRatio);
+        const bool smallMinorEnough =
+            maxMinorRatio <= 0.0f ||
+            (medianMinor > 0.0f && cell.minorRadius / medianMinor <= maxMinorRatio);
+
+        if (lowMean && lowVoxelSupport && isolated &&
+            smallMajorEnough && smallMinorEnough)
+        {
+            rejected++;
+            continue;
+        }
+        filtered.push_back(cell);
+    }
+
+    if (rejected > 0)
+    {
+        std::sort(filtered.begin(), filtered.end(), [](const DetectedCell &lhs,
+                                                       const DetectedCell &rhs) {
+            if (std::abs(lhs.centerScaled.y - rhs.centerScaled.y) > 1e-3f)
+            {
+                return lhs.centerScaled.y < rhs.centerScaled.y;
+            }
+            return lhs.centerScaled.x < rhs.centerScaled.x;
+        });
+        for (size_t i = 0; i < filtered.size(); ++i)
+        {
+            filtered[i].name = makeCellName(frameStem, static_cast<int>(i + 1));
+            filtered[i].zForCsv = filtered[i].centerScaled.z / effectiveZScaling();
+        }
+    }
+
+    // This filter targets persistent floating dust spots. Those artifacts can
+    // look radius-like after PCA inflation, so the decision uses relative mean
+    // intensity and component support plus isolation from the biological field.
+    std::cout << "[CellLumen LowDensityArtifactFilter]"
+              << " enabled=1"
+              << " before=" << cells.size()
+              << " after=" << filtered.size()
+              << " rejected=" << rejected
+              << " median_mean=" << medianMean
+              << " median_voxels=" << medianVoxels
+              << " max_mean_ratio=" << maxMeanRatio
+              << " max_voxel_ratio=" << maxVoxelRatio
+              << " min_nearest_distance=" << minNearest
+              << " max_major_ratio=" << maxMajorRatio
+              << " max_minor_ratio=" << maxMinorRatio
               << std::endl;
 
     return filtered;
@@ -5015,6 +6349,9 @@ std::vector<CellLumen::DetectedCell> CellLumen::detectCellsInVolume(
         const float radiusSq = radius * radius;
         const float quantile = clampf(config.cellLumen.finalLocalRefineQuantile, 0.0f, 0.99f);
         const float centerBlend = clampf(config.cellLumen.finalLocalRefineBlend, 0.0f, 1.0f);
+        const float zBlend = config.cellLumen.finalLocalRefineZBlend >= 0.0f
+            ? clampf(config.cellLumen.finalLocalRefineZBlend, 0.0f, 1.0f)
+            : centerBlend;
         const float zScale = effectiveZScaling();
         const int Z = static_cast<int>(volume.size());
         const int Y = volume[0].rows;
@@ -5109,7 +6446,7 @@ std::vector<CellLumen::DetectedCell> CellLumen::detectCellsInVolume(
                                              static_cast<float>(sz / totalWeight));
             cell.centerScaled.x += centerBlend * (refinedCenter.x - cell.centerScaled.x);
             cell.centerScaled.y += centerBlend * (refinedCenter.y - cell.centerScaled.y);
-            cell.centerScaled.z += centerBlend * (refinedCenter.z - cell.centerScaled.z);
+            cell.centerScaled.z += zBlend * (refinedCenter.z - cell.centerScaled.z);
             cell.zForCsv = cell.centerScaled.z / effectiveZScaling();
             annotateSignalStats(volume, cell);
             refinedCenters++;
@@ -5181,16 +6518,23 @@ std::vector<CellLumen::DetectedCell> CellLumen::detectCellsInVolume(
                   << " radius=" << radius
                   << " quantile=" << quantile
                   << " blend=" << centerBlend
+                  << " z_blend=" << zBlend
                   << " refined_centers=" << refinedCenters
                   << " post_refine_merged_pairs=" << postRefineMergedPairs
                   << " final_cells=" << bestCells.size()
                   << std::endl;
     }
 
-    refineCentersByZColumn(volume, bestCells);
+    if (config.cellLumen.finalZColumnRefineBeforeCollapseEnabled)
+    {
+        refineCentersByZColumn(volume, bestCells);
+    }
 
     const size_t beforeZPeakSplit = bestCells.size();
-    bestCells = splitCellsByLocalZPeaks(volume, bestCells, frameStem);
+    if (config.cellLumen.finalZPeakSplitBeforeCollapseEnabled)
+    {
+        bestCells = splitCellsByLocalZPeaks(volume, bestCells, frameStem);
+    }
     if (bestCells.size() != beforeZPeakSplit)
     {
         std::sort(bestCells.begin(), bestCells.end(), [](const DetectedCell &lhs, const DetectedCell &rhs) {
@@ -5206,6 +6550,8 @@ std::vector<CellLumen::DetectedCell> CellLumen::detectCellsInVolume(
             bestCells[i].zForCsv = bestCells[i].centerScaled.z / effectiveZScaling();
         }
     }
+
+    bestCells = filterLowDensityArtifacts(bestCells, frameStem);
 
     if (config.cellLumen.finalSparseIsolatedFloorFilterEnabled &&
         bestCells.size() >= 2)
@@ -5371,6 +6717,64 @@ std::vector<CellLumen::DetectedCell> CellLumen::detectCellsInVolume(
             bestCells[i].zForCsv = bestCells[i].centerScaled.z / effectiveZScaling();
         }
     }
+
+    if (config.cellLumen.finalPostCollapseZColumnRefineEnabled)
+    {
+        // Collapse can average several early bright fragments back toward a
+        // biased z slice. This optional second pass corrects the final collapsed
+        // centers without adding candidates or changing lineage evidence.
+        refineCentersByZColumn(volume, bestCells);
+    }
+
+    if (config.cellLumen.finalPostCollapseZPeakSplitEnabled)
+    {
+        // A few sparse early frames contain two real centers that are close in
+        // x/y but separated along z. Running a small add-only z split after
+        // collapse keeps the low-extra collapse path while giving the reviewer
+        // and Cell Universe one extra local candidate for the second center.
+        const size_t beforePostCollapseZPeakSplit = bestCells.size();
+        bestCells = splitCellsByLocalZPeaks(volume, bestCells, frameStem);
+        if (bestCells.size() != beforePostCollapseZPeakSplit)
+        {
+            std::sort(bestCells.begin(), bestCells.end(), [](const DetectedCell &lhs,
+                                                             const DetectedCell &rhs) {
+                if (std::abs(lhs.centerScaled.y - rhs.centerScaled.y) > 1e-3f)
+                {
+                    return lhs.centerScaled.y < rhs.centerScaled.y;
+                }
+                return lhs.centerScaled.x < rhs.centerScaled.x;
+            });
+            for (size_t i = 0; i < bestCells.size(); ++i)
+            {
+                bestCells[i].name = makeCellName(frameStem, static_cast<int>(i + 1));
+                bestCells[i].zForCsv = bestCells[i].centerScaled.z / effectiveZScaling();
+            }
+        }
+    }
+
+    const size_t beforeZProfileRescue = bestCells.size();
+    bestCells = addZProfileRescueCandidates(volume, bestCells, frameStem);
+    if (bestCells.size() != beforeZProfileRescue)
+    {
+        std::sort(bestCells.begin(), bestCells.end(), [](const DetectedCell &lhs,
+                                                         const DetectedCell &rhs) {
+            if (std::abs(lhs.centerScaled.y - rhs.centerScaled.y) > 1e-3f)
+            {
+                return lhs.centerScaled.y < rhs.centerScaled.y;
+            }
+            return lhs.centerScaled.x < rhs.centerScaled.x;
+        });
+        for (size_t i = 0; i < bestCells.size(); ++i)
+        {
+            bestCells[i].name = makeCellName(frameStem, static_cast<int>(i + 1));
+            bestCells[i].zForCsv = bestCells[i].centerScaled.z / effectiveZScaling();
+        }
+    }
+
+    // Run the same artifact filter again after cluster recall/collapse because
+    // those final stages can leave a low-density floating candidate in the
+    // output even if the pre-collapse candidate list was already cleaned.
+    bestCells = filterLowDensityArtifacts(bestCells, frameStem);
 
     const size_t beforeDominatedDuplicateFilter = bestCells.size();
     bestCells = filterDominatedDuplicateCandidates(volume, bestCells, frameStem);

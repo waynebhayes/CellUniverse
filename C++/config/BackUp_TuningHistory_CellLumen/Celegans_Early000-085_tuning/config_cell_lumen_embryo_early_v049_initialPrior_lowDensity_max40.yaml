@@ -1,0 +1,9 @@
+base_config: config_cell_lumen_embryo_early_v048_initialPrior_lowDensityArtifactFilter.yaml
+
+cell_lumen:
+  # v047 proved that initial-prior cluster collapse can repair very early
+  # internal bright fragments, but the full f000 to f085 sweep showed that a
+  # max cell gate of 90 is too broad and over merges real dense candidates after
+  # about f052. v049 keeps the same idea only for sparse early frames.
+  initialPriorClusterCollapseMaxCells: 40
+  finalClusterCentroidCollapseMaxCells: 40

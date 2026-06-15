@@ -1,0 +1,12 @@
+base_config: config_cell_lumen_embryo_early_v054_v043_zrefine_zpeak_add_only.yaml
+
+cell_lumen:
+  # v057 keeps the smaller add-only budget from v056, but uses the new
+  # default-off priority ordering so the budget goes to the candidates whose
+  # local 3D peaks are most displaced from the current center. This targets the
+  # observed early-frame failure mode: the true cell is present, but the bright
+  # core pulls the reported center just outside the 20 px review radius.
+  finalZPeakSplitMaxAdded: 12
+  finalZPeakSplitPrioritizeCandidates: true
+  finalZPeakSplitPriorityMinPeakShiftScaled: 14.0
+  finalZPeakSplitPriorityScoreWeight: 0.02

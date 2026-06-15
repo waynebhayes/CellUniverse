@@ -1,0 +1,16 @@
+base_config: config_cell_lumen_embryo_early_v047_initialPrior_clusterCollapse.yaml
+
+cell_lumen:
+  # v048 removes the persistent floating dust candidates seen in the earliest
+  # embryo frames. These candidates can look normal after radius inflation, so
+  # the filter requires three signals together: low mean intensity compared with
+  # this frame, lower component support compared with this frame, and isolation
+  # from the main biological candidate field.
+  finalLowDensityArtifactFilterEnabled: true
+  finalLowDensityArtifactFilterMinCells: 1
+  finalLowDensityArtifactFilterMaxCells: 90
+  finalLowDensityArtifactMaxMeanRatio: 0.65
+  finalLowDensityArtifactMaxVoxelRatio: 0.95
+  finalLowDensityArtifactMinNearestDistance: 38.0
+  finalLowDensityArtifactMaxMajorRadiusRatio: -1.0
+  finalLowDensityArtifactMaxMinorRadiusRatio: -1.0

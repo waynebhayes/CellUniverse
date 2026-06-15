@@ -1,0 +1,6 @@
+base_config: config_cell_lumen_embryo_early_v091_v090_zProfileRescue.yaml
+
+cell_lumen:
+  # v093 keeps z-profile rescue narrow. f018 needs a nearby upper z lobe, while
+  # larger z jumps were taking the small rescue budget first and adding extras.
+  finalZProfileRescueMaxShiftScaled: 20.0

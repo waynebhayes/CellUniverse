@@ -1,0 +1,7 @@
+base_config: config_cell_lumen_embryo_early_v091_v090_zProfileRescue.yaml
+
+cell_lumen:
+  # Diagnostic only. If f018/f036 recover with a large z-profile budget, the
+  # remaining bug is option priority. If they still miss, candidate generation
+  # itself is missing the needed x/y column.
+  finalZProfileRescueMaxAdded: 12

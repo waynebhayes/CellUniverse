@@ -1,0 +1,8 @@
+base_config: config_cell_lumen_embryo_early_v050_initialPrior_lowDensity_max60.yaml
+
+cell_lumen:
+  # v051 adds a safety guard for single-link collapse chains. If one candidate
+  # group is wider than this diameter, it may contain two real nearby cells
+  # connected by brightness fragments, so we keep the original candidates rather
+  # than making one midpoint-like miss.
+  initialPriorClusterCollapseMaxGroupDiameter: 45.0

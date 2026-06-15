@@ -1,0 +1,23 @@
+base_config: config_cell_lumen_embryo_early_v061_v059_postCollapse_zrefine.yaml
+
+cell_lumen:
+  # v062 adds a small post-collapse z split budget on top of v061. This targets
+  # the remaining failure pattern where two real cells share one final collapsed
+  # center because they are close in x/y but separated along z.
+  finalZPeakSplitEnabled: true
+  finalZPeakSplitBeforeCollapseEnabled: false
+  finalPostCollapseZPeakSplitEnabled: true
+  finalZPeakSplitMaxAdded: 8
+  finalZPeakSplitAddOnlyEnabled: true
+  finalZPeakSplitMinMajorRadius: 18.0
+  finalZPeakSplitRadiusXY: 22.0
+  finalZPeakSplitQuantile: 0.76
+  finalZPeakSplitMinPeakScoreFraction: 0.42
+  finalZPeakSplitLocal3DFallbackEnabled: true
+  finalZPeakSplitPreferLocal3D: true
+  finalZPeakSplitLocal3DCentroidRadiusXY: 12.0
+  finalZPeakSplitLocal3DCentroidHalfWindowScaled: 18.0
+  finalZPeakSplitMinSeparationScaled: 16.0
+  finalZPeakSplitMaxSeparationScaled: 58.0
+  finalZPeakSplitMaxCenterShiftXY: 32.0
+  finalZPeakSplitRadiusScale: 0.82

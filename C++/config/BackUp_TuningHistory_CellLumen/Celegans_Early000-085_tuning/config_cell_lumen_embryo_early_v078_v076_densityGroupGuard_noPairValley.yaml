@@ -1,0 +1,12 @@
+base_config: config_cell_lumen_embryo_early_v077_v076_densityAwareCollapse.yaml
+
+cell_lumen:
+  # v077 proved that pairwise valley blocking is too conservative for early
+  # large cells: internal texture can look valley-like before we see the whole
+  # brightness body. v078 lets groups form first, then uses the group-level
+  # density projection to protect true two-lobe cells.
+  initialPriorClusterCollapseValleyGuardEnabled: false
+  initialPriorClusterCollapseDensityShapeEnabled: true
+  initialPriorClusterCollapseDensityCentroidEnabled: true
+  initialPriorClusterCollapseDensityTwoLobeGuardEnabled: true
+  initialPriorClusterCollapseMaxGroupDiameter: 64.0

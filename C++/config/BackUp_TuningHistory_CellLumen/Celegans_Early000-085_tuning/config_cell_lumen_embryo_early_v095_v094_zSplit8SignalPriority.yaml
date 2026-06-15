@@ -1,0 +1,7 @@
+base_config: config_cell_lumen_embryo_early_v094_v091_zProfileSignalPriority.yaml
+
+cell_lumen:
+  # v095 combines the f018 fix from v094 with the medium-density z-peak budget
+  # that recovered f036 in v088. This is still a test profile, not the final
+  # integrated YAML, because the larger z budget can add internal fragments.
+  finalZPeakSplitMaxAdded: 8

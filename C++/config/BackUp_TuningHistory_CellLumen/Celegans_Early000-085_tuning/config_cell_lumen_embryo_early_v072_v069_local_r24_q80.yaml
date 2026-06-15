@@ -1,0 +1,8 @@
+base_config: config_cell_lumen_embryo_early_v069_v043_stronger_local_z_refine.yaml
+
+cell_lumen:
+  # This variant keeps the v069 radius but uses a brighter local core for the
+  # final centroid. The intent is to reduce halo pull in very sparse early
+  # frames while preserving the stable later v043 behavior.
+  finalLocalRefineRadius: 24.0
+  finalLocalRefineQuantile: 0.80

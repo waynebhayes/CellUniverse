@@ -1,0 +1,7 @@
+base_config: config_cell_lumen_embryo_early_v100_v097_ambiguousAddback.yaml
+
+cell_lumen:
+  # v101 combines the two verified rescue causes:
+  # f039 needs ambiguous collapse add-back, while f021/f025 need more z-profile
+  # rescue budget because the image-only upper peak exists but ranks too low.
+  finalZProfileRescueMaxAdded: 12

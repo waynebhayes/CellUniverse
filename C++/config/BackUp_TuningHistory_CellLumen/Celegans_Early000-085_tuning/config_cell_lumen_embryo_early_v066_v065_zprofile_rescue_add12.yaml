@@ -1,0 +1,7 @@
+base_config: config_cell_lumen_embryo_early_v065_v061_zprofile_rescue_add4.yaml
+
+cell_lumen:
+  # v066 raises only the z-profile rescue budget. v065 showed many valid upper
+  # z options but added only four, so this checks whether the remaining f018 and
+  # f036 misses are simply lower in the rescue queue.
+  finalZProfileRescueMaxAdded: 12

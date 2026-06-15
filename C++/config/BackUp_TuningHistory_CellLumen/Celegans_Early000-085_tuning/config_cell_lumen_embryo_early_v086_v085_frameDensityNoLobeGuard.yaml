@@ -1,0 +1,9 @@
+base_config: config_cell_lumen_embryo_early_v085_v084_frameDensityBody.yaml
+
+cell_lumen:
+  # v086 isolates the useful part of v085. The first frame-density test proved
+  # that the two-lobe guard was too protective in very early large cells: it
+  # treated internal texture as separated lobes and blocked almost all collapse.
+  # Here we keep whole-frame density centroids and moment radii, but do not let
+  # the group-level two-lobe guard veto collapse.
+  initialPriorClusterCollapseDensityTwoLobeGuardEnabled: false

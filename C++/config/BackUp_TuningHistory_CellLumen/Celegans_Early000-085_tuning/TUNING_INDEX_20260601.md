@@ -58,10 +58,28 @@ this directory are the source records for what was changed in each version.
 | v036 full | config_cell_lumen_embryo_early_v036_watershedRescue_highRecall.yaml | v036_full_f000_085_noTif | 86 | 37 | 71 | 19 | 60 | full sweep improves no-miss over v020, but still misses 15 frames |
 | v037 | config_cell_lumen_embryo_early_v037_watershedRescue_lessFinalMerge.yaml | v037_watershedRescue_lessFinalMerge_probe_noTif | 9 | 0 | 7 | 2 | 107 | lowering final merge is too broad |
 | v038 | config_cell_lumen_embryo_early_v038_watershedRescue_lessMerge_zPeakSplit.yaml | v038_watershedRescue_lessMerge_zPeakSplit_probe_noTif | 9 | 0 | 7 | 2 | 115 | f018 becomes no-miss, but f021 and f035 regress |
+| v047 stress | config_cell_lumen_embryo_early_v047_initialPrior_clusterCollapse.yaml | CellLumen_EarlyLogicTests_20260613/v047_initialPrior_worst5_noTif | 5 | 1 | 5 | 0 | 6 | uses legal initial.csv spacing scale to collapse early internal bright fragments; no miss on v046 stress frames |
+| v047 full | config_cell_lumen_embryo_early_v047_initialPrior_clusterCollapse.yaml | CellLumen_EarlyLogicTests_20260613/v047_initialPrior_full_f000_085_noTif | 86 | 33 | 48 | 246 | 124 | maxCells 90 is too broad; dense frames after about f052 over merge badly |
+| v050 key | config_cell_lumen_embryo_early_v050_initialPrior_lowDensity_max60.yaml | CellLumen_EarlyLogicTests_20260613/v050b_postCollapseLowDensity_keyframes_noTif | 10 | 3 | 7 | 3 | 8 | best balanced key-frame test so far; fixes f000/f002 dust and keeps f014/f035, but f004/f018/f036 still miss |
 
 ## Current best choices
 
-For clean standalone output, v020 full is the best full run so far:
+For current no-miss early CellLumen output, v107 is the best full run so far:
+
+- YAML: `config_cell_lumen_embryo_early_v107_v105_groupGate25.yaml`
+- Output: `/Users/wangyiding/CellUniverse/C++/output/CellLumen_EarlyLogicTests_20260614/v107_groupGate25_full_f000_085_noTif`
+- 86 frames checked from f000 to f085
+- 86 frames with no GT miss
+- total missing = 0
+- total extra = 1478
+- max extra = 46 at f053
+- median extra = 15
+- no TIFF files were generated
+
+This is now the early-profile source for
+`/Users/wangyiding/CellUniverse/C++/config/C.elegans developing embryo/Concentrated/C_elegans_DensityAuto_Best.yaml`.
+
+For historical low-extra reference, v020 full is still useful:
 
 - 86 frames checked from f000 to f085
 - 52 perfect frames
@@ -108,3 +126,18 @@ The full v020 run still missed GT cells in:
    many extras and introduces a new miss in f035.
 10. Combining less merge with Z peak split in v038 proves f018 can be rescued,
     but the same settings are too broad and damage f021 and f035.
+11. v047 keeps the v046 cluster collapse direction but computes the collapse
+    distance from initial.csv spacing instead of only a fixed constant. On the
+    five v046 stress frames it keeps zero missing GT cells and reduces total
+    extras from 7 to 6. It still needs a full f000 to f085 no-tif sweep.
+12. The full v047 sweep proves the collapse max cell gate cannot stay at 90.
+    It starts over merging true dense candidates after about f052.
+13. v050 with maxCells 60 plus the default-off low density artifact filter is
+    the best current early key-frame candidate, but it still needs a cluster
+    diameter or two-lobe safety guard before a full sweep is meaningful.
+14. v076 is the current best early high-recall candidate. It returns to the
+    stable v043 base, uses wider local x/y brightness refinement, freezes local
+    z movement, and allows only upward z-column recovery. The full f001 to f085
+    sweep reached 85 / 85 no-miss frames with total_missing = 0 and
+    total_extra = 2123. The max extra frame is f053 with 46 extra candidates,
+    and no TIFF files were left in the output directory.

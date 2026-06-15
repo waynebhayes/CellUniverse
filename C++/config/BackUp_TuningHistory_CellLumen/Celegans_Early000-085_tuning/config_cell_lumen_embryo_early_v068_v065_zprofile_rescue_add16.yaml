@@ -1,0 +1,6 @@
+base_config: config_cell_lumen_embryo_early_v065_v061_zprofile_rescue_add4.yaml
+
+cell_lumen:
+  # v068 narrows the diagnostic v067 budget. f036 is fixed by a z-profile clone
+  # at z=189, which did not enter the add12 budget but did enter add24.
+  finalZProfileRescueMaxAdded: 16

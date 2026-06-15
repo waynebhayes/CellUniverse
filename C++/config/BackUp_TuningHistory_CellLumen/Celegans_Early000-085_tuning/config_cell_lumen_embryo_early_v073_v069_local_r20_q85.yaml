@@ -1,0 +1,8 @@
+base_config: config_cell_lumen_embryo_early_v069_v043_stronger_local_z_refine.yaml
+
+cell_lumen:
+  # This stricter local-core test checks whether using only the brightest local
+  # voxels avoids broad halo bias. It is still count-neutral and only moves
+  # existing candidates.
+  finalLocalRefineRadius: 20.0
+  finalLocalRefineQuantile: 0.85

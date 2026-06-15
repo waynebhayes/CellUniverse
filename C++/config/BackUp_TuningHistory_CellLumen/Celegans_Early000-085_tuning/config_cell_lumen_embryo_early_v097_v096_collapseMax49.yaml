@@ -1,0 +1,8 @@
+base_config: config_cell_lumen_embryo_early_v096_v094_mediumDensityZSplit.yaml
+
+cell_lumen:
+  # v097 tests the strongest pattern from the full v096 sweep: once raw
+  # candidate count reaches about fifty, initial-prior collapse starts merging
+  # real nearby cells more often than it removes harmless internal fragments.
+  # Keep collapse for the earliest large-cell stage, then switch to high recall.
+  initialPriorClusterCollapseMaxCells: 49

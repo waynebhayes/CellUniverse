@@ -1,0 +1,25 @@
+base_config: config_cell_lumen_embryo_early_v079_v076_densityCentroid_diameterGuard.yaml
+
+cell_lumen:
+  # v079 fixed much of the early internal over-splitting, but f004 showed a
+  # different failure: two real daughters close in x/y but separated in z were
+  # collapsed into one midpoint. v080 keeps the density centroid collapse and
+  # adds the existing add-only post-collapse z split to recover those z-doublet
+  # cases without using GT.
+  finalZPeakSplitEnabled: true
+  finalZPeakSplitBeforeCollapseEnabled: false
+  finalPostCollapseZPeakSplitEnabled: true
+  finalZPeakSplitMaxAdded: 8
+  finalZPeakSplitAddOnlyEnabled: true
+  finalZPeakSplitMinMajorRadius: 18.0
+  finalZPeakSplitRadiusXY: 22.0
+  finalZPeakSplitQuantile: 0.76
+  finalZPeakSplitMinPeakScoreFraction: 0.42
+  finalZPeakSplitLocal3DFallbackEnabled: true
+  finalZPeakSplitPreferLocal3D: true
+  finalZPeakSplitLocal3DCentroidRadiusXY: 12.0
+  finalZPeakSplitLocal3DCentroidHalfWindowScaled: 18.0
+  finalZPeakSplitMinSeparationScaled: 16.0
+  finalZPeakSplitMaxSeparationScaled: 58.0
+  finalZPeakSplitMaxCenterShiftXY: 32.0
+  finalZPeakSplitRadiusScale: 0.82

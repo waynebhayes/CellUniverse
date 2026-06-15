@@ -1,0 +1,9 @@
+base_config: config_cell_lumen_embryo_early_v048_initialPrior_lowDensityArtifactFilter.yaml
+
+cell_lumen:
+  # v050 is the balanced gate after testing v047 and v049. A max of 40 skipped
+  # important early stress frames such as f014 and f035, while a max of 90 over
+  # merged real dense candidates after about f052. A max of 60 keeps the early
+  # fragment collapse but should skip the later 70+ candidate dense frames.
+  initialPriorClusterCollapseMaxCells: 60
+  finalClusterCentroidCollapseMaxCells: 60

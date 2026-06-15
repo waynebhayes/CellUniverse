@@ -1,0 +1,9 @@
+base_config: config_cell_lumen_embryo_early_v063_v062_prioritized_postCollapse_zsplit.yaml
+
+cell_lumen:
+  # v064 uses slice-level z peaks first instead of local 3D voxel peaks. The
+  # remaining f018/f036 misses show real evidence as separated z-slice peaks at
+  # nearly the same x/y location, so slice ordering is a better match than
+  # choosing two brightest 3D voxels.
+  finalZPeakSplitPreferLocal3D: false
+  finalZPeakSplitLocal3DFallbackEnabled: false

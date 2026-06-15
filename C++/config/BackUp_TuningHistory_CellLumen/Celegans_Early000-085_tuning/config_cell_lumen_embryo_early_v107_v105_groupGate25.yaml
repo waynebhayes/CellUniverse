@@ -1,0 +1,8 @@
+base_config: config_cell_lumen_embryo_early_v105_v104_diameterBridgeGate.yaml
+
+cell_lumen:
+  # v107 targets the remaining f047 miss. Its linked group count is 26, while
+  # f028-f032 early over-split frames remain at about 19-23 groups and should
+  # still collapse. This lowers the group-count high-recall switch without
+  # using frame number or GT.
+  initialPriorClusterCollapseSkipAboveGroupCount: 25

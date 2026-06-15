@@ -1,0 +1,7 @@
+base_config: config_cell_lumen_embryo_early_v098_v097_zProfileBudget12.yaml
+
+cell_lumen:
+  # v099 checks the remaining f039 miss by disabling initial collapse just
+  # before the raw candidate count reaches 45. If this fixes f039, the failure
+  # is a bad collapse group rather than a missing z-profile candidate.
+  initialPriorClusterCollapseMaxCells: 44

@@ -1,0 +1,19 @@
+base_config: config_cell_lumen_embryo_early_v090_v086_tighterLink34Max63.yaml
+
+cell_lumen:
+  # v091 uses the existing default-off z profile rescue for the remaining
+  # low-density misses. This is narrower than increasing FinalZPeakSplit: it
+  # keeps the collapsed center, then adds a candidate only when the same x/y
+  # column has a strong upper z-density peak. Dense frames skip this rescue.
+  finalZProfileRescueAddEnabled: true
+  finalZProfileRescueMinCells: 1
+  finalZProfileRescueMaxCells: 52
+  finalZProfileRescueMaxAdded: 4
+  finalZProfileRescueRadiusXY: 22.0
+  finalZProfileRescueHalfWindowScaled: 42.0
+  finalZProfileRescueQuantile: 0.76
+  finalZProfileRescueMinScoreFraction: 0.72
+  finalZProfileRescueMinShiftScaled: 8.0
+  finalZProfileRescueMaxShiftScaled: 42.0
+  finalZProfileRescueMinExistingDistance: 6.0
+  finalZProfileRescueRadiusScale: 0.90

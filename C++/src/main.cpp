@@ -47,6 +47,7 @@ public:
     std::string output{};
     std::string config{};
     std::string csvOutput{};
+    std::string initialPriorCsv{};
 };
 
 // helper function to load the config
@@ -162,19 +163,28 @@ Args initArgs(int argc, char *argv[]) {
     return args;
 }
 
-CellLumenArgs initCellLumenArgs(char *argv[])
+CellLumenArgs initCellLumenArgs(int argc, char *argv[])
 {
     CellLumenArgs args;
     args.inputFile = argv[2];
     args.output = argv[3];
     args.config = argv[4];
     args.csvOutput = argv[5];
+    if (argc > 6)
+    {
+        args.initialPriorCsv = argv[6];
+    }
 
     std::cout << "Loading CellLumen args:\n";
     std::cout << "Input frame: " << args.inputFile << '\n' << std::flush;
     std::cout << "Output folder: " << args.output << '\n' << std::flush;
     std::cout << "Config file: " << args.config << '\n' << std::flush;
     std::cout << "CSV output: " << args.csvOutput << '\n' << std::flush;
+    if (!args.initialPriorCsv.empty())
+    {
+        std::cout << "Initial prior CSV: " << args.initialPriorCsv << '\n'
+                  << std::flush;
+    }
     return args;
 }
 
@@ -238,13 +248,22 @@ int main(int argc, char *argv[])
     {
         if (argc < 6)
         {
-            std::cerr << "Usage: celluniverse --cell-lumen <input_frame.tif> <output_dir> <config.yaml> <csv_output>\n";
+            std::cerr << "Usage: celluniverse --cell-lumen <input_frame.tif> <output_dir> <config.yaml> <csv_output> [initial_prior.csv]\n";
             return 1;
         }
 
-        CellLumenArgs args = initCellLumenArgs(argv);
+        CellLumenArgs args = initCellLumenArgs(argc, argv);
         BaseConfig config;
         loadConfig(args.config, config);
+        if (!args.initialPriorCsv.empty())
+        {
+            // Standalone CellLumen keeps the old four-argument behavior by
+            // default. A fifth argument explicitly enables the early initial
+            // prior collapse for experiments that need legal initial.csv scale
+            // information without changing the main tracking run.
+            config.cellLumen.initialPriorCsvPath = args.initialPriorCsv;
+            config.cellLumen.initialPriorClusterCollapseEnabled = true;
+        }
         applyRuntimeOverrides(config);
         config.printConfig();
 

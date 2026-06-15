@@ -1,0 +1,34 @@
+base_config: config_cell_lumen_embryo_early_v043_baselineClean_midpointRescue.yaml
+
+cell_lumen:
+  # v054 combines a mild z-only center correction with add-only z peak rescue.
+  # The correction is deliberately blended instead of full strength so it can
+  # help z-biased centers without pushing already borderline centers past the
+  # matching radius.
+  finalZColumnRefineEnabled: true
+  finalZColumnRefineRadiusXY: 12.0
+  finalZColumnRefineHalfWindowScaled: 42.0
+  finalZColumnRefineQuantile: 0.70
+  finalZColumnRefineMinScoreFraction: 0.35
+  finalZColumnRefineMaxMoveScaled: 32.0
+  finalZColumnRefineBlend: 0.55
+  finalZColumnRefineMinCells: 1
+  finalZColumnRefineMaxCells: 90
+
+  finalZPeakSplitEnabled: true
+  finalZPeakSplitMinCells: 1
+  finalZPeakSplitMaxCells: 90
+  finalZPeakSplitMaxAdded: 24
+  finalZPeakSplitAddOnlyEnabled: true
+  finalZPeakSplitMinMajorRadius: 18.0
+  finalZPeakSplitRadiusXY: 22.0
+  finalZPeakSplitQuantile: 0.76
+  finalZPeakSplitMinPeakScoreFraction: 0.42
+  finalZPeakSplitLocal3DFallbackEnabled: true
+  finalZPeakSplitPreferLocal3D: true
+  finalZPeakSplitLocal3DCentroidRadiusXY: 12.0
+  finalZPeakSplitLocal3DCentroidHalfWindowScaled: 18.0
+  finalZPeakSplitMinSeparationScaled: 16.0
+  finalZPeakSplitMaxSeparationScaled: 58.0
+  finalZPeakSplitMaxCenterShiftXY: 32.0
+  finalZPeakSplitRadiusScale: 0.82

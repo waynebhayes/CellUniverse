@@ -1,0 +1,13 @@
+base_config: config_cell_lumen_embryo_early_v043_baselineClean_midpointRescue.yaml
+
+cell_lumen:
+  # v071 showed that a wider local brightness centroid fixes the original v043
+  # sparse misses, but its z-column pass moved f036 slightly downward and
+  # created a new miss. This variant keeps the local x/y/z centroid update and
+  # disables the separate z-column refinement so a strong upper z peak is not
+  # averaged back toward the lower bright slice.
+  finalLocalRefineEnabled: true
+  finalLocalRefineRadius: 28.0
+  finalLocalRefineQuantile: 0.75
+  finalLocalRefineBlend: 1.0
+  finalZColumnRefineEnabled: false

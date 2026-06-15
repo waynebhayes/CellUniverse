@@ -1,0 +1,7 @@
+base_config: config_cell_lumen_embryo_early_v057_v054_prioritized_zpeak_add12.yaml
+
+cell_lumen:
+  # v058 checks whether a slightly larger prioritized z-rescue budget can keep
+  # the f035/f036 fixes from v057 while also reaching the f002 candidates that
+  # ranked lower under the new priority score.
+  finalZPeakSplitMaxAdded: 18

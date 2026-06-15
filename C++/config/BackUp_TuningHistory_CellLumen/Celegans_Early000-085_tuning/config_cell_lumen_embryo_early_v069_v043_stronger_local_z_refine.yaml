@@ -1,0 +1,21 @@
+base_config: config_cell_lumen_embryo_early_v043_baselineClean_midpointRescue.yaml
+
+cell_lumen:
+  # v043 already has high recall across most early frames, but its remaining
+  # misses are usually unmatched candidates just outside the 20 px review
+  # radius. This experiment does not add or remove cells. It only lets the
+  # existing local brightness center and z-column pass move accepted candidates
+  # a little more strongly toward their own local image evidence.
+  finalLocalRefineEnabled: true
+  finalLocalRefineRadius: 24.0
+  finalLocalRefineQuantile: 0.75
+  finalLocalRefineBlend: 1.0
+  finalZColumnRefineEnabled: true
+  finalZColumnRefineRadiusXY: 12.0
+  finalZColumnRefineHalfWindowScaled: 42.0
+  finalZColumnRefineQuantile: 0.70
+  finalZColumnRefineMinScoreFraction: 0.35
+  finalZColumnRefineMaxMoveScaled: 32.0
+  finalZColumnRefineBlend: 1.0
+  finalZColumnRefineMinCells: 1
+  finalZColumnRefineMaxCells: 90

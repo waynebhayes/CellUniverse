@@ -1,0 +1,9 @@
+base_config: config_cell_lumen_embryo_early_v105_v104_diameterBridgeGate.yaml
+
+cell_lumen:
+  # Diagnostic for the remaining f047 miss. The nearest prediction has good
+  # x/y but z is too low, so test whether a narrow z-profile budget boost at
+  # this collapsed candidate count recovers the upper image peak.
+  finalZProfileRescueBoostMinCells: 38
+  finalZProfileRescueBoostMaxCells: 38
+  finalZProfileRescueBoostMaxAdded: 12

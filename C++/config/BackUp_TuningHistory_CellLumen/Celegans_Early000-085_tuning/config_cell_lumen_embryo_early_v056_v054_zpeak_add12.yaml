@@ -1,0 +1,6 @@
+base_config: config_cell_lumen_embryo_early_v054_v043_zrefine_zpeak_add_only.yaml
+
+cell_lumen:
+  # v056 is a middle budget between v055 and v054. It tests whether the f035
+  # and f036 z-biased centers need a slightly larger add-only rescue budget.
+  finalZPeakSplitMaxAdded: 12

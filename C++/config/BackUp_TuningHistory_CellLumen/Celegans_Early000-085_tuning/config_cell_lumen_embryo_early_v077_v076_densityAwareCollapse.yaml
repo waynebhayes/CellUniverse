@@ -1,0 +1,40 @@
+base_config: config_cell_lumen_embryo_early_v076_v043_xy_refine_positive_z.yaml
+
+cell_lumen:
+  # v077 keeps the v076 no-miss high-recall center refinement, then tests a
+  # safer CellLumen-side collapse for early large-cell internal bright fragments.
+  # This is not a GT shortcut. It uses only initial.csv spacing scale and the
+  # current frame brightness-density shape. The goal is to reduce obvious extra
+  # internal peaks without deleting true close daughters.
+  initialPriorClusterCollapseEnabled: true
+  initialPriorCsvPath: /Users/wangyiding/CellUniverse/C++/config/C.elegans developing embryo/C.elegans_initial/initial_files/00_core_start_points/initial_embryo_0.csv
+  initialPriorClusterCollapseMinCells: 1
+  initialPriorClusterCollapseMaxCells: 90
+  initialPriorClusterCollapseMinClusterSize: 2
+  initialPriorClusterCollapseLinkScale: 0.18
+  initialPriorClusterCollapseMinLinkDistance: 24.0
+  initialPriorClusterCollapseMaxLinkDistance: 42.0
+  initialPriorClusterCollapseMaxGroupDiameter: 64.0
+  initialPriorClusterCollapseRadiusScale: 1.0
+  initialPriorClusterCollapseUseSignalWeights: true
+
+  # Pairwise dark-valley guard blocks direct merges between two bright centers
+  # when a real low-intensity gap is visible.
+  initialPriorClusterCollapseValleyGuardEnabled: true
+  initialPriorClusterCollapseValleyMaxQ20Ratio: 0.72
+  initialPriorClusterCollapseValleyMinDrop: 15.0
+
+  # Group-level brightness-density guard. This is the PCA-like part: a collapse
+  # group is measured as one local brightness body. If the projection between
+  # its farthest peaks has two strong lobes and a dark saddle, keep the original
+  # candidates. Otherwise use the density centroid instead of simply averaging
+  # seed centers.
+  initialPriorClusterCollapseDensityShapeEnabled: true
+  initialPriorClusterCollapseDensityCentroidEnabled: true
+  initialPriorClusterCollapseDensityTwoLobeGuardEnabled: true
+  initialPriorClusterCollapseDensityQuantile: 0.55
+  initialPriorClusterCollapseDensityPadding: 12.0
+  initialPriorClusterCollapseDensityMinVoxels: 80
+  initialPriorClusterCollapseDensityTwoLobeMinDistance: 30.0
+  initialPriorClusterCollapseDensityTwoLobeMaxValleyRatio: 0.58
+  initialPriorClusterCollapseDensityTwoLobeMinDrop: 12.0

@@ -1,0 +1,26 @@
+base_config: config_cell_lumen_embryo_early_v084_v083_postCollapseZSplit4.yaml
+
+cell_lumen:
+  # v085 tests the human-review style density idea more directly.
+  # Earlier collapse tests used a local threshold inside each candidate group.
+  # That made normal texture inside one large early cell look like a real dark
+  # valley. This version measures the candidate group against a whole-frame
+  # brightness-density threshold, so a continuous bright cell body can collapse
+  # internal fragments while true separated daughters with a real low-density
+  # gap stay protected.
+  initialPriorClusterCollapseMaxCells: 72
+  initialPriorClusterCollapseValleyGuardEnabled: false
+  initialPriorClusterCollapseDensityShapeEnabled: true
+  initialPriorClusterCollapseDensityCentroidEnabled: true
+  initialPriorClusterCollapseDensityTwoLobeGuardEnabled: true
+  initialPriorClusterCollapseDensityUseFrameThreshold: true
+  initialPriorClusterCollapseDensityMomentRadiiEnabled: true
+  initialPriorClusterCollapseDensityQuantile: 0.55
+  initialPriorClusterCollapseDensityFrameQuantile: 0.935
+  initialPriorClusterCollapseDensityPadding: 14.0
+  initialPriorClusterCollapseDensityMinVoxels: 80
+  initialPriorClusterCollapseDensityRadiusSigmaScale: 2.20
+  initialPriorClusterCollapseDensityTwoLobeMinDistance: 28.0
+  initialPriorClusterCollapseDensityTwoLobeMaxValleyRatio: 0.52
+  initialPriorClusterCollapseDensityTwoLobeMaxSupportRatio: 0.28
+  initialPriorClusterCollapseDensityTwoLobeMinDrop: 8.0
