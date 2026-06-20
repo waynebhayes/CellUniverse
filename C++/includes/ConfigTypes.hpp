@@ -1801,6 +1801,18 @@ public:
     float fusionSplitPriorCollapsedCenterPairRescueMinSeparation = 35.0f;
     float fusionSplitPriorCollapsedCenterPairRescueMinParentShape = 2.20f;
     int fusionSplitPriorCollapsedCenterPairRescueMinWindowBoth = 1;
+    // Default-off soft rescue for sparse early frames. A collapsed center pair
+    // may still be a real first daughter pair when the pair is wide and both
+    // candidates have strong voxel support. Keep it as a scored candidate with a
+    // penalty instead of hard rejecting it; dense-frame profiles should leave
+    // this off unless separately verified.
+    bool fusionSplitPriorCollapsedCenterPairSoftRescueEnabled = false;
+    int fusionSplitPriorCollapsedCenterPairSoftRescueMaxCells = 40;
+    float fusionSplitPriorCollapsedCenterPairSoftRescueMinSeparationFraction = 0.90f;
+    int fusionSplitPriorCollapsedCenterPairSoftRescueMinVoxels = 2500;
+    float fusionSplitPriorCollapsedCenterPairSoftRescueMinSignal = 70.0f;
+    float fusionSplitPriorCollapsedCenterPairSoftRescueSeparationPenaltyWeight = 1.0f;
+    float fusionSplitPriorCollapsedCenterPairSoftRescueShapePenaltyWeight = 4.0f;
     // Default-off recall path for sparse early frames. If a parent has no
     // normal near center prior, a single strong Cell Lumen center slightly
     // farther away can be the true continuation after fast embryo motion.
@@ -3017,6 +3029,13 @@ public:
         if (node["fusionSplitPriorCollapsedCenterPairRescueMinSeparation"]) fusionSplitPriorCollapsedCenterPairRescueMinSeparation = node["fusionSplitPriorCollapsedCenterPairRescueMinSeparation"].as<float>();
         if (node["fusionSplitPriorCollapsedCenterPairRescueMinParentShape"]) fusionSplitPriorCollapsedCenterPairRescueMinParentShape = node["fusionSplitPriorCollapsedCenterPairRescueMinParentShape"].as<float>();
         if (node["fusionSplitPriorCollapsedCenterPairRescueMinWindowBoth"]) fusionSplitPriorCollapsedCenterPairRescueMinWindowBoth = node["fusionSplitPriorCollapsedCenterPairRescueMinWindowBoth"].as<int>();
+        if (node["fusionSplitPriorCollapsedCenterPairSoftRescueEnabled"]) fusionSplitPriorCollapsedCenterPairSoftRescueEnabled = node["fusionSplitPriorCollapsedCenterPairSoftRescueEnabled"].as<bool>();
+        if (node["fusionSplitPriorCollapsedCenterPairSoftRescueMaxCells"]) fusionSplitPriorCollapsedCenterPairSoftRescueMaxCells = node["fusionSplitPriorCollapsedCenterPairSoftRescueMaxCells"].as<int>();
+        if (node["fusionSplitPriorCollapsedCenterPairSoftRescueMinSeparationFraction"]) fusionSplitPriorCollapsedCenterPairSoftRescueMinSeparationFraction = node["fusionSplitPriorCollapsedCenterPairSoftRescueMinSeparationFraction"].as<float>();
+        if (node["fusionSplitPriorCollapsedCenterPairSoftRescueMinVoxels"]) fusionSplitPriorCollapsedCenterPairSoftRescueMinVoxels = node["fusionSplitPriorCollapsedCenterPairSoftRescueMinVoxels"].as<int>();
+        if (node["fusionSplitPriorCollapsedCenterPairSoftRescueMinSignal"]) fusionSplitPriorCollapsedCenterPairSoftRescueMinSignal = node["fusionSplitPriorCollapsedCenterPairSoftRescueMinSignal"].as<float>();
+        if (node["fusionSplitPriorCollapsedCenterPairSoftRescueSeparationPenaltyWeight"]) fusionSplitPriorCollapsedCenterPairSoftRescueSeparationPenaltyWeight = node["fusionSplitPriorCollapsedCenterPairSoftRescueSeparationPenaltyWeight"].as<float>();
+        if (node["fusionSplitPriorCollapsedCenterPairSoftRescueShapePenaltyWeight"]) fusionSplitPriorCollapsedCenterPairSoftRescueShapePenaltyWeight = node["fusionSplitPriorCollapsedCenterPairSoftRescueShapePenaltyWeight"].as<float>();
         if (node["fusionCenterPriorFarSingleEnabled"]) fusionCenterPriorFarSingleEnabled = node["fusionCenterPriorFarSingleEnabled"].as<bool>();
         if (node["fusionCenterPriorFarSingleMaxCells"]) fusionCenterPriorFarSingleMaxCells = node["fusionCenterPriorFarSingleMaxCells"].as<int>();
         if (node["fusionCenterPriorFarSingleMinDistance"]) fusionCenterPriorFarSingleMinDistance = node["fusionCenterPriorFarSingleMinDistance"].as<float>();
@@ -3850,6 +3869,13 @@ public:
         std::cout << "fusionSplitPriorCollapsedCenterPairRescueMinSeparation: " << fusionSplitPriorCollapsedCenterPairRescueMinSeparation << '\n';
         std::cout << "fusionSplitPriorCollapsedCenterPairRescueMinParentShape: " << fusionSplitPriorCollapsedCenterPairRescueMinParentShape << '\n';
         std::cout << "fusionSplitPriorCollapsedCenterPairRescueMinWindowBoth: " << fusionSplitPriorCollapsedCenterPairRescueMinWindowBoth << '\n';
+        std::cout << "fusionSplitPriorCollapsedCenterPairSoftRescueEnabled: " << fusionSplitPriorCollapsedCenterPairSoftRescueEnabled << '\n';
+        std::cout << "fusionSplitPriorCollapsedCenterPairSoftRescueMaxCells: " << fusionSplitPriorCollapsedCenterPairSoftRescueMaxCells << '\n';
+        std::cout << "fusionSplitPriorCollapsedCenterPairSoftRescueMinSeparationFraction: " << fusionSplitPriorCollapsedCenterPairSoftRescueMinSeparationFraction << '\n';
+        std::cout << "fusionSplitPriorCollapsedCenterPairSoftRescueMinVoxels: " << fusionSplitPriorCollapsedCenterPairSoftRescueMinVoxels << '\n';
+        std::cout << "fusionSplitPriorCollapsedCenterPairSoftRescueMinSignal: " << fusionSplitPriorCollapsedCenterPairSoftRescueMinSignal << '\n';
+        std::cout << "fusionSplitPriorCollapsedCenterPairSoftRescueSeparationPenaltyWeight: " << fusionSplitPriorCollapsedCenterPairSoftRescueSeparationPenaltyWeight << '\n';
+        std::cout << "fusionSplitPriorCollapsedCenterPairSoftRescueShapePenaltyWeight: " << fusionSplitPriorCollapsedCenterPairSoftRescueShapePenaltyWeight << '\n';
         std::cout << "fusionCenterPriorFarSingleEnabled: " << fusionCenterPriorFarSingleEnabled << '\n';
         std::cout << "fusionCenterPriorFarSingleMinDistance: " << fusionCenterPriorFarSingleMinDistance << '\n';
         std::cout << "fusionCenterPriorFarSingleMaxDistance: " << fusionCenterPriorFarSingleMaxDistance << '\n';

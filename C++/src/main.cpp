@@ -116,6 +116,35 @@ void applyRuntimeOverrides(BaseConfig &config)
               << std::endl;
 }
 
+void applyTrackingInitialPriorOverride(BaseConfig &config, const Args &args)
+{
+    if (!config.cellLumen.initialPriorClusterCollapseEnabled ||
+        args.initial.empty())
+    {
+        return;
+    }
+
+    // Main tracking runs already receive the legal starting initial.csv as a
+    // required CLI argument. Use that same file for Cell Lumen's early spacing
+    // prior so shared YAML files do not depend on a developer machine path.
+    const std::string previousPath = config.cellLumen.initialPriorCsvPath;
+    std::error_code previousExistsError;
+    const bool previousExists =
+        !previousPath.empty() &&
+        fs::exists(fs::path(previousPath), previousExistsError) &&
+        !previousExistsError;
+    config.cellLumen.initialPriorCsvPath = args.initial;
+
+    std::cout << "[Runtime InitialPriorCsv]"
+              << " mode=tracking"
+              << " source=initial_arg"
+              << " path=" << config.cellLumen.initialPriorCsvPath
+              << " previous=" << (previousPath.empty() ? "<empty>" : previousPath)
+              << " previous_exists=" << previousExists
+              << " reason=portable_cell_lumen_initial_prior"
+              << std::endl;
+}
+
 Args initArgs(int argc, char *argv[]) {
     // parse args here
     Args args;
@@ -287,6 +316,7 @@ int main(int argc, char *argv[])
     // load config
     BaseConfig config;
     loadConfig(args.config, config);
+    applyTrackingInitialPriorOverride(config, args);
 
     // CLI resume args (from run_celluniverse.sh INI preset) override whatever
     // was parsed from the YAML. Use argv-based detection so "absent CLI arg"

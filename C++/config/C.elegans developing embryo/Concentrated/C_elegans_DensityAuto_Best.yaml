@@ -598,6 +598,20 @@ profiles:
         fusionSplitPriorCollapsedCenterPairRescueMinSeparation: 35.0
         fusionSplitPriorCollapsedCenterPairRescueMinParentShape: 2.20
         fusionSplitPriorCollapsedCenterPairRescueMinWindowBoth: 1
+        # Sparse early frames can contain a real first division inside a center
+        # cluster that was collapsed to fight over-splitting. Keep those wide,
+        # strong pairs as soft candidates instead of hard rejecting them. This is
+        # intended to fix one-shot f004-style misses without reopening dense
+        # f078-style internal-peak false splits. f061 still has sparse geometry
+        # after a burst of real divisions, so allow this rescue slightly past
+        # 40 cells when both centers are strong and far apart.
+        fusionSplitPriorCollapsedCenterPairSoftRescueEnabled: true
+        fusionSplitPriorCollapsedCenterPairSoftRescueMaxCells: 48
+        fusionSplitPriorCollapsedCenterPairSoftRescueMinSeparationFraction: 0.90
+        fusionSplitPriorCollapsedCenterPairSoftRescueMinVoxels: 2200
+        fusionSplitPriorCollapsedCenterPairSoftRescueMinSignal: 70.0
+        fusionSplitPriorCollapsedCenterPairSoftRescueSeparationPenaltyWeight: 1.0
+        fusionSplitPriorCollapsedCenterPairSoftRescueShapePenaltyWeight: 4.0
         # f017 showed one strong Cell Lumen center just outside the ordinary
         # 24px center prior range. Allow this only in sparse early frames so
         # fast moving early cells can reanchor without opening dense-frame risk.

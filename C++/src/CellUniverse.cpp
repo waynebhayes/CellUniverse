@@ -2803,7 +2803,14 @@ void CellUniverse::applyCellLumenRescue(int frameIndex)
     int splitPriorRejectedTemporalCatchPairs = 0;
     int splitPriorEarlyLargeCatchAssignments = 0;
     int splitPriorRejectedCollapsedCenterCluster = 0;
+    int splitPriorSoftAllowedCollapsedCenterCluster = 0;
     if (lumenConfig.fusionSplitPriorEnabled && frame.cells.size() > 0) {
+        int splitPriorLiveCells = 0;
+        for (const auto &cell : frame.cells) {
+            if (!cell.isTrash()) {
+                ++splitPriorLiveCells;
+            }
+        }
         std::unordered_map<size_t, std::vector<FusionCandidateRef>> candidatesByParent;
         struct RankedSplitPrior {
             size_t parentIdx = 0;
@@ -3343,8 +3350,10 @@ void CellUniverse::applyCellLumenRescue(int frameIndex)
                         collapsedIt->second.count(list[j].candidateId) > 0;
                     WindowSupportResult collapsedCenterPairWindowSupport;
                     if (collapsedCenterClusterPairRaw &&
-                        lumenConfig
-                            .fusionSplitPriorCollapsedCenterPairRescueEnabled) {
+                        (lumenConfig
+                             .fusionSplitPriorCollapsedCenterPairRescueEnabled ||
+                         lumenConfig
+                             .fusionSplitPriorCollapsedCenterPairSoftRescueEnabled)) {
                         collapsedCenterPairWindowSupport =
                             computeWindowSupport(parentCenter,
                                                  list[i].center,
@@ -3364,12 +3373,77 @@ void CellUniverse::applyCellLumenRescue(int frameIndex)
                                 .fusionSplitPriorCollapsedCenterPairRescueMinSeparation &&
                         parentShapeElongation >=
                             lumenConfig
-                                .fusionSplitPriorCollapsedCenterPairRescueMinParentShape &&
+                            .fusionSplitPriorCollapsedCenterPairRescueMinParentShape &&
                         collapsedCenterPairWindowSupport.bothDaughtersSupported >=
                             collapsedPairMinWindowBoth;
+                    const int softRescueMaxCells = std::max(
+                        0,
+                        lumenConfig
+                            .fusionSplitPriorCollapsedCenterPairSoftRescueMaxCells);
+                    const float softRescueMinSeparation =
+                        lumenConfig
+                            .fusionSplitPriorCollapsedCenterPairRescueMinSeparation *
+                        std::clamp(
+                            lumenConfig
+                                .fusionSplitPriorCollapsedCenterPairSoftRescueMinSeparationFraction,
+                            0.0f,
+                            1.0f);
+                    const int softRescueMinVoxels = std::max(
+                        0,
+                        lumenConfig
+                            .fusionSplitPriorCollapsedCenterPairSoftRescueMinVoxels);
+                    const float softRescueMinSignal = std::max(
+                        0.0f,
+                        lumenConfig
+                            .fusionSplitPriorCollapsedCenterPairSoftRescueMinSignal);
+                    const bool softRescueSignalOk =
+                        list[i].voxelCount >= softRescueMinVoxels &&
+                        list[j].voxelCount >= softRescueMinVoxels &&
+                        list[i].signal >= softRescueMinSignal &&
+                        list[j].signal >= softRescueMinSignal;
+                    const bool softRescueSupportOk =
+                        collapsedCenterPairWindowSupport.bothDaughtersSupported >=
+                            collapsedPairMinWindowBoth ||
+                        sep >= lumenConfig
+                                   .fusionSplitPriorCollapsedCenterPairRescueMinSeparation;
+                    const bool collapsedCenterClusterPairSoftRescued =
+                        collapsedCenterClusterPairRaw &&
+                        !collapsedCenterClusterPairRescued &&
+                        lumenConfig
+                            .fusionSplitPriorCollapsedCenterPairSoftRescueEnabled &&
+                        splitPriorLiveCells <= softRescueMaxCells &&
+                        sep >= softRescueMinSeparation &&
+                        softRescueSignalOk &&
+                        softRescueSupportOk;
+                    double collapsedCenterSoftPenalty = 0.0;
+                    if (collapsedCenterClusterPairSoftRescued) {
+                        const float sepShortfall = std::max(
+                            0.0f,
+                            lumenConfig
+                                    .fusionSplitPriorCollapsedCenterPairRescueMinSeparation -
+                                sep);
+                        const float shapeShortfall = std::max(
+                            0.0f,
+                            lumenConfig
+                                    .fusionSplitPriorCollapsedCenterPairRescueMinParentShape -
+                                parentShapeElongation);
+                        collapsedCenterSoftPenalty =
+                            static_cast<double>(sepShortfall) *
+                                static_cast<double>(std::max(
+                                    0.0f,
+                                    lumenConfig
+                                        .fusionSplitPriorCollapsedCenterPairSoftRescueSeparationPenaltyWeight)) +
+                            static_cast<double>(shapeShortfall) *
+                                static_cast<double>(std::max(
+                                    0.0f,
+                                    lumenConfig
+                                        .fusionSplitPriorCollapsedCenterPairSoftRescueShapePenaltyWeight));
+                        rankingSoftPenalty += collapsedCenterSoftPenalty;
+                    }
                     const bool collapsedCenterClusterPair =
                         collapsedCenterClusterPairRaw &&
-                        !collapsedCenterClusterPairRescued;
+                        !collapsedCenterClusterPairRescued &&
+                        !collapsedCenterClusterPairSoftRescued;
                     if (collapsedCenterClusterPairRescued) {
                         std::cout
                             << "[CellLumen Fusion SplitPrior Allow CollapsedCenterClusterPair] frame="
@@ -3390,6 +3464,36 @@ void CellUniverse::applyCellLumenRescue(int frameIndex)
                                    .bothDaughtersSupported
                             << " minWindowBoth=" << collapsedPairMinWindowBoth
                             << " reason=wide_future_supported_pair_in_elongated_parent"
+                            << std::endl;
+                    }
+                    if (collapsedCenterClusterPairSoftRescued) {
+                        ++splitPriorSoftAllowedCollapsedCenterCluster;
+                        std::cout
+                            << "[CellLumen Fusion SplitPrior SoftAllow CollapsedCenterClusterPair] frame="
+                            << absoluteFrame
+                            << " parent=" << parent.getName()
+                            << " candidateIds=(" << list[i].candidateId
+                            << "," << list[j].candidateId << ")"
+                            << " sep=" << sep
+                            << " softMinSep=" << softRescueMinSeparation
+                            << " hardMinSep="
+                            << lumenConfig
+                                   .fusionSplitPriorCollapsedCenterPairRescueMinSeparation
+                            << " parentShapeElong=" << parentShapeElongation
+                            << " hardMinParentShape="
+                            << lumenConfig
+                                   .fusionSplitPriorCollapsedCenterPairRescueMinParentShape
+                            << " windowBoth="
+                            << collapsedCenterPairWindowSupport
+                                   .bothDaughtersSupported
+                            << " liveCells=" << splitPriorLiveCells
+                            << " maxCells=" << softRescueMaxCells
+                            << " vox=(" << list[i].voxelCount
+                            << "," << list[j].voxelCount << ")"
+                            << " signal=(" << list[i].signal
+                            << "," << list[j].signal << ")"
+                            << " softPenalty=" << collapsedCenterSoftPenalty
+                            << " reason=sparse_strong_collapsed_pair_kept_as_soft_candidate"
                             << std::endl;
                     }
                     if (collapsedCenterClusterPair) {
@@ -7529,6 +7633,8 @@ void CellUniverse::applyCellLumenRescue(int frameIndex)
                   << splitPriorRejectedTemporalCatchPairs
                   << " rejected_collapsed_center_cluster_pairs="
                   << splitPriorRejectedCollapsedCenterCluster
+                  << " soft_allowed_collapsed_center_cluster_pairs="
+                  << splitPriorSoftAllowedCollapsedCenterCluster
                   << " window_enabled=" << (windowEnabled ? 1 : 0)
                   << " window_offsets=" << windowCandidatesByOffset.size()
                   << " ranking_soft_gate="
@@ -14276,6 +14382,52 @@ void CellUniverse::releaseFrameImages(int frameIndex)
         return;
     }
     frames[frameIndex].releaseImageStacks();
+
+    // Long OpenLab runs only need the current frame and the short future window
+    // for Cell Lumen fusion. Older per-frame candidate caches can be dropped
+    // after export/checkpoint so a one-shot 0-249 run does not retain stale
+    // graph state for hundreds of frames.
+    const int keepWindow = std::max(
+        2,
+        std::clamp(config.cellLumen.fusionSplitPriorWindowSize, 2, 5) + 1);
+    const int keepFromFrame = frameIndex - keepWindow;
+    if (keepFromFrame <= 0) {
+        return;
+    }
+
+    auto pruneFrameCache = [&](auto &cache) {
+        int erased = 0;
+        for (auto it = cache.begin(); it != cache.end();) {
+            if (it->first < keepFromFrame) {
+                it = cache.erase(it);
+                ++erased;
+            } else {
+                ++it;
+            }
+        }
+        return erased;
+    };
+
+    const int erasedSplitPriors = pruneFrameCache(cellLumenSplitPriors);
+    const int erasedReanchors = pruneFrameCache(cellLumenCenterReanchorCandidateIds);
+    const int erasedBadParents = pruneFrameCache(cellLumenSplitPriorRejectedBadParents);
+    const int erasedCollapsedParents = pruneFrameCache(cellLumenCollapsedCenterParents);
+    const int erasedCenterCandidates = pruneFrameCache(cellLumenCenterCandidates);
+    const int erasedLookahead = pruneFrameCache(cellLumenLookaheadCandidates);
+    const int totalErased = erasedSplitPriors + erasedReanchors + erasedBadParents +
+                            erasedCollapsedParents + erasedCenterCandidates +
+                            erasedLookahead;
+    if (totalErased > 0) {
+        std::cout << "[Runtime CacheRelease] frame=" << (firstFrame + frameIndex)
+                  << " keep_from_frame=" << (firstFrame + keepFromFrame)
+                  << " split_priors=" << erasedSplitPriors
+                  << " reanchors=" << erasedReanchors
+                  << " bad_parents=" << erasedBadParents
+                  << " collapsed_parents=" << erasedCollapsedParents
+                  << " center_candidates=" << erasedCenterCandidates
+                  << " lookahead=" << erasedLookahead
+                  << std::endl;
+    }
 }
 
 void CellUniverse::saveImages(int frameIndex, const std::string &stage)
