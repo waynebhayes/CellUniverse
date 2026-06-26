@@ -3247,6 +3247,14 @@ CostCallbackPair Frame::trySplitCellPhased(
     float lumenParentAnchorOneRealSeedLockMaxScore,
     float lumenParentAnchorOneRealSeedLockMinSeedSeparation,
     float lumenParentAnchorOneRealSeedLockMaxFinalSeedAxisRatio,
+    bool lumenParentAnchorOneRealLateSeedPositionLockEnabled,
+    int lumenParentAnchorOneRealLateSeedPositionLockMinLiveCells,
+    float lumenParentAnchorOneRealLateSeedPositionLockMinImageGain,
+    float lumenParentAnchorOneRealLateSeedPositionLockMinSeedTotalGain,
+    float lumenParentAnchorOneRealLateSeedPositionLockMinSeedSeparation,
+    float lumenParentAnchorOneRealLateSeedPositionLockMaxScore,
+    float lumenParentAnchorOneRealLateSeedPositionLockMaxSeedTotalWorsening,
+    float lumenParentAnchorOneRealLateSeedPositionLockMaxRefitDrift,
     bool lumenParentAnchorOneRealMinImageGainGuardEnabled,
     float lumenParentAnchorOneRealCleanMinImageGain,
     float lumenParentAnchorOneRealPartialMinImageGain,
@@ -3273,6 +3281,7 @@ CostCallbackPair Frame::trySplitCellPhased(
     float lumenCleanTwoRealCompactDuplicateBypassMaxSoftPenaltyFraction,
     float lumenCleanTwoRealCompactDuplicateBypassMinParentDistanceBalance,
     float lumenCleanTwoRealCompactDuplicateBypassMaxScore,
+    float lumenCleanTwoRealCompactDuplicateBypassMaxOverlapToImageGainRatio,
     bool lumenRejectNonWindowLowShapeOverlapDuplicate,
     float lumenNonWindowLowShapeMaxParentShape,
     float lumenNonWindowLowShapeMinOverlapCost,
@@ -4684,6 +4693,7 @@ CostCallbackPair Frame::trySplitCellPhased(
     // replaced them during evaluation).
     const size_t d1IdxBest = bestCells.size() - 2;
     const size_t d2IdxBest = bestCells.size() - 1;
+    bool lateSeedPositionLockApplied = false;
     if (hasSeedLockedState &&
         lumenParentAnchorOneRealSeedLockOnRefitCollapse &&
         bestLabel == "cell_lumen_primary" &&
@@ -4721,6 +4731,9 @@ CostCallbackPair Frame::trySplitCellPhased(
             finalSeedAxisRatio <= std::clamp(
                 lumenParentAnchorOneRealSeedLockMaxFinalSeedAxisRatio,
                 0.0f, 1.0f);
+        const float refitSeedDriftForLock = std::max(
+            static_cast<float>(cv::norm(refitD1Pos - bestSeedD1)),
+            static_cast<float>(cv::norm(refitD2Pos - bestSeedD2)));
         const size_t seedD1Idx = seedLockedCells.size() - 2;
         const size_t seedD2Idx = seedLockedCells.size() - 1;
         const bool seedLockUseCellLumenGateParams =
@@ -4734,6 +4747,7 @@ CostCallbackPair Frame::trySplitCellPhased(
                               probConfig, seedBioReason,
                               seedLockUseCellLumenGateParams && lumenSkipExistingCellBuriedCheck,
                               seedLockUseCellLumenGateParams && lumenSkipNeighborBridgeCheck);
+        bool seedLockApplied = false;
         if (seedLockOneRealCandidate &&
             seedLockCleanFuture &&
             seedLockScoreWithoutWindow <=
@@ -4767,6 +4781,7 @@ CostCallbackPair Frame::trySplitCellPhased(
             bestPerSlice = seedLockedPerSlice;
             bestImageCost = seedLockedImageCost;
             bestTotal = seedLockedTotal;
+            seedLockApplied = true;
         } else if (seedLockOneRealCandidate &&
                    seedLockCleanFuture &&
                    refitCollapsedSeed) {
@@ -4781,6 +4796,91 @@ CostCallbackPair Frame::trySplitCellPhased(
                       << " finalAxisLen=" << finalAxisForLock
                       << " finalSeedAxisRatio=" << finalSeedAxisRatio
                       << std::endl;
+        }
+        const double lateSeedImageGain =
+            baselineImageCost - seedLockedImageCost;
+        const double lateSeedTotalGain =
+            baselineTotal - seedLockedTotal;
+        const double lateSeedAllowedWorsening =
+            std::max(
+                0.0,
+                static_cast<double>(
+                    lumenParentAnchorOneRealLateSeedPositionLockMaxSeedTotalWorsening));
+        const float lateSeedAllowedMaxDrift =
+            std::max(
+                std::max(0.0f, lumenParentAnchorOneRealMaxRefitDrift),
+                std::max(0.0f, lumenParentAnchorOneRealLateSeedPositionLockMaxRefitDrift));
+        // Late crowded frames can contain correct Cell Lumen centers that PCA
+        // refit drags toward a neighboring bright mass. This default-off lock
+        // keeps the Cell Lumen seed position only when the seed state is also
+        // favored by image and total cost, future support, and bio checks. The
+        // normal bridge and duplicate gates still run below on the locked
+        // daughter positions.
+        const bool lateSeedPositionLock =
+            !seedLockApplied &&
+            lumenParentAnchorOneRealLateSeedPositionLockEnabled &&
+            seedLockOneRealCandidate &&
+            seedLockCleanFuture &&
+            static_cast<int>(savedCells.size()) >=
+                std::max(0, lumenParentAnchorOneRealLateSeedPositionLockMinLiveCells) &&
+            seedAxisForLock >=
+                std::max(
+                    0.0f,
+                    lumenParentAnchorOneRealLateSeedPositionLockMinSeedSeparation) &&
+            seedLockScoreWithoutWindow <=
+                std::max(
+                    0.0f,
+                    lumenParentAnchorOneRealLateSeedPositionLockMaxScore) &&
+            lateSeedImageGain >=
+                static_cast<double>(std::max(
+                    0.0f,
+                    lumenParentAnchorOneRealLateSeedPositionLockMinImageGain)) &&
+            lateSeedTotalGain >=
+                static_cast<double>(std::max(
+                    0.0f,
+                    lumenParentAnchorOneRealLateSeedPositionLockMinSeedTotalGain)) &&
+            refitSeedDriftForLock >
+                std::max(0.0f, lumenParentAnchorOneRealMaxRefitDrift) &&
+            refitSeedDriftForLock <= lateSeedAllowedMaxDrift &&
+            seedLockedTotal <= baselineTotal + lateSeedAllowedWorsening &&
+            seedLockedTotal <= bestTotal + lateSeedAllowedWorsening &&
+            seedBioOk;
+        if (lateSeedPositionLock) {
+            std::cout << "[Split CellLumen Late Seed Position Lock] "
+                      << parentName
+                      << " reason=late_parent_anchor_one_real_refit_dragged_seed"
+                      << " liveCells=" << savedCells.size()
+                      << " seedAxisLen=" << seedAxisForLock
+                      << " finalAxisLen=" << finalAxisForLock
+                      << " refitSeedDrift=" << refitSeedDriftForLock
+                      << " allowedRefitDrift=" << lateSeedAllowedMaxDrift
+                      << " seedImageGain=" << lateSeedImageGain
+                      << " minImageGain="
+                      << lumenParentAnchorOneRealLateSeedPositionLockMinImageGain
+                      << " seedTotalGain=" << lateSeedTotalGain
+                      << " minSeedTotalGain="
+                      << lumenParentAnchorOneRealLateSeedPositionLockMinSeedTotalGain
+                      << " seedTotal=" << seedLockedTotal
+                      << " refitTotal=" << bestTotal
+                      << " baseline=" << baselineTotal
+                      << " scoreNoWindowBonus="
+                      << seedLockScoreWithoutWindow
+                      << " windowBoth="
+                      << lumenProposal->windowBothDaughtersSupported
+                      << " candidateIds=("
+                      << lumenProposal->candidateIdA << ","
+                      << lumenProposal->candidateIdB << ")"
+                      << " seed1=(" << bestSeedD1.x << ","
+                      << bestSeedD1.y << "," << bestSeedD1.z << ")"
+                      << " seed2=(" << bestSeedD2.x << ","
+                      << bestSeedD2.y << "," << bestSeedD2.z << ")"
+                      << std::endl;
+            bestCells = seedLockedCells;
+            bestSynth = seedLockedSynth;
+            bestPerSlice = seedLockedPerSlice;
+            bestImageCost = seedLockedImageCost;
+            bestTotal = seedLockedTotal;
+            lateSeedPositionLockApplied = true;
         }
     }
     const Ellipsoid &bestD1 = bestCells[d1IdxBest];
@@ -6099,7 +6199,12 @@ CostCallbackPair Frame::trySplitCellPhased(
     const bool parentAnchorOneRealPartialRefitDriftRescueWindow =
         lumenParentAnchorOneRealPartialRefitDriftRescueEnabled &&
         parentAnchorOneRealPartialWindowForWeakGain;
-    const bool parentAnchorOneRealRefitDriftRescue =
+    const int lumenParentAnchorOneRealMaxCandidateVoxels =
+        (lumenProposal != nullptr)
+            ? std::max(lumenProposal->leftPixelCount,
+                       lumenProposal->rightPixelCount)
+            : 0;
+    const bool parentAnchorOneRealBridgeRefitDriftRescue =
         parentAnchorOneRealPostRefitGuardActive &&
         lumenParentAnchorOneRealRefitDriftRescueEnabled &&
         (parentAnchorOneRealCleanWindowForWeakGain ||
@@ -6124,6 +6229,53 @@ CostCallbackPair Frame::trySplitCellPhased(
             std::max(
                 0.0f,
                 lumenParentAnchorOneRealRefitDriftRescueMaxScore);
+    // Sparse early one-real splits can have no clean dark bridge yet because
+    // the two daughters are still touching. The hard refit-drift guard should
+    // still block noisy anchor drift, but a small overage is allowed when
+    // Cell Lumen has one real center, short-window support, strong image gain,
+    // and the live frame is still very sparse. This targets early f018-style
+    // true divisions and stays off once the frame has enough cells for the
+    // later duplicate-anchor failure modes.
+    const bool parentAnchorOneRealSparsePositiveRefitDriftRescue =
+        parentAnchorOneRealPostRefitGuardActive &&
+        lumenParentAnchorOneRealRefitDriftRescueEnabled &&
+        lumenParentAnchorOneRealPositiveWindowRescueEnabled &&
+        parentAnchorOneRealPartialRefitDriftRescueWindow &&
+        cells.size() <= 20 &&
+        lumenParentAnchorOneRealMaxRefitDrift >= 0.0f &&
+        snapshotDriftMax <= lumenParentAnchorOneRealMaxRefitDrift + 2.0f &&
+        duplicateImageGain >=
+            static_cast<double>(std::max(
+                0.0f,
+                lumenParentAnchorOneRealRefitDriftRescueMinImageGain)) &&
+        overlapCostDiff <= duplicateImageGain * 1.75 &&
+        bridgeCostRescueValleyFromBright <=
+            std::max(
+                0.0f,
+                lumenParentAnchorOneRealPositiveWindowRescueMaxBridgeValleyRatio) &&
+        duplicateGateParentShape >=
+            std::max(
+                1.0f,
+                lumenParentAnchorOneRealPositiveWindowRescueMinShape) &&
+        duplicateGateParentShape <=
+            std::max(
+                1.0f,
+                lumenParentAnchorOneRealPositiveWindowRescueMaxShape) &&
+        duplicateGatePriorScoreWithoutWindow <=
+            std::max(
+                0.0f,
+                lumenParentAnchorOneRealPositiveWindowRescueMaxScore) &&
+        lumenProposal->windowParentPersists <= 0 &&
+        lumenProposal->parentDistanceBalance >= 0.90f &&
+        lumenProposal->parentPersistencePenalty <= 1e-5f &&
+        lumenProposal->neighborClaimPenalty <= 1e-5f &&
+        lumenProposal->continuationClaimSoftPenalty <= 1e-5f &&
+        lumenParentAnchorOneRealMaxCandidateVoxels >=
+            std::max(0,
+                     lumenParentAnchorOneRealPositiveWindowRescueMinRealVoxels);
+    const bool parentAnchorOneRealRefitDriftRescue =
+        parentAnchorOneRealBridgeRefitDriftRescue ||
+        parentAnchorOneRealSparsePositiveRefitDriftRescue;
     const bool parentAnchorOneRealExcessRefitDrift =
         parentAnchorOneRealPostRefitGuardActive &&
         lumenParentAnchorOneRealMaxRefitDrift >= 0.0f &&
@@ -6135,12 +6287,15 @@ CostCallbackPair Frame::trySplitCellPhased(
         std::cout << "[Split Gate Rescue CellLumen parent anchor one-real refit-drift] "
                   << parentName
                   << " windowMode="
-                  << (parentAnchorOneRealCleanWindowForWeakGain ? "clean"
-                                                               : "partial")
+                  << (parentAnchorOneRealSparsePositiveRefitDriftRescue
+                          ? "sparse_positive_partial"
+                          : (parentAnchorOneRealCleanWindowForWeakGain ? "clean"
+                                                                       : "partial"))
                   << " maxRefitDrift=" << snapshotDriftMax
                   << " allowedMaxRefitDrift="
                   << lumenParentAnchorOneRealMaxRefitDrift
                   << " imageGain=" << duplicateImageGain
+                  << " overlapDiff=" << overlapCostDiff
                   << " bridgeGapWidth=" << lumenBridgeGapWidth
                   << " bridgeValleyFromBright="
                   << bridgeCostRescueValleyFromBright
@@ -6152,6 +6307,8 @@ CostCallbackPair Frame::trySplitCellPhased(
                   << " candidateIds=("
                   << lumenProposal->candidateIdA << ","
                   << lumenProposal->candidateIdB << ")"
+                  << " maxCandidateVoxels="
+                  << lumenParentAnchorOneRealMaxCandidateVoxels
                   << std::endl;
     }
     if (parentAnchorOneRealExcessRefitDrift) {
@@ -6255,6 +6412,66 @@ CostCallbackPair Frame::trySplitCellPhased(
                    ? static_cast<double>(std::max(
                          0.0f, lumenParentAnchorOneRealPartialMinImageGain))
                    : 0.0);
+    // Late seed-position lock already proved the seed state with clean future
+    // support, bio checks, image gain, and a large total-cost gain. Do not let
+    // the older image-only guard reject the same candidate again just because
+    // the image gain is slightly below the generic one-real threshold. The
+    // evidence path repeats the core checks so the guard still recognizes a
+    // seed-locked result even if a future refactor forgets to carry the boolean
+    // state down to this older gate.
+    const bool parentAnchorOneRealLateSeedEvidenceBypass =
+        lumenParentAnchorOneRealLateSeedPositionLockEnabled &&
+        lumenParentAnchorOneRealCandidate &&
+        parentAnchorOneRealCleanWindowForWeakGain &&
+        static_cast<int>(savedCells.size()) >=
+            std::max(0, lumenParentAnchorOneRealLateSeedPositionLockMinLiveCells) &&
+        seedAxisLen >=
+            std::max(
+                0.0f,
+                lumenParentAnchorOneRealLateSeedPositionLockMinSeedSeparation) &&
+        duplicateGatePriorScoreWithoutWindow <=
+            std::max(
+                0.0f,
+                lumenParentAnchorOneRealLateSeedPositionLockMaxScore) &&
+        duplicateImageGain >=
+            static_cast<double>(std::max(
+                0.0f,
+                lumenParentAnchorOneRealLateSeedPositionLockMinImageGain)) &&
+        (-costDiff) >=
+            static_cast<double>(std::max(
+                0.0f,
+                lumenParentAnchorOneRealLateSeedPositionLockMinSeedTotalGain)) &&
+        snapshotDriftMax <= 1.0f &&
+        costDiff < 0.0 &&
+        imageCostDiff < 0.0;
+    const bool parentAnchorOneRealLateSeedMinImageBypass =
+        (lateSeedPositionLockApplied || parentAnchorOneRealLateSeedEvidenceBypass) &&
+        parentAnchorOneRealCleanWindowForWeakGain &&
+        costDiff < 0.0 &&
+        duplicateImageGain > 0.0 &&
+        lumenProposal != nullptr &&
+        lumenProposal->windowMissingDaughterCount == 0 &&
+        lumenProposal->windowParentPersists == 0;
+    if (parentAnchorOneRealLateSeedMinImageBypass &&
+        duplicateImageGain < parentAnchorOneRealMinImageGainForGuard &&
+        parentAnchorOneRealMinImageGainForGuard > 0.0) {
+        std::cout << "[Split Gate Rescue CellLumen late seed min-image bypass] "
+                  << parentName
+                  << " mode="
+                  << (lateSeedPositionLockApplied ? "state" : "evidence")
+                  << " imageGain=" << duplicateImageGain
+                  << " minImageGain=" << parentAnchorOneRealMinImageGainForGuard
+                  << " totalDiff=" << costDiff
+                  << " bridgeGapWidth=" << lumenBridgeGapWidth
+                  << " bridgeValleyFromBright="
+                  << bridgeCostRescueValleyFromBright
+                  << " windowBoth="
+                  << lumenProposal->windowBothDaughtersSupported
+                  << " candidateIds=("
+                  << lumenProposal->candidateIdA << ","
+                  << lumenProposal->candidateIdB << ")"
+                  << std::endl;
+    }
     const bool parentAnchorOneRealBelowMinImageGain =
         useCellLumenGateParams &&
         lumenParentAnchorOneRealCandidate &&
@@ -6263,6 +6480,7 @@ CostCallbackPair Frame::trySplitCellPhased(
         parentAnchorOneRealMinImageGainForGuard > 0.0 &&
         imageCostDiff < 0.0 &&
         duplicateImageGain < parentAnchorOneRealMinImageGainForGuard &&
+        !parentAnchorOneRealLateSeedMinImageBypass &&
         !parentAnchorCleanFutureDriftRescue;
     if (parentAnchorOneRealBelowMinImageGain) {
         std::cout << "[Split Reject CellLumen parent anchor one-real min-image-gain guard] "
@@ -6715,6 +6933,16 @@ CostCallbackPair Frame::trySplitCellPhased(
         lumenProposal->continuationClaimSoftPenalty <= 1e-5f &&
         imageCostDiff <= 0.0 &&
         overlapCostDiff <= baselineImageCost * 0.70;
+    const double duplicateOverlapToImageGainRatio =
+        (duplicateImageGain > 1e-9)
+            ? overlapCostDiff / duplicateImageGain
+            : std::numeric_limits<double>::infinity();
+    const bool compactDuplicateOverlapGainRatioOk =
+        lumenCleanTwoRealCompactDuplicateBypassMaxOverlapToImageGainRatio <
+            0.0f ||
+        duplicateOverlapToImageGainRatio <=
+            static_cast<double>(
+                lumenCleanTwoRealCompactDuplicateBypassMaxOverlapToImageGainRatio);
     const bool cleanTwoRealDuplicateBypass =
         lumenCleanTwoRealDuplicateBypassEnabled &&
         lumenAllowWindowBackedDuplicateHandoff &&
@@ -6741,7 +6969,10 @@ CostCallbackPair Frame::trySplitCellPhased(
         earlyLumenPriorScoreWithoutWindowBonus <=
             lumenCleanTwoRealDuplicateBypassMaxScore &&
         lumenProposal->balancedWindowBonus > 0.0f;
-    const bool compactCleanTwoRealDuplicateBypass =
+    // Late dense false split t120_cell_08410 showed that a compact two-real
+    // bypass can buy image gain by creating heavy overlap with an existing
+    // neighbor. Keep this guard default-off and profile-controlled.
+    const bool compactCleanTwoRealDuplicateBypassBase =
         lumenCleanTwoRealCompactDuplicateBypassEnabled &&
         lumenAllowWindowBackedDuplicateHandoff &&
         lumenWeakPositiveSupportAllowed &&
@@ -6772,6 +7003,9 @@ CostCallbackPair Frame::trySplitCellPhased(
             lumenCleanTwoRealCompactDuplicateBypassMinParentDistanceBalance &&
         earlyLumenPriorScoreWithoutWindowBonus <=
             lumenCleanTwoRealCompactDuplicateBypassMaxScore;
+    const bool compactCleanTwoRealDuplicateBypass =
+        compactCleanTwoRealDuplicateBypassBase &&
+        compactDuplicateOverlapGainRatioOk;
     const bool windowBackedDuplicateHandoffRescue =
         continuationConflictDuplicateRescue ||
         weakNeighborHandoffDuplicateRescue ||
@@ -6821,6 +7055,10 @@ CostCallbackPair Frame::trySplitCellPhased(
                   << " overlapDiff=" << overlapCostDiff
                   << " maxOverlapFraction="
                   << lumenCleanTwoRealCompactDuplicateBypassMaxOverlapCostFraction
+                  << " overlapToImageGainRatio="
+                  << duplicateOverlapToImageGainRatio
+                  << " maxOverlapToImageGainRatio="
+                  << lumenCleanTwoRealCompactDuplicateBypassMaxOverlapToImageGainRatio
                   << " softPenaltyFraction="
                   << earlyLumenPositiveGateSoftPenaltyFraction
                   << " maxSoftPenaltyFraction="
@@ -6841,6 +7079,33 @@ CostCallbackPair Frame::trySplitCellPhased(
                   << lumenProposal->candidateIdA << ","
                   << lumenProposal->candidateIdB << ")"
                   << std::endl;
+    }
+    if (compactCleanTwoRealDuplicateBypassBase &&
+        !compactDuplicateOverlapGainRatioOk) {
+        std::cout << "[Split Gate Reject CellLumen clean two-real compact duplicate overlap/image ratio] "
+                  << parentName
+                  << " daughter=" << daughterExistingDuplicate.daughterName
+                  << " other=" << daughterExistingDuplicate.otherName
+                  << " imageGain=" << duplicateImageGain
+                  << " overlapDiff=" << overlapCostDiff
+                  << " overlapToImageGainRatio="
+                  << duplicateOverlapToImageGainRatio
+                  << " maxOverlapToImageGainRatio="
+                  << lumenCleanTwoRealCompactDuplicateBypassMaxOverlapToImageGainRatio
+                  << " totalDiff=" << costDiff
+                  << " priorScoreNoWindowBonus="
+                  << earlyLumenPriorScoreWithoutWindowBonus
+                  << " candidateIds=("
+                  << lumenProposal->candidateIdA << ","
+                  << lumenProposal->candidateIdB << ")"
+                  << std::endl;
+        // f176 showed that merely disabling the compact duplicate bypass was
+        // not enough: the generic positive image gate could still accept a
+        // split whose overlap cost was many times larger than its image gain.
+        // Keep this default-off through the YAML ratio threshold, and make the
+        // configured dense-profile reject actually restore the parent.
+        restoreLiveParent();
+        return {0.0, noop};
     }
     const bool daughterExistingOverlapDuplicate =
         useCellLumenGateParams &&
@@ -7644,11 +7909,6 @@ CostCallbackPair Frame::trySplitCellPhased(
         (baselineImageCost > 1e-9)
             ? lumenSoftGatePenaltyCost / baselineImageCost
             : std::numeric_limits<double>::infinity();
-    const int lumenParentAnchorOneRealMaxCandidateVoxels =
-        (lumenProposal != nullptr)
-            ? std::max(lumenProposal->leftPixelCount,
-                       lumenProposal->rightPixelCount)
-            : 0;
     const bool parentAnchorOneRealPositiveWindowRescue =
         useCellLumenCostGate &&
         useCellLumenImageGate &&

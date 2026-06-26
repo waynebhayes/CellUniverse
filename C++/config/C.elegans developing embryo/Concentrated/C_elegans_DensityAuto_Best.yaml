@@ -556,6 +556,7 @@ profiles:
         fusionRepairPositionBlend: 0.2
         fusionRepairRadiusBlend: 0.75
         fusionCenterPriorEnabled: true
+        fusionGlobalLumenCenterAssignmentEnabled: false
         fusionCenterPriorMaxDistance: 24.0
         fusionCenterPriorPositionBlend: 0.35
         fusionCenterPriorRadiusBlend: 0.25
@@ -666,6 +667,9 @@ profiles:
         fusionSplitPriorMidpointWeight: 1.0
         fusionSplitPriorSeparationPenaltyWeight: 0.2
         fusionSplitPriorSignalBonusWeight: 0.001
+        # Logging only: records parent local crowding for every split prior so
+        # density-specific split filters can be reviewed without changing results.
+        fusionSplitPriorLocalDensityFeatureRadius: 45.0
         fusionSplitPriorConflictReplacementEnabled: true
         fusionSplitPriorConflictCloseParentRadiusScale: 0.45
         fusionSplitPriorConflictMinNewSeparationRadiusScale: 1.4
@@ -702,9 +706,10 @@ profiles:
         fusionSplitPriorEarlyLargeSeparationRescueFirstFrameOnly: false
         fusionSplitPriorEarlyLargeSeparationRescueMaxFrame: 20
         fusionSplitPriorEarlyLargeSeparationMinSeparation: 32.0
-        fusionSplitPriorEarlyLargeSeparationMinLateralSeparation: 18.0
-        # f004 has a real early split where both Cell Lumen daughters are strong,
-        # but the first future window is still incomplete. Keep this rescue narrow:
+        fusionSplitPriorEarlyLargeSeparationMinLateralSeparation: 17.5
+        # f004 clean full-run has a real early split where both Cell Lumen
+        # daughters are strong, but the first future window is still incomplete
+        # and the lateral separation is 17.95 px. Keep this rescue narrow:
         # only early frames, real lateral separation, elongated parent, and score <= 22.
         fusionSplitPriorEarlyLargeSeparationMinParentDistanceBalance: 0.35
         fusionSplitPriorEarlyLargeSeparationMinParentShape: 1.2
@@ -727,6 +732,15 @@ profiles:
         fusionSplitPriorContinuationClaimTieMargin: 4.0
         fusionSplitPriorContinuationClaimCloseParentRadiusScale: 0.62
         fusionSplitPriorContinuationClaimCloseParentPenalty: 6.0
+        fusionSplitPriorProtectFutureContinuationCandidateEnabled: false
+        fusionSplitPriorProtectFutureContinuationMinDistance: 24.0
+        fusionSplitPriorProtectFutureContinuationMaxDistance: 32.0
+        fusionSplitPriorProtectFutureContinuationMinOldNearestCurrentDistance: 24.0
+        fusionSplitPriorProtectFutureContinuationMinOldWindowSupport: 1
+        fusionSplitPriorProtectFutureContinuationMinCenterWindowSupport: 1
+        fusionSplitPriorProtectFutureContinuationMinVoxels: 1000
+        fusionSplitPriorProtectFutureContinuationMinSignal: 100.0
+        fusionSplitPriorProtectFutureContinuationPenalty: 80.0
         fusionSplitPriorMinDaughterParentDistance: 6.0
         fusionSplitPriorMinDaughterParentDistanceRadiusScale: 0.35
         fusionSplitPriorMinParentDistanceBalance: 0.35
@@ -982,6 +996,17 @@ profiles:
         # evidence is very strong and the parent is clearly elongated.
         fusionSplitPriorParentAnchorOneRealPostRefitGuardEnabled: true
         fusionSplitPriorParentAnchorOneRealMaxRefitDrift: 14.0
+        # Late seed position lock is intentionally off in the early profile.
+        # Early fixes should stay controlled by sparse-stage rescue gates, not
+        # by the very dense f175-style Cell Lumen seed lock.
+        fusionSplitPriorParentAnchorOneRealLateSeedPositionLockEnabled: false
+        fusionSplitPriorParentAnchorOneRealLateSeedPositionLockMinLiveCells: 300
+        fusionSplitPriorParentAnchorOneRealLateSeedPositionLockMinImageGain: 5000.0
+        fusionSplitPriorParentAnchorOneRealLateSeedPositionLockMinSeedTotalGain: 0.0
+        fusionSplitPriorParentAnchorOneRealLateSeedPositionLockMinSeedSeparation: 20.0
+        fusionSplitPriorParentAnchorOneRealLateSeedPositionLockMaxScore: 8.0
+        fusionSplitPriorParentAnchorOneRealLateSeedPositionLockMaxSeedTotalWorsening: 0.0
+        fusionSplitPriorParentAnchorOneRealLateSeedPositionLockMaxRefitDrift: 30.0
         fusionSplitPriorParentAnchorOneRealRefitDriftRescueEnabled: true
         fusionSplitPriorParentAnchorOneRealPartialRefitDriftRescueEnabled: true
         fusionSplitPriorParentAnchorOneRealRefitDriftRescueMinImageGain: 20000.0
@@ -1026,6 +1051,14 @@ profiles:
         fusionSplitPriorPrepassFallbackEnabled: true
         fusionSplitPriorPrepassFallbackMaxPriors: 12
         fusionSplitPriorPrepassFallbackMinKeptPixels: 50000
+        # Late dense f176 had a real split whose image PCA daughters were
+        # clean, but its local kept-pixel count was just below the broad
+        # fallback cutoff. Keep the main cutoff conservative and rescue only
+        # no-prior parents with compact score and enough parent shape.
+        fusionSplitPriorPrepassFallbackLowKeptRescueEnabled: true
+        fusionSplitPriorPrepassFallbackLowKeptRescueMinKeptPixels: 45000
+        fusionSplitPriorPrepassFallbackLowKeptRescueMinShape: 1.45
+        fusionSplitPriorPrepassFallbackLowKeptRescueMaxScore: 4.0
         fusionSplitPriorPrepassFallbackMinShape: 1.2
         fusionSplitPriorPrepassFallbackMinSeparationRadiusScale: 0.9
         fusionSplitPriorPrepassFallbackMaxSeparationRadiusScale: 1.05
@@ -1875,6 +1908,7 @@ profiles:
         fusionRepairPositionBlend: 0.2
         fusionRepairRadiusBlend: 0.75
         fusionCenterPriorEnabled: true
+        fusionGlobalLumenCenterAssignmentEnabled: false
         fusionCenterPriorMaxDistance: 24.0
         fusionCenterPriorPositionBlend: 0.35
         fusionCenterPriorRadiusBlend: 0.25
@@ -1907,6 +1941,28 @@ profiles:
         fusionSplitPriorMidpointWeight: 1.0
         fusionSplitPriorSeparationPenaltyWeight: 0.2
         fusionSplitPriorSignalBonusWeight: 0.001
+        # Logging only: records parent local crowding for every split prior so
+        # late dense filters can be tuned by measured neighborhood density.
+        fusionSplitPriorLocalDensityFeatureRadius: 45.0
+        # Disabled in this middle profile. The late-wide two-real rescue is only
+        # meant for the very dense f170+ profile, where parent fits can be too
+        # small compared with real daughter spacing.
+        fusionSplitPriorLateWideTwoRealPairRescueEnabled: false
+        fusionSplitPriorLateWideTwoRealPairMinLiveCells: 300
+        fusionSplitPriorLateWideTwoRealPairMinWindowBoth: 1
+        fusionSplitPriorLateWideTwoRealPairMaxWindowMissing: 1
+        fusionSplitPriorLateWideTwoRealPairMaxWindowParentPersists: 1
+        fusionSplitPriorLateWideTwoRealPairMaxSeparation: 64.0
+        fusionSplitPriorLateWideTwoRealPairMaxSeparationRadiusScale: 4.2
+        fusionSplitPriorLateWideTwoRealPairMinLateralSeparation: 42.0
+        fusionSplitPriorLateWideTwoRealPairMaxZDominance: 0.35
+        fusionSplitPriorLateWideTwoRealPairMaxMidpointDistance: 12.0
+        fusionSplitPriorLateWideTwoRealPairMinParentDistanceBalance: 0.70
+        fusionSplitPriorLateWideTwoRealPairMinParentShape: 1.0
+        fusionSplitPriorLateWideTwoRealPairMinVoxels: 1800
+        fusionSplitPriorLateWideTwoRealPairMinSignal: 120.0
+        fusionSplitPriorLateWideTwoRealPairSeparationPenaltyWeight: 0.35
+        fusionSplitPriorLateWideTwoRealPairSelectionBonus: 35.0
         fusionSplitPriorConflictReplacementEnabled: true
         fusionSplitPriorConflictCloseParentRadiusScale: 0.45
         fusionSplitPriorConflictMinNewSeparationRadiusScale: 1.4
@@ -2008,6 +2064,15 @@ profiles:
         fusionSplitPriorContinuationClaimTieMargin: 4.0
         fusionSplitPriorContinuationClaimCloseParentRadiusScale: 0.62
         fusionSplitPriorContinuationClaimCloseParentPenalty: 6.0
+        fusionSplitPriorProtectFutureContinuationCandidateEnabled: false
+        fusionSplitPriorProtectFutureContinuationMinDistance: 24.0
+        fusionSplitPriorProtectFutureContinuationMaxDistance: 32.0
+        fusionSplitPriorProtectFutureContinuationMinOldNearestCurrentDistance: 24.0
+        fusionSplitPriorProtectFutureContinuationMinOldWindowSupport: 1
+        fusionSplitPriorProtectFutureContinuationMinCenterWindowSupport: 1
+        fusionSplitPriorProtectFutureContinuationMinVoxels: 1000
+        fusionSplitPriorProtectFutureContinuationMinSignal: 100.0
+        fusionSplitPriorProtectFutureContinuationPenalty: 80.0
         fusionSplitPriorMinDaughterParentDistance: 6.0
         fusionSplitPriorMinDaughterParentDistanceRadiusScale: 0.35
         fusionSplitPriorMinParentDistanceBalance: 0.35
@@ -2070,6 +2135,14 @@ profiles:
         fusionSplitPriorPrepassFallbackEnabled: true
         fusionSplitPriorPrepassFallbackMaxPriors: 12
         fusionSplitPriorPrepassFallbackMinKeptPixels: 50000
+        # f176 t120_cell_1141 has a real image PCA two-daughter split, but its
+        # local kept-pixel count is just below the broad late fallback cutoff.
+        # Keep the main cutoff conservative and rescue only compact low-kept
+        # cases, so high-density internal texture does not flood the schedule.
+        fusionSplitPriorPrepassFallbackLowKeptRescueEnabled: true
+        fusionSplitPriorPrepassFallbackLowKeptRescueMinKeptPixels: 45000
+        fusionSplitPriorPrepassFallbackLowKeptRescueMinShape: 1.45
+        fusionSplitPriorPrepassFallbackLowKeptRescueMaxScore: 4.0
         fusionSplitPriorPrepassFallbackMinShape: 1.2
         fusionSplitPriorPrepassFallbackMinSeparationRadiusScale: 0.9
         fusionSplitPriorPrepassFallbackMaxSeparationRadiusScale: 1.05
@@ -2674,6 +2747,7 @@ profiles:
         fusionRepairPositionBlend: 0.2
         fusionRepairRadiusBlend: 0.75
         fusionCenterPriorEnabled: true
+        fusionGlobalLumenCenterAssignmentEnabled: false
         fusionCenterPriorMaxDistance: 24.0
         fusionCenterPriorPositionBlend: 0.35
         fusionCenterPriorRadiusBlend: 0.25
@@ -2706,6 +2780,28 @@ profiles:
         fusionSplitPriorMidpointWeight: 1.0
         fusionSplitPriorSeparationPenaltyWeight: 0.2
         fusionSplitPriorSignalBonusWeight: 0.001
+        # Logging only: every split prior records parent local crowding. This
+        # lets late dense split filters use measured neighborhood density later,
+        # without changing the verified baseline by itself.
+        fusionSplitPriorLocalDensityFeatureRadius: 45.0
+        # Disabled here to protect the verified f121-f170 behavior. The wide
+        # two-real rescue is enabled only in the f170+ very dense profile below.
+        fusionSplitPriorLateWideTwoRealPairRescueEnabled: false
+        fusionSplitPriorLateWideTwoRealPairMinLiveCells: 300
+        fusionSplitPriorLateWideTwoRealPairMinWindowBoth: 1
+        fusionSplitPriorLateWideTwoRealPairMaxWindowMissing: 1
+        fusionSplitPriorLateWideTwoRealPairMaxWindowParentPersists: 1
+        fusionSplitPriorLateWideTwoRealPairMaxSeparation: 64.0
+        fusionSplitPriorLateWideTwoRealPairMaxSeparationRadiusScale: 4.2
+        fusionSplitPriorLateWideTwoRealPairMinLateralSeparation: 42.0
+        fusionSplitPriorLateWideTwoRealPairMaxZDominance: 0.35
+        fusionSplitPriorLateWideTwoRealPairMaxMidpointDistance: 12.0
+        fusionSplitPriorLateWideTwoRealPairMinParentDistanceBalance: 0.70
+        fusionSplitPriorLateWideTwoRealPairMinParentShape: 1.0
+        fusionSplitPriorLateWideTwoRealPairMinVoxels: 1800
+        fusionSplitPriorLateWideTwoRealPairMinSignal: 120.0
+        fusionSplitPriorLateWideTwoRealPairSeparationPenaltyWeight: 0.35
+        fusionSplitPriorLateWideTwoRealPairSelectionBonus: 35.0
         fusionSplitPriorConflictReplacementEnabled: true
         fusionSplitPriorConflictCloseParentRadiusScale: 0.45
         fusionSplitPriorConflictMinNewSeparationRadiusScale: 1.4
@@ -2753,6 +2849,15 @@ profiles:
         fusionSplitPriorContinuationClaimTieMargin: 4.0
         fusionSplitPriorContinuationClaimCloseParentRadiusScale: 0.62
         fusionSplitPriorContinuationClaimCloseParentPenalty: 6.0
+        fusionSplitPriorProtectFutureContinuationCandidateEnabled: false
+        fusionSplitPriorProtectFutureContinuationMinDistance: 24.0
+        fusionSplitPriorProtectFutureContinuationMaxDistance: 32.0
+        fusionSplitPriorProtectFutureContinuationMinOldNearestCurrentDistance: 24.0
+        fusionSplitPriorProtectFutureContinuationMinOldWindowSupport: 1
+        fusionSplitPriorProtectFutureContinuationMinCenterWindowSupport: 1
+        fusionSplitPriorProtectFutureContinuationMinVoxels: 1000
+        fusionSplitPriorProtectFutureContinuationMinSignal: 100.0
+        fusionSplitPriorProtectFutureContinuationPenalty: 80.0
         fusionSplitPriorMinDaughterParentDistance: 6.0
         fusionSplitPriorMinDaughterParentDistanceRadiusScale: 0.35
         fusionSplitPriorMinParentDistanceBalance: 0.35
@@ -2830,6 +2935,16 @@ profiles:
         fusionSplitPriorPrepassFallbackSeedMaxSeparationRadiusScale: 0.95
         fusionSplitPriorPrepassFallbackSeedMaxScore: 16.0
         fusionSplitPriorPrepassFallbackSeedMinShape: 1.4
+        # A weak parent-anchor prior can occupy a parent even when it never
+        # becomes a useful scheduled split. Let stronger prepass evidence replace
+        # only that weak-window pattern.
+        fusionSplitPriorPrepassFallbackOverrideWeakExistingPriorEnabled: true
+        fusionSplitPriorPrepassFallbackOverrideMinParentShape: 1.45
+        fusionSplitPriorPrepassFallbackOverrideMaxScore: 4.0
+        fusionSplitPriorPrepassFallbackOverrideMaxSeparationRadiusScale: 1.05
+        fusionSplitPriorPrepassFallbackOverrideMinExistingWindowBoth: 2
+        fusionSplitPriorPrepassFallbackOverrideMaxExistingWindowMissing: 0
+        fusionSplitPriorPrepassFallbackOverrideMaxExistingWindowParentPersists: 0
         fusionSplitPriorSnapshotSeedMaxRefitDrift: 12.0
         fusionSplitPriorSnapshotSeedEarlyRefitWaiverEnabled: false
         fusionSplitPriorSnapshotSeedEarlyRefitMaxDrift: -1.0
@@ -3364,6 +3479,7 @@ profiles:
         fusionRepairPositionBlend: 0.2
         fusionRepairRadiusBlend: 0.75
         fusionCenterPriorEnabled: true
+        fusionGlobalLumenCenterAssignmentEnabled: false
         fusionCenterPriorMaxDistance: 24.0
         fusionCenterPriorPositionBlend: 0.35
         fusionCenterPriorRadiusBlend: 0.25
@@ -3396,6 +3512,28 @@ profiles:
         fusionSplitPriorMidpointWeight: 1.0
         fusionSplitPriorSeparationPenaltyWeight: 0.2
         fusionSplitPriorSignalBonusWeight: 0.001
+        # Logging only: every split prior records parent local crowding. This
+        # lets late dense split filters use measured neighborhood density later,
+        # without changing split decisions by itself.
+        fusionSplitPriorLocalDensityFeatureRadius: 45.0
+        # Disabled here to protect the verified repaired dense profile. The wide
+        # two-real rescue is enabled only in the f170+ very dense profile below.
+        fusionSplitPriorLateWideTwoRealPairRescueEnabled: false
+        fusionSplitPriorLateWideTwoRealPairMinLiveCells: 300
+        fusionSplitPriorLateWideTwoRealPairMinWindowBoth: 1
+        fusionSplitPriorLateWideTwoRealPairMaxWindowMissing: 1
+        fusionSplitPriorLateWideTwoRealPairMaxWindowParentPersists: 1
+        fusionSplitPriorLateWideTwoRealPairMaxSeparation: 64.0
+        fusionSplitPriorLateWideTwoRealPairMaxSeparationRadiusScale: 4.2
+        fusionSplitPriorLateWideTwoRealPairMinLateralSeparation: 42.0
+        fusionSplitPriorLateWideTwoRealPairMaxZDominance: 0.35
+        fusionSplitPriorLateWideTwoRealPairMaxMidpointDistance: 12.0
+        fusionSplitPriorLateWideTwoRealPairMinParentDistanceBalance: 0.70
+        fusionSplitPriorLateWideTwoRealPairMinParentShape: 1.0
+        fusionSplitPriorLateWideTwoRealPairMinVoxels: 1800
+        fusionSplitPriorLateWideTwoRealPairMinSignal: 120.0
+        fusionSplitPriorLateWideTwoRealPairSeparationPenaltyWeight: 0.35
+        fusionSplitPriorLateWideTwoRealPairSelectionBonus: 35.0
         fusionSplitPriorConflictReplacementEnabled: true
         fusionSplitPriorConflictCloseParentRadiusScale: 0.45
         fusionSplitPriorConflictMinNewSeparationRadiusScale: 1.4
@@ -3443,6 +3581,15 @@ profiles:
         fusionSplitPriorContinuationClaimTieMargin: 4.0
         fusionSplitPriorContinuationClaimCloseParentRadiusScale: 0.62
         fusionSplitPriorContinuationClaimCloseParentPenalty: 6.0
+        fusionSplitPriorProtectFutureContinuationCandidateEnabled: false
+        fusionSplitPriorProtectFutureContinuationMinDistance: 24.0
+        fusionSplitPriorProtectFutureContinuationMaxDistance: 32.0
+        fusionSplitPriorProtectFutureContinuationMinOldNearestCurrentDistance: 24.0
+        fusionSplitPriorProtectFutureContinuationMinOldWindowSupport: 1
+        fusionSplitPriorProtectFutureContinuationMinCenterWindowSupport: 1
+        fusionSplitPriorProtectFutureContinuationMinVoxels: 1000
+        fusionSplitPriorProtectFutureContinuationMinSignal: 100.0
+        fusionSplitPriorProtectFutureContinuationPenalty: 80.0
         fusionSplitPriorMinDaughterParentDistance: 6.0
         fusionSplitPriorMinDaughterParentDistanceRadiusScale: 0.35
         fusionSplitPriorMinParentDistanceBalance: 0.35
@@ -4063,6 +4210,7 @@ profiles:
         fusionRepairPositionBlend: 0.2
         fusionRepairRadiusBlend: 0.75
         fusionCenterPriorEnabled: true
+        fusionGlobalLumenCenterAssignmentEnabled: false
         fusionCenterPriorMaxDistance: 24.0
         fusionCenterPriorPositionBlend: 0.35
         fusionCenterPriorRadiusBlend: 0.25
@@ -4109,6 +4257,30 @@ profiles:
         fusionSplitPriorElongatedParentMaxScore: 80.0
         fusionSplitPriorElongatedParentScoreBonus: 10.0
         fusionSplitPriorElongatedParentMaxNeighborClaimPenalty: 30.0
+        # Logging only: every split prior records parent local crowding. This
+        # lets late dense split filters use measured neighborhood density later,
+        # without changing split decisions by itself.
+        fusionSplitPriorLocalDensityFeatureRadius: 45.0
+        # f177 can have two strong real Cell Lumen daughter centers just beyond
+        # the normal parent-radius scaled max separation because the previous
+        # parent shape is too small. Let only wide, lateral, balanced, strong
+        # two-real pairs enter global selection; all split validation still runs.
+        fusionSplitPriorLateWideTwoRealPairRescueEnabled: true
+        fusionSplitPriorLateWideTwoRealPairMinLiveCells: 300
+        fusionSplitPriorLateWideTwoRealPairMinWindowBoth: 1
+        fusionSplitPriorLateWideTwoRealPairMaxWindowMissing: 1
+        fusionSplitPriorLateWideTwoRealPairMaxWindowParentPersists: 1
+        fusionSplitPriorLateWideTwoRealPairMaxSeparation: 64.0
+        fusionSplitPriorLateWideTwoRealPairMaxSeparationRadiusScale: 4.2
+        fusionSplitPriorLateWideTwoRealPairMinLateralSeparation: 42.0
+        fusionSplitPriorLateWideTwoRealPairMaxZDominance: 0.35
+        fusionSplitPriorLateWideTwoRealPairMaxMidpointDistance: 12.0
+        fusionSplitPriorLateWideTwoRealPairMinParentDistanceBalance: 0.70
+        fusionSplitPriorLateWideTwoRealPairMinParentShape: 1.0
+        fusionSplitPriorLateWideTwoRealPairMinVoxels: 1800
+        fusionSplitPriorLateWideTwoRealPairMinSignal: 120.0
+        fusionSplitPriorLateWideTwoRealPairSeparationPenaltyWeight: 0.35
+        fusionSplitPriorLateWideTwoRealPairSelectionBonus: 35.0
         fusionSplitPriorMaxPriorsPerFrame: 50
         fusionSplitPriorWindowEnabled: true
         fusionSplitPriorWindowSize: 3
@@ -4142,6 +4314,20 @@ profiles:
         fusionSplitPriorContinuationClaimTieMargin: 4.0
         fusionSplitPriorContinuationClaimCloseParentRadiusScale: 0.62
         fusionSplitPriorContinuationClaimCloseParentPenalty: 6.0
+        # Late-only lineage safety: if a Cell Lumen center is far from an old
+        # continuation but both the old position and the center persist in the
+        # future window, treat that center as continuation evidence before split
+        # selection. This targets f177-style daughter stealing without touching
+        # early or middle density profiles.
+        fusionSplitPriorProtectFutureContinuationCandidateEnabled: true
+        fusionSplitPriorProtectFutureContinuationMinDistance: 24.0
+        fusionSplitPriorProtectFutureContinuationMaxDistance: 32.0
+        fusionSplitPriorProtectFutureContinuationMinOldNearestCurrentDistance: 24.0
+        fusionSplitPriorProtectFutureContinuationMinOldWindowSupport: 1
+        fusionSplitPriorProtectFutureContinuationMinCenterWindowSupport: 1
+        fusionSplitPriorProtectFutureContinuationMinVoxels: 1000
+        fusionSplitPriorProtectFutureContinuationMinSignal: 100.0
+        fusionSplitPriorProtectFutureContinuationPenalty: 80.0
         fusionSplitPriorMinDaughterParentDistance: 6.0
         fusionSplitPriorMinDaughterParentDistanceRadiusScale: 0.35
         fusionSplitPriorMinParentDistanceBalance: 0.35
@@ -4209,10 +4395,50 @@ profiles:
         fusionSplitPriorPrepassFallbackMaxSeparationRadiusScale: 1.05
         fusionSplitPriorPrepassFallbackParentClaimMargin: 8.0
         fusionSplitPriorPrepassFallbackMaxScore: 8.0
+        # f176 t120_cell_1141 has a real image PCA two-daughter split, but
+        # its kept-pixel count is slightly below the broad late fallback
+        # cutoff. This late-only rescue keeps the main cutoff conservative
+        # and only lets compact low-kept evidence enter the split schedule.
+        fusionSplitPriorPrepassFallbackLowKeptRescueEnabled: true
+        fusionSplitPriorPrepassFallbackLowKeptRescueMinKeptPixels: 45000
+        fusionSplitPriorPrepassFallbackLowKeptRescueMinShape: 1.45
+        fusionSplitPriorPrepassFallbackLowKeptRescueMaxScore: 4.0
         fusionSplitPriorPrepassFallbackRejectBadLumenParent: true
         fusionSplitPriorPrepassFallbackRejectCollapsedCenterParent: false
         fusionSplitPriorPrepassFallbackBadLumenMaxScore: 28.0
         fusionSplitPriorPrepassFallbackBadLumenMaxNeighborClaimPenalty: 18.0
+        # f175 scheduled many parent-anchor attempts even though most true late
+        # splits have two real Cell Lumen daughters. Filter only weak one-real
+        # parent-anchor priors in this dense profile; strong wide partial priors
+        # and prepass fallback can still pass through the bypass below.
+        fusionSplitPriorRejectWeakParentAnchoredOneRealEnabled: true
+        fusionSplitPriorWeakParentAnchoredOneRealMinVoxels: 1500
+        fusionSplitPriorWeakParentAnchoredOneRealMinSignal: 105.0
+        fusionSplitPriorWeakParentAnchoredOneRealMinSeparationRadiusScale: 1.10
+        fusionSplitPriorWeakParentAnchoredOneRealMaxZDominance: 0.75
+        fusionSplitPriorWeakParentAnchoredOneRealMinLateralSeparation: 8.0
+        fusionSplitPriorWeakParentAnchoredPartialBypassEnabled: true
+        fusionSplitPriorWeakParentAnchoredPartialBypassMinParentShape: 1.45
+        fusionSplitPriorWeakParentAnchoredPartialBypassMaxScore: 8.0
+        fusionSplitPriorWeakParentAnchoredPartialBypassMinRealVoxels: 2600
+        fusionSplitPriorWeakParentAnchoredPartialBypassMinRealSignal: 105.0
+        fusionSplitPriorWeakParentAnchoredPartialBypassMinWindowBoth: 1
+        fusionSplitPriorWeakParentAnchoredPartialBypassMaxWindowMissing: 1
+        fusionSplitPriorWeakParentAnchoredPartialBypassMaxWindowParentPersists: 0
+        fusionSplitPriorWeakParentAnchoredPartialBypassMinSeparationRadiusScale: 1.25
+        fusionSplitPriorWeakParentAnchoredPartialBypassMinLateralSeparation: 18.0
+        fusionSplitPriorWeakParentAnchoredPartialBypassMaxZDominance: 0.45
+        fusionSplitPriorWeakParentAnchoredPartialBypassMaxMidpointDistance: 20.0
+        # Some late parents keep a weak parent-anchor prior that never becomes
+        # a useful split attempt. Let stronger prepass evidence replace only
+        # that weak-window pattern instead of adding a general new split path.
+        fusionSplitPriorPrepassFallbackOverrideWeakExistingPriorEnabled: true
+        fusionSplitPriorPrepassFallbackOverrideMinParentShape: 1.45
+        fusionSplitPriorPrepassFallbackOverrideMaxScore: 4.0
+        fusionSplitPriorPrepassFallbackOverrideMaxSeparationRadiusScale: 1.05
+        fusionSplitPriorPrepassFallbackOverrideMinExistingWindowBoth: 2
+        fusionSplitPriorPrepassFallbackOverrideMaxExistingWindowMissing: 0
+        fusionSplitPriorPrepassFallbackOverrideMaxExistingWindowParentPersists: 0
         fusionSplitPriorPrepassFallbackUseSnapshotSeedOnLargeDrift: true
         fusionSplitPriorPrepassFallbackSeedMaxShift: 25.0
         fusionSplitPriorPrepassFallbackSeedMinSeparationRadiusScale: 0.55
@@ -4275,6 +4501,11 @@ profiles:
         fusionSplitPriorParentAnchorMinShape: 1.15
         fusionTemporalCenterRepairAllowSharedClaimPcaRelax: false
         fusionTemporalCenterRepairSharedClaimPcaRelaxMinShape: 1.45
+        # Dense late frames need future support, but the future center also has
+        # to be owned by this lineage. Otherwise PCA can drift a continuation
+        # into a neighbor's bright center, as in the f175 t120_cell_08411 case.
+        fusionTemporalCenterRepairPcaRelaxRequireOwnClaimEnabled: true
+        fusionTemporalCenterRepairPcaRelaxOwnClaimMargin: 2.0
         fusionSplitPriorAllowWindowBackedDuplicateHandoff: true
         fusionSplitPriorParentAnchorCleanFutureDriftRescueMinImageGain: 20000.0
         fusionSplitPriorDuplicateHandoffMinContinuationPenalty: 12.0
@@ -4297,10 +4528,52 @@ profiles:
         fusionStaleContinuationPruneLowQualityMaxMinorRadius: 5.5
         fusionStaleContinuationPruneLowQualityMaxCellAgeFrames: 999
         fusionStaleContinuationPruneLowQualityIgnoresProtection: true
+        # Leave claimed center pruning disabled in this late profile. A f175
+        # test showed that this geometric rule can remove real dense neighbors
+        # such as t120_cell_0121 and t120_cell_0581, so it is not safe enough
+        # for the main run without stronger lineage evidence.
         fusionStaleContinuationPruneClaimedCenterEnabled: false
         fusionStaleContinuationPruneClaimedCenterMargin: 4.0
         fusionStaleContinuationPruneClaimedCenterRequireGuardOrNoFuture: true
         fusionStaleContinuationPruneGuardedNoFutureIgnoresCurrentCenterEnabled: true
+        # f177 showed the generic stale prune could delete t120_cell_1290 even
+        # though futureSupport=2, only because PCA position guard had reverted
+        # its same-frame shape fit. Keep the no-future prune behavior, but let
+        # future-window evidence protect guarded cells from the final prune path.
+        fusionStaleContinuationPruneFutureSupportProtectsGuardedEnabled: true
+        # f177 showed that protection alone can keep a real lineage name at the
+        # old stale position. Before falling back to keep/delete, try a narrow
+        # late-only reanchor to the nearest current Cell Lumen center, but only
+        # when that center is also future-supported and not better claimed by a
+        # neighboring live cell.
+        fusionStaleContinuationPruneGuardedFutureReanchorEnabled: true
+        fusionStaleContinuationPruneGuardedFutureReanchorMaxDistance: 30.0
+        fusionStaleContinuationPruneGuardedFutureReanchorMinFutureSupport: 1
+        fusionStaleContinuationPruneGuardedFutureReanchorClaimMargin: 4.0
+        fusionStaleContinuationPruneGuardedFutureReanchorMinVoxels: 1000
+        fusionStaleContinuationPruneGuardedFutureReanchorMinSignal: 100.0
+        # Late dense f175 produced a stale shadow where random perturb improved
+        # local image cost for an old continuation even though its nearest
+        # CellLumen center was better explained by another track. This narrow
+        # cleanup only touches same-frame random-perturb accepted continuations,
+        # avoiding the broader claimed-center rule that removed real neighbors.
+        # Keep a separate age guard: f175 showed that young real daughters
+        # from f170/f173 can temporarily share a nearby lumen center, while the
+        # stale shadow we want to remove is an old continuation.
+        fusionStaleContinuationPruneRandomPerturbShadowEnabled: true
+        fusionStaleContinuationPruneRandomPerturbShadowMinLiveCells: 300
+        fusionStaleContinuationPruneRandomPerturbShadowMinCellAgeFrames: 20
+        fusionStaleContinuationPruneRandomPerturbShadowClaimMargin: 4.0
+        # Center sharing alone is not enough in the very dense stage. Require
+        # the old continuation and the better owner to also be spatially close,
+        # so a real neighbor is not deleted just because it shares one nearby
+        # CellLumen center.
+        fusionStaleContinuationPruneRandomPerturbShadowMaxCellDistance: 18.0
+        # Keep the random-perturb shadow cleanup late-only, but do not delete a
+        # continuation if the future window still supports it. f175 showed this
+        # exact pattern for a real cell that briefly shared one dense CellLumen
+        # center with a neighbor.
+        fusionStaleContinuationPruneRandomPerturbShadowMaxFutureSupport: 0
         fusionStaleContinuationPruneCrowdedBridgeEnabled: true
         fusionStaleContinuationPruneCrowdedBridgeMaxNeighborDistance: 32.0
         fusionStaleContinuationPruneCrowdedBridgeMinBrightnessAdvantage: 0.03
@@ -4352,7 +4625,9 @@ profiles:
         fusionSplitPriorParentAnchorOneRealRefitDriftRescueMinImageGain: 20000.0
         fusionSplitPriorParentAnchorOneRealRefitDriftRescueMaxBridgeValleyRatio: 0.35
         fusionSplitPriorParentAnchorOneRealRefitDriftRescueMinBridgeGapWidth: 8.0
-        fusionSplitPriorParentAnchorOneRealRefitDriftRescueMinParentShape: 1.8
+        # Late dense f176 has a true one-real parent-anchor split with shape 1.791.
+        # Keep this rescue local to this profile so the hard 14 px drift guard still blocks noisy anchors elsewhere.
+        fusionSplitPriorParentAnchorOneRealRefitDriftRescueMinParentShape: 1.75
         fusionSplitPriorParentAnchorOneRealRefitDriftRescueMaxScore: 80.0
         fusionSplitPriorParentAnchorOneRealCleanHighOverlapMinCost: 10000.0
         fusionSplitPriorParentAnchorOneRealCleanHighOverlapMinImageGain: 5000.0
@@ -4367,6 +4642,22 @@ profiles:
         fusionSplitPriorParentAnchorOneRealSeedLockMaxScore: 8.0
         fusionSplitPriorParentAnchorOneRealSeedLockMinSeedSeparation: 14.0
         fusionSplitPriorParentAnchorOneRealSeedLockMaxFinalSeedAxisRatio: 0.75
+        # f175 showed a very dense-frame failure where Cell Lumen placed one
+        # daughter center correctly, but PCA refit pulled it toward a neighboring
+        # bright mass and the drift guard then rejected the true split. Keep this
+        # repair only in the very dense profile; downstream bridge and duplicate
+        # gates still run after the seed position is locked.
+        fusionSplitPriorParentAnchorOneRealLateSeedPositionLockEnabled: true
+        fusionSplitPriorParentAnchorOneRealLateSeedPositionLockMinLiveCells: 300
+        # f175 t120_cell_082 showed that a low-gain one-real seed can look good
+        # after seed locking but still be a false split. Match the normal clean
+        # min-image guard so this bypass only helps stronger late dense evidence.
+        fusionSplitPriorParentAnchorOneRealLateSeedPositionLockMinImageGain: 3500.0
+        fusionSplitPriorParentAnchorOneRealLateSeedPositionLockMinSeedTotalGain: 8000.0
+        fusionSplitPriorParentAnchorOneRealLateSeedPositionLockMinSeedSeparation: 20.0
+        fusionSplitPriorParentAnchorOneRealLateSeedPositionLockMaxScore: 8.0
+        fusionSplitPriorParentAnchorOneRealLateSeedPositionLockMaxSeedTotalWorsening: 0.0
+        fusionSplitPriorParentAnchorOneRealLateSeedPositionLockMaxRefitDrift: 30.0
         fusionSplitPriorParentAnchorOneRealMinImageGainGuardEnabled: true
         fusionSplitPriorParentAnchorOneRealCleanMinImageGain: 3500.0
         fusionSplitPriorParentAnchorOneRealPartialMinImageGain: 20000.0
@@ -4420,6 +4711,52 @@ profiles:
         fusionSplitPriorCleanTwoRealCompactSelectionBonus: 30.0
         fusionSplitPriorCleanTwoRealRescueBeforeDefaultNegativeGate: true
         fusionSplitPriorParentAnchorOneRealSharedCandidatePenalty: 30.0
+        # f175 t120_cell_082 had clean future support and a real current
+        # CellLumen seed, but the shared-candidate penalty protected a weak
+        # two-real alternative and made both choices disappear. Only this late
+        # dense profile can waive that penalty for strong parent-anchor pairs;
+        # normal split validation still runs after scheduling.
+        fusionSplitPriorParentAnchorSharedCandidatePenaltyBypassEnabled: true
+        fusionSplitPriorParentAnchorSharedPenaltyBypassMinWindowBoth: 2
+        fusionSplitPriorParentAnchorSharedPenaltyBypassMaxWindowMissing: 0
+        fusionSplitPriorParentAnchorSharedPenaltyBypassMaxWindowParentPersists: 0
+        fusionSplitPriorParentAnchorSharedPenaltyBypassMinParentShape: 1.50
+        fusionSplitPriorParentAnchorSharedPenaltyBypassMaxScore: 12.0
+        fusionSplitPriorParentAnchorSharedPenaltyBypassMinRealVoxels: 1000
+        fusionSplitPriorParentAnchorSharedPenaltyBypassMinRealSignal: 80.0
+        fusionSplitPriorParentAnchorSharedPenaltyBypassMinFarDistance: 24.0
+        fusionSplitPriorParentAnchorSharedPenaltyBypassMinLateralSeparation: 18.0
+        fusionSplitPriorParentAnchorSharedPenaltyBypassMaxZDominance: 0.75
+        # f176 t120_cell_1290 had the correct real Cell Lumen seed and clean
+        # future support, but it got a small neighbor-claim penalty because the
+        # same seed was also near a lower-shape neighbor. This late-only rescue
+        # keeps that elongated-parent pattern selectable without relaxing the
+        # generic parent-anchor claim gate.
+        fusionSplitPriorParentAnchorElongatedSharedClaimRescueEnabled: true
+        fusionSplitPriorParentAnchorElongatedSharedClaimMinWindowBoth: 2
+        fusionSplitPriorParentAnchorElongatedSharedClaimMaxWindowMissing: 0
+        fusionSplitPriorParentAnchorElongatedSharedClaimMaxWindowParentPersists: 0
+        fusionSplitPriorParentAnchorElongatedSharedClaimMinParentShape: 1.70
+        fusionSplitPriorParentAnchorElongatedSharedClaimMaxLowCompetitorShape: 1.50
+        fusionSplitPriorParentAnchorElongatedSharedClaimMinShapeAdvantage: 0.25
+        fusionSplitPriorParentAnchorElongatedSharedClaimMaxNeighborClaimPenalty: 4.0
+        fusionSplitPriorParentAnchorElongatedSharedClaimMaxScore: 12.0
+        fusionSplitPriorParentAnchorElongatedSharedClaimMinRealVoxels: 1000
+        fusionSplitPriorParentAnchorElongatedSharedClaimMinRealSignal: 80.0
+        fusionSplitPriorParentAnchorElongatedSharedClaimMinFarDistance: 24.0
+        fusionSplitPriorParentAnchorElongatedSharedClaimMinLateralSeparation: 18.0
+        fusionSplitPriorParentAnchorElongatedSharedClaimMaxZDominance: 0.75
+        fusionSplitPriorParentAnchorElongatedSharedClaimSelectionBonus: 45.0
+        # f176 showed a low-shape parent-anchor split can steal the same real
+        # Cell Lumen center from a more elongated neighbor and leave the count
+        # looking correct while the lineage name is wrong. Keep this late-only
+        # as a soft selection penalty, not a hard rejection, so the low-shape
+        # parent can still split when no stronger local competitor exists.
+        fusionSplitPriorParentAnchorPreferElongatedCompetitorEnabled: true
+        fusionSplitPriorParentAnchorPreferElongatedCompetitorMaxLowShape: 1.50
+        fusionSplitPriorParentAnchorPreferElongatedCompetitorMinShapeAdvantage: 0.25
+        fusionSplitPriorParentAnchorPreferElongatedCompetitorPenalty: 35.0
+        fusionSplitPriorWeakParentAnchoredFutureBypassEnabled: true
         fusionSplitPriorCleanTwoRealHighNeighborClaimRescueEnabled: true
         fusionSplitPriorCleanTwoRealHighNeighborClaimMinParentDistanceBalance: 0.65
         fusionSplitPriorCleanTwoRealHighNeighborClaimMaxScore: 60.0
@@ -4441,6 +4778,11 @@ profiles:
         fusionSplitPriorCleanTwoRealCompactDuplicateBypassMaxSoftPenaltyFraction: 0.012
         fusionSplitPriorCleanTwoRealCompactDuplicateBypassMinParentDistanceBalance: 0.45
         fusionSplitPriorCleanTwoRealCompactDuplicateBypassMaxScore: 18.0
+        # Late f175 false split t120_cell_08410 had a real-looking two-center
+        # pair, but overlap cost was much larger than image gain. This keeps
+        # the compact duplicate bypass for true dense splits while rejecting
+        # overlap-dominated false divisions in this late density profile only.
+        fusionSplitPriorCleanTwoRealCompactDuplicateBypassMaxOverlapToImageGainRatio: 2.0
         fusionSplitPriorRejectLowShapeZDominantPairs: true
         fusionSplitPriorLowShapeZDominantMaxParentShape: 1.45
         fusionSplitPriorRejectNonWindowLowShapeOverlapDuplicate: true
