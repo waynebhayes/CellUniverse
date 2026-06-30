@@ -18,7 +18,7 @@ joblib==1.2.0
 kiwisolver==1.1.0
 MarkupSafe==1.1.1
 matplotlib==3.1.1
-msgpack==1.0.0
+msgpack==1.2.1
 networkx==2.4
 numpy==1.22.0
 numpydoc==0.9.1
